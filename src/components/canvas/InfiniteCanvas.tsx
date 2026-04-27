@@ -28,21 +28,42 @@ import { TextNode } from '../nodes/TextNode';
 import { PromptNode } from '../nodes/PromptNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { ImageNode } from '../nodes/ImageNode';
+import { NodeFloatingToolbar } from '../nodes/NodeFloatingToolbar';
 import { CanvasToolbar } from './CanvasToolbar';
 
 // --- Adapters ---
-function TextNodeAdapter({ id, data, selected }: NodeProps) {
+function TextNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const deleteNode = useCanvasStore((s) => s.deleteNode);
+  const addNode = useCanvasStore((s) => s.addNode);
   const [editing, setEditing] = useState(false);
+
+  const handleCopy = () => {
+    addNode({
+      id: crypto.randomUUID(),
+      type: 'text',
+      position: { x: xPos + 40, y: yPos + 40 },
+      data: { ...data },
+    });
+  };
 
   return (
     <div className="relative">
+      <NodeFloatingToolbar
+        visible={!!selected}
+        onCopy={handleCopy}
+        onDelete={() => deleteNode(id)}
+        onLink={() => console.log('Link clicked')}
+        onShare={() => console.log('Share clicked')}
+        onMore={() => console.log('More clicked')}
+      />
       <Handle
         type="target"
         position={Position.Left}
         className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
       />
       <TextNode
+        id={id}
         data={data as TextNodeData}
         selected={selected}
         editing={editing}
@@ -59,19 +80,39 @@ function TextNodeAdapter({ id, data, selected }: NodeProps) {
   );
 }
 
-function PromptNodeAdapter({ id, data, selected }: NodeProps) {
+function PromptNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const deleteNode = useCanvasStore((s) => s.deleteNode);
+  const addNode = useCanvasStore((s) => s.addNode);
   const generateText = useCanvasStore((s) => s.generateTextFromPrompt);
   const generateImage = useCanvasStore((s) => s.generateImageFromPrompt);
 
+  const handleCopy = () => {
+    addNode({
+      id: crypto.randomUUID(),
+      type: 'prompt',
+      position: { x: xPos + 40, y: yPos + 40 },
+      data: { ...data },
+    });
+  };
+
   return (
     <div className="relative">
+      <NodeFloatingToolbar
+        visible={!!selected}
+        onCopy={handleCopy}
+        onDelete={() => deleteNode(id)}
+        onLink={() => console.log('Link clicked')}
+        onShare={() => console.log('Share clicked')}
+        onMore={() => console.log('More clicked')}
+      />
       <Handle
         type="target"
         position={Position.Left}
         className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
       />
       <PromptNode
+        id={id}
         data={data as PromptNodeData}
         selected={selected}
         onChange={(next) => updateNodeData<'prompt'>(id, next)}
@@ -87,15 +128,36 @@ function PromptNodeAdapter({ id, data, selected }: NodeProps) {
   );
 }
 
-function AITextResultNodeAdapter({ data, selected }: NodeProps) {
+function AITextResultNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
+  const deleteNode = useCanvasStore((s) => s.deleteNode);
+  const addNode = useCanvasStore((s) => s.addNode);
+
+  const handleCopy = () => {
+    addNode({
+      id: crypto.randomUUID(),
+      type: 'ai_text_result',
+      position: { x: xPos + 40, y: yPos + 40 },
+      data: { ...data },
+    });
+  };
+
   return (
     <div className="relative">
+      <NodeFloatingToolbar
+        visible={!!selected}
+        onCopy={handleCopy}
+        onDelete={() => deleteNode(id)}
+        onLink={() => console.log('Link clicked')}
+        onShare={() => console.log('Share clicked')}
+        onMore={() => console.log('More clicked')}
+      />
       <Handle
         type="target"
         position={Position.Left}
         className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
       />
       <AITextResultNode
+        id={id}
         data={data as AITextResultNodeData}
         selected={selected}
       />
@@ -108,15 +170,36 @@ function AITextResultNodeAdapter({ data, selected }: NodeProps) {
   );
 }
 
-function ImageNodeAdapter({ data, selected }: NodeProps) {
+function ImageNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
+  const deleteNode = useCanvasStore((s) => s.deleteNode);
+  const addNode = useCanvasStore((s) => s.addNode);
+
+  const handleCopy = () => {
+    addNode({
+      id: crypto.randomUUID(),
+      type: 'image',
+      position: { x: xPos + 40, y: yPos + 40 },
+      data: { ...data },
+    });
+  };
+
   return (
     <div className="relative">
+      <NodeFloatingToolbar
+        visible={!!selected}
+        onCopy={handleCopy}
+        onDelete={() => deleteNode(id)}
+        onLink={() => console.log('Link clicked')}
+        onShare={() => console.log('Share clicked')}
+        onMore={() => console.log('More clicked')}
+      />
       <Handle
         type="target"
         position={Position.Left}
         className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
       />
       <ImageNode
+        id={id}
         data={data as ImageNodeData}
         selected={selected}
         loading={false}

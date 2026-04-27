@@ -6,6 +6,7 @@ import type { PromptNodeData } from '../../types/canvas';
 import { NodeShell } from './NodeShell';
 
 export interface PromptNodeProps {
+  id?: string;
   data: PromptNodeData;
   selected?: boolean;
   onChange?: (next: PromptNodeData) => void;
@@ -14,6 +15,7 @@ export interface PromptNodeProps {
 }
 
 export function PromptNode({
+  id,
   data,
   selected = false,
   onChange,
@@ -37,6 +39,7 @@ export function PromptNode({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gl-stroke-subtle text-gl-text-tertiary">
         <Sparkles size={14} />
         <span className="text-[12px] font-medium text-gl-text-secondary">Prompt</span>
+        {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
       </div>
 
       {/* Content */}
@@ -66,7 +69,7 @@ export function PromptNode({
           <button
             onClick={onGenerateText}
             disabled={isGenerating}
-            className="flex-1 flex justify-center items-center gap-2 py-2 rounded-gl-sm bg-gl-accent-cool/10 border border-gl-accent-cool/20 text-gl-accent-cool hover:bg-gl-accent-cool/20 transition-colors disabled:opacity-50 text-[12px] font-medium"
+            className="flex-1 flex justify-center items-center gap-2 py-2 rounded-gl-sm bg-gl-accent-cool/[0.08] border border-gl-accent-cool/40 text-gl-accent-cool hover:bg-gl-accent-cool/10 transition-colors disabled:opacity-50 text-[12px] font-medium"
           >
             {isGenerating && data.mode === 'text' ? (
               <Loader2 size={14} className="animate-spin" />

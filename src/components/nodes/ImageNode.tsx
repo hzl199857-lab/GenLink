@@ -6,6 +6,7 @@ import type { ImageNodeData } from '../../types/canvas';
 import { NodeShell } from './NodeShell';
 
 export interface ImageNodeProps {
+  id?: string;
   data: ImageNodeData;
   selected?: boolean;
   loading?: boolean;
@@ -14,6 +15,7 @@ export interface ImageNodeProps {
 }
 
 export function ImageNode({
+  id,
   data,
   selected = false,
   loading = false,
@@ -40,6 +42,7 @@ export function ImageNode({
         <div className="flex items-center gap-2 text-gl-accent-cyan">
           <ImageIcon size={14} />
           <span className="text-[12px] font-medium text-gl-text-secondary">Image</span>
+          {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
         </div>
         <div className="flex items-center gap-2">
           {onRegenerate && (

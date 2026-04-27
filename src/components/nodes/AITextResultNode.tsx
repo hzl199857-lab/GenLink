@@ -6,11 +6,13 @@ import type { AITextResultNodeData } from '../../types/canvas';
 import { NodeShell } from './NodeShell';
 
 export interface AITextResultNodeProps {
+  id?: string;
   data: AITextResultNodeData;
   selected?: boolean;
 }
 
 export function AITextResultNode({
+  id,
   data,
   selected = false,
 }: AITextResultNodeProps) {
@@ -34,6 +36,7 @@ export function AITextResultNode({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gl-stroke-subtle text-gl-accent-cool">
         <Sparkles size={14} />
         <span className="text-[12px] font-medium text-gl-text-secondary">AI Text Result</span>
+        {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
       </div>
 
       {/* Content */}

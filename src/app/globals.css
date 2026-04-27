@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --gl-app: #0b0d12;
+  --gl-canvas: #0e1117;
+  --gl-text-primary: rgba(245, 247, 250, 0.96);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--gl-app);
+  color: var(--gl-text-primary);
+  font-family: var(--font-geist-sans), "Inter", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(122, 162, 255, 0.26);
+  color: rgba(245, 247, 250, 0.98);
+}
+
+.gl-canvas-bg {
+  background-color: #0e1117;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.06) 0.8px, transparent 0.8px),
+    radial-gradient(circle at top, rgba(122, 162, 255, 0.07), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 24%);
+  background-position: 0 0, center top, center top;
+  background-size: 24px 24px, 100% 100%, 100% 100%;
+}
+
+.react-flow__node {
+  border-radius: 18px;
+}
+
+.react-flow__edge-path {
+  stroke: rgba(190, 205, 225, 0.3);
+  stroke-width: 1.4;
+}
+
+.react-flow__minimap {
+  background: rgba(19, 25, 35, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+}
+
+.react-flow__controls {
+  background: rgba(19, 25, 35, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+}
+
+.react-flow__controls-button {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: rgba(214, 219, 227, 0.72);
+}
+
+.react-flow__controls-button:hover {
+  background: #1a2230;
+  color: rgba(245, 247, 250, 0.96);
+}
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: rgba(122, 162, 255, 0.4);
+  border: 1.5px solid rgba(122, 162, 255, 0.6);
+}
+
+.react-flow__attribution {
+  display: none;
+}

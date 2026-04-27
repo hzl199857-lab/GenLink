@@ -6,6 +6,7 @@ import type { TextNodeData } from '../../types/canvas';
 import { NodeShell } from './NodeShell';
 
 export interface TextNodeProps {
+  id?: string;
   data: TextNodeData;
   selected?: boolean;
   editing?: boolean;
@@ -15,6 +16,7 @@ export interface TextNodeProps {
 }
 
 export function TextNode({
+  id,
   data,
   selected = false,
   editing = false,
@@ -38,6 +40,7 @@ export function TextNode({
         <div className="flex items-center gap-2 text-gl-text-tertiary">
           <Type size={14} />
           <span className="text-[12px] font-medium">{data.title || 'Text'}</span>
+          {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
         </div>
         <button className="text-gl-text-tertiary hover:text-gl-text-secondary transition-colors">
           <MoreHorizontal size={14} />
