@@ -1,0 +1,99 @@
+'use client';
+
+import React from 'react';
+import { Image as ImageIcon, Maximize2, RefreshCw } from 'lucide-react';
+import type { ImageNodeData } from '../../types/canvas';
+import { NodeShell } from './NodeShell';
+
+export interface ImageNodeProps {
+  data: ImageNodeData;
+  selected?: boolean;
+  loading?: boolean;
+  onOpenFullscreen?: () => void;
+  onRegenerate?: () => void;
+}
+
+export function ImageNode({
+  data,
+  selected = false,
+  loading = false,
+  onOpenFullscreen,
+  onRegenerate,
+}: ImageNodeProps) {
+  let formattedTime = '';
+  try {
+    const date = new Date(data.generatedAt);
+    if (!isNaN(date.getTime())) {
+      formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+  } catch {
+    // Ignore invalid date
+  }
+
+  return (
+    <NodeShell
+      state={loading ? 'loading' : selected ? 'selected' : 'default'}
+      className="min-w-[320px] w-[320px] sm:w-[420px] flex flex-col"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gl-stroke-subtle">
+        <div className="flex items-center gap-2 text-gl-accent-cyan">
+          <ImageIcon size={14} />
+          <span className="text-[12px] font-medium text-gl-text-secondary">Image</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {onRegenerate && (
+            <button onClick={onRegenerate} className="text-gl-text-tertiary hover:text-gl-text-primary transition-colors">
+              <RefreshCw size={14} />
+            </button>
+          )}
+          {onOpenFullscreen && (
+            <button onClick={onOpenFullscreen} className="text-gl-text-tertiary hover:text-gl-text-primary transition-colors">
+              <Maximize2 size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Image Area */}
+      <div className="p-4 pb-2">
+        <div 
+          className="relative w-full aspect-[4/3] rounded-gl-md overflow-hidden bg-gl-panel-soft cursor-pointer group"
+          onClick={onOpenFullscreen}
+        >
+          {loading ? (
+            <div className="absolute inset-0 bg-gl-panel-soft animate-pulse" />
+          ) : data.imageUrl ? (
+            <img 
+              src={data.imageUrl} 
+              alt={data.prompt}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-gl-text-muted">
+              <ImageIcon size={24} />
+            </div>
+          )}
+          
+          {/* Hover Overlay */}
+          {!loading && data.imageUrl && (
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <Maximize2 size={24} className="text-white" />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Prompt / Meta Area */}
+      <div className="px-4 pb-4">
+        <p className="line-clamp-2 text-[11px] text-gl-text-tertiary leading-relaxed mb-2" title={data.prompt}>
+          {data.prompt}
+        </p>
+        <div className="flex items-center justify-between text-[11px] text-gl-text-muted">
+          <span>{data.model || 'Unknown Model'}</span>
+          <span>{formattedTime}</span>
+        </div>
+      </div>
+    </NodeShell>
+  );
+}
