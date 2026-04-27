@@ -4,8 +4,8 @@
 
 :root {
   color-scheme: dark;
-  --gl-app: #0b0d12;
-  --gl-canvas: #0e1117;
+  --gl-app: #08090b;
+  --gl-canvas: #0b0c0e;
   --gl-text-primary: rgba(245, 247, 250, 0.96);
 }
 
@@ -36,7 +36,7 @@ body {
 }
 
 .gl-canvas-bg {
-  background-color: #0e1117;
+  background-color: #0b0c0e;
   background-image:
     radial-gradient(rgba(255, 255, 255, 0.06) 0.8px, transparent 0.8px),
     radial-gradient(circle at top, rgba(122, 162, 255, 0.07), transparent 42%),
@@ -55,13 +55,13 @@ body {
 }
 
 .react-flow__minimap {
-  background: rgba(19, 25, 35, 0.92);
+  background: rgba(21, 23, 26, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 14px;
 }
 
 .react-flow__controls {
-  background: rgba(19, 25, 35, 0.92);
+  background: rgba(21, 23, 26, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
@@ -74,7 +74,7 @@ body {
 }
 
 .react-flow__controls-button:hover {
-  background: #1a2230;
+  background: #1e2024;
   color: rgba(245, 247, 250, 0.96);
 }
 
