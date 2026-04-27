@@ -15,7 +15,9 @@ import ReactFlow, {
   Node as ReactFlowNode,
   Edge as ReactFlowEdge,
   NodeProps,
-  BackgroundVariant
+  BackgroundVariant,
+  Handle,
+  Position
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -34,14 +36,26 @@ function TextNodeAdapter({ id, data, selected }: NodeProps) {
   const [editing, setEditing] = useState(false);
 
   return (
-    <TextNode
-      data={data as TextNodeData}
-      selected={selected}
-      editing={editing}
-      onChange={(next) => updateNodeData<'text'>(id, next)}
-      onStartEdit={() => setEditing(true)}
-      onEndEdit={() => setEditing(false)}
-    />
+    <div className="relative">
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+      <TextNode
+        data={data as TextNodeData}
+        selected={selected}
+        editing={editing}
+        onChange={(next) => updateNodeData<'text'>(id, next)}
+        onStartEdit={() => setEditing(true)}
+        onEndEdit={() => setEditing(false)}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+    </div>
   );
 }
 
@@ -51,32 +65,68 @@ function PromptNodeAdapter({ id, data, selected }: NodeProps) {
   const generateImage = useCanvasStore((s) => s.generateImageFromPrompt);
 
   return (
-    <PromptNode
-      data={data as PromptNodeData}
-      selected={selected}
-      onChange={(next) => updateNodeData<'prompt'>(id, next)}
-      onGenerateText={() => generateText(id)}
-      onGenerateImage={() => generateImage(id)}
-    />
+    <div className="relative">
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+      <PromptNode
+        data={data as PromptNodeData}
+        selected={selected}
+        onChange={(next) => updateNodeData<'prompt'>(id, next)}
+        onGenerateText={() => generateText(id)}
+        onGenerateImage={() => generateImage(id)}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+    </div>
   );
 }
 
 function AITextResultNodeAdapter({ data, selected }: NodeProps) {
   return (
-    <AITextResultNode
-      data={data as AITextResultNodeData}
-      selected={selected}
-    />
+    <div className="relative">
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+      <AITextResultNode
+        data={data as AITextResultNodeData}
+        selected={selected}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+    </div>
   );
 }
 
 function ImageNodeAdapter({ data, selected }: NodeProps) {
   return (
-    <ImageNode
-      data={data as ImageNodeData}
-      selected={selected}
-      loading={false}
-    />
+    <div className="relative">
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+      <ImageNode
+        data={data as ImageNodeData}
+        selected={selected}
+        loading={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!w-2.5 !h-2.5 !bg-gl-panel !border !border-gl-stroke-medium !rounded-full hover:!bg-gl-accent-cool-soft transition-colors"
+      />
+    </div>
   );
 }
 
