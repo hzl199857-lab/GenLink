@@ -13,7 +13,7 @@ const HANDLE_BADGE_BASE =
   'pointer-events-none absolute z-40 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-full border border-gl-stroke-medium bg-gl-panel text-gl-text-tertiary transition-all duration-150 nodrag nopan';
 
 const SIDE_ZONE_BASE =
-  'absolute z-20 nodrag nopan';
+  'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
 
 type PointerPosition = {
   x: number;
@@ -127,7 +127,10 @@ export function CardSideHandle({
       };
 
   return (
-    <div ref={rootRef} className="contents">
+    <div
+      ref={rootRef}
+      className="pointer-events-none absolute inset-0 z-20 overflow-visible"
+    >
       <Handle
         data-handle-dom-id={handleDomId}
         type={type}
