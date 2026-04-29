@@ -25,9 +25,7 @@ export default function HomePage() {
   };
 
   const handleSave = () => {
-    saveProject().then((id) => {
-      // Success is handled silently or via Toast in the future
-    }).catch((err) => {
+    saveProject().catch(() => {
       // Error handled by store, sets hasError state
     });
   };

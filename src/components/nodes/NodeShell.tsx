@@ -18,7 +18,7 @@ export function NodeShell({
     <div
       style={{ minWidth }}
       className={clsx(
-        "relative rounded-gl-xl bg-gl-panel border border-gl-stroke-subtle backdrop-blur-sm shadow-gl-card transition-all duration-150 ease-out",
+        "node-connectable-card relative rounded-gl-xl bg-gl-panel border border-gl-stroke-subtle backdrop-blur-sm shadow-gl-card transition-all duration-150 ease-out",
         {
           "hover:shadow-gl-cardHover hover:bg-gl-panel-hover": state === 'default',
           "shadow-gl-cardHover bg-gl-panel-hover": state === 'hover',

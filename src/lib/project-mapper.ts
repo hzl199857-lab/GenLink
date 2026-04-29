@@ -7,6 +7,7 @@ import type {
   ProjectSnapshot,
   PromptNodeData,
   TextNodeData,
+  UploadedImageNodeData,
 } from "@/types/canvas";
 
 interface DbProjectRecord {
@@ -42,7 +43,8 @@ function isNodeType(value: string): value is NodeType {
     value === "text" ||
     value === "prompt" ||
     value === "ai_text_result" ||
-    value === "image"
+    value === "image" ||
+    value === "uploaded_image"
   );
 }
 
@@ -123,6 +125,10 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
 
     return {
       imageUrl: typeof record.imageUrl === "string" ? record.imageUrl : "",
+      hostedImageUrl:
+        typeof record.hostedImageUrl === "string"
+          ? record.hostedImageUrl
+          : undefined,
       prompt: typeof record.prompt === "string" ? record.prompt : "",
       model: typeof record.model === "string" ? record.model : undefined,
       width: typeof record.width === "number" ? record.width : undefined,
@@ -142,6 +148,29 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
     imageUrl: "",
     prompt: "",
     generatedAt: new Date(0).toISOString(),
+  };
+}
+
+function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    return {
+      imageUrl: typeof record.imageUrl === "string" ? record.imageUrl : "",
+      hostedImageUrl:
+        typeof record.hostedImageUrl === "string"
+          ? record.hostedImageUrl
+          : undefined,
+      fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+      width: typeof record.width === "number" ? record.width : 320,
+      height: typeof record.height === "number" ? record.height : 320,
+    };
+  }
+
+  return {
+    imageUrl: "",
+    width: 320,
+    height: 320,
   };
 }
 
@@ -190,6 +219,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "image",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeImageNodeData(parsed),
+      };
+    case "uploaded_image":
+      return {
+        id: record.id,
+        type: "uploaded_image",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeUploadedImageNodeData(parsed),
       };
   }
 }

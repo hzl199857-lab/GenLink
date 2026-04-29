@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { FilePlus2, Save, FolderOpen, Loader2 } from 'lucide-react';
 
 export interface CanvasHeaderProps {
@@ -23,10 +23,12 @@ export function CanvasHeader({
   onNewProject,
 }: CanvasHeaderProps) {
   const [localName, setLocalName] = useState(projectName);
+  const [lastProjectName, setLastProjectName] = useState(projectName);
 
-  useEffect(() => {
+  if (projectName !== lastProjectName) {
+    setLastProjectName(projectName);
     setLocalName(projectName);
-  }, [projectName]);
+  }
 
   const handleBlur = () => {
     if (localName.trim() !== projectName && onProjectNameChange) {

@@ -11,6 +11,7 @@ import type {
   ProjectSnapshot,
   PromptNodeData,
   TextNodeData,
+  UploadedImageNodeData,
 } from "@/types/canvas";
 
 type ProjectListItem = {
@@ -24,6 +25,25 @@ type ApiErrorResponse = {
   error: string;
 };
 
+export const CANVAS_TEXT_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
+export const CANVAS_IMAGE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
+
+function readStoredApiKey(storageKey: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem(storageKey)?.trim() ?? "";
+}
+
+function readStoredTextApiKey(): string {
+  return readStoredApiKey(CANVAS_TEXT_API_KEY_STORAGE_KEY);
+}
+
+function readStoredImageApiKey(): string {
+  return readStoredApiKey(CANVAS_IMAGE_API_KEY_STORAGE_KEY);
+}
+
 type AiTextSuccessResponse = {
   ok: true;
   result: {
@@ -33,6 +53,36 @@ type AiTextSuccessResponse = {
     completionTokens?: number;
     totalTokens?: number;
   };
+};
+
+type AiTextStreamEvent =
+  | {
+      type: "delta";
+      delta?: string;
+    }
+  | {
+      type: "done";
+      result?: {
+        content: string;
+        model: string;
+        promptTokens?: number;
+        completionTokens?: number;
+        totalTokens?: number;
+      };
+    }
+  | {
+      type: "error";
+      error?: string;
+    };
+
+type ConnectedImagePayload = {
+  id: string;
+  imageUrl: string;
+  originalImageUrl: string;
+  hostedImageUrl?: string;
+  fileName?: string;
+  alt: string;
+  sourceType: "image" | "uploaded_image";
 };
 
 type AiImageSuccessResponse = {
@@ -70,12 +120,23 @@ type ProjectSnapshotSuccessResponse = {
   snapshot: ProjectSnapshot;
 };
 
+const TEXT_SYSTEM_PROMPT =
+  "Only output the final result. Do not include extra commentary. If there are multiple possible results, return just one.";
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 
+function isClaudeModel(model?: string): boolean {
+  return typeof model === "string" && /^claude-/i.test(model);
+}
+
 function createTextNodeData(): TextNodeData {
-  return { text: "" };
+  return {
+    text: "",
+    model: "gpt-5.4",
+    status: "idle",
+  };
 }
 
 function createPromptNodeData(): PromptNodeData {
@@ -99,6 +160,14 @@ function createImageNodeData(): ImageNodeData {
     imageUrl: "",
     prompt: "",
     generatedAt: nowIso(),
+  };
+}
+
+function createUploadedImageNodeData(): UploadedImageNodeData {
+  return {
+    imageUrl: "",
+    width: 320,
+    height: 320,
   };
 }
 
@@ -131,6 +200,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createImageNodeData(),
+      };
+    case "uploaded_image":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createUploadedImageNodeData(),
       };
   }
 }
@@ -173,6 +249,90 @@ async function assertOkResponse<TSuccess extends { ok: true }>(
   return json as TSuccess;
 }
 
+async function readTextStreamResponse(
+  response: Response,
+  handlers: {
+    onDelta?: (delta: string) => void;
+  } = {},
+): Promise<NonNullable<Extract<AiTextStreamEvent, { type: "done" }>["result"]>> {
+  if (!response.ok) {
+    const text = await response.text();
+
+    try {
+      const json = JSON.parse(text) as ApiErrorResponse;
+      throw new Error(json.error || "Request failed");
+    } catch {
+      throw new Error(text || "Request failed");
+    }
+  }
+
+  if (!response.body) {
+    throw new Error("Stream response body is missing");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult:
+    | NonNullable<Extract<AiTextStreamEvent, { type: "done" }>["result"]>
+    | null = null;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      while (true) {
+        const separatorIndex = buffer.indexOf("\n\n");
+
+        if (separatorIndex === -1) {
+          break;
+        }
+
+        const rawEvent = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+
+        const dataLines = rawEvent
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart());
+
+        if (dataLines.length === 0) {
+          continue;
+        }
+
+        const event = JSON.parse(dataLines.join("\n")) as AiTextStreamEvent;
+
+        if (event.type === "delta") {
+          handlers.onDelta?.(event.delta ?? "");
+          continue;
+        }
+
+        if (event.type === "error") {
+          throw new Error(event.error || "Text stream failed");
+        }
+
+        if (event.type === "done" && event.result) {
+          finalResult = event.result;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!finalResult) {
+    throw new Error("Stream ended before the final result was received");
+  }
+
+  return finalResult;
+}
+
 function setPromptNodeStatus(
   nodes: CanvasNode[],
   promptNodeId: string,
@@ -191,6 +351,84 @@ function setPromptNodeStatus(
         }
       : node,
   );
+}
+
+function setTextNodeStatus(
+  nodes: CanvasNode[],
+  textNodeId: string,
+  status: NonNullable<TextNodeData["status"]>,
+  errorMessage?: string,
+): CanvasNode[] {
+  return nodes.map((node) =>
+    node.id === textNodeId && node.type === "text"
+      ? {
+          ...node,
+          data: {
+            ...node.data,
+            status,
+            errorMessage,
+          },
+        }
+      : node,
+  );
+}
+
+function getConnectedImagesForTextNode(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  textNodeId: string,
+): ConnectedImagePayload[] {
+  const connectedSourceIds = edges
+    .filter((edge) => edge.target === textNodeId)
+    .map((edge) => edge.source);
+
+  return connectedSourceIds.reduce<ConnectedImagePayload[]>((acc, sourceId) => {
+    const sourceNode = nodes.find((node) => node.id === sourceId);
+
+    if (!sourceNode) {
+      return acc;
+    }
+
+    if (sourceNode.type === "uploaded_image") {
+      if (!sourceNode.data.imageUrl.trim()) {
+        return acc;
+      }
+
+      acc.push({
+        id: sourceNode.id,
+        imageUrl:
+          sourceNode.data.hostedImageUrl?.trim() ||
+          sourceNode.data.imageUrl,
+        originalImageUrl: sourceNode.data.imageUrl,
+        hostedImageUrl: sourceNode.data.hostedImageUrl?.trim() || undefined,
+        fileName: sourceNode.data.fileName,
+        alt: sourceNode.data.fileName?.trim() || "Connected image",
+        sourceType: "uploaded_image",
+      });
+      return acc;
+    }
+
+    if (sourceNode.type === "image") {
+      if (!sourceNode.data.imageUrl.trim()) {
+        return acc;
+      }
+
+      acc.push({
+        id: sourceNode.id,
+        imageUrl:
+          sourceNode.data.hostedImageUrl?.trim() ||
+          sourceNode.data.imageUrl,
+        originalImageUrl: sourceNode.data.imageUrl,
+        hostedImageUrl: sourceNode.data.hostedImageUrl?.trim() || undefined,
+        fileName: undefined,
+        alt: sourceNode.data.prompt?.trim() || "Generated image",
+        sourceType: "image",
+      });
+      return acc;
+    }
+
+    return acc;
+  }, []);
 }
 
 export interface CanvasState {
@@ -216,7 +454,9 @@ export interface CanvasState {
   deleteEdge: (id: string) => void;
 
   generateTextFromPrompt: (promptNodeId: string) => Promise<void>;
+  generateTextFromTextNode: (textNodeId: string) => Promise<void>;
   generateImageFromPrompt: (promptNodeId: string) => Promise<void>;
+  getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
 
   setProjectName: (name: string) => void;
   newProject: (name?: string) => void;
@@ -269,6 +509,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           case "ai_text_result":
             return { ...node, data: { ...node.data, ...partial } };
           case "image":
+            return { ...node, data: { ...node.data, ...partial } };
+          case "uploaded_image":
             return { ...node, data: { ...node.data, ...partial } };
         }
       });
@@ -325,6 +567,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt node mode is not text");
     }
 
+    if (!readStoredTextApiKey()) {
+      throw new Error("Please set the Text API key first");
+    }
+
     set((state) => ({
       error: null,
       nodes: setPromptNodeStatus(state.nodes, promptNodeId, "generating"),
@@ -339,6 +585,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         body: JSON.stringify({
           prompt: promptNode.data.prompt,
           model: promptNode.data.model,
+          systemPrompt: TEXT_SYSTEM_PROMPT,
+          apiKey: readStoredTextApiKey(),
         }),
       });
 
@@ -385,6 +633,131 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  generateTextFromTextNode: async (textNodeId) => {
+    const state = get();
+    const textNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "text" }> =>
+        node.id === textNodeId && node.type === "text",
+    );
+
+    if (!textNode) {
+      throw new Error("Text node not found");
+    }
+
+    if (!textNode.data.aiPrompt?.trim()) {
+      throw new Error("Prompt is required");
+    }
+
+    if (!readStoredTextApiKey()) {
+      throw new Error("Please set the Text API key first");
+    }
+
+    const connectedImages = getConnectedImagesForTextNode(
+      state.nodes,
+      state.edges,
+      textNodeId,
+    );
+
+    const promptSections = [
+      textNode.data.text?.trim()
+        ? `Current text content:\n${textNode.data.text.trim()}`
+        : "",
+      textNode.data.aiPrompt?.trim()
+        ? `Task instructions:\n${textNode.data.aiPrompt.trim()}`
+        : "",
+      `Please produce a fresh variation that differs from previous results. Change the angle, wording, details, or composition. Random seed: ${crypto.randomUUID()}`,
+    ].filter(Boolean);
+
+    set((state) => ({
+      error: null,
+      nodes: state.nodes.map((node) =>
+        node.id === textNodeId && node.type === "text"
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                text: "",
+                status: "generating",
+                errorMessage: undefined,
+              },
+            }
+          : node,
+      ),
+    }));
+
+    try {
+      const response = await fetch("/api/ai/text", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: promptSections.join("\n\n"),
+          model: textNode.data.model,
+          systemPrompt: TEXT_SYSTEM_PROMPT,
+          temperature: 0.9,
+          apiKey: readStoredTextApiKey(),
+          images: connectedImages.map((image) => ({
+            url: isClaudeModel(textNode.data.model)
+              ? image.originalImageUrl
+              : image.imageUrl,
+          })),
+          stream: true,
+        }),
+      });
+
+      let streamedText = "";
+      const result = await readTextStreamResponse(response, {
+        onDelta: (delta) => {
+          streamedText += delta;
+
+          set((currentState) => ({
+            nodes: currentState.nodes.map((node) =>
+              node.id === textNodeId && node.type === "text"
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      text: streamedText,
+                      status: "generating",
+                      errorMessage: undefined,
+                    },
+                  }
+                : node,
+            ),
+          }));
+        },
+      });
+
+      set((state) => ({
+        error: null,
+        nodes: setTextNodeStatus(
+          state.nodes.map((node) =>
+            node.id === textNodeId && node.type === "text"
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    text: result.content,
+                    model: result.model,
+                  },
+                }
+              : node,
+          ),
+          textNodeId,
+          "idle",
+        ),
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((state) => ({
+        error: message,
+        nodes: setTextNodeStatus(state.nodes, textNodeId, "error", message),
+      }));
+    }
+  },
+
   generateImageFromPrompt: async (promptNodeId) => {
     const promptNode = get().nodes.find(
       (node): node is Extract<CanvasNode, { type: "prompt" }> =>
@@ -397,6 +770,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     if (promptNode.data.mode !== "image") {
       throw new Error("Prompt node mode is not image");
+    }
+
+    if (!readStoredImageApiKey()) {
+      throw new Error("Please set the Image API key first");
     }
 
     set((state) => ({
@@ -414,6 +791,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           prompt: promptNode.data.prompt,
           model: promptNode.data.model,
           size: "1024x1024",
+          apiKey: readStoredImageApiKey(),
         }),
       });
 
@@ -464,6 +842,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setProjectName: (name) => {
     set({ projectName: name, error: null });
+  },
+
+  getConnectedImagesForTextNode: (textNodeId) => {
+    const state = get();
+    return getConnectedImagesForTextNode(state.nodes, state.edges, textNodeId);
   },
 
   newProject: (name) => {

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import NextImage from 'next/image';
 import { Image as ImageIcon, Maximize2, RefreshCw } from 'lucide-react';
 import type { ImageNodeData } from '../../types/canvas';
 import { NodeShell } from './NodeShell';
@@ -67,10 +68,13 @@ export function ImageNode({
           {loading ? (
             <div className="absolute inset-0 bg-gl-panel-soft animate-pulse" />
           ) : data.imageUrl ? (
-            <img 
-              src={data.imageUrl} 
+            <NextImage
+              src={data.imageUrl}
               alt={data.prompt}
-              className="w-full h-full object-cover"
+              fill
+              unoptimized
+              sizes="420px"
+              className="object-cover"
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-gl-text-muted">

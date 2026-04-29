@@ -3,7 +3,6 @@ import "server-only";
 // GenLink Vibe API client for server-side route handlers and actions only.
 
 const VIBE_BASE_URL = process.env.VIBE_BASE_URL ?? "https://www.vibeapi.cn/v1";
-const VIBE_API_KEY = process.env.VIBE_API_KEY ?? "";
 const VIBE_GEMINI_BASE_URL = "https://www.vibeapi.cn";
 
 const DEFAULT_TEXT_MODEL = "gpt-4o-mini";
@@ -17,6 +16,10 @@ export interface GenerateTextParams {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  apiKey?: string;
+  images?: Array<{
+    url: string;
+  }>;
 }
 
 export interface GenerateTextResult {
@@ -27,11 +30,19 @@ export interface GenerateTextResult {
   totalTokens?: number;
 }
 
+export interface TextStreamChunk {
+  type: "delta" | "done" | "error";
+  delta?: string;
+  result?: GenerateTextResult;
+  error?: string;
+}
+
 export interface GenerateImageParams {
   prompt: string;
   model?: string;
   size?: string;
   n?: number;
+  apiKey?: string;
 }
 
 export interface GenerateImageResult {
@@ -69,6 +80,30 @@ interface VibeChatResponse {
   };
 }
 
+interface ClaudeMessageResponse {
+  content?: Array<{ type?: string; text?: string }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+  model?: string;
+  error?: {
+    message?: string;
+  };
+}
+
+type ChatMessageContentPart =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "image_url";
+      image_url: {
+        url: string;
+      };
+    };
+
 interface VibeImageResponse {
   data?: Array<{
     url?: string;
@@ -97,16 +132,28 @@ interface VibeGeminiImageResponse {
   };
 }
 
-function assertConfigured(): void {
-  if (!VIBE_API_KEY) {
-    throw new VibeApiError(500, "VIBE_API_KEY is not configured");
+function assertConfigured(apiKey?: string): string {
+  const resolvedApiKey = apiKey?.trim();
+
+  if (!resolvedApiKey) {
+    throw new VibeApiError(400, "API key is required");
   }
+
+  return resolvedApiKey;
 }
 
-function createHeaders(): HeadersInit {
+function createHeaders(apiKey?: string): HeadersInit {
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${VIBE_API_KEY}`,
+    Authorization: `Bearer ${assertConfigured(apiKey)}`,
+  };
+}
+
+function createAnthropicHeaders(apiKey?: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "x-api-key": assertConfigured(apiKey),
+    "anthropic-version": "2023-06-01",
   };
 }
 
@@ -137,6 +184,111 @@ function normalizeMessageContent(
   }
 
   return "";
+}
+
+function isClaudeModel(model: string): boolean {
+  return /^claude-/i.test(model);
+}
+
+function parseDataUrl(url: string):
+  | { mediaType: string; data: string }
+  | null {
+  const match = url.match(/^data:([^;]+);base64,(.+)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    mediaType: match[1],
+    data: match[2],
+  };
+}
+
+function createOpenAiUserContent(
+  prompt: string,
+  images?: Array<{
+    url: string;
+  }>,
+): string | ChatMessageContentPart[] {
+  const userContent: ChatMessageContentPart[] = [
+    {
+      type: "text",
+      text: prompt,
+    },
+  ];
+
+  for (const image of images ?? []) {
+    if (!image.url.trim()) {
+      continue;
+    }
+
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: image.url,
+      },
+    });
+  }
+
+  return userContent.length === 1 ? prompt : userContent;
+}
+
+function createClaudeUserContent(
+  prompt: string,
+  images?: Array<{
+    url: string;
+  }>,
+): Array<
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source:
+        | { type: "base64"; media_type: string; data: string }
+        | { type: "url"; url: string };
+    }
+> {
+  const content: Array<
+    | { type: "text"; text: string }
+    | {
+        type: "image";
+        source:
+          | { type: "base64"; media_type: string; data: string }
+          | { type: "url"; url: string };
+      }
+  > = [{ type: "text", text: prompt }];
+
+  for (const image of images ?? []) {
+    const url = image.url.trim();
+
+    if (!url) {
+      continue;
+    }
+
+    const dataUrl = parseDataUrl(url);
+
+    if (dataUrl) {
+      content.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: dataUrl.mediaType,
+          data: dataUrl.data,
+        },
+      });
+      continue;
+    }
+
+    content.push({
+      type: "image",
+      source: {
+        type: "url",
+        url,
+      },
+    });
+  }
+
+  return content;
 }
 
 function toGeminiAspectRatio(size?: string): string {
@@ -196,24 +348,31 @@ function toGeminiImageSize(size?: string): string {
 async function requestJson<T>(
   path: string,
   body: Record<string, unknown>,
+  apiKey?: string,
 ): Promise<T> {
-  return requestJsonWithBaseUrl<T>(VIBE_BASE_URL, path, body);
+  return requestJsonWithBaseUrl<T>(
+    VIBE_BASE_URL,
+    path,
+    body,
+    apiKey,
+    createHeaders,
+  );
 }
 
 async function requestJsonWithBaseUrl<T>(
   baseUrl: string,
   path: string,
   body: Record<string, unknown>,
+  apiKey?: string,
+  requestHeadersFactory: (apiKey?: string) => HeadersInit = createHeaders,
 ): Promise<T> {
-  assertConfigured();
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: createHeaders(),
+      headers: requestHeadersFactory(apiKey),
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -252,24 +411,356 @@ async function requestJsonWithBaseUrl<T>(
   }
 }
 
+async function requestStream(
+  path: string,
+  body: Record<string, unknown>,
+  apiKey?: string,
+  requestHeadersFactory: (apiKey?: string) => HeadersInit = createHeaders,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${VIBE_BASE_URL}${path}`, {
+      method: "POST",
+      headers: requestHeadersFactory(apiKey),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+
+      try {
+        const json = text
+          ? (JSON.parse(text) as { error?: { message?: string } })
+          : {};
+        throw new VibeApiError(
+          response.status,
+          json.error?.message ??
+            `Vibe API request failed with status ${response.status}`,
+          json,
+        );
+      } catch (error) {
+        if (error instanceof VibeApiError) {
+          throw error;
+        }
+
+        throw new VibeApiError(
+          response.status,
+          text || `Vibe API request failed with status ${response.status}`,
+        );
+      }
+    }
+
+    if (!response.body) {
+      throw new VibeApiError(502, "Vibe API returned no response stream");
+    }
+
+    return response;
+  } catch (error) {
+    if (error instanceof VibeApiError) {
+      throw error;
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new VibeApiError(504, "Vibe API request timed out");
+    }
+
+    throw new VibeApiError(
+      502,
+      error instanceof Error ? error.message : "Vibe API request failed",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function createSseChunk(chunk: TextStreamChunk): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`);
+}
+
+function normalizeOpenAiDeltaContent(
+  content:
+    | string
+    | Array<{ type?: string; text?: string }>
+    | Array<{ type?: string; text?: { value?: string } | string }>
+    | undefined,
+): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((item) => {
+      if (item.type !== "text") {
+        return "";
+      }
+
+      if (typeof item.text === "string") {
+        return item.text;
+      }
+
+      if (item.text && typeof item.text === "object") {
+        return item.text.value ?? "";
+      }
+
+      return "";
+    })
+    .join("");
+}
+
+export async function generateTextStream(
+  params: GenerateTextParams,
+): Promise<ReadableStream<Uint8Array>> {
+  const model = params.model ?? DEFAULT_TEXT_MODEL;
+  const isClaude = isClaudeModel(model);
+  const path = isClaude ? "/messages" : "/chat/completions";
+  const body = isClaude
+    ? {
+        model,
+        system: params.systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: createClaudeUserContent(params.prompt, params.images),
+          },
+        ],
+        temperature: params.temperature ?? 0.7,
+        max_tokens: params.maxTokens ?? 1024,
+        stream: true,
+      }
+    : {
+        model,
+        messages: [
+          ...(params.systemPrompt
+            ? [{ role: "system" as const, content: params.systemPrompt }]
+            : []),
+          {
+            role: "user" as const,
+            content: createOpenAiUserContent(params.prompt, params.images),
+          },
+        ],
+        temperature: params.temperature ?? 0.7,
+        max_tokens: params.maxTokens,
+        stream: true,
+      };
+
+  const upstreamResponse = await requestStream(
+    path,
+    body,
+    params.apiKey,
+    isClaude ? createAnthropicHeaders : createHeaders,
+  );
+  const reader = upstreamResponse.body!.getReader();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let buffer = "";
+      let currentEvent = "message";
+      let aggregatedText = "";
+      let resolvedModel = model;
+
+      const emitDone = () => {
+        controller.enqueue(
+          createSseChunk({
+            type: "done",
+            result: {
+              content: aggregatedText,
+              model: resolvedModel,
+            },
+          }),
+        );
+      };
+
+      const processEvent = (eventName: string, dataLines: string[]) => {
+        const data = dataLines.join("\n").trim();
+
+        if (!data) {
+          return;
+        }
+
+        if (data === "[DONE]") {
+          emitDone();
+          controller.close();
+          return;
+        }
+
+        const json = JSON.parse(data) as Record<string, unknown>;
+
+        if (typeof json.model === "string" && json.model) {
+          resolvedModel = json.model;
+        }
+
+        if (!isClaude) {
+          const choice = Array.isArray(json.choices)
+            ? (json.choices[0] as {
+                delta?: {
+                  content?:
+                    | string
+                    | Array<{
+                        type?: string;
+                        text?: { value?: string } | string;
+                      }>;
+                };
+                finish_reason?: string | null;
+              } | undefined)
+            : undefined;
+
+          const delta = normalizeOpenAiDeltaContent(choice?.delta?.content);
+
+          if (delta) {
+            aggregatedText += delta;
+            controller.enqueue(createSseChunk({ type: "delta", delta }));
+          }
+
+          if (choice?.finish_reason) {
+            emitDone();
+            controller.close();
+          }
+
+          return;
+        }
+
+        if (
+          eventName === "content_block_delta" &&
+          typeof json.delta === "object" &&
+          json.delta !== null
+        ) {
+          const delta = (json.delta as { text?: string }).text ?? "";
+
+          if (delta) {
+            aggregatedText += delta;
+            controller.enqueue(createSseChunk({ type: "delta", delta }));
+          }
+
+          return;
+        }
+
+        if (eventName === "message_stop") {
+          emitDone();
+          controller.close();
+        }
+      };
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+
+          if (done) {
+            if (aggregatedText) {
+              emitDone();
+            }
+            controller.close();
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+
+          while (true) {
+            const separatorIndex = buffer.indexOf("\n\n");
+
+            if (separatorIndex === -1) {
+              break;
+            }
+
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+
+            const lines = rawEvent.split(/\r?\n/);
+            const dataLines: string[] = [];
+            currentEvent = "message";
+
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                currentEvent = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                dataLines.push(line.slice(5).trimStart());
+              }
+            }
+
+            processEvent(currentEvent, dataLines);
+          }
+        }
+      } catch (error) {
+        controller.enqueue(
+          createSseChunk({
+            type: "error",
+            error:
+              error instanceof Error ? error.message : "Text stream failed",
+          }),
+        );
+        controller.close();
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+}
+
 export async function generateText(
   params: GenerateTextParams,
 ): Promise<GenerateTextResult> {
   const model = params.model ?? DEFAULT_TEXT_MODEL;
-  const messages: Array<{ role: "system" | "user"; content: string }> = [];
+  if (isClaudeModel(model)) {
+    const json = await requestJsonWithBaseUrl<ClaudeMessageResponse>(
+      VIBE_BASE_URL,
+      "/messages",
+      {
+        model,
+        system: params.systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: createClaudeUserContent(params.prompt, params.images),
+          },
+        ],
+        temperature: params.temperature ?? 0.7,
+        max_tokens: params.maxTokens ?? 1024,
+      },
+      params.apiKey,
+      createAnthropicHeaders,
+    );
 
-  if (params.systemPrompt) {
-    messages.push({ role: "system", content: params.systemPrompt });
+    const content = normalizeMessageContent(json.content);
+    const promptTokens = json.usage?.input_tokens;
+    const completionTokens = json.usage?.output_tokens;
+
+    return {
+      content,
+      model: json.model ?? model,
+      promptTokens,
+      completionTokens,
+      totalTokens:
+        typeof promptTokens === "number" && typeof completionTokens === "number"
+          ? promptTokens + completionTokens
+          : undefined,
+    };
   }
 
-  messages.push({ role: "user", content: params.prompt });
-
-  const json = await requestJson<VibeChatResponse>("/chat/completions", {
-    model,
-    messages,
-    temperature: params.temperature ?? 0.7,
-    max_tokens: params.maxTokens,
-  });
+  const json = await requestJson<VibeChatResponse>(
+    "/chat/completions",
+    {
+      model,
+      messages: [
+        ...(params.systemPrompt
+          ? [{ role: "system" as const, content: params.systemPrompt }]
+          : []),
+        {
+          role: "user" as const,
+          content: createOpenAiUserContent(params.prompt, params.images),
+        },
+      ],
+      temperature: params.temperature ?? 0.7,
+      max_tokens: params.maxTokens,
+    },
+    params.apiKey,
+  );
 
   const content = normalizeMessageContent(json.choices?.[0]?.message?.content);
 
@@ -288,12 +779,16 @@ async function generateImageOpenAI(
   const model = params.model ?? DEFAULT_IMAGE_MODEL;
   const size = params.size ?? DEFAULT_IMAGE_SIZE;
 
-  const json = await requestJson<VibeImageResponse>("/images/generations", {
-    model,
-    prompt: params.prompt,
-    size,
-    n: params.n ?? 1,
-  });
+  const json = await requestJson<VibeImageResponse>(
+    "/images/generations",
+    {
+      model,
+      prompt: params.prompt,
+      size,
+      n: params.n ?? 1,
+    },
+    params.apiKey,
+  );
 
   const image = json.data?.[0];
   const imageUrl = image?.b64_json
@@ -337,6 +832,7 @@ async function generateImageGemini(
         },
       },
     },
+    params.apiKey,
   );
 
   const imagePart = json.candidates?.[0]?.content?.parts?.find(

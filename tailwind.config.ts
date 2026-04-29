@@ -48,7 +48,7 @@ const config: Config = {
         "gl-cardSelected": "0 12px 34px rgba(0,0,0,0.36)",
         "gl-toolbar": "0 6px 18px rgba(0,0,0,0.24)",
         "gl-glow":
-          "0 0 0 1px rgba(122,162,255,0.22), 0 0 0 6px rgba(122,162,255,0.06)",
+          "0 0 0 1px rgba(255,255,255,0.32), 0 0 0 6px rgba(255,255,255,0.08)",
       },
     },
   },

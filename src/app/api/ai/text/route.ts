@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { VibeApiError, generateText } from "@/lib/vibe";
+import { VibeApiError, generateText, generateTextStream } from "@/lib/vibe";
 
 export const runtime = "nodejs";
 
@@ -10,6 +10,9 @@ interface TextRequestBody {
   systemPrompt?: unknown;
   temperature?: unknown;
   maxTokens?: unknown;
+  apiKey?: unknown;
+  images?: unknown;
+  stream?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -23,7 +26,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await generateText({
+    const images = Array.isArray(body.images)
+      ? body.images
+          .filter(
+            (image): image is { url: string } =>
+              typeof image === "object" &&
+              image !== null &&
+              "url" in image &&
+              typeof image.url === "string" &&
+              image.url.trim() !== "",
+          )
+          .map((image) => ({
+            url: image.url,
+          }))
+      : undefined;
+
+    const params = {
       prompt: body.prompt,
       model: typeof body.model === "string" ? body.model : undefined,
       systemPrompt:
@@ -31,7 +49,23 @@ export async function POST(request: Request) {
       temperature:
         typeof body.temperature === "number" ? body.temperature : undefined,
       maxTokens: typeof body.maxTokens === "number" ? body.maxTokens : undefined,
-    });
+      apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
+      images,
+    };
+
+    if (body.stream === true) {
+      const stream = await generateTextStream(params);
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      });
+    }
+
+    const result = await generateText(params);
 
     return NextResponse.json({ ok: true, result });
   } catch (error) {

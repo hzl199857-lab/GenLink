@@ -9,6 +9,7 @@ interface ImageRequestBody {
   model?: unknown;
   size?: unknown;
   n?: unknown;
+  apiKey?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
       model: typeof body.model === "string" ? body.model : undefined,
       size: typeof body.size === "string" ? body.size : undefined,
       n: typeof body.n === "number" ? body.n : undefined,
+      apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
     });
 
     return NextResponse.json({ ok: true, result });
