@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useViewport } from 'reactflow';
 import {
   Crop,
   Boxes,
@@ -78,12 +79,18 @@ export function ImageGenerationNodeToolbar({
   onUpload,
   onAction,
 }: ImageGenerationNodeToolbarProps) {
+  const { zoom } = useViewport();
+
   if (!visible) return null;
 
   return (
     <div
-      className="absolute left-1/2 z-20 -translate-x-1/2 transition-[top,transform] duration-300 ease-out"
-      style={{ top: `${top}px` }}
+      className="absolute left-1/2 z-20 transition-[top,transform] duration-300 ease-out"
+      style={{
+        top: `${top}px`,
+        transform: `translateX(-50%) scale(${1 / Math.max(zoom, 0.0001)})`,
+        transformOrigin: 'bottom center',
+      }}
     >
       {hasGeneratedImage ? (
         <div

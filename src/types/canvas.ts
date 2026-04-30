@@ -65,6 +65,7 @@ export interface ImageNodeData {
   model?: string;
   width?: number;
   height?: number;
+  sizeBytes?: number;
   generatedAt: string;
   sourcePromptNodeId?: string;
 }
@@ -75,6 +76,7 @@ export interface UploadedImageNodeData {
   fileName?: string;
   width: number;
   height: number;
+  sizeBytes?: number;
 }
 
 export type CanvasNodeData =

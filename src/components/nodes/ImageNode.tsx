@@ -13,6 +13,7 @@ export interface ImageNodeProps {
   loading?: boolean;
   onOpenFullscreen?: () => void;
   onRegenerate?: () => void;
+  onShowInfo?: () => void;
 }
 
 export function ImageNode({
@@ -22,6 +23,7 @@ export function ImageNode({
   loading = false,
   onOpenFullscreen,
   onRegenerate,
+  onShowInfo,
 }: ImageNodeProps) {
   let formattedTime = '';
   try {
@@ -39,10 +41,10 @@ export function ImageNode({
       className="min-w-[320px] w-[320px] sm:w-[420px] flex flex-col"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gl-stroke-subtle">
-        <div className="flex items-center gap-2 text-gl-accent-cyan">
-          <ImageIcon size={14} />
-          <span className="text-[12px] font-medium text-gl-text-secondary">Image</span>
+      <div className="flex items-center justify-between border-b border-gl-stroke-subtle px-4 py-3">
+        <div className="-mt-2 flex items-center gap-1.5 text-gl-accent-cyan">
+          <ImageIcon size={24} />
+          <span className="text-[22px] font-medium leading-none text-gl-text-secondary">Image</span>
           {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
         </div>
         <div className="flex items-center gap-2">
@@ -63,7 +65,7 @@ export function ImageNode({
       <div className="p-4 pb-2">
         <div 
           className="relative w-full aspect-[4/3] rounded-gl-md overflow-hidden bg-gl-panel-soft cursor-pointer group"
-          onClick={onOpenFullscreen}
+          onClick={onShowInfo}
         >
           {loading ? (
             <div className="absolute inset-0 bg-gl-panel-soft animate-pulse" />

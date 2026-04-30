@@ -180,6 +180,8 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
       model: typeof record.model === "string" ? record.model : undefined,
       width: typeof record.width === "number" ? record.width : undefined,
       height: typeof record.height === "number" ? record.height : undefined,
+      sizeBytes:
+        typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
       generatedAt:
         typeof record.generatedAt === "string"
           ? record.generatedAt
@@ -211,6 +213,8 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
       fileName: typeof record.fileName === "string" ? record.fileName : undefined,
       width: typeof record.width === "number" ? record.width : 320,
       height: typeof record.height === "number" ? record.height : 320,
+      sizeBytes:
+        typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
     };
   }
 

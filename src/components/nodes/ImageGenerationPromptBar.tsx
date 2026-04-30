@@ -3,9 +3,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
-import { Sparkles, Expand, ChevronDown, Check } from 'lucide-react';
+import { Sparkles, Maximize2, Minimize2, ChevronDown, Check } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 
+const COLLAPSED_PROMPT_HEIGHT = 54;
+const EXPANDED_PROMPT_HEIGHT = 225;
 const IMAGE_MODELS = ['gpt-image-2'] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
 const IMAGE_DETAIL_OPTIONS = [
@@ -27,6 +29,12 @@ const IMAGE_ASPECT_RATIO_LAYOUT = [
   { value: '21:9', className: 'col-start-3 row-start-3 h-[54px]' },
   { value: '9:21', className: 'col-start-4 row-start-3 h-[54px]' },
 ] as const;
+
+const CIRCLED_NUMBER_LABELS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'] as const;
+
+function getThumbnailIndexLabel(index: number): string {
+  return CIRCLED_NUMBER_LABELS[index] ?? String(index + 1);
+}
 
 export interface ImageGenerationPromptBarProps {
   nodeId?: string;
@@ -235,6 +243,7 @@ export function ImageGenerationPromptBar({
   const [draftPrompt, setDraftPrompt] = useState(prompt);
   const [isPromptFocused, setIsPromptFocused] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
@@ -267,6 +276,7 @@ export function ImageGenerationPromptBar({
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
   const settingsLabel = `${aspectRatio} · ${quality}`;
+  const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
 
   return (
     <NodeToolbar
@@ -298,16 +308,18 @@ export function ImageGenerationPromptBar({
         onWheelCapture={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
         className="text-node-prompt-bar relative w-[720px] max-w-[calc(100vw-48px)] rounded-[22px] border border-white/10 bg-gl-panel/95 px-4 py-3 shadow-gl-toolbar backdrop-blur-xl"
+        style={{ transform: 'scale(0.9)', transformOrigin: 'top center' }}
       >
         <button
           type="button"
+          onClick={() => setExpanded((value) => !value)}
           className="absolute right-4 top-4 flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-white/[0.06] hover:text-gl-text-secondary"
-          title="展开"
+          title={expanded ? '收起' : '展开'}
         >
-          <Expand size={14} />
+          {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
 
-        <div className="flex min-h-[138px] flex-col">
+        <div className="flex min-h-[104px] flex-col">
           <div className="mb-4 flex items-start gap-2">
             <ToolSquareButton title="参考图" onClick={onAddReference}>
               <ReferenceImageIcon />
@@ -329,8 +341,8 @@ export function ImageGenerationPromptBar({
                       sizes="50px"
                       className="object-cover"
                     />
-                    <span className="absolute bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[6px] bg-black/70 px-1.5 py-0.5 text-[14px] font-medium leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.25)]">
-                      {`图片${index + 1}`}
+                    <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[13px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                      {getThumbnailIndexLabel(index)}
                     </span>
                   </div>
                 ))}
@@ -342,39 +354,51 @@ export function ImageGenerationPromptBar({
             </ToolSquareButton>
           </div>
 
-          <textarea
-            value={resolvedValue}
-            onChange={(e) => {
-              const next = e.target.value;
-              setDraftPrompt(next);
+          <div
+            className="overflow-hidden"
+            style={{
+              height: promptHeight,
+              transition: 'height 500ms ease-in-out',
+            }}
+          >
+            <textarea
+              value={resolvedValue}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDraftPrompt(next);
 
-              if (!isComposing) {
-                onPromptChange?.(next);
-              }
-            }}
-            onFocus={() => {
-              setDraftPrompt(prompt);
-              setIsPromptFocused(true);
-              onFocusWithinChange?.(true);
-            }}
-            onBlur={() => {
-              setIsPromptFocused(false);
+                if (!isComposing) {
+                  onPromptChange?.(next);
+                }
+              }}
+              onFocus={() => {
+                setDraftPrompt(prompt);
+                setIsPromptFocused(true);
+                onFocusWithinChange?.(true);
+              }}
+              onBlur={() => {
+                setIsPromptFocused(false);
 
-              if (!isComposing) {
-                onPromptChange?.(draftPrompt);
-              }
-            }}
-            onCompositionStart={() => setIsComposing(true)}
-            onCompositionEnd={(e) => {
-              const nextValue = e.currentTarget.value;
-              setIsComposing(false);
-              setDraftPrompt(nextValue);
-              onPromptChange?.(nextValue);
-            }}
-            placeholder="描述你想生成的图像内容"
-            className="text-node-prompt-input nodrag nopan min-h-[72px] w-full resize-none overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
-            rows={3}
-          />
+                if (!isComposing) {
+                  onPromptChange?.(draftPrompt);
+                }
+              }}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={(e) => {
+                const nextValue = e.currentTarget.value;
+                setIsComposing(false);
+                setDraftPrompt(nextValue);
+                onPromptChange?.(nextValue);
+              }}
+              placeholder="描述你想生成的图像内容"
+              className="text-node-prompt-input nodrag nopan w-full resize-none overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
+              rows={expanded ? 6 : 2}
+              style={{
+                minHeight: promptHeight,
+                height: expanded ? promptHeight : undefined,
+              }}
+            />
+          </div>
 
           <div className="mt-auto flex items-end justify-between gap-3 pt-6">
             <div className="flex flex-wrap items-center gap-1">
@@ -497,7 +521,7 @@ export function ImageGenerationPromptBar({
                                       item.value === 'auto' ? 'h-8' : 'h-4',
                                     ].join(' ')}
                                   >
-                                    {item.label ?? item.value}
+                                    {'label' in item ? item.label : item.value}
                                   </span>
                                 </button>
                               );

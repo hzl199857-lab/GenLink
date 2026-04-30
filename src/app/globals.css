@@ -69,28 +69,159 @@ body {
   transform-origin: center;
 }
 
-.react-flow__minimap {
-  background: rgba(21, 23, 26, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 14px;
+.canvas-minimap-panel {
+  margin: 0 0 68px 14px;
+  transform: translateY(-50px);
+  overflow: hidden;
+  border-radius: 10px;
+  background: #19191b !important;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
-.react-flow__controls {
-  background: rgba(21, 23, 26, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+.canvas-minimap-panel.react-flow__minimap,
+.canvas-minimap-panel.react-flow__minimap svg {
+  background: #19191b !important;
 }
 
-.react-flow__controls-button {
+.react-flow__minimap-mask {
+  fill: #19191b;
+  stroke: transparent;
+}
+
+.react-flow__minimap-node {
+  fill: rgba(118, 126, 145, 0.46);
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.react-flow__minimap .react-flow__minimap-node {
+  rx: 3px;
+  ry: 3px;
+}
+
+.react-flow__minimap-svg {
+  display: block;
+  border-radius: 10px;
+  background: #19191b !important;
+}
+
+.canvas-zoom-panel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px 14px;
+}
+
+.canvas-zoom-shell {
+  min-height: 30px;
+}
+
+.canvas-zoom-icon-button {
+  display: inline-flex;
+  height: 24px;
+  width: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  color: rgba(214, 219, 227, 0.72);
+  color: rgba(216, 220, 228, 0.74);
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
 }
 
-.react-flow__controls-button:hover {
-  background: #1e2024;
-  color: rgba(245, 247, 250, 0.96);
+.canvas-zoom-icon-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(245, 247, 250, 0.98);
+}
+
+.canvas-zoom-icon-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.canvas-zoom-icon-button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.canvas-zoom-round-button {
+  display: inline-flex;
+  height: 30px;
+  width: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(32, 33, 36, 0.95);
+  color: rgba(216, 220, 228, 0.78);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.canvas-zoom-round-button:hover {
+  background: rgba(44, 45, 49, 0.98);
+  color: rgba(245, 247, 250, 0.98);
+}
+
+.canvas-zoom-round-button:active {
+  transform: scale(0.96);
+}
+
+.canvas-zoom-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 58px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.canvas-zoom-slider::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.canvas-zoom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px;
+  height: 15px;
+  width: 15px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.08),
+    0 8px 18px rgba(0, 0, 0, 0.32);
+  cursor: pointer;
+}
+
+.canvas-zoom-slider::-moz-range-track {
+  height: 5px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.canvas-zoom-slider::-moz-range-thumb {
+  height: 15px;
+  width: 15px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.08),
+    0 8px 18px rgba(0, 0, 0, 0.32);
+  cursor: pointer;
 }
 
 .react-flow__handle {

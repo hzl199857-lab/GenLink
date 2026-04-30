@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useId } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useId, useState } from 'react';
 import {
   Handle,
   Position,
@@ -9,7 +9,10 @@ import {
 } from 'reactflow';
 import { Plus } from 'lucide-react';
 
-const SIDE_ZONE_WIDTH = 96;
+const HANDLE_SIZE = 10;
+const HANDLE_BADGE_SIZE = 22;
+const HANDLE_BADGE_GAP = HANDLE_BADGE_SIZE;
+const SIDE_ZONE_WIDTH = 56;
 
 const HANDLE_HITBOX_BASE =
   '!z-30 !pointer-events-auto !w-[10px] !-translate-y-1/2 !rounded-full !border-0 !bg-transparent transition-[top,left] duration-300 ease-out cursor-crosshair nodrag nopan';
@@ -21,6 +24,7 @@ const SIDE_ZONE_BASE =
   'pointer-events-auto absolute z-20 cursor-crosshair transition-[top,left,height] duration-300 ease-out nodrag nopan';
 
 let activeConnectionCleanup: (() => void) | null = null;
+const BLANK_CONNECTION_DROP_EVENT = 'genlink:connection-blank-drop';
 
 export interface CardSideHandleProps {
   type: HandleType;
@@ -44,24 +48,67 @@ export function CardSideHandle({
   const nodeId = useNodeId();
   const store = useStoreApi();
   const cleanupRef = useRef<(() => void) | null>(null);
+  const shouldMeasureCardBounds = cardWidth <= 0;
+  const [measuredCardBounds, setMeasuredCardBounds] = useState({
+    left: cardLeftOffset,
+    width: cardWidth,
+  });
   const handleTop = useMemo(
     () => `calc(50% + ${cardTopOffset / 2}px)`,
     [cardTopOffset],
   );
-  const cardRightEdge = cardLeftOffset + cardWidth;
+  const resolvedCardLeft = shouldMeasureCardBounds ? measuredCardBounds.left : cardLeftOffset;
+  const resolvedCardWidth = shouldMeasureCardBounds ? measuredCardBounds.width : cardWidth;
+  const cardRightEdge = resolvedCardLeft + resolvedCardWidth;
   const handleLeft = position === Position.Left
-    ? cardLeftOffset - 5
-    : cardRightEdge - 5;
+    ? resolvedCardLeft - HANDLE_SIZE / 2
+    : cardRightEdge - HANDLE_SIZE / 2;
   const badgeLeft = position === Position.Left
-    ? cardLeftOffset - 44
-    : cardRightEdge + 22;
+    ? resolvedCardLeft - HANDLE_BADGE_SIZE - HANDLE_BADGE_GAP
+    : cardRightEdge + HANDLE_BADGE_GAP;
   const zoneLeft = position === Position.Left
-    ? cardLeftOffset - SIDE_ZONE_WIDTH
-    : cardRightEdge;
+    ? resolvedCardLeft - SIDE_ZONE_WIDTH + HANDLE_SIZE / 2
+    : cardRightEdge - HANDLE_SIZE / 2;
 
   useEffect(() => () => {
     cleanupRef.current?.();
   }, []);
+
+  useEffect(() => {
+    if (!shouldMeasureCardBounds) {
+      return;
+    }
+
+    const overlayElement = rootRef.current;
+    const containerElement = overlayElement?.parentElement;
+    const cardElement = containerElement?.querySelector<HTMLElement>('.node-connectable-card');
+
+    if (!overlayElement || !containerElement || !cardElement) {
+      return;
+    }
+
+    const updateMeasuredCardBounds = () => {
+      setMeasuredCardBounds({
+        left: cardElement.offsetLeft,
+        width: cardElement.offsetWidth,
+      });
+    };
+
+    updateMeasuredCardBounds();
+
+    const resizeObserver = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => updateMeasuredCardBounds())
+      : null;
+
+    resizeObserver?.observe(containerElement);
+    resizeObserver?.observe(cardElement);
+    window.addEventListener('resize', updateMeasuredCardBounds);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateMeasuredCardBounds);
+    };
+  }, [shouldMeasureCardBounds]);
 
   const startZoneConnection = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !nodeId) {
@@ -247,7 +294,7 @@ export function CardSideHandle({
       connectionHandleId: handleId,
       connectionHandleType: type,
       connectionStatus: null,
-      connectionPosition: getConnectionPosition(event.nativeEvent),
+      connectionPosition: getHandleCenter(handleElement),
       connectionStartHandle: {
         nodeId,
         handleId,
@@ -386,6 +433,20 @@ export function CardSideHandle({
 
       if (connection) {
         onConnect?.(connection);
+      } else {
+        upEvent.preventDefault();
+        upEvent.stopPropagation();
+        window.dispatchEvent(new CustomEvent(BLANK_CONNECTION_DROP_EVENT, {
+          detail: {
+            nodeId,
+            handleId,
+            handleType: type,
+            screen: {
+              x: upEvent.clientX,
+              y: upEvent.clientY,
+            },
+          },
+        }));
       }
 
       cleanup();

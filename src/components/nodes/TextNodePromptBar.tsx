@@ -12,6 +12,14 @@ import {
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 
+const COLLAPSED_PROMPT_HEIGHT = 54;
+const EXPANDED_PROMPT_HEIGHT = 225;
+const CIRCLED_NUMBER_LABELS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'] as const;
+
+function getThumbnailIndexLabel(index: number): string {
+  return CIRCLED_NUMBER_LABELS[index] ?? String(index + 1);
+}
+
 const MODEL_OPTIONS = [
   'gemini-3-flash',
   'gemini-3.1-pro',
@@ -117,7 +125,8 @@ export function TextNodePromptBar({
         onPointerDown={(e) => e.stopPropagation()}
         onWheelCapture={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
-        className="text-node-prompt-bar relative flex w-[600px] max-w-[calc(100vw-48px)] flex-col gap-4 rounded-gl-lg border border-gl-stroke-soft bg-gl-panel/90 px-5 pt-4 pb-1.5 shadow-gl-toolbar backdrop-blur-md"
+        className="text-node-prompt-bar relative flex w-[600px] max-w-[calc(100vw-48px)] flex-col gap-4 rounded-gl-lg border border-gl-stroke-soft bg-gl-panel/90 px-5 py-3 shadow-gl-toolbar backdrop-blur-md"
+        style={{ transform: 'scale(0.9)', transformOrigin: 'top center' }}
       >
         <button
           onClick={() => setExpanded((v) => !v)}
@@ -143,8 +152,8 @@ export function TextNodePromptBar({
                   sizes="50px"
                   className="object-cover"
                 />
-                <span className="absolute bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[6px] bg-black/70 px-1.5 py-0.5 text-[14px] font-medium leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.25)]">
-                  {`图片${index + 1}`}
+                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[13px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                  {getThumbnailIndexLabel(index)}
                 </span>
               </div>
             ))}
@@ -152,10 +161,10 @@ export function TextNodePromptBar({
         ) : null}
 
         <div className="relative">
-          <div
-            className="overflow-hidden"
-            style={{
-              height: expanded ? 300 : 108,
+        <div
+          className="overflow-hidden"
+          style={{
+              height: expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT,
               transition: 'height 500ms ease-in-out',
             }}
           >
@@ -186,9 +195,14 @@ export function TextNodePromptBar({
               onWheel={handleWheel}
               onWheelCapture={(e) => e.stopPropagation()}
               placeholder="告诉 AI 你想生成的文本内容..."
-              rows={expanded ? 8 : 4}
-              className="text-node-prompt-input nodrag nopan min-h-[108px] w-full resize-none overflow-y-auto border-0 bg-transparent pr-9 text-[15px] font-medium leading-6 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
-              style={{ height: expanded ? 300 : undefined }}
+              rows={expanded ? 6 : 2}
+              className="text-node-prompt-input nodrag nopan w-full resize-none overflow-y-auto border-0 bg-transparent pr-9 text-[15px] font-medium leading-6 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
+              style={{
+                minHeight: expanded
+                  ? EXPANDED_PROMPT_HEIGHT
+                  : COLLAPSED_PROMPT_HEIGHT,
+                height: expanded ? EXPANDED_PROMPT_HEIGHT : undefined,
+              }}
             />
           </div>
         </div>

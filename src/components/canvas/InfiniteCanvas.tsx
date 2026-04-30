@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { AlignLeft, CircleHelp, Expand, Grip, Image as ImageIcon, Map, Video, X } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
-  Controls,
   MiniMap,
+  Panel,
   useReactFlow,
+  useViewport,
   NodeChange,
   EdgeChange,
   Connection,
@@ -55,6 +56,12 @@ let notifyImageToolbarAction: ((action: string) => void) | null = null;
 let notifyImageGenerationCardClick:
   | ((data: ImageGenerationNodeData) => void)
   | null = null;
+let notifyImageNodeCardClick:
+  | ((data: ImageNodeData) => void)
+  | null = null;
+let notifyUploadedImageNodeCardClick:
+  | ((data: UploadedImageNodeData) => void)
+  | null = null;
 
 function formatImageSize(bytes?: number): string {
   if (!bytes || bytes <= 0) {
@@ -82,15 +89,39 @@ function formatImageResolution(width?: number, height?: number): string {
   return `${width}×${height}`;
 }
 
+function inferImageSizeBytesFromUrl(url?: string): number | undefined {
+  if (!url?.startsWith('data:')) {
+    return undefined;
+  }
+
+  const match = url.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const base64Payload = match[1];
+  const paddingLength = base64Payload.endsWith('==')
+    ? 2
+    : base64Payload.endsWith('=')
+      ? 1
+      : 0;
+
+  return Math.max(
+    0,
+    Math.floor((base64Payload.length * 3) / 4) - paddingLength,
+  );
+}
+
 function formatGeneratedAt(value?: string): string {
   if (!value) {
-    return '-';
+    return '';
   }
 
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
-    return '-';
+    return '';
   }
 
   return date.toLocaleString('zh-CN', {
@@ -107,7 +138,6 @@ function toImageInfoPopoverData(
   data: ImageGenerationNodeData,
 ): ImageGenerationInfoPopoverData {
   return {
-    title: data.prompt?.trim() || data.title?.trim() || '未命名图片',
     model: data.generatedModel?.trim() || data.model?.trim() || '-',
     format: data.generatedImageFormat?.trim() || 'PNG',
     size: formatImageSize(data.generatedImageSizeBytes),
@@ -115,7 +145,55 @@ function toImageInfoPopoverData(
       data.generatedImageWidth,
       data.generatedImageHeight,
     ),
-    createdTime: formatGeneratedAt(data.generatedAt),
+    createdTime: formatGeneratedAt(data.generatedAt) || undefined,
+  };
+}
+
+function inferImageFormatFromUrl(url?: string): string {
+  if (!url?.trim()) {
+    return '-';
+  }
+
+  const dataUrlMatch = url.match(/^data:image\/([a-zA-Z0-9.+-]+)[;,]/i);
+
+  if (dataUrlMatch?.[1]) {
+    return dataUrlMatch[1].toUpperCase();
+  }
+
+  const pathname = url.split('?')[0] ?? '';
+  const extensionMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
+
+  if (extensionMatch?.[1]) {
+    return extensionMatch[1].toUpperCase();
+  }
+
+  return '-';
+}
+
+function toImageNodeInfoPopoverData(
+  data: ImageNodeData,
+): ImageGenerationInfoPopoverData {
+  return {
+    model: data.model?.trim() || '-',
+    format: inferImageFormatFromUrl(data.hostedImageUrl || data.imageUrl),
+    size: formatImageSize(
+      data.sizeBytes ?? inferImageSizeBytesFromUrl(data.imageUrl),
+    ),
+    resolution: formatImageResolution(data.width, data.height),
+    createdTime: formatGeneratedAt(data.generatedAt) || undefined,
+  };
+}
+
+function toUploadedImageInfoPopoverData(
+  data: UploadedImageNodeData,
+): ImageGenerationInfoPopoverData {
+  return {
+    model: '-',
+    format: inferImageFormatFromUrl(data.hostedImageUrl || data.imageUrl),
+    size: formatImageSize(
+      data.sizeBytes ?? inferImageSizeBytesFromUrl(data.imageUrl),
+    ),
+    resolution: formatImageResolution(data.width, data.height),
   };
 }
 
@@ -139,6 +217,7 @@ function readImageFile(file: File): Promise<UploadedImageNodeData> {
           fileName: file.name,
           width: image.naturalWidth || 320,
           height: image.naturalHeight || 320,
+          sizeBytes: file.size,
         });
       };
       image.onerror = () => reject(new Error('Invalid image file'));
@@ -273,6 +352,7 @@ function ImageNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
         data={data as ImageNodeData}
         selected={selected}
         loading={false}
+        onShowInfo={() => notifyImageNodeCardClick?.(data as ImageNodeData)}
       />
       <CardSideHandle type="source" position={Position.Right} visible={!!selected} />
     </div>
@@ -292,6 +372,7 @@ function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
       data={data as UploadedImageNodeData}
       selected={selected}
       onReplace={handleReplace}
+      onShowInfo={() => notifyUploadedImageNodeCardClick?.(data as UploadedImageNodeData)}
     />
   );
 }
@@ -306,6 +387,63 @@ const nodeTypes = {
 
 const EDGE_DELETE_BUTTON_SIZE = 20;
 const EDGE_DELETE_BUTTON_OFFSET = 18;
+const NODE_PASTE_OFFSET = 40;
+const IMAGE_IMPORT_COLUMNS = 4;
+const IMAGE_IMPORT_SPACING_X = 48;
+const IMAGE_IMPORT_SPACING_Y = 48;
+const CANVAS_MIN_ZOOM = 0.2;
+const CANVAS_MAX_ZOOM = 2;
+const CONNECTION_MENU_ANCHOR_NODE_ID = '__connection-menu-anchor__';
+const BLANK_CONNECTION_DROP_EVENT = 'genlink:connection-blank-drop';
+
+type ConnectionMenuAction = 'text' | 'image_generation' | 'video';
+
+type PendingConnectionMenu = {
+  screen: { x: number; y: number };
+  canvas: { x: number; y: number };
+  connection: OnConnectStartParams;
+};
+
+type BlankConnectionDropEventDetail = {
+  nodeId: string;
+  handleId: string | null;
+  handleType: 'source' | 'target';
+  screen: { x: number; y: number };
+};
+
+function cloneNodeData<T>(data: T): T {
+  return typeof structuredClone === 'function'
+    ? structuredClone(data)
+    : JSON.parse(JSON.stringify(data)) as T;
+}
+
+function cloneCanvasNode(
+  node: CanvasNode,
+  offsetMultiplier = 1,
+): CanvasNode {
+  return {
+    id: crypto.randomUUID(),
+    type: node.type,
+    position: {
+      x: node.position.x + NODE_PASTE_OFFSET * offsetMultiplier,
+      y: node.position.y + NODE_PASTE_OFFSET * offsetMultiplier,
+    },
+    data: cloneNodeData(node.data),
+  } as CanvasNode;
+}
+
+function getImageImportPosition(
+  basePosition: { x: number; y: number },
+  index: number,
+): { x: number; y: number } {
+  const column = index % IMAGE_IMPORT_COLUMNS;
+  const row = Math.floor(index / IMAGE_IMPORT_COLUMNS);
+
+  return {
+    x: basePosition.x + column * IMAGE_IMPORT_SPACING_X,
+    y: basePosition.y + row * IMAGE_IMPORT_SPACING_Y,
+  };
+}
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -317,6 +455,23 @@ function isTypingTarget(target: EventTarget | null): boolean {
     target instanceof HTMLTextAreaElement ||
     target.isContentEditable
   );
+}
+
+function getClipboardImageFiles(data: DataTransfer | null): File[] {
+  if (!data) {
+    return [];
+  }
+
+  const filesFromItems = Array.from(data.items)
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file instanceof File);
+
+  if (filesFromItems.length > 0) {
+    return filesFromItems;
+  }
+
+  return Array.from(data.files).filter((file) => file.type.startsWith('image/'));
 }
 
 function getEdgeDeleteButtonPosition(point: { x: number; y: number }): { x: number; y: number } {
@@ -345,6 +500,190 @@ function getConnectDropTargetElement(event: MouseEvent | TouchEvent): Element | 
   return null;
 }
 
+function getConnectEndScreenPosition(event: MouseEvent | TouchEvent): { x: number; y: number } | null {
+  if ('changedTouches' in event) {
+    const touch = event.changedTouches[0];
+
+    if (!touch) {
+      return null;
+    }
+
+    return {
+      x: touch.clientX,
+      y: touch.clientY,
+    };
+  }
+
+  return {
+    x: event.clientX,
+    y: event.clientY,
+  };
+}
+
+function clampZoomLevel(zoom: number): number {
+  return Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, zoom));
+}
+
+function CanvasViewportControls() {
+  const { zoom } = useViewport();
+  const { zoomTo, fitView } = useReactFlow();
+  const [isMiniMapVisible, setIsMiniMapVisible] = useState(true);
+  const clampedZoom = clampZoomLevel(zoom);
+
+  return (
+    <>
+      {isMiniMapVisible ? (
+        <MiniMap
+          position="bottom-left"
+          className="canvas-minimap-panel"
+          style={{
+            width: 200,
+            height: 150,
+            background: '#19191b',
+          }}
+          maskColor="#19191b"
+          maskStrokeColor="transparent"
+          maskStrokeWidth={0}
+          nodeColor={() => 'rgba(118,126,145,0.46)'}
+          nodeStrokeColor={() => 'rgba(255,255,255,0.08)'}
+          nodeBorderRadius={3}
+          pannable
+          zoomable
+        />
+      ) : null}
+
+      <Panel position="bottom-left" className="canvas-zoom-panel">
+        <button
+          type="button"
+          className="canvas-zoom-round-button"
+          aria-label={isMiniMapVisible ? 'Hide minimap' : 'Show minimap'}
+          aria-pressed={isMiniMapVisible}
+          title={isMiniMapVisible ? '关闭地图' : '打开地图'}
+          onClick={() => setIsMiniMapVisible((visible) => !visible)}
+        >
+          <Map size={14} />
+        </button>
+
+        <div className="canvas-zoom-shell flex items-center gap-2 rounded-full bg-[#202124] px-2 py-1.5 shadow-[0_14px_34px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+          <button
+            type="button"
+            className="canvas-zoom-icon-button"
+            aria-label="Drag handle"
+            title="移动"
+          >
+            <Grip size={15} />
+          </button>
+
+          <button
+            type="button"
+            className="canvas-zoom-icon-button"
+            onClick={() => void fitView({ duration: 220, padding: 0.18 })}
+            aria-label="Fit view"
+            title="适应画布"
+          >
+            <Expand size={15} />
+          </button>
+
+          <input
+            type="range"
+            min={CANVAS_MIN_ZOOM}
+            max={CANVAS_MAX_ZOOM}
+            step={0.01}
+            value={clampedZoom}
+            onChange={(event) => {
+              void zoomTo(Number(event.target.value), { duration: 120 });
+            }}
+            className="canvas-zoom-slider"
+            aria-label="Canvas zoom"
+          />
+        </div>
+
+        <button
+          type="button"
+          className="canvas-zoom-round-button"
+          aria-label="Help"
+          title="帮助"
+        >
+          <CircleHelp size={14} />
+        </button>
+      </Panel>
+    </>
+  );
+}
+
+function ConnectionCreateMenu({
+  x,
+  y,
+  onSelect,
+}: {
+  x: number;
+  y: number;
+  onSelect?: (action: ConnectionMenuAction) => void;
+}) {
+  const items: Array<{
+    action: ConnectionMenuAction;
+    title: string;
+    subtitle?: string;
+    icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  }> = [
+    {
+      action: 'text',
+      title: '文本生成',
+      subtitle: '脚本、广告词、品牌文案',
+      icon: AlignLeft,
+    },
+    {
+      action: 'image_generation',
+      title: '图片生成',
+      icon: ImageIcon,
+    },
+    {
+      action: 'video',
+      title: '视频生成',
+      icon: Video,
+    },
+  ];
+
+  return (
+    <div
+      className="fixed z-[65] w-[288px] rounded-[16px] border border-white/10 bg-[#191A1C]/95 p-3 shadow-[0_18px_42px_rgba(0,0,0,0.48)] backdrop-blur-xl"
+      style={{ left: x, top: y }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div className="px-1 pb-2 text-[13px] font-medium text-gl-text-muted">引用该节点生成</div>
+      <div className="flex flex-col gap-1">
+        {items.map((item) => {
+          const Icon = item.icon;
+
+          return (
+            <button
+              key={item.action}
+              type="button"
+              onClick={() => onSelect?.(item.action)}
+              className="flex min-h-[52px] w-full items-center gap-3 rounded-[12px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.08]"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/[0.08] text-gl-text-secondary">
+                <Icon size={17} strokeWidth={2} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[15px] font-semibold leading-5 text-gl-text-secondary">
+                  {item.title}
+                </span>
+                {item.subtitle ? (
+                  <span className="mt-0.5 block truncate text-[12px] leading-4 text-gl-text-muted">
+                    {item.subtitle}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // --- Inner Canvas ---
 function InnerCanvas() {
   const storeNodes = useCanvasStore((s) => s.nodes);
@@ -363,12 +702,18 @@ function InnerCanvas() {
     x: number;
     y: number;
   } | null>(null);
+  const [addMenu, setAddMenu] = useState<{
+    screen: { x: number; y: number };
+    canvas: { x: number; y: number };
+  } | null>(null);
+  const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
+  const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
     : null;
 
   const rfNodes = useMemo<ReactFlowNode[]>(() => {
-    return storeNodes.map((n) => ({
+    const nodes: ReactFlowNode[] = storeNodes.map((n) => ({
       id: n.id,
       type: n.type,
       position: n.position,
@@ -379,10 +724,30 @@ function InnerCanvas() {
           ? '.text-node-drag-handle'
           : undefined,
     }));
-  }, [storeNodes, selectedNodeIds]);
+
+    if (connectionMenu) {
+      nodes.push({
+        id: CONNECTION_MENU_ANCHOR_NODE_ID,
+        type: 'default',
+        position: connectionMenu.canvas,
+        data: {},
+        selectable: false,
+        draggable: false,
+        focusable: false,
+        style: {
+          width: 1,
+          height: 1,
+          opacity: 0,
+          pointerEvents: 'none',
+        },
+      });
+    }
+
+    return nodes;
+  }, [connectionMenu, storeNodes, selectedNodeIds]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
-    return storeEdges.map((e) => ({
+    const edges: ReactFlowEdge[] = storeEdges.map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
@@ -400,7 +765,41 @@ function InnerCanvas() {
             strokeWidth: 2.8,
           },
     }));
-  }, [activeSelectedEdgeId, storeEdges]);
+
+    if (connectionMenu?.connection.nodeId && connectionMenu.connection.handleType) {
+      const connection = connectionMenu.connection;
+      const connectionNodeId = connection.nodeId;
+
+      if (!connectionNodeId) {
+        return edges;
+      }
+      const source = connection.handleType === 'source'
+        ? connectionNodeId
+        : CONNECTION_MENU_ANCHOR_NODE_ID;
+      const target = connection.handleType === 'source'
+        ? CONNECTION_MENU_ANCHOR_NODE_ID
+        : connectionNodeId;
+
+      edges.push({
+        id: '__connection-menu-preview-edge__',
+        source,
+        target,
+        sourceHandle: connection.handleType === 'source'
+          ? connection.handleId || undefined
+          : undefined,
+        targetHandle: connection.handleType === 'target'
+          ? connection.handleId || undefined
+          : undefined,
+        interactionWidth: 0,
+        style: {
+          stroke: 'rgba(190,205,225,0.42)',
+          strokeWidth: 3,
+        },
+      });
+    }
+
+    return edges;
+  }, [activeSelectedEdgeId, connectionMenu, storeEdges]);
 
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
   const [textApiKey, setTextApiKey] = useState(() =>
@@ -413,15 +812,13 @@ function InnerCanvas() {
       ? ''
       : window.localStorage.getItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY) ?? '',
   );
-  const [addMenu, setAddMenu] = useState<{
-    screen: { x: number; y: number };
-    canvas: { x: number; y: number };
-  } | null>(null);
-  const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
+  const copiedNodesRef = useRef<CanvasNode[]>([]);
+  const pasteCountRef = useRef(0);
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
+  const suppressNextPaneClearRef = useRef(false);
 
   const { project } = useReactFlow();
 
@@ -464,10 +861,69 @@ function InnerCanvas() {
     };
   }, []);
 
+  useEffect(() => {
+    notifyImageNodeCardClick = (data) => {
+      setImageInfoPopover(toImageNodeInfoPopoverData(data));
+    };
+
+    return () => {
+      if (notifyImageNodeCardClick) {
+        notifyImageNodeCardClick = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    notifyUploadedImageNodeCardClick = (data) => {
+      setImageInfoPopover(toUploadedImageInfoPopoverData(data));
+    };
+
+    return () => {
+      if (notifyUploadedImageNodeCardClick) {
+        notifyUploadedImageNodeCardClick = null;
+      }
+    };
+  }, []);
+
   const clearEdgeSelection = useCallback(() => {
     setSelectedEdgeId(null);
     setEdgeDeleteButtonPosition(null);
   }, []);
+
+  const clearConnectionMenu = useCallback(() => {
+    setConnectionMenu(null);
+  }, [setConnectionMenu]);
+
+  useEffect(() => {
+    const handleBlankConnectionDrop = (event: Event) => {
+      const detail = (event as CustomEvent<BlankConnectionDropEventDetail>).detail;
+
+      if (!detail?.nodeId || !detail.handleType) {
+        return;
+      }
+
+      setSelectedNodeIds(new Set());
+      clearEdgeSelection();
+      setAddMenu(null);
+      setImageInfoPopover(null);
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 250);
+      setConnectionMenu({
+        screen: detail.screen,
+        canvas: project(detail.screen),
+        connection: {
+          nodeId: detail.nodeId,
+          handleId: detail.handleId,
+          handleType: detail.handleType,
+        },
+      });
+    };
+
+    window.addEventListener(BLANK_CONNECTION_DROP_EVENT, handleBlankConnectionDrop);
+    return () => window.removeEventListener(BLANK_CONNECTION_DROP_EVENT, handleBlankConnectionDrop);
+  }, [clearEdgeSelection, project]);
 
   const handleDeleteSelectedEdge = useCallback(() => {
     if (!selectedEdgeId) {
@@ -490,17 +946,86 @@ function InnerCanvas() {
     setSelectedNodeIds(new Set());
   }, [deleteNode, selectedNodeIds]);
 
+  const handleCopySelectedNodes = useCallback(() => {
+    if (selectedNodeIds.size === 0) {
+      return false;
+    }
+
+    const selectedNodes = storeNodes.filter((node) => selectedNodeIds.has(node.id));
+
+    if (selectedNodes.length === 0) {
+      return false;
+    }
+
+    copiedNodesRef.current = selectedNodes.map((node) => cloneCanvasNode(node, 0));
+    pasteCountRef.current = 0;
+    return true;
+  }, [selectedNodeIds, storeNodes]);
+
+  const handlePasteNodes = useCallback(() => {
+    if (copiedNodesRef.current.length === 0) {
+      return false;
+    }
+
+    pasteCountRef.current += 1;
+
+    const pastedNodes = copiedNodesRef.current.map((node) =>
+      cloneCanvasNode(node, pasteCountRef.current),
+    );
+
+    pastedNodes.forEach((node) => addNode(node));
+    setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
+    clearEdgeSelection();
+    return true;
+  }, [addNode, clearEdgeSelection]);
+
+  const addUploadedImages = useCallback(async (
+    files: File[],
+    basePosition: { x: number; y: number },
+  ) => {
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
+    const nextNodeIds = new Set<string>();
+
+    imageDataList.forEach((data, index) => {
+      const node = createUploadedImageNode(
+        data,
+        getImageImportPosition(basePosition, index),
+      );
+      nextNodeIds.add(node.id);
+      addNode(node);
+    });
+
+    setSelectedNodeIds(nextNodeIds);
+    clearEdgeSelection();
+  }, [addNode, clearEdgeSelection]);
+
   useEffect(() => {
     if (!selectedEdgeId && selectedNodeIds.size === 0) {
       return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete' && event.key !== 'Backspace') {
+      if (isTypingTarget(event.target)) {
         return;
       }
 
-      if (isTypingTarget(event.target)) {
+      const key = event.key.toLowerCase();
+      const isModifierPressed = event.ctrlKey || event.metaKey;
+
+      if (isModifierPressed && key === 'c') {
+        if (handleCopySelectedNodes()) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (event.key !== 'Delete' && event.key !== 'Backspace') {
         return;
       }
 
@@ -518,11 +1043,43 @@ function InnerCanvas() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     clearEdgeSelection,
+    handleCopySelectedNodes,
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
     selectedEdgeId,
     selectedNodeIds,
   ]);
+
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      const imageFiles = getClipboardImageFiles(event.clipboardData);
+
+      if (imageFiles.length > 0) {
+        event.preventDefault();
+        clearEdgeSelection();
+        setAddMenu(null);
+        clearConnectionMenu();
+        setImageInfoPopover(null);
+        const center = project({
+          x: window.innerWidth / 2,
+          y: window.innerHeight / 2,
+        });
+        void addUploadedImages(imageFiles, center);
+        return;
+      }
+
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+
+      if (handlePasteNodes()) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [addUploadedImages, clearConnectionMenu, clearEdgeSelection, handlePasteNodes, project]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const selectionChanges = changes.filter((change) => change.type === 'select');
@@ -584,20 +1141,27 @@ function InnerCanvas() {
 
     setSelectedNodeIds(new Set());
     setAddMenu(null);
+    clearConnectionMenu();
     setSelectedEdgeId(edge.id);
     setEdgeDeleteButtonPosition(getEdgeDeleteButtonPosition({
       x: event.clientX,
       y: event.clientY,
     }));
-  }, []);
+  }, [clearConnectionMenu]);
 
   const handlePaneClick = useCallback(() => {
+    if (suppressNextPaneClearRef.current) {
+      return;
+    }
+
     setAddMenu(null);
+    clearConnectionMenu();
     setImageInfoPopover(null);
     clearEdgeSelection();
-  }, [clearEdgeSelection]);
+  }, [clearConnectionMenu, clearEdgeSelection]);
 
   const onConnect = useCallback((connection: Connection) => {
+    clearConnectionMenu();
     addEdgeStore({
       id: crypto.randomUUID(),
       source: connection.source || '',
@@ -605,7 +1169,7 @@ function InnerCanvas() {
       sourceHandle: connection.sourceHandle || undefined,
       targetHandle: connection.targetHandle || undefined,
     });
-  }, [addEdgeStore]);
+  }, [addEdgeStore, clearConnectionMenu]);
 
   const onConnectStart = useCallback((_event: React.MouseEvent | React.TouchEvent, params: OnConnectStartParams) => {
     pendingConnectionRef.current = params;
@@ -629,6 +1193,25 @@ function InnerCanvas() {
     const targetNodeId = targetNodeElement?.getAttribute('data-id');
 
     if (!targetNodeId || targetNodeId === pendingConnection.nodeId) {
+      const screenPosition = getConnectEndScreenPosition(event);
+
+      if (!screenPosition) {
+        return;
+      }
+
+      setSelectedNodeIds(new Set());
+      clearEdgeSelection();
+      setAddMenu(null);
+      setImageInfoPopover(null);
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 250);
+      setConnectionMenu({
+        screen: screenPosition,
+        canvas: project(screenPosition),
+        connection: pendingConnection,
+      });
       return;
     }
 
@@ -648,7 +1231,7 @@ function InnerCanvas() {
       target: pendingConnection.nodeId,
       targetHandle: pendingConnection.handleId || undefined,
     });
-  }, [addEdgeStore]);
+  }, [addEdgeStore, clearEdgeSelection, project]);
 
   const handleAddNode = useCallback((type: NodeType) => {
     const center = project({
@@ -677,37 +1260,33 @@ function InnerCanvas() {
     input.click();
   }, [project]);
 
-  const addUploadedImage = useCallback(async (file: File, position: { x: number; y: number }) => {
-    const data = await readImageFile(file);
-    addNode(createUploadedImageNode(data, position));
-  }, [addNode]);
-
   const handleUploadInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     const position = uploadPositionRef.current;
 
-    if (file && position) {
-      void addUploadedImage(file, position);
+    if (files.length > 0 && position) {
+      void addUploadedImages(files, position);
     }
 
     event.target.value = '';
     uploadPositionRef.current = null;
-  }, [addUploadedImage]);
+  }, [addUploadedImages]);
 
   const handleImageDrop = useCallback((event: React.DragEvent) => {
-    const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith('image/'));
+    const files = Array.from(event.dataTransfer.files).filter((item) => item.type.startsWith('image/'));
 
-    if (!file) {
+    if (files.length === 0) {
       return;
     }
 
     event.preventDefault();
     setAddMenu(null);
-    void addUploadedImage(
-      file,
+    setImageInfoPopover(null);
+    void addUploadedImages(
+      files,
       project({ x: event.clientX, y: event.clientY }),
     );
-  }, [addUploadedImage, project]);
+  }, [addUploadedImages, project]);
 
   const handlePaneDoubleClick = useCallback((event: React.MouseEvent) => {
     const target = event.target;
@@ -725,7 +1304,8 @@ function InnerCanvas() {
       screen: { x: event.clientX, y: event.clientY },
       canvas: canvasPosition,
     });
-  }, [project]);
+    clearConnectionMenu();
+  }, [clearConnectionMenu, project]);
 
   const handleAddMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (action === 'text' && addMenu) {
@@ -742,6 +1322,49 @@ function InnerCanvas() {
 
     setAddMenu(null);
   }, [addMenu, addNodeAtCenter, openUploadPicker]);
+
+  const handleConnectionMenuSelect = useCallback((action: ConnectionMenuAction) => {
+    if (!connectionMenu) {
+      return;
+    }
+
+    if (action === 'video') {
+      clearConnectionMenu();
+      return;
+    }
+
+    const nodeType: NodeType = action === 'text' ? 'text' : 'image_generation';
+    const nextNode = addNodeAtCenter(nodeType, connectionMenu.canvas);
+    const connection = connectionMenu.connection;
+
+    if (connection.nodeId && connection.handleType) {
+      addEdgeStore({
+        id: crypto.randomUUID(),
+        source: connection.handleType === 'source'
+          ? connection.nodeId
+          : nextNode.id,
+        target: connection.handleType === 'source'
+          ? nextNode.id
+          : connection.nodeId,
+        sourceHandle: connection.handleType === 'source'
+          ? connection.handleId || undefined
+          : undefined,
+        targetHandle: connection.handleType === 'target'
+          ? connection.handleId || undefined
+          : undefined,
+      });
+    }
+
+    setSelectedNodeIds(new Set([nextNode.id]));
+    clearEdgeSelection();
+    clearConnectionMenu();
+  }, [
+    addEdgeStore,
+    addNodeAtCenter,
+    clearConnectionMenu,
+    clearEdgeSelection,
+    connectionMenu,
+  ]);
 
   const handleSaveApiKeys = useCallback((values: { textApiKey: string; imageApiKey: string }) => {
     window.localStorage.setItem(CANVAS_TEXT_API_KEY_STORAGE_KEY, values.textApiKey);
@@ -770,6 +1393,8 @@ function InnerCanvas() {
         onDoubleClick={handlePaneDoubleClick}
         connectOnClick={false}
         zoomOnDoubleClick={false}
+        minZoom={CANVAS_MIN_ZOOM}
+        maxZoom={CANVAS_MAX_ZOOM}
         nodeDragThreshold={1}
         deleteKeyCode={null}
         defaultEdgeOptions={{
@@ -793,18 +1418,7 @@ function InnerCanvas() {
           variant={BackgroundVariant.Dots}
           className="gl-canvas-bg"
         />
-        <MiniMap
-          style={{ background: '#131923', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 14 }}
-          maskColor="rgba(11,13,18,0.6)"
-          nodeColor={() => '#1A2230'}
-          nodeStrokeColor={() => 'rgba(255,255,255,0.1)'}
-          pannable
-          zoomable
-        />
-        <Controls
-          className="!bg-gl-panel !border !border-gl-stroke-subtle !rounded-gl-md"
-          showInteractive={false}
-        />
+        <CanvasViewportControls />
       </ReactFlow>
 
       {activeSelectedEdgeId && edgeDeleteButtonPosition ? (
@@ -835,6 +1449,14 @@ function InnerCanvas() {
         />
       ) : null}
 
+      {connectionMenu ? (
+        <ConnectionCreateMenu
+          x={connectionMenu.screen.x}
+          y={connectionMenu.screen.y}
+          onSelect={handleConnectionMenuSelect}
+        />
+      ) : null}
+
       <CanvasToolbar
         onAddTextNode={() => handleAddNode('text')}
         onAddImageGenerationNode={() => handleAddNode('image_generation')}
@@ -850,6 +1472,7 @@ function InnerCanvas() {
         ref={uploadInputRef}
         type="file"
         accept="image/*"
+        multiple
         className="sr-only"
         onChange={handleUploadInputChange}
       />

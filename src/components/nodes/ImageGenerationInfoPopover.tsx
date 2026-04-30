@@ -4,12 +4,11 @@ import React from 'react';
 import { X } from 'lucide-react';
 
 export interface ImageGenerationInfoPopoverData {
-  title: string;
   model: string;
   format: string;
   size: string;
   resolution: string;
-  createdTime: string;
+  createdTime?: string;
 }
 
 export interface ImageGenerationInfoPopoverProps {
@@ -50,7 +49,7 @@ export function ImageGenerationInfoPopover({
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="truncate text-[16px] font-medium text-white/95">
-              {data.title}
+              图片信息
             </div>
           </div>
           <button
@@ -65,11 +64,12 @@ export function ImageGenerationInfoPopover({
         </div>
 
         <div className="flex flex-col gap-2.5">
-          <InfoRow label="模型" value={data.model} />
           <InfoRow label="格式" value={data.format} />
           <InfoRow label="大小" value={data.size} />
           <InfoRow label="分辨率" value={data.resolution} />
-          <InfoRow label="创建时间" value={data.createdTime} />
+          {data.createdTime ? (
+            <InfoRow label="创建时间" value={data.createdTime} />
+          ) : null}
         </div>
       </div>
     </div>

@@ -16,6 +16,7 @@ const MAX_CARD_EDGE = 540;
 const MIN_CARD_EDGE = 220;
 const CARD_ACCESSORY_TOP_SPACE = 64;
 const CARD_ACCESSORY_GAP = 12;
+const CARD_TOOLBAR_LIFT = 30;
 
 export interface ImageGenerationNodeProps {
   id?: string;
@@ -168,11 +169,10 @@ export function ImageGenerationNode({
   const cardStageHeight = MAX_CARD_EDGE + CARD_ACCESSORY_TOP_SPACE + CARD_ACCESSORY_GAP;
   const cardTopOffset = cardStageHeight - cardDimensions.height;
   const cardLeftOffset = Math.round((MAX_CARD_EDGE - cardDimensions.width) / 2);
+  const toolbarTop = cardTopOffset - CARD_ACCESSORY_TOP_SPACE - CARD_TOOLBAR_LIFT;
   const previewImageUrl =
     data.generatedHostedImageUrl ||
-    data.generatedImageUrl ||
-    data.referenceImageUrl ||
-    connectedImages[0]?.imageUrl;
+    data.generatedImageUrl;
   const hasGeneratedImage = Boolean(
     data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim(),
   );
@@ -212,16 +212,16 @@ export function ImageGenerationNode({
           className="absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
           style={{
             left: `${cardLeftOffset}px`,
-            top: `${Math.max(8, cardTopOffset - CARD_ACCESSORY_GAP - 18)}px`,
+            top: `${Math.max(0, cardTopOffset - CARD_ACCESSORY_GAP - 26)}px`,
           }}
         >
-          <ImageIcon size={12} />
-          <span className="text-[11px] font-medium leading-none">{data.title || 'Image'}</span>
+          <ImageIcon size={24} />
+          <span className="text-[22px] font-medium leading-none">{data.title || 'Image'}</span>
         </div>
 
         <ImageGenerationNodeToolbar
           visible={selected}
-          top={Math.max(0, cardTopOffset - CARD_ACCESSORY_TOP_SPACE)}
+          top={toolbarTop}
           hasGeneratedImage={hasGeneratedImage}
           onUpload={onUpload}
           onAction={onToolbarAction}

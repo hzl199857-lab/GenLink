@@ -11,16 +11,18 @@ export interface UploadedImageNodeProps {
   data: UploadedImageNodeData;
   selected?: boolean;
   onReplace?: (file: File) => void;
+  onShowInfo?: () => void;
 }
 
-const MAX_CARD_WIDTH = 280;
-const MAX_CARD_HEIGHT = 360;
-const MIN_CARD_WIDTH = 200;
+const MAX_CARD_WIDTH = 420;
+const MAX_CARD_HEIGHT = 540;
+const MIN_CARD_WIDTH = 300;
 
 export function UploadedImageNode({
   data,
   selected = false,
   onReplace,
+  onShowInfo,
 }: UploadedImageNodeProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const imageWidth = Math.max(data.width || 320, 1);
@@ -54,9 +56,9 @@ export function UploadedImageNode({
 
   return (
     <div className="relative group node-connectable-root" style={{ width: cardWidth }}>
-      <div className="mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
-        <ImageIcon size={12} />
-        <span className="text-[11px] font-medium leading-none">image</span>
+      <div className="-mt-2 mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
+        <ImageIcon size={24} />
+        <span className="text-[22px] font-medium leading-none">image</span>
       </div>
 
       <div
@@ -67,6 +69,7 @@ export function UploadedImageNode({
             : 'shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
         ].join(' ')}
         style={{ aspectRatio: `${imageWidth} / ${imageHeight}` }}
+        onClick={onShowInfo}
       >
         {data.imageUrl ? (
           <NextImage
@@ -108,8 +111,20 @@ export function UploadedImageNode({
         />
       </div>
 
-      <CardSideHandle type="target" position={Position.Left} visible={showAccessories} cardTopOffset={18} />
-      <CardSideHandle type="source" position={Position.Right} visible={showAccessories} cardTopOffset={18} />
+      <CardSideHandle
+        type="target"
+        position={Position.Left}
+        visible={showAccessories}
+        cardTopOffset={18}
+        cardWidth={cardWidth}
+      />
+      <CardSideHandle
+        type="source"
+        position={Position.Right}
+        visible={showAccessories}
+        cardTopOffset={18}
+        cardWidth={cardWidth}
+      />
     </div>
   );
 }

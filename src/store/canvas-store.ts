@@ -187,6 +187,8 @@ const SUPPORTED_IMAGE_ASPECT_RATIOS = [
   "9:21",
 ] as const;
 
+type SupportedImageAspectRatio = (typeof SUPPORTED_IMAGE_ASPECT_RATIOS)[number];
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -397,13 +399,13 @@ function resolveImageApiQuality(detail?: string): "low" | "medium" | "high" {
 function resolveNearestAspectRatio(
   width?: number,
   height?: number,
-): keyof (typeof IMAGE_SIZE_PRESETS)["1K"] {
+): SupportedImageAspectRatio {
   if (!width || !height || width <= 0 || height <= 0) {
     return "1:1";
   }
 
   const ratio = width / height;
-  let best = SUPPORTED_IMAGE_ASPECT_RATIOS[0];
+  let best: SupportedImageAspectRatio = SUPPORTED_IMAGE_ASPECT_RATIOS[0];
   let bestDelta = Number.POSITIVE_INFINITY;
 
   for (const option of SUPPORTED_IMAGE_ASPECT_RATIOS) {
@@ -631,6 +633,35 @@ function getConnectedImagesForTargetNode(
 
     return acc;
   }, []);
+}
+
+function getConnectedTextPromptForTargetNode(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  targetNodeId: string,
+): string {
+  const connectedSourceIds = edges
+    .filter((edge) => edge.target === targetNodeId)
+    .map((edge) => edge.source);
+
+  const promptSections = connectedSourceIds.reduce<string[]>((acc, sourceId) => {
+    const sourceNode = nodes.find((node) => node.id === sourceId);
+
+    if (!sourceNode || sourceNode.type !== "text") {
+      return acc;
+    }
+
+    const text = sourceNode.data.text?.trim();
+
+    if (!text) {
+      return acc;
+    }
+
+    acc.push(text);
+    return acc;
+  }, []);
+
+  return promptSections.join("\n\n");
 }
 
 export interface CanvasState {
@@ -904,7 +935,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Image generation node not found");
     }
 
-    if (!imageGenerationNode.data.prompt?.trim()) {
+    const connectedTextPrompt = getConnectedTextPromptForTargetNode(
+      state.nodes,
+      state.edges,
+      imageGenerationNodeId,
+    );
+    const directPrompt = imageGenerationNode.data.prompt?.trim() || "";
+    const effectivePrompt = [
+      connectedTextPrompt
+        ? `Upstream text node content:\n${connectedTextPrompt}`
+        : "",
+      directPrompt
+        ? `Additional image instructions:\n${directPrompt}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    if (!effectivePrompt) {
       throw new Error("Prompt is required");
     }
 
@@ -951,7 +999,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt: imageGenerationNode.data.prompt.trim(),
+          prompt: effectivePrompt,
           model: imageGenerationNode.data.model,
           size,
           quality,
@@ -983,7 +1031,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         result.hostedImageUrl ||
         (await persistGeneratedImage(
           result.imageUrl,
-          imageGenerationNode.data.prompt.trim(),
+          directPrompt || connectedTextPrompt,
         ).catch((error) => {
           console.warn("generated image hosting failed", error);
           return undefined;
