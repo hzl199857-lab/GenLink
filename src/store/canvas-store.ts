@@ -9,7 +9,6 @@ import type {
   ImageNodeData,
   NodeType,
   ProjectSnapshot,
-  PromptNodeData,
   TextNodeData,
   UploadedImageNodeData,
 } from "@/types/canvas";
@@ -26,8 +25,6 @@ type ApiErrorResponse = {
 };
 
 export const CANVAS_TEXT_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
-export const CANVAS_IMAGE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
-
 function readStoredApiKey(storageKey: string): string {
   if (typeof window === "undefined") {
     return "";
@@ -39,21 +36,6 @@ function readStoredApiKey(storageKey: string): string {
 function readStoredTextApiKey(): string {
   return readStoredApiKey(CANVAS_TEXT_API_KEY_STORAGE_KEY);
 }
-
-function readStoredImageApiKey(): string {
-  return readStoredApiKey(CANVAS_IMAGE_API_KEY_STORAGE_KEY);
-}
-
-type AiTextSuccessResponse = {
-  ok: true;
-  result: {
-    content: string;
-    model: string;
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  };
-};
 
 type AiTextStreamEvent =
   | {
@@ -83,16 +65,6 @@ type ConnectedImagePayload = {
   fileName?: string;
   alt: string;
   sourceType: "image" | "uploaded_image";
-};
-
-type AiImageSuccessResponse = {
-  ok: true;
-  result: {
-    imageUrl: string;
-    model: string;
-    width: number;
-    height: number;
-  };
 };
 
 type ProjectsListSuccessResponse = {
@@ -139,14 +111,6 @@ function createTextNodeData(): TextNodeData {
   };
 }
 
-function createPromptNodeData(): PromptNodeData {
-  return {
-    prompt: "",
-    mode: "text",
-    status: "idle",
-  };
-}
-
 function createAITextResultNodeData(): AITextResultNodeData {
   return {
     content: "",
@@ -179,13 +143,6 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createTextNodeData(),
-      };
-    case "prompt":
-      return {
-        id: crypto.randomUUID(),
-        type,
-        position,
-        data: createPromptNodeData(),
       };
     case "ai_text_result":
       return {
@@ -333,26 +290,6 @@ async function readTextStreamResponse(
   return finalResult;
 }
 
-function setPromptNodeStatus(
-  nodes: CanvasNode[],
-  promptNodeId: string,
-  status: PromptNodeData["status"],
-  errorMessage?: string,
-): CanvasNode[] {
-  return nodes.map((node) =>
-    node.id === promptNodeId && node.type === "prompt"
-      ? {
-          ...node,
-          data: {
-            ...node.data,
-            status,
-            errorMessage,
-          },
-        }
-      : node,
-  );
-}
-
 function setTextNodeStatus(
   nodes: CanvasNode[],
   textNodeId: string,
@@ -453,9 +390,7 @@ export interface CanvasState {
   addEdge: (edge: CanvasEdge) => void;
   deleteEdge: (id: string) => void;
 
-  generateTextFromPrompt: (promptNodeId: string) => Promise<void>;
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
-  generateImageFromPrompt: (promptNodeId: string) => Promise<void>;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
 
   setProjectName: (name: string) => void;
@@ -504,8 +439,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         switch (node.type) {
           case "text":
             return { ...node, data: { ...node.data, ...partial } };
-          case "prompt":
-            return { ...node, data: { ...node.data, ...partial } };
           case "ai_text_result":
             return { ...node, data: { ...node.data, ...partial } };
           case "image":
@@ -551,86 +484,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       edges: state.edges.filter((edge) => edge.id !== id),
     }));
-  },
-
-  generateTextFromPrompt: async (promptNodeId) => {
-    const promptNode = get().nodes.find(
-      (node): node is Extract<CanvasNode, { type: "prompt" }> =>
-        node.id === promptNodeId && node.type === "prompt",
-    );
-
-    if (!promptNode) {
-      throw new Error("Prompt node not found");
-    }
-
-    if (promptNode.data.mode !== "text") {
-      throw new Error("Prompt node mode is not text");
-    }
-
-    if (!readStoredTextApiKey()) {
-      throw new Error("Please set the Text API key first");
-    }
-
-    set((state) => ({
-      error: null,
-      nodes: setPromptNodeStatus(state.nodes, promptNodeId, "generating"),
-    }));
-
-    try {
-      const response = await fetch("/api/ai/text", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: promptNode.data.prompt,
-          model: promptNode.data.model,
-          systemPrompt: TEXT_SYSTEM_PROMPT,
-          apiKey: readStoredTextApiKey(),
-        }),
-      });
-
-      const json = await assertOkResponse<AiTextSuccessResponse>(response);
-      const resultNodeId = crypto.randomUUID();
-      const generatedAt = nowIso();
-
-      const resultNode: CanvasNode = {
-        id: resultNodeId,
-        type: "ai_text_result",
-        position: {
-          x: promptNode.position.x + 380,
-          y: promptNode.position.y,
-        },
-        data: {
-          content: json.result.content,
-          model: json.result.model,
-          tokens: json.result.totalTokens,
-          generatedAt,
-          sourcePromptNodeId: promptNodeId,
-        },
-      };
-
-      const edge: CanvasEdge = {
-        id: crypto.randomUUID(),
-        source: promptNodeId,
-        target: resultNodeId,
-      };
-
-      set((state) => ({
-        error: null,
-        nodes: setPromptNodeStatus(state.nodes, promptNodeId, "idle").concat(
-          resultNode,
-        ),
-        edges: [...state.edges, edge],
-      }));
-    } catch (error) {
-      const message = toErrorMessage(error);
-
-      set((state) => ({
-        error: message,
-        nodes: setPromptNodeStatus(state.nodes, promptNodeId, "error", message),
-      }));
-    }
   },
 
   generateTextFromTextNode: async (textNodeId) => {
@@ -754,88 +607,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((state) => ({
         error: message,
         nodes: setTextNodeStatus(state.nodes, textNodeId, "error", message),
-      }));
-    }
-  },
-
-  generateImageFromPrompt: async (promptNodeId) => {
-    const promptNode = get().nodes.find(
-      (node): node is Extract<CanvasNode, { type: "prompt" }> =>
-        node.id === promptNodeId && node.type === "prompt",
-    );
-
-    if (!promptNode) {
-      throw new Error("Prompt node not found");
-    }
-
-    if (promptNode.data.mode !== "image") {
-      throw new Error("Prompt node mode is not image");
-    }
-
-    if (!readStoredImageApiKey()) {
-      throw new Error("Please set the Image API key first");
-    }
-
-    set((state) => ({
-      error: null,
-      nodes: setPromptNodeStatus(state.nodes, promptNodeId, "generating"),
-    }));
-
-    try {
-      const response = await fetch("/api/ai/image", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: promptNode.data.prompt,
-          model: promptNode.data.model,
-          size: "1024x1024",
-          apiKey: readStoredImageApiKey(),
-        }),
-      });
-
-      const json = await assertOkResponse<AiImageSuccessResponse>(response);
-      const resultNodeId = crypto.randomUUID();
-      const generatedAt = nowIso();
-
-      const resultNode: CanvasNode = {
-        id: resultNodeId,
-        type: "image",
-        position: {
-          x: promptNode.position.x + 380,
-          y: promptNode.position.y,
-        },
-        data: {
-          imageUrl: json.result.imageUrl,
-          prompt: promptNode.data.prompt,
-          model: json.result.model,
-          width: json.result.width,
-          height: json.result.height,
-          generatedAt,
-          sourcePromptNodeId: promptNodeId,
-        },
-      };
-
-      const edge: CanvasEdge = {
-        id: crypto.randomUUID(),
-        source: promptNodeId,
-        target: resultNodeId,
-      };
-
-      set((state) => ({
-        error: null,
-        nodes: setPromptNodeStatus(state.nodes, promptNodeId, "idle").concat(
-          resultNode,
-        ),
-        edges: [...state.edges, edge],
-      }));
-    } catch (error) {
-      const message = toErrorMessage(error);
-
-      set((state) => ({
-        error: message,
-        nodes: setPromptNodeStatus(state.nodes, promptNodeId, "error", message),
       }));
     }
   },

@@ -1,6 +1,6 @@
 // GenLink canvas domain types shared by store, API, and node rendering.
 
-export type NodeType = "text" | "prompt" | "ai_text_result" | "image" | "uploaded_image";
+export type NodeType = "text" | "ai_text_result" | "image" | "uploaded_image";
 
 export interface BaseCanvasNode<
   TType extends NodeType = NodeType,
@@ -21,14 +21,6 @@ export interface TextNodeData {
   aiPrompt?: string;
   model?: string;
   status?: "idle" | "generating" | "error";
-  errorMessage?: string;
-}
-
-export interface PromptNodeData {
-  prompt: string;
-  mode: "text" | "image";
-  model?: string;
-  status: "idle" | "generating" | "error";
   errorMessage?: string;
 }
 
@@ -61,14 +53,12 @@ export interface UploadedImageNodeData {
 
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
-  | { type: "prompt"; data: PromptNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData };
 
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
-  | BaseCanvasNode<"prompt", PromptNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>;

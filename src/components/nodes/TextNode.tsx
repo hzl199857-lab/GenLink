@@ -82,7 +82,7 @@ export function TextNode({
       <div
         className={[
           'node-connectable-card text-node-drag-handle relative rounded-gl-lg bg-gl-panel border shadow-gl-card',
-          'min-w-[380px] max-w-[460px] min-h-[260px]',
+          'min-w-[200px] max-w-[460px] min-h-[260px]',
           'px-5 py-4 flex flex-col cursor-grab transition-colors duration-150',
           isGenerating
             ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'

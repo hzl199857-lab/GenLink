@@ -20,11 +20,10 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import { CANVAS_IMAGE_API_KEY_STORAGE_KEY, CANVAS_TEXT_API_KEY_STORAGE_KEY, useCanvasStore } from '@/store/canvas-store';
-import type { CanvasNode, NodeType, PromptNodeData, TextNodeData, AITextResultNodeData, ImageNodeData, UploadedImageNodeData } from '@/types/canvas';
+import { CANVAS_TEXT_API_KEY_STORAGE_KEY, useCanvasStore } from '@/store/canvas-store';
+import type { CanvasNode, NodeType, TextNodeData, AITextResultNodeData, ImageNodeData, UploadedImageNodeData } from '@/types/canvas';
 
 import { TextNode } from '../nodes/TextNode';
-import { PromptNode } from '../nodes/PromptNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { ImageNode } from '../nodes/ImageNode';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
@@ -99,46 +98,6 @@ function TextNodeAdapter({ id, data, selected }: NodeProps) {
       onPromptPointerDown={() => notifyPromptBarInteraction?.()}
       onPromptFocusWithinChange={setPromptFocused}
     />
-  );
-}
-
-function PromptNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
-  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
-  const deleteNode = useCanvasStore((s) => s.deleteNode);
-  const addNode = useCanvasStore((s) => s.addNode);
-  const generateText = useCanvasStore((s) => s.generateTextFromPrompt);
-  const generateImage = useCanvasStore((s) => s.generateImageFromPrompt);
-
-  const handleCopy = () => {
-    addNode({
-      id: crypto.randomUUID(),
-      type: 'prompt',
-      position: { x: xPos + 40, y: yPos + 40 },
-      data: { ...data },
-    });
-  };
-
-  return (
-    <div className="relative group node-connectable-root">
-      <NodeFloatingToolbar
-        visible={!!selected}
-        onCopy={handleCopy}
-        onDelete={() => deleteNode(id)}
-        onLink={() => console.log('Link clicked')}
-        onShare={() => console.log('Share clicked')}
-        onMore={() => console.log('More clicked')}
-      />
-      <CardSideHandle type="target" position={Position.Left} visible={!!selected} />
-      <PromptNode
-        id={id}
-        data={data as PromptNodeData}
-        selected={selected}
-        onChange={(next) => updateNodeData<'prompt'>(id, next)}
-        onGenerateText={() => generateText(id)}
-        onGenerateImage={() => generateImage(id)}
-      />
-      <CardSideHandle type="source" position={Position.Right} visible={!!selected} />
-    </div>
   );
 }
 
@@ -230,7 +189,6 @@ function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
 
 const nodeTypes = {
   text: TextNodeAdapter,
-  prompt: PromptNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
@@ -336,11 +294,6 @@ function InnerCanvas() {
     typeof window === 'undefined'
       ? ''
       : window.localStorage.getItem(CANVAS_TEXT_API_KEY_STORAGE_KEY) ?? '',
-  );
-  const [imageApiKey, setImageApiKey] = useState(() =>
-    typeof window === 'undefined'
-      ? ''
-      : window.localStorage.getItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY) ?? '',
   );
   const [addMenu, setAddMenu] = useState<{
     screen: { x: number; y: number };
@@ -642,11 +595,9 @@ function InnerCanvas() {
     setAddMenu(null);
   }, [addMenu, addNodeAtCenter, openUploadPicker]);
 
-  const handleSaveApiKeys = useCallback((values: { textApiKey: string; imageApiKey: string }) => {
+  const handleSaveApiKeys = useCallback((values: { textApiKey: string }) => {
     window.localStorage.setItem(CANVAS_TEXT_API_KEY_STORAGE_KEY, values.textApiKey);
-    window.localStorage.setItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY, values.imageApiKey);
     setTextApiKey(values.textApiKey);
-    setImageApiKey(values.imageApiKey);
     setApiSettingsOpen(false);
   }, []);
 
@@ -736,7 +687,6 @@ function InnerCanvas() {
 
       <CanvasToolbar
         onAddTextNode={() => handleAddNode('text')}
-        onAddPromptNode={() => handleAddNode('prompt')}
         onUploadImage={() => openUploadPicker()}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
       />
@@ -750,7 +700,6 @@ function InnerCanvas() {
       <ApiSettingsPanel
         open={apiSettingsOpen}
         initialTextApiKey={textApiKey}
-        initialImageApiKey={imageApiKey}
         onClose={() => setApiSettingsOpen(false)}
         onSave={handleSaveApiKeys}
       />

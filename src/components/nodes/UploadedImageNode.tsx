@@ -13,8 +13,9 @@ export interface UploadedImageNodeProps {
   onReplace?: (file: File) => void;
 }
 
-const MAX_CARD_WIDTH = 420;
-const MIN_CARD_WIDTH = 260;
+const MAX_CARD_WIDTH = 280;
+const MAX_CARD_HEIGHT = 360;
+const MIN_CARD_WIDTH = 200;
 
 export function UploadedImageNode({
   data,
@@ -24,7 +25,12 @@ export function UploadedImageNode({
   const inputRef = useRef<HTMLInputElement>(null);
   const imageWidth = Math.max(data.width || 320, 1);
   const imageHeight = Math.max(data.height || 320, 1);
-  const cardWidth = Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, imageWidth));
+  const imageAspectRatio = imageWidth / imageHeight;
+  const fittedWidthByHeight = MAX_CARD_HEIGHT * imageAspectRatio;
+  const cardWidth = Math.min(
+    MAX_CARD_WIDTH,
+    Math.max(MIN_CARD_WIDTH, Math.min(imageWidth, fittedWidthByHeight)),
+  );
   const estimatedCardHeight = cardWidth * (imageHeight / imageWidth);
   const showAccessories = selected;
   const useTightReplaceButton = cardWidth < 310 || estimatedCardHeight < 140;

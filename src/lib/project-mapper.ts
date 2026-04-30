@@ -5,7 +5,6 @@ import type {
   ImageNodeData,
   NodeType,
   ProjectSnapshot,
-  PromptNodeData,
   TextNodeData,
   UploadedImageNodeData,
 } from "@/types/canvas";
@@ -41,7 +40,6 @@ interface DbCanvasEdgeRecord {
 function isNodeType(value: string): value is NodeType {
   return (
     value === "text" ||
-    value === "prompt" ||
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image"
@@ -67,30 +65,6 @@ function normalizeTextNodeData(value: unknown): TextNodeData {
   }
 
   return { text: "" };
-}
-
-function normalizePromptNodeData(value: unknown): PromptNodeData {
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-
-    return {
-      prompt: typeof record.prompt === "string" ? record.prompt : "",
-      mode: record.mode === "image" ? "image" : "text",
-      model: typeof record.model === "string" ? record.model : undefined,
-      status:
-        record.status === "generating" || record.status === "error"
-          ? record.status
-          : "idle",
-      errorMessage:
-        typeof record.errorMessage === "string" ? record.errorMessage : undefined,
-    };
-  }
-
-  return {
-    prompt: "",
-    mode: "text",
-    status: "idle",
-  };
 }
 
 function normalizeAITextResultNodeData(value: unknown): AITextResultNodeData {
@@ -177,6 +151,10 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
 function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
   const parsed = parseNodeJson(record.data);
 
+  if (record.type === "prompt") {
+    throw new Error('Legacy "prompt" nodes are no longer supported');
+  }
+
   if (!isNodeType(record.type)) {
     console.warn(`Unknown canvas node type "${record.type}", coercing to text`);
 
@@ -198,13 +176,6 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "text",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeTextNodeData(parsed),
-      };
-    case "prompt":
-      return {
-        id: record.id,
-        type: "prompt",
-        position: { x: record.positionX, y: record.positionY },
-        data: normalizePromptNodeData(parsed),
       };
     case "ai_text_result":
       return {
@@ -245,11 +216,17 @@ export function dbToSnapshot(
   nodes: DbCanvasNodeRecord[],
   edges: DbCanvasEdgeRecord[],
 ): ProjectSnapshot {
+  const filteredNodes = nodes.filter((node) => node.type !== "prompt");
+  const validNodeIds = new Set(filteredNodes.map((node) => node.id));
+  const filteredEdges = edges.filter(
+    (edge) => validNodeIds.has(edge.source) && validNodeIds.has(edge.target),
+  );
+
   return {
     id: project.id,
     name: project.name,
-    nodes: nodes.map(nodeFromDbRecord),
-    edges: edges.map(edgeFromDbRecord),
+    nodes: filteredNodes.map(nodeFromDbRecord),
+    edges: filteredEdges.map(edgeFromDbRecord),
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   };
