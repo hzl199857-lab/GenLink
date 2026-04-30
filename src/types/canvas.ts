@@ -1,6 +1,11 @@
 // GenLink canvas domain types shared by store, API, and node rendering.
 
-export type NodeType = "text" | "ai_text_result" | "image" | "uploaded_image";
+export type NodeType =
+  | "text"
+  | "image_generation"
+  | "ai_text_result"
+  | "image"
+  | "uploaded_image";
 
 export interface BaseCanvasNode<
   TType extends NodeType = NodeType,
@@ -20,6 +25,23 @@ export interface TextNodeData {
   title?: string;
   aiPrompt?: string;
   model?: string;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
+}
+
+export interface ImageGenerationNodeData {
+  title?: string;
+  prompt?: string;
+  model?: string;
+  aspectRatio?: string;
+  quality?: string;
+  detail?: string;
+  count?: number;
+  referenceImageUrl?: string;
+  generatedImageUrl?: string;
+  generatedImageWidth?: number;
+  generatedImageHeight?: number;
+  generatedAt?: string;
   status?: "idle" | "generating" | "error";
   errorMessage?: string;
 }
@@ -53,12 +75,14 @@ export interface UploadedImageNodeData {
 
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
+  | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData };
 
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
+  | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>;

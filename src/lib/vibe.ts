@@ -41,8 +41,13 @@ export interface GenerateImageParams {
   prompt: string;
   model?: string;
   size?: string;
+  quality?: string;
   n?: number;
   apiKey?: string;
+  images?: Array<{
+    url: string;
+    fileName?: string;
+  }>;
 }
 
 export interface GenerateImageResult {
@@ -130,6 +135,42 @@ interface VibeGeminiImageResponse {
     code?: number | string;
     status?: string;
   };
+}
+
+async function createImageFilePart(
+  image: {
+    url: string;
+    fileName?: string;
+  },
+  index: number,
+): Promise<Blob> {
+  const trimmedUrl = image.url.trim();
+
+  if (!trimmedUrl) {
+    throw new VibeApiError(400, `Reference image ${index + 1} is empty`);
+  }
+
+  const dataUrl = parseDataUrl(trimmedUrl);
+
+  if (dataUrl) {
+    return new Blob([Buffer.from(dataUrl.data, "base64")], {
+      type: dataUrl.mediaType,
+    });
+  }
+
+  const response = await fetch(trimmedUrl);
+
+  if (!response.ok) {
+    throw new VibeApiError(
+      response.status,
+      `Failed to fetch reference image ${index + 1}`,
+    );
+  }
+
+  const bytes = await response.arrayBuffer();
+  return new Blob([bytes], {
+    type: response.headers.get("content-type") || "image/png",
+  });
 }
 
 function assertConfigured(apiKey?: string): string {
@@ -476,6 +517,58 @@ async function requestStream(
   }
 }
 
+async function requestForm<T>(
+  path: string,
+  formData: FormData,
+  apiKey?: string,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${VIBE_BASE_URL}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${assertConfigured(apiKey)}`,
+      },
+      body: formData,
+      signal: controller.signal,
+    });
+
+    const text = await response.text();
+    const json = text ? (JSON.parse(text) as T) : ({} as T);
+
+    if (!response.ok) {
+      const message =
+        (json as { error?: { message?: string } }).error?.message ??
+        `Vibe API request failed with status ${response.status}`;
+
+      throw new VibeApiError(response.status, message, json);
+    }
+
+    return json;
+  } catch (error) {
+    if (error instanceof VibeApiError) {
+      throw error;
+    }
+
+    if (error instanceof SyntaxError) {
+      throw new VibeApiError(502, "Vibe API returned invalid JSON");
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new VibeApiError(504, "Vibe API request timed out");
+    }
+
+    throw new VibeApiError(
+      502,
+      error instanceof Error ? error.message : "Vibe API request failed",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function createSseChunk(chunk: TextStreamChunk): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`);
 }
@@ -778,17 +871,52 @@ async function generateImageOpenAI(
 ): Promise<GenerateImageResult> {
   const model = params.model ?? DEFAULT_IMAGE_MODEL;
   const size = params.size ?? DEFAULT_IMAGE_SIZE;
+  const quality = params.quality;
+  let json: VibeImageResponse;
 
-  const json = await requestJson<VibeImageResponse>(
-    "/images/generations",
-    {
-      model,
-      prompt: params.prompt,
-      size,
-      n: params.n ?? 1,
-    },
-    params.apiKey,
-  );
+  if (params.images?.length) {
+    const formData = new FormData();
+    formData.append("model", model);
+    formData.append("prompt", params.prompt);
+
+    if (size) {
+      formData.append("size", size);
+    }
+
+    if (quality) {
+      formData.append("quality", quality);
+    }
+
+    const imageBlobs = await Promise.all(
+      params.images.map((image, index) => createImageFilePart(image, index)),
+    );
+
+    imageBlobs.forEach((blob, index) => {
+      formData.append(
+        "image[]",
+        blob,
+        params.images?.[index]?.fileName?.trim() || `reference-${index + 1}.png`,
+      );
+    });
+
+    json = await requestForm<VibeImageResponse>(
+      "/images/edits",
+      formData,
+      params.apiKey,
+    );
+  } else {
+    json = await requestJson<VibeImageResponse>(
+      "/images/generations",
+      {
+        model,
+        prompt: params.prompt,
+        size,
+        quality,
+        n: params.n ?? 1,
+      },
+      params.apiKey,
+    );
+  }
 
   const image = json.data?.[0];
   const imageUrl = image?.b64_json

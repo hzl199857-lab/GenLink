@@ -3,7 +3,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
-import { Sparkles, ArrowUp, Maximize2, Minimize2, ChevronDown, Check } from 'lucide-react';
+import {
+  Sparkles,
+  Maximize2,
+  Minimize2,
+  ChevronDown,
+  Check,
+} from 'lucide-react';
+import { PromptBarRunControls } from './PromptBarRunControls';
 
 const MODEL_OPTIONS = [
   'gemini-3-flash',
@@ -110,7 +117,7 @@ export function TextNodePromptBar({
         onPointerDown={(e) => e.stopPropagation()}
         onWheelCapture={(e) => e.stopPropagation()}
         onWheel={(e) => e.stopPropagation()}
-        className="text-node-prompt-bar relative w-[600px] max-w-[calc(100vw-48px)] bg-gl-panel/90 backdrop-blur-md border border-gl-stroke-soft rounded-gl-lg shadow-gl-toolbar px-5 pt-4 pb-1.5 flex flex-col gap-4"
+        className="text-node-prompt-bar relative flex w-[600px] max-w-[calc(100vw-48px)] flex-col gap-4 rounded-gl-lg border border-gl-stroke-soft bg-gl-panel/90 px-5 pt-4 pb-1.5 shadow-gl-toolbar backdrop-blur-md"
       >
         <button
           onClick={() => setExpanded((v) => !v)}
@@ -180,7 +187,7 @@ export function TextNodePromptBar({
               onWheelCapture={(e) => e.stopPropagation()}
               placeholder="向 AI 描述你想要的文本内容..."
               rows={expanded ? 8 : 4}
-              className="nodrag nopan text-node-prompt-input w-full bg-transparent border-0 outline-none resize-none overflow-y-auto text-[15px] font-medium text-gl-text-primary placeholder:text-gl-text-muted leading-6 pr-9 min-h-[108px]"
+              className="text-node-prompt-input nodrag nopan min-h-[108px] w-full resize-none overflow-y-auto border-0 bg-transparent pr-9 text-[15px] font-medium leading-6 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
               style={{ height: expanded ? 300 : undefined }}
             />
           </div>
@@ -200,7 +207,10 @@ export function TextNodePromptBar({
               ].join(' ')}
               title="选择模型"
             >
-              <Sparkles size={15} className="text-gl-text-tertiary group-hover:text-gl-text-secondary" />
+              <Sparkles
+                size={15}
+                className="text-gl-text-tertiary group-hover:text-gl-text-secondary"
+              />
               <span className="leading-none">{model}</span>
               <ChevronDown
                 size={15}
@@ -236,7 +246,9 @@ export function TextNodePromptBar({
                         ].join(' ')}
                       >
                         <span className="truncate">{option}</span>
-                        {selected ? <Check size={18} className="text-gl-text-primary" /> : null}
+                        {selected ? (
+                          <Check size={18} className="text-gl-text-primary" />
+                        ) : null}
                       </button>
                     );
                   })}
@@ -245,21 +257,7 @@ export function TextNodePromptBar({
             ) : null}
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <div
-              className="h-[21px] w-[21px] flex items-center justify-center rounded-gl-pill border border-gl-stroke-soft text-[12px] text-gl-text-secondary"
-              title="Credits"
-            >
-              1
-            </div>
-            <button
-              onClick={onRun}
-              className="h-6 w-6 flex items-center justify-center rounded-full bg-white text-black hover:bg-gray-200 transition-colors shadow-sm ml-1"
-              title="Run"
-            >
-              <ArrowUp size={14} strokeWidth={2.4} />
-            </button>
-          </div>
+          <PromptBarRunControls label="1" labelTitle="Credits" onRun={onRun} />
         </div>
       </div>
     </NodeToolbar>

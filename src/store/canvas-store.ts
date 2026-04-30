@@ -6,6 +6,7 @@ import type {
   AITextResultNodeData,
   CanvasEdge,
   CanvasNode,
+  ImageGenerationNodeData,
   ImageNodeData,
   NodeType,
   ProjectSnapshot,
@@ -65,6 +66,8 @@ type ConnectedImagePayload = {
   fileName?: string;
   alt: string;
   sourceType: "image" | "uploaded_image";
+  width?: number;
+  height?: number;
 };
 
 type ProjectsListSuccessResponse = {
@@ -95,6 +98,62 @@ type ProjectSnapshotSuccessResponse = {
 const TEXT_SYSTEM_PROMPT =
   "Only output the final result. Do not include extra commentary. If there are multiple possible results, return just one.";
 
+const IMAGE_SIZE_PRESETS = {
+  "1K": {
+    "1:1": "1024x1024",
+    "4:3": "1024x768",
+    "3:4": "768x1024",
+    "5:4": "1024x816",
+    "4:5": "816x1024",
+    "3:2": "1024x688",
+    "2:3": "688x1024",
+    "16:9": "1088x608",
+    "9:16": "608x1088",
+    "21:9": "1248x528",
+    "9:21": "528x1248",
+  },
+  "2K": {
+    "1:1": "2048x2048",
+    "4:3": "2048x1536",
+    "3:4": "1536x2048",
+    "5:4": "2048x1632",
+    "4:5": "1632x2048",
+    "3:2": "2048x1360",
+    "2:3": "1360x2048",
+    "16:9": "2048x1152",
+    "9:16": "1152x2048",
+    "21:9": "2048x880",
+    "9:21": "880x2048",
+  },
+  "4K": {
+    "1:1": "2880x2880",
+    "4:3": "3312x2480",
+    "3:4": "2480x3312",
+    "5:4": "3200x2560",
+    "4:5": "2560x3200",
+    "3:2": "3520x2352",
+    "2:3": "2352x3520",
+    "16:9": "3840x2160",
+    "9:16": "2160x3840",
+    "21:9": "3840x1648",
+    "9:21": "1648x3840",
+  },
+} as const;
+
+const SUPPORTED_IMAGE_ASPECT_RATIOS = [
+  "1:1",
+  "4:3",
+  "3:4",
+  "5:4",
+  "4:5",
+  "3:2",
+  "2:3",
+  "16:9",
+  "9:16",
+  "21:9",
+  "9:21",
+] as const;
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -107,6 +166,19 @@ function createTextNodeData(): TextNodeData {
   return {
     text: "",
     model: "gpt-5.4",
+    status: "idle",
+  };
+}
+
+function createImageGenerationNodeData(): ImageGenerationNodeData {
+  return {
+    title: "Image",
+    prompt: "",
+    model: "gpt-image-2",
+    aspectRatio: "auto",
+    quality: "1K",
+    detail: "medium",
+    count: 5,
     status: "idle",
   };
 }
@@ -150,6 +222,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createAITextResultNodeData(),
+      };
+    case "image_generation":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createImageGenerationNodeData(),
       };
     case "image":
       return {
@@ -204,6 +283,70 @@ async function assertOkResponse<TSuccess extends { ok: true }>(
   }
 
   return json as TSuccess;
+}
+
+function resolveImageApiQuality(detail?: string): "low" | "medium" | "high" {
+  if (detail === "low" || detail === "high") {
+    return detail;
+  }
+
+  return "medium";
+}
+
+function resolveNearestAspectRatio(
+  width?: number,
+  height?: number,
+): keyof (typeof IMAGE_SIZE_PRESETS)["1K"] {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return "1:1";
+  }
+
+  const ratio = width / height;
+  let best = SUPPORTED_IMAGE_ASPECT_RATIOS[0];
+  let bestDelta = Number.POSITIVE_INFINITY;
+
+  for (const option of SUPPORTED_IMAGE_ASPECT_RATIOS) {
+    const [w, h] = option.split(":").map(Number);
+    const delta = Math.abs(ratio - w / h);
+
+    if (delta < bestDelta) {
+      best = option;
+      bestDelta = delta;
+    }
+  }
+
+  return best;
+}
+
+function resolveImageSize(
+  sizeTier: string | undefined,
+  aspectRatio: string | undefined,
+  connectedImages: ConnectedImagePayload[],
+): string {
+  const normalizedSizeTier =
+    sizeTier === "2K" || sizeTier === "4K" ? sizeTier : "1K";
+  const presets = IMAGE_SIZE_PRESETS[normalizedSizeTier];
+
+  if (aspectRatio === "auto") {
+    const primaryImage = connectedImages[0];
+
+    if (!primaryImage) {
+      return "auto";
+    }
+
+    return presets[
+      resolveNearestAspectRatio(primaryImage.width, primaryImage.height)
+    ];
+  }
+
+  if (
+    aspectRatio &&
+    Object.prototype.hasOwnProperty.call(presets, aspectRatio)
+  ) {
+    return presets[aspectRatio as keyof typeof presets];
+  }
+
+  return presets["1:1"];
 }
 
 async function readTextStreamResponse(
@@ -310,13 +453,13 @@ function setTextNodeStatus(
   );
 }
 
-function getConnectedImagesForTextNode(
+function getConnectedImagesForTargetNode(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
-  textNodeId: string,
+  targetNodeId: string,
 ): ConnectedImagePayload[] {
   const connectedSourceIds = edges
-    .filter((edge) => edge.target === textNodeId)
+    .filter((edge) => edge.target === targetNodeId)
     .map((edge) => edge.source);
 
   return connectedSourceIds.reduce<ConnectedImagePayload[]>((acc, sourceId) => {
@@ -341,6 +484,8 @@ function getConnectedImagesForTextNode(
         fileName: sourceNode.data.fileName,
         alt: sourceNode.data.fileName?.trim() || "Connected image",
         sourceType: "uploaded_image",
+        width: sourceNode.data.width,
+        height: sourceNode.data.height,
       });
       return acc;
     }
@@ -360,6 +505,25 @@ function getConnectedImagesForTextNode(
         fileName: undefined,
         alt: sourceNode.data.prompt?.trim() || "Generated image",
         sourceType: "image",
+        width: sourceNode.data.width,
+        height: sourceNode.data.height,
+      });
+      return acc;
+    }
+
+    if (sourceNode.type === "image_generation") {
+      if (!sourceNode.data.generatedImageUrl?.trim()) {
+        return acc;
+      }
+
+      acc.push({
+        id: sourceNode.id,
+        imageUrl: sourceNode.data.generatedImageUrl,
+        originalImageUrl: sourceNode.data.generatedImageUrl,
+        alt: sourceNode.data.prompt?.trim() || "Generated image",
+        sourceType: "image",
+        width: sourceNode.data.generatedImageWidth,
+        height: sourceNode.data.generatedImageHeight,
       });
       return acc;
     }
@@ -391,7 +555,13 @@ export interface CanvasState {
   deleteEdge: (id: string) => void;
 
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
+  generateImageFromImageGenerationNode: (
+    imageGenerationNodeId: string,
+  ) => Promise<void>;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
+  getConnectedImagesForImageGenerationNode: (
+    imageGenerationNodeId: string,
+  ) => ConnectedImagePayload[];
 
   setProjectName: (name: string) => void;
   newProject: (name?: string) => void;
@@ -438,6 +608,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
         switch (node.type) {
           case "text":
+            return { ...node, data: { ...node.data, ...partial } };
+          case "image_generation":
             return { ...node, data: { ...node.data, ...partial } };
           case "ai_text_result":
             return { ...node, data: { ...node.data, ...partial } };
@@ -505,7 +677,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Please set the Text API key first");
     }
 
-    const connectedImages = getConnectedImagesForTextNode(
+    const connectedImages = getConnectedImagesForTargetNode(
       state.nodes,
       state.edges,
       textNodeId,
@@ -617,7 +789,148 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   getConnectedImagesForTextNode: (textNodeId) => {
     const state = get();
-    return getConnectedImagesForTextNode(state.nodes, state.edges, textNodeId);
+    return getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      textNodeId,
+    );
+  },
+
+  generateImageFromImageGenerationNode: async (imageGenerationNodeId) => {
+    const state = get();
+    const imageGenerationNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+        node.id === imageGenerationNodeId && node.type === "image_generation",
+    );
+
+    if (!imageGenerationNode) {
+      throw new Error("Image generation node not found");
+    }
+
+    if (!imageGenerationNode.data.prompt?.trim()) {
+      throw new Error("Prompt is required");
+    }
+
+    if (!readStoredTextApiKey()) {
+      throw new Error("Please set the API key first");
+    }
+
+    const connectedImages = getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      imageGenerationNodeId,
+    );
+    const size = resolveImageSize(
+      imageGenerationNode.data.quality,
+      imageGenerationNode.data.aspectRatio,
+      connectedImages,
+    );
+    const quality = resolveImageApiQuality(imageGenerationNode.data.detail);
+
+    set((currentState) => ({
+      error: null,
+      nodes: currentState.nodes.map((node) =>
+        node.id === imageGenerationNodeId && node.type === "image_generation"
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                status: "generating",
+                errorMessage: undefined,
+              },
+            }
+          : node,
+      ),
+    }));
+
+    try {
+      const response = await fetch("/api/ai/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: imageGenerationNode.data.prompt.trim(),
+          model: imageGenerationNode.data.model,
+          size,
+          quality,
+          apiKey: readStoredTextApiKey(),
+          images:
+            connectedImages.length > 0
+              ? connectedImages.map((image) => ({
+                  url: image.originalImageUrl,
+                  fileName: image.fileName,
+                }))
+              : undefined,
+        }),
+      });
+
+      const json = (await response.json()) as
+        | {
+            ok: true;
+            result: {
+              imageUrl: string;
+              model: string;
+              width: number;
+              height: number;
+            };
+          }
+        | ApiErrorResponse;
+
+      if (!response.ok || !("ok" in json) || json.ok === false) {
+        throw new Error("error" in json ? json.error : "Request failed");
+      }
+
+      set((currentState) => ({
+        error: null,
+        nodes: currentState.nodes.map((node) =>
+          node.id === imageGenerationNodeId &&
+          node.type === "image_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  generatedImageUrl: json.result.imageUrl,
+                  generatedImageWidth: json.result.width,
+                  generatedImageHeight: json.result.height,
+                  generatedAt: nowIso(),
+                  status: "idle",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+        edges: currentState.edges,
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        error: message,
+        nodes: currentState.nodes.map((node) =>
+          node.id === imageGenerationNodeId &&
+          node.type === "image_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "error",
+                  errorMessage: message,
+                },
+              }
+            : node,
+        ),
+      }));
+    }
+  },
+
+  getConnectedImagesForImageGenerationNode: (imageGenerationNodeId) => {
+    const state = get();
+    return getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      imageGenerationNodeId,
+    );
   },
 
   newProject: (name) => {

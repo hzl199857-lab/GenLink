@@ -2,6 +2,7 @@ import type {
   AITextResultNodeData,
   CanvasEdge,
   CanvasNode,
+  ImageGenerationNodeData,
   ImageNodeData,
   NodeType,
   ProjectSnapshot,
@@ -40,6 +41,7 @@ interface DbCanvasEdgeRecord {
 function isNodeType(value: string): value is NodeType {
   return (
     value === "text" ||
+    value === "image_generation" ||
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image"
@@ -90,6 +92,61 @@ function normalizeAITextResultNodeData(value: unknown): AITextResultNodeData {
     content: "",
     model: "",
     generatedAt: new Date(0).toISOString(),
+  };
+}
+
+function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeData {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    return {
+      title: typeof record.title === "string" ? record.title : "Image",
+      prompt: typeof record.prompt === "string" ? record.prompt : "",
+      model: typeof record.model === "string" ? record.model : "gpt-image-2",
+      aspectRatio: typeof record.aspectRatio === "string" ? record.aspectRatio : "auto",
+      quality: typeof record.quality === "string" ? record.quality : "1K",
+      detail: typeof record.detail === "string" ? record.detail : "medium",
+      count: typeof record.count === "number" ? record.count : 5,
+      referenceImageUrl:
+        typeof record.referenceImageUrl === "string"
+          ? record.referenceImageUrl
+          : undefined,
+      generatedImageUrl:
+        typeof record.generatedImageUrl === "string"
+          ? record.generatedImageUrl
+          : undefined,
+      generatedImageWidth:
+        typeof record.generatedImageWidth === "number"
+          ? record.generatedImageWidth
+          : undefined,
+      generatedImageHeight:
+        typeof record.generatedImageHeight === "number"
+          ? record.generatedImageHeight
+          : undefined,
+      generatedAt:
+        typeof record.generatedAt === "string"
+          ? record.generatedAt
+          : undefined,
+      status:
+        record.status === "idle" ||
+        record.status === "generating" ||
+        record.status === "error"
+          ? record.status
+          : "idle",
+      errorMessage:
+        typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+    };
+  }
+
+  return {
+    title: "Image",
+    prompt: "",
+    model: "gpt-image-2",
+    aspectRatio: "auto",
+    quality: "1K",
+    detail: "medium",
+    count: 5,
+    status: "idle",
   };
 }
 
@@ -176,6 +233,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "text",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeTextNodeData(parsed),
+      };
+    case "image_generation":
+      return {
+        id: record.id,
+        type: "image_generation",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeImageGenerationNodeData(parsed),
       };
     case "ai_text_result":
       return {

@@ -1,9 +1,22 @@
 'use client';
 
 import React from 'react';
-import { AlignLeft, Grid2X2, Image as ImageIcon, Upload, Video, Volume2 } from 'lucide-react';
+import {
+  AlignLeft,
+  Grid2X2,
+  Image as ImageIcon,
+  Upload,
+  Video,
+  Volume2,
+} from 'lucide-react';
 
-export type AddNodeMenuAction = 'text' | 'image' | 'video' | 'audio' | 'storyboard' | 'upload';
+export type AddNodeMenuAction =
+  | 'text'
+  | 'image_generation'
+  | 'video'
+  | 'audio'
+  | 'storyboard'
+  | 'upload';
 
 export interface AddNodeMenuProps {
   x: number;
@@ -24,7 +37,7 @@ const NODE_ITEMS: Array<{
     icon: AlignLeft,
   },
   {
-    action: 'image',
+    action: 'image_generation',
     title: '图片',
     subtitle: '宣传图、海报、封面',
     icon: ImageIcon,

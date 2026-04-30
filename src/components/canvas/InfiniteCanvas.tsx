@@ -21,9 +21,18 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 
 import { CANVAS_TEXT_API_KEY_STORAGE_KEY, useCanvasStore } from '@/store/canvas-store';
-import type { CanvasNode, NodeType, TextNodeData, AITextResultNodeData, ImageNodeData, UploadedImageNodeData } from '@/types/canvas';
+import type {
+  CanvasNode,
+  NodeType,
+  TextNodeData,
+  ImageGenerationNodeData,
+  AITextResultNodeData,
+  ImageNodeData,
+  UploadedImageNodeData,
+} from '@/types/canvas';
 
 import { TextNode } from '../nodes/TextNode';
+import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { ImageNode } from '../nodes/ImageNode';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
@@ -95,6 +104,29 @@ function TextNodeAdapter({ id, data, selected }: NodeProps) {
       onStartEdit={() => setEditing(true)}
       onEndEdit={() => setEditing(false)}
       onRun={() => generateText(id)}
+      onPromptPointerDown={() => notifyPromptBarInteraction?.()}
+      onPromptFocusWithinChange={setPromptFocused}
+    />
+  );
+}
+
+function ImageGenerationNodeAdapter({ id, data, selected }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateImage = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
+  const connectedImages = useCanvasStore((s) =>
+    s.getConnectedImagesForImageGenerationNode(id),
+  );
+  const [promptFocused, setPromptFocused] = useState(false);
+
+  return (
+    <ImageGenerationNode
+      id={id}
+      data={data as ImageGenerationNodeData}
+      selected={selected || promptFocused}
+      connectedImages={connectedImages}
+      onChange={(next) => updateNodeData<'image_generation'>(id, next)}
+      onRun={() => generateImage(id)}
+      onUpload={() => console.log('reference image upload pending')}
       onPromptPointerDown={() => notifyPromptBarInteraction?.()}
       onPromptFocusWithinChange={setPromptFocused}
     />
@@ -189,6 +221,7 @@ function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
 
 const nodeTypes = {
   text: TextNodeAdapter,
+  image_generation: ImageGenerationNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
@@ -264,7 +297,10 @@ function InnerCanvas() {
       position: n.position,
       data: n.data,
       selected: selectedNodeIds.has(n.id),
-      dragHandle: n.type === 'text' ? '.text-node-drag-handle' : undefined,
+      dragHandle:
+        n.type === 'text'
+          ? '.text-node-drag-handle'
+          : undefined,
     }));
   }, [storeNodes, selectedNodeIds]);
 
@@ -588,6 +624,10 @@ function InnerCanvas() {
       addNodeAtCenter('text', addMenu.canvas);
     }
 
+    if (action === 'image_generation' && addMenu) {
+      addNodeAtCenter('image_generation', addMenu.canvas);
+    }
+
     if (action === 'upload' && addMenu) {
       openUploadPicker(addMenu.canvas);
     }
@@ -687,6 +727,7 @@ function InnerCanvas() {
 
       <CanvasToolbar
         onAddTextNode={() => handleAddNode('text')}
+        onAddImageGenerationNode={() => handleAddNode('image_generation')}
         onUploadImage={() => openUploadPicker()}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
       />
