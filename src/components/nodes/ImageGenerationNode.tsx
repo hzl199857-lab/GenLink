@@ -1,12 +1,15 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import NextImage from 'next/image';
-import { Position } from 'reactflow';
+import { Position, useUpdateNodeInternals } from 'reactflow';
 import { Image as ImageIcon } from 'lucide-react';
 import type { ImageGenerationNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
-import { ImageGenerationNodeToolbar } from './ImageGenerationNodeToolbar';
+import {
+  ImageGenerationNodeToolbar,
+  type ImageGenerationToolbarAction,
+} from './ImageGenerationNodeToolbar';
 import { ImageGenerationPromptBar } from './ImageGenerationPromptBar';
 
 const MAX_CARD_EDGE = 540;
@@ -28,6 +31,8 @@ export interface ImageGenerationNodeProps {
   onChange?: (next: ImageGenerationNodeData) => void;
   onRun?: () => void;
   onUpload?: () => void;
+  onToolbarAction?: (action: ImageGenerationToolbarAction) => void;
+  onImageCardClick?: (data: ImageGenerationNodeData) => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
 }
@@ -102,9 +107,13 @@ export function ImageGenerationNode({
   onChange,
   onRun,
   onUpload,
+  onToolbarAction,
+  onImageCardClick,
   onPromptPointerDown,
   onPromptFocusWithinChange,
 }: ImageGenerationNodeProps) {
+  const updateNodeInternals = useUpdateNodeInternals();
+
   const handlePromptChange = (next: string) => {
     onChange?.({
       ...data,
@@ -160,9 +169,32 @@ export function ImageGenerationNode({
   const cardTopOffset = cardStageHeight - cardDimensions.height;
   const cardLeftOffset = Math.round((MAX_CARD_EDGE - cardDimensions.width) / 2);
   const previewImageUrl =
+    data.generatedHostedImageUrl ||
     data.generatedImageUrl ||
     data.referenceImageUrl ||
     connectedImages[0]?.imageUrl;
+  const hasGeneratedImage = Boolean(
+    data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim(),
+  );
+
+  useEffect(() => {
+    if (!id) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      updateNodeInternals(id);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [
+    cardDimensions.height,
+    cardDimensions.width,
+    cardLeftOffset,
+    cardTopOffset,
+    id,
+    updateNodeInternals,
+  ]);
 
   return (
     <div
@@ -190,7 +222,9 @@ export function ImageGenerationNode({
         <ImageGenerationNodeToolbar
           visible={selected}
           top={Math.max(0, cardTopOffset - CARD_ACCESSORY_TOP_SPACE)}
+          hasGeneratedImage={hasGeneratedImage}
           onUpload={onUpload}
+          onAction={onToolbarAction}
         />
 
         <div
@@ -205,12 +239,20 @@ export function ImageGenerationNode({
             className={[
               'node-connectable-card relative h-full w-full rounded-gl-lg border bg-gl-panel shadow-gl-card',
               'flex items-center justify-center overflow-hidden transition-[border-color,box-shadow] duration-300 ease-out',
+              hasGeneratedImage ? 'cursor-pointer' : '',
               isGenerating
                 ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
                 : selected
                   ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_0_8px_rgba(255,255,255,0.08)]'
                   : 'border-gl-stroke-subtle',
             ].join(' ')}
+            onClick={() => {
+              if (!hasGeneratedImage) {
+                return;
+              }
+
+              onImageCardClick?.(data);
+            }}
           >
             {previewImageUrl ? (
               <NextImage
@@ -225,6 +267,12 @@ export function ImageGenerationNode({
               <ImageIcon size={44} className="text-gl-text-muted" />
             )}
           </div>
+
+          {data.status === 'error' && data.errorMessage ? (
+            <div className="absolute left-0 right-0 -bottom-6 px-1 text-center text-[11px] text-gl-error">
+              {data.errorMessage}
+            </div>
+          ) : null}
         </div>
 
         <CardSideHandle
@@ -232,12 +280,16 @@ export function ImageGenerationNode({
           position={Position.Left}
           visible={showAccessories}
           cardTopOffset={cardTopOffset}
+          cardLeftOffset={cardLeftOffset}
+          cardWidth={cardDimensions.width}
         />
         <CardSideHandle
           type="source"
           position={Position.Right}
           visible={showAccessories}
           cardTopOffset={cardTopOffset}
+          cardLeftOffset={cardLeftOffset}
+          cardWidth={cardDimensions.width}
         />
       </div>
 

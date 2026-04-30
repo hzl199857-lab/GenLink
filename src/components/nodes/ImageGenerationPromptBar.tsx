@@ -237,7 +237,6 @@ export function ImageGenerationPromptBar({
   const [isComposing, setIsComposing] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -303,14 +302,14 @@ export function ImageGenerationPromptBar({
         <button
           type="button"
           className="absolute right-4 top-4 flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-white/[0.06] hover:text-gl-text-secondary"
-          title="Expand"
+          title="展开"
         >
           <Expand size={14} />
         </button>
 
         <div className="flex min-h-[138px] flex-col">
           <div className="mb-4 flex items-start gap-2">
-            <ToolSquareButton title="Reference image" onClick={onAddReference}>
+            <ToolSquareButton title="参考图" onClick={onAddReference}>
               <ReferenceImageIcon />
             </ToolSquareButton>
 
@@ -338,13 +337,12 @@ export function ImageGenerationPromptBar({
               </div>
             ) : null}
 
-            <ToolSquareButton title="Add" onClick={onAddReference}>
+            <ToolSquareButton title="添加参考图" onClick={onAddReference}>
               <span className="text-[24px] leading-none">+</span>
             </ToolSquareButton>
           </div>
 
           <textarea
-            ref={textareaRef}
             value={resolvedValue}
             onChange={(e) => {
               const next = e.target.value;
@@ -373,7 +371,7 @@ export function ImageGenerationPromptBar({
               setDraftPrompt(nextValue);
               onPromptChange?.(nextValue);
             }}
-            placeholder="Describe the image you want to generate"
+            placeholder="描述你想生成的图像内容"
             className="text-node-prompt-input nodrag nopan min-h-[72px] w-full resize-none overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
             rows={3}
           />
@@ -483,7 +481,7 @@ export function ImageGenerationPromptBar({
                                   type="button"
                                   onClick={() => onAspectRatioChange?.(item.value)}
                                   className={[
-                                    'flex w-[57px] flex-col items-center rounded-[12px] px-1 pt-2.5 pb-1.5 text-[12px] font-medium transition-colors duration-150',
+                                    'flex w-[57px] flex-col items-center rounded-[12px] px-1 pb-1.5 pt-2.5 text-[12px] font-medium transition-colors duration-150',
                                     item.className,
                                     selected
                                       ? 'bg-white/[0.1] text-gl-text-primary'

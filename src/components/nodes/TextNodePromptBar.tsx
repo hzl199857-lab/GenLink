@@ -122,7 +122,7 @@ export function TextNodePromptBar({
         <button
           onClick={() => setExpanded((v) => !v)}
           className="absolute right-5 top-4 z-10 flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-secondary"
-          title={expanded ? 'Collapse' : 'Expand'}
+          title={expanded ? '收起' : '展开'}
         >
           {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
@@ -185,7 +185,7 @@ export function TextNodePromptBar({
               }}
               onWheel={handleWheel}
               onWheelCapture={(e) => e.stopPropagation()}
-              placeholder="向 AI 描述你想要的文本内容..."
+              placeholder="告诉 AI 你想生成的文本内容..."
               rows={expanded ? 8 : 4}
               className="text-node-prompt-input nodrag nopan min-h-[108px] w-full resize-none overflow-y-auto border-0 bg-transparent pr-9 text-[15px] font-medium leading-6 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
               style={{ height: expanded ? 300 : undefined }}

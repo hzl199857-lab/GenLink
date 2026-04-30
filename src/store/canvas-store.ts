@@ -25,7 +25,36 @@ type ApiErrorResponse = {
   error: string;
 };
 
+type ImageJobPollResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      jobId: string;
+      status: "pending";
+    }
+  | {
+      ok: true;
+      jobId: string;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: true;
+      jobId: string;
+      status: "completed";
+      result: {
+        imageUrl: string;
+        hostedImageUrl?: string;
+        model: string;
+        width: number;
+        height: number;
+        format?: string;
+        sizeBytes?: number;
+      };
+    };
+
 export const CANVAS_TEXT_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
+export const CANVAS_IMAGE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
 function readStoredApiKey(storageKey: string): string {
   if (typeof window === "undefined") {
     return "";
@@ -36,6 +65,10 @@ function readStoredApiKey(storageKey: string): string {
 
 function readStoredTextApiKey(): string {
   return readStoredApiKey(CANVAS_TEXT_API_KEY_STORAGE_KEY);
+}
+
+function readStoredImageApiKey(): string {
+  return readStoredApiKey(CANVAS_IMAGE_API_KEY_STORAGE_KEY);
 }
 
 type AiTextStreamEvent =
@@ -101,42 +134,42 @@ const TEXT_SYSTEM_PROMPT =
 const IMAGE_SIZE_PRESETS = {
   "1K": {
     "1:1": "1024x1024",
-    "4:3": "1024x768",
-    "3:4": "768x1024",
-    "5:4": "1024x816",
-    "4:5": "816x1024",
-    "3:2": "1024x688",
-    "2:3": "688x1024",
-    "16:9": "1088x608",
-    "9:16": "608x1088",
-    "21:9": "1248x528",
-    "9:21": "528x1248",
+    "16:9": "1280x720",
+    "9:16": "720x1280",
+    "4:3": "1152x864",
+    "3:4": "864x1152",
+    "3:2": "1248x832",
+    "2:3": "832x1248",
+    "5:4": "1120x896",
+    "4:5": "896x1120",
+    "21:9": "1456x624",
+    "9:21": "624x1456",
   },
   "2K": {
     "1:1": "2048x2048",
-    "4:3": "2048x1536",
-    "3:4": "1536x2048",
-    "5:4": "2048x1632",
-    "4:5": "1632x2048",
-    "3:2": "2048x1360",
-    "2:3": "1360x2048",
-    "16:9": "2048x1152",
-    "9:16": "1152x2048",
-    "21:9": "2048x880",
-    "9:21": "880x2048",
+    "16:9": "2560x1440",
+    "9:16": "1440x2560",
+    "4:3": "2304x1728",
+    "3:4": "1728x2304",
+    "3:2": "2496x1664",
+    "2:3": "1664x2496",
+    "5:4": "2240x1792",
+    "4:5": "1792x2240",
+    "21:9": "3024x1296",
+    "9:21": "1296x3024",
   },
   "4K": {
     "1:1": "2880x2880",
-    "4:3": "3312x2480",
-    "3:4": "2480x3312",
-    "5:4": "3200x2560",
-    "4:5": "2560x3200",
-    "3:2": "3520x2352",
-    "2:3": "2352x3520",
     "16:9": "3840x2160",
     "9:16": "2160x3840",
-    "21:9": "3840x1648",
-    "9:21": "1648x3840",
+    "4:3": "3264x2448",
+    "3:4": "2448x3264",
+    "3:2": "3504x2336",
+    "2:3": "2336x3504",
+    "5:4": "3200x2560",
+    "4:5": "2560x3200",
+    "21:9": "3696x1584",
+    "9:21": "1584x3696",
   },
 } as const;
 
@@ -271,6 +304,74 @@ function toErrorMessage(error: unknown): string {
   }
 
   return "Internal error";
+}
+
+async function persistGeneratedImage(
+  imageUrl: string,
+  prompt: string,
+): Promise<string | undefined> {
+  if (!imageUrl.startsWith("data:")) {
+    return undefined;
+  }
+
+  const response = await fetch("/api/image-hosting/upload", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      dataUrl: imageUrl,
+      fileName: `${prompt || "generated-image"}.png`,
+    }),
+  });
+
+  const json = (await response.json()) as
+    | {
+        ok: true;
+        result: {
+          imageUrl: string;
+        };
+      }
+    | ApiErrorResponse;
+
+  if (!response.ok || !("ok" in json) || json.ok === false) {
+    throw new Error("error" in json ? json.error : "Image hosting failed");
+  }
+
+  return json.result.imageUrl;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pollImageGenerationJob(jobId: string): Promise<Extract<ImageJobPollResponse, { ok: true; status: "completed" }>["result"]> {
+  const startedAt = Date.now();
+  const timeoutMs = 10 * 60_000;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await fetch(`/api/ai/image?jobId=${encodeURIComponent(jobId)}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    const json = (await response.json()) as ImageJobPollResponse;
+
+    if (!response.ok || ("ok" in json && json.ok === false)) {
+      throw new Error("error" in json ? json.error : "Image polling failed");
+    }
+
+    if (json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.status === "error") {
+      throw new Error(json.error || "Image generation failed");
+    }
+
+    await sleep(2000);
+  }
+
+  throw new Error("Image generation polling timed out");
 }
 
 async function assertOkResponse<TSuccess extends { ok: true }>(
@@ -673,10 +774,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt is required");
     }
 
-    if (!readStoredTextApiKey()) {
-      throw new Error("Please set the Text API key first");
-    }
-
     const connectedImages = getConnectedImagesForTargetNode(
       state.nodes,
       state.edges,
@@ -721,7 +818,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           model: textNode.data.model,
           systemPrompt: TEXT_SYSTEM_PROMPT,
           temperature: 0.9,
-          apiKey: readStoredTextApiKey(),
+          apiKey: readStoredTextApiKey() || undefined,
           images: connectedImages.map((image) => ({
             url: isClaudeModel(textNode.data.model)
               ? image.originalImageUrl
@@ -811,10 +908,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt is required");
     }
 
-    if (!readStoredTextApiKey()) {
-      throw new Error("Please set the API key first");
-    }
-
     const connectedImages = getConnectedImagesForTargetNode(
       state.nodes,
       state.edges,
@@ -835,6 +928,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               ...node,
               data: {
                 ...node.data,
+                generatedImageUrl: undefined,
+                generatedHostedImageUrl: undefined,
+                generatedImageWidth: undefined,
+                generatedImageHeight: undefined,
+                generatedImageFormat: undefined,
+                generatedImageSizeBytes: undefined,
+                generatedModel: undefined,
+                generatedAt: undefined,
                 status: "generating",
                 errorMessage: undefined,
               },
@@ -854,7 +955,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           model: imageGenerationNode.data.model,
           size,
           quality,
-          apiKey: readStoredTextApiKey(),
+          apiKey: readStoredImageApiKey() || undefined,
           images:
             connectedImages.length > 0
               ? connectedImages.map((image) => ({
@@ -868,18 +969,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const json = (await response.json()) as
         | {
             ok: true;
-            result: {
-              imageUrl: string;
-              model: string;
-              width: number;
-              height: number;
-            };
+            jobId: string;
+            status: "pending";
           }
         | ApiErrorResponse;
 
       if (!response.ok || !("ok" in json) || json.ok === false) {
         throw new Error("error" in json ? json.error : "Request failed");
       }
+
+      const result = await pollImageGenerationJob(json.jobId);
+      const hostedImageUrl =
+        result.hostedImageUrl ||
+        (await persistGeneratedImage(
+          result.imageUrl,
+          imageGenerationNode.data.prompt.trim(),
+        ).catch((error) => {
+          console.warn("generated image hosting failed", error);
+          return undefined;
+        }));
 
       set((currentState) => ({
         error: null,
@@ -890,9 +998,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 ...node,
                 data: {
                   ...node.data,
-                  generatedImageUrl: json.result.imageUrl,
-                  generatedImageWidth: json.result.width,
-                  generatedImageHeight: json.result.height,
+                  generatedImageUrl: result.imageUrl,
+                  generatedHostedImageUrl: hostedImageUrl,
+                  generatedImageWidth: result.width,
+                  generatedImageHeight: result.height,
+                  generatedImageFormat: result.format,
+                  generatedImageSizeBytes: result.sizeBytes,
+                  generatedModel: result.model,
                   generatedAt: nowIso(),
                   status: "idle",
                   errorMessage: undefined,

@@ -20,7 +20,11 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import { CANVAS_TEXT_API_KEY_STORAGE_KEY, useCanvasStore } from '@/store/canvas-store';
+import {
+  CANVAS_IMAGE_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_API_KEY_STORAGE_KEY,
+  useCanvasStore,
+} from '@/store/canvas-store';
 import type {
   CanvasNode,
   NodeType,
@@ -37,12 +41,83 @@ import { AITextResultNode } from '../nodes/AITextResultNode';
 import { ImageNode } from '../nodes/ImageNode';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
 import { CardSideHandle } from '../nodes/CardSideHandle';
+import {
+  ImageGenerationInfoPopover,
+  type ImageGenerationInfoPopoverData,
+} from '../nodes/ImageGenerationInfoPopover';
 import { NodeFloatingToolbar } from '../nodes/NodeFloatingToolbar';
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasToolbar } from './CanvasToolbar';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
+let notifyImageToolbarAction: ((action: string) => void) | null = null;
+let notifyImageGenerationCardClick:
+  | ((data: ImageGenerationNodeData) => void)
+  | null = null;
+
+function formatImageSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) {
+    return '-';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const fractionDigits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(fractionDigits)} ${units[unitIndex]}`;
+}
+
+function formatImageResolution(width?: number, height?: number): string {
+  if (!width || !height) {
+    return '-';
+  }
+
+  return `${width}×${height}`;
+}
+
+function formatGeneratedAt(value?: string): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '-';
+  }
+
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function toImageInfoPopoverData(
+  data: ImageGenerationNodeData,
+): ImageGenerationInfoPopoverData {
+  return {
+    title: data.prompt?.trim() || data.title?.trim() || '未命名图片',
+    model: data.generatedModel?.trim() || data.model?.trim() || '-',
+    format: data.generatedImageFormat?.trim() || 'PNG',
+    size: formatImageSize(data.generatedImageSizeBytes),
+    resolution: formatImageResolution(
+      data.generatedImageWidth,
+      data.generatedImageHeight,
+    ),
+    createdTime: formatGeneratedAt(data.generatedAt),
+  };
+}
 
 // --- Adapters ---
 function readImageFile(file: File): Promise<UploadedImageNodeData> {
@@ -127,6 +202,8 @@ function ImageGenerationNodeAdapter({ id, data, selected }: NodeProps) {
       onChange={(next) => updateNodeData<'image_generation'>(id, next)}
       onRun={() => generateImage(id)}
       onUpload={() => console.log('reference image upload pending')}
+      onToolbarAction={(action) => notifyImageToolbarAction?.(action)}
+      onImageCardClick={(next) => notifyImageGenerationCardClick?.(next)}
       onPromptPointerDown={() => notifyPromptBarInteraction?.()}
       onPromptFocusWithinChange={setPromptFocused}
     />
@@ -331,10 +408,16 @@ function InnerCanvas() {
       ? ''
       : window.localStorage.getItem(CANVAS_TEXT_API_KEY_STORAGE_KEY) ?? '',
   );
+  const [imageApiKey, setImageApiKey] = useState(() =>
+    typeof window === 'undefined'
+      ? ''
+      : window.localStorage.getItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY) ?? '',
+  );
   const [addMenu, setAddMenu] = useState<{
     screen: { x: number; y: number };
     canvas: { x: number; y: number };
   } | null>(null);
+  const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const promptBarInteractionRef = useRef(false);
@@ -353,6 +436,30 @@ function InnerCanvas() {
     return () => {
       if (notifyPromptBarInteraction) {
         notifyPromptBarInteraction = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    notifyImageToolbarAction = (action) => {
+      console.log(`image toolbar action pending: ${action}`);
+    };
+
+    return () => {
+      if (notifyImageToolbarAction) {
+        notifyImageToolbarAction = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    notifyImageGenerationCardClick = (data) => {
+      setImageInfoPopover(toImageInfoPopoverData(data));
+    };
+
+    return () => {
+      if (notifyImageGenerationCardClick) {
+        notifyImageGenerationCardClick = null;
       }
     };
   }, []);
@@ -486,6 +593,7 @@ function InnerCanvas() {
 
   const handlePaneClick = useCallback(() => {
     setAddMenu(null);
+    setImageInfoPopover(null);
     clearEdgeSelection();
   }, [clearEdgeSelection]);
 
@@ -635,9 +743,11 @@ function InnerCanvas() {
     setAddMenu(null);
   }, [addMenu, addNodeAtCenter, openUploadPicker]);
 
-  const handleSaveApiKeys = useCallback((values: { textApiKey: string }) => {
+  const handleSaveApiKeys = useCallback((values: { textApiKey: string; imageApiKey: string }) => {
     window.localStorage.setItem(CANVAS_TEXT_API_KEY_STORAGE_KEY, values.textApiKey);
+    window.localStorage.setItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY, values.imageApiKey);
     setTextApiKey(values.textApiKey);
+    setImageApiKey(values.imageApiKey);
     setApiSettingsOpen(false);
   }, []);
 
@@ -731,6 +841,11 @@ function InnerCanvas() {
         onUploadImage={() => openUploadPicker()}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
       />
+      <ImageGenerationInfoPopover
+        open={imageInfoPopover !== null}
+        data={imageInfoPopover}
+        onClose={() => setImageInfoPopover(null)}
+      />
       <input
         ref={uploadInputRef}
         type="file"
@@ -741,6 +856,7 @@ function InnerCanvas() {
       <ApiSettingsPanel
         open={apiSettingsOpen}
         initialTextApiKey={textApiKey}
+        initialImageApiKey={imageApiKey}
         onClose={() => setApiSettingsOpen(false)}
         onSave={handleSaveApiKeys}
       />

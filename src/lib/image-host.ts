@@ -1,17 +1,21 @@
-import "server-only";
+import 'server-only';
 
-import { createHmac, randomUUID } from "node:crypto";
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
-import { VibeApiError } from "@/lib/vibe";
+import { VibeApiError } from '@/lib/vibe';
 
-const OSS_POLICY_EXPIRES_IN_MS = 5 * 60 * 1000;
-const OSS_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const LOCAL_IMAGE_DIR = path.resolve(process.cwd(), 'img');
+const LOCAL_IMAGE_ROUTE_PREFIX = '/api/image-hosting/file';
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_FILE_STEM_LENGTH = 80;
 
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
 
   if (!match) {
-    throw new VibeApiError(400, "Only base64 data URLs can be uploaded");
+    throw new VibeApiError(400, 'Only base64 data URLs can be uploaded');
   }
 
   return {
@@ -20,111 +24,63 @@ function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
   };
 }
 
-function normalizeFileName(fileName?: string, mimeType?: string): string {
+function extensionFromMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+
+  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/gif') return 'gif';
+
+  const fallback = normalized.split('/')[1]?.replace(/[^\w]+/g, '') || 'png';
+  return fallback;
+}
+
+function normalizeFileStem(fileName?: string): string {
   const trimmed = fileName?.trim();
 
-  if (trimmed) {
-    return trimmed.replace(/[^\w.\-]+/g, "_");
+  if (!trimmed) {
+    return 'generated-image';
   }
 
-  const extension = mimeType?.split("/")[1]?.toLowerCase() || "png";
-  return `genlink-upload.${extension === "jpeg" ? "jpg" : extension}`;
-}
+  const parsed = path.parse(trimmed);
+  const stem = parsed.name || 'generated-image';
+  const normalized = stem.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
 
-function resolveOssConfig() {
-  const bucket = process.env.ALIYUN_OSS_BUCKET?.trim();
-  const region = process.env.ALIYUN_OSS_REGION?.trim();
-  const accessKeyId = process.env.ALIYUN_OSS_ACCESS_KEY_ID?.trim();
-  const accessKeySecret = process.env.ALIYUN_OSS_ACCESS_KEY_SECRET?.trim();
-  const publicBaseUrl = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim();
-
-  if (!bucket || !region || !accessKeyId || !accessKeySecret) {
-    throw new VibeApiError(
-      500,
-      "Aliyun OSS is not configured. Please set ALIYUN_OSS_BUCKET, ALIYUN_OSS_REGION, ALIYUN_OSS_ACCESS_KEY_ID, and ALIYUN_OSS_ACCESS_KEY_SECRET.",
-    );
+  if (!normalized) {
+    return 'generated-image';
   }
 
-  return {
-    bucket,
-    region,
-    accessKeyId,
-    accessKeySecret,
-    host: `https://${bucket}.oss-${region}.aliyuncs.com`,
-    publicBaseUrl: publicBaseUrl || `https://${bucket}.oss-${region}.aliyuncs.com`,
-  };
+  return normalized.slice(0, MAX_FILE_STEM_LENGTH);
 }
 
-function buildObjectKey(fileName?: string, mimeType?: string): string {
-  const normalizedFileName = normalizeFileName(fileName, mimeType);
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-
-  return `genlink/${year}/${month}/${randomUUID()}-${normalizedFileName}`;
+export function getLocalImageDirectory(): string {
+  return LOCAL_IMAGE_DIR;
 }
 
-export async function uploadImageDataUrl(
+export async function saveImageDataUrl(
   dataUrl: string,
   fileName?: string,
 ): Promise<string> {
   const { mimeType, base64 } = parseDataUrl(dataUrl);
-  const bytes = Buffer.from(base64, "base64");
+  const bytes = Buffer.from(base64, 'base64');
 
   if (bytes.byteLength === 0) {
-    throw new VibeApiError(400, "Image data is empty");
+    throw new VibeApiError(400, 'Image data is empty');
   }
 
-  if (bytes.byteLength > OSS_MAX_UPLOAD_BYTES) {
-    throw new VibeApiError(400, "Image is too large to upload");
+  if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+    throw new VibeApiError(400, 'Image is too large to save');
   }
 
-  const config = resolveOssConfig();
-  const objectKey = buildObjectKey(fileName, mimeType);
-  const expiration = new Date(Date.now() + OSS_POLICY_EXPIRES_IN_MS).toISOString();
-  const policy = {
-    expiration,
-    conditions: [
-      ["content-length-range", 0, OSS_MAX_UPLOAD_BYTES],
-      ["eq", "$key", objectKey],
-      ["eq", "$success_action_status", "200"],
-      ["eq", "$Content-Type", mimeType],
-      ["eq", "$Content-Disposition", "inline"],
-    ],
-  };
+  await mkdir(LOCAL_IMAGE_DIR, { recursive: true });
 
-  const policyBase64 = Buffer.from(JSON.stringify(policy)).toString("base64");
-  const signature = createHmac("sha1", config.accessKeySecret)
-    .update(policyBase64)
-    .digest("base64");
+  const extension = extensionFromMimeType(mimeType);
+  const stem = normalizeFileStem(fileName);
+  const savedFileName = `${new Date().toISOString().slice(0, 10)}-${randomUUID()}-${stem}.${extension}`;
+  const absolutePath = path.join(LOCAL_IMAGE_DIR, savedFileName);
 
-  const formData = new FormData();
-  formData.append("key", objectKey);
-  formData.append("OSSAccessKeyId", config.accessKeyId);
-  formData.append("policy", policyBase64);
-  formData.append("Signature", signature);
-  formData.append("success_action_status", "200");
-  formData.append("Content-Type", mimeType);
-  formData.append("Content-Disposition", "inline");
-  formData.append(
-    "file",
-    new Blob([bytes], { type: mimeType }),
-    normalizeFileName(fileName, mimeType),
-  );
+  await writeFile(absolutePath, bytes);
 
-  const response = await fetch(config.host, {
-    method: "POST",
-    body: formData,
-  });
-
-  const text = (await response.text()).trim();
-
-  if (!response.ok) {
-    throw new VibeApiError(
-      response.status,
-      text || "Aliyun OSS upload failed",
-    );
-  }
-
-  return `${config.publicBaseUrl.replace(/\/$/, "")}/${objectKey}`;
+  return `${LOCAL_IMAGE_ROUTE_PREFIX}/${encodeURIComponent(savedFileName)}`;
 }

@@ -8,7 +8,8 @@ const VIBE_GEMINI_BASE_URL = "https://www.vibeapi.cn";
 const DEFAULT_TEXT_MODEL = "gpt-4o-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 const DEFAULT_IMAGE_SIZE = "1024x1024";
-const REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 6 * 60_000;
 
 export interface GenerateTextParams {
   prompt: string;
@@ -390,6 +391,7 @@ async function requestJson<T>(
   path: string,
   body: Record<string, unknown>,
   apiKey?: string,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   return requestJsonWithBaseUrl<T>(
     VIBE_BASE_URL,
@@ -397,6 +399,7 @@ async function requestJson<T>(
     body,
     apiKey,
     createHeaders,
+    timeoutMs,
   );
 }
 
@@ -406,9 +409,10 @@ async function requestJsonWithBaseUrl<T>(
   body: Record<string, unknown>,
   apiKey?: string,
   requestHeadersFactory: (apiKey?: string) => HeadersInit = createHeaders,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${baseUrl}${path}`, {
@@ -457,9 +461,10 @@ async function requestStream(
   body: Record<string, unknown>,
   apiKey?: string,
   requestHeadersFactory: (apiKey?: string) => HeadersInit = createHeaders,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${VIBE_BASE_URL}${path}`, {
@@ -521,9 +526,10 @@ async function requestForm<T>(
   path: string,
   formData: FormData,
   apiKey?: string,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${VIBE_BASE_URL}${path}`, {
@@ -903,6 +909,7 @@ async function generateImageOpenAI(
       "/images/edits",
       formData,
       params.apiKey,
+      IMAGE_REQUEST_TIMEOUT_MS,
     );
   } else {
     json = await requestJson<VibeImageResponse>(
@@ -915,6 +922,7 @@ async function generateImageOpenAI(
         n: params.n ?? 1,
       },
       params.apiKey,
+      IMAGE_REQUEST_TIMEOUT_MS,
     );
   }
 
@@ -961,6 +969,8 @@ async function generateImageGemini(
       },
     },
     params.apiKey,
+    createHeaders,
+    IMAGE_REQUEST_TIMEOUT_MS,
   );
 
   const imagePart = json.candidates?.[0]?.content?.parts?.find(

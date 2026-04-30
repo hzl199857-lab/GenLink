@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { uploadImageDataUrl } from "@/lib/image-host";
+import { saveImageDataUrl } from "@/lib/image-host";
 import { VibeApiError } from "@/lib/vibe";
 
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const imageUrl = await uploadImageDataUrl(
+    const imageUrl = await saveImageDataUrl(
       body.dataUrl,
       typeof body.fileName === "string" ? body.fileName : undefined,
     );

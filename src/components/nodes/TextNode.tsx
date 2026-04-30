@@ -50,11 +50,21 @@ export function TextNode({
   };
 
   const handlePromptChange = (next: string) => {
-    onChange?.({ ...data, aiPrompt: next, status: data.status === 'error' ? 'idle' : data.status, errorMessage: undefined });
+    onChange?.({
+      ...data,
+      aiPrompt: next,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
   };
 
   const handleModelChange = (next: string) => {
-    onChange?.({ ...data, model: next, status: data.status === 'error' ? 'idle' : data.status, errorMessage: undefined });
+    onChange?.({
+      ...data,
+      model: next,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
   };
 
   const handleCopyContent = async () => {
@@ -74,16 +84,16 @@ export function TextNode({
 
   return (
     <div className="relative group node-connectable-root">
-      <div className="flex items-center gap-1.5 text-gl-text-tertiary mb-1.5 ml-1 select-none nodrag nopan">
+      <div className="mb-1.5 ml-1 flex select-none items-center gap-1.5 text-gl-text-tertiary nodrag nopan">
         <AlignLeft size={12} />
         <span className="text-[11px] font-medium leading-none">{data.title || 'Text'}</span>
       </div>
 
       <div
         className={[
-          'node-connectable-card text-node-drag-handle relative rounded-gl-lg bg-gl-panel border shadow-gl-card',
-          'min-w-[200px] max-w-[460px] min-h-[260px]',
-          'px-5 py-4 flex flex-col cursor-grab transition-colors duration-150',
+          'node-connectable-card text-node-drag-handle relative rounded-gl-lg border bg-gl-panel shadow-gl-card',
+          'min-h-[260px] min-w-[200px] max-w-[460px] px-5 py-4',
+          'flex cursor-grab flex-col transition-colors duration-150',
           isGenerating
             ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
             : selected
@@ -101,14 +111,14 @@ export function TextNode({
             onWheelCapture={handleContentWheel}
             onWheel={handleContentWheel}
             placeholder="双击开始编辑..."
-            className="text-node-scrollable nodrag nopan w-full flex-1 overflow-y-auto bg-transparent border-none outline-none resize-none pr-1 text-[13px] leading-6 text-gl-text-primary placeholder:text-gl-text-muted"
+            className="text-node-scrollable nodrag nopan w-full flex-1 resize-none overflow-y-auto border-none bg-transparent pr-1 text-[13px] leading-6 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
             style={{ maxHeight: TEXT_NODE_SCROLL_THRESHOLD_PX }}
           />
         ) : (
           <div
             onWheelCapture={handleContentWheel}
             onWheel={handleContentWheel}
-            className="text-node-scrollable whitespace-pre-wrap text-[13px] leading-6 flex-1 w-full overflow-y-auto pr-1"
+            className="text-node-scrollable flex-1 w-full overflow-y-auto whitespace-pre-wrap pr-1 text-[13px] leading-6"
             style={{ maxHeight: TEXT_NODE_SCROLL_THRESHOLD_PX }}
           >
             {data.text ? (

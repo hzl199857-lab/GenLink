@@ -54,7 +54,7 @@ export function CanvasToolbar({
         type="button"
         onClick={onAddImageGenerationNode}
         className="flex h-9 w-9 items-center justify-center rounded-gl-md text-gl-text-secondary transition-colors duration-150 hover:bg-gl-panel-hover hover:text-gl-text-primary"
-        title="添加图片生成节点"
+        title="添加图像节点"
       >
         <ImageIcon size={16} />
       </button>

@@ -103,6 +103,10 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
       title: typeof record.title === "string" ? record.title : "Image",
       prompt: typeof record.prompt === "string" ? record.prompt : "",
       model: typeof record.model === "string" ? record.model : "gpt-image-2",
+      generatedModel:
+        typeof record.generatedModel === "string"
+          ? record.generatedModel
+          : undefined,
       aspectRatio: typeof record.aspectRatio === "string" ? record.aspectRatio : "auto",
       quality: typeof record.quality === "string" ? record.quality : "1K",
       detail: typeof record.detail === "string" ? record.detail : "medium",
@@ -115,6 +119,10 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
         typeof record.generatedImageUrl === "string"
           ? record.generatedImageUrl
           : undefined,
+      generatedHostedImageUrl:
+        typeof record.generatedHostedImageUrl === "string"
+          ? record.generatedHostedImageUrl
+          : undefined,
       generatedImageWidth:
         typeof record.generatedImageWidth === "number"
           ? record.generatedImageWidth
@@ -122,6 +130,14 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
       generatedImageHeight:
         typeof record.generatedImageHeight === "number"
           ? record.generatedImageHeight
+          : undefined,
+      generatedImageFormat:
+        typeof record.generatedImageFormat === "string"
+          ? record.generatedImageFormat
+          : undefined,
+      generatedImageSizeBytes:
+        typeof record.generatedImageSizeBytes === "number"
+          ? record.generatedImageSizeBytes
           : undefined,
       generatedAt:
         typeof record.generatedAt === "string"

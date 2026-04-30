@@ -33,14 +33,18 @@ export interface ImageGenerationNodeData {
   title?: string;
   prompt?: string;
   model?: string;
+  generatedModel?: string;
   aspectRatio?: string;
   quality?: string;
   detail?: string;
   count?: number;
   referenceImageUrl?: string;
   generatedImageUrl?: string;
+  generatedHostedImageUrl?: string;
   generatedImageWidth?: number;
   generatedImageHeight?: number;
+  generatedImageFormat?: string;
+  generatedImageSizeBytes?: number;
   generatedAt?: string;
   status?: "idle" | "generating" | "error";
   errorMessage?: string;

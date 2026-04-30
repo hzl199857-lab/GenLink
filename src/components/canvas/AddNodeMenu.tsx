@@ -33,12 +33,12 @@ const NODE_ITEMS: Array<{
   {
     action: 'text',
     title: '文本',
-    subtitle: '广告词、品牌文案',
+    subtitle: '广告语、品牌文案',
     icon: AlignLeft,
   },
   {
     action: 'image_generation',
-    title: '图片',
+    title: '图像',
     subtitle: '宣传图、海报、封面',
     icon: ImageIcon,
   },

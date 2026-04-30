@@ -12,13 +12,13 @@ import { Plus } from 'lucide-react';
 const SIDE_ZONE_WIDTH = 96;
 
 const HANDLE_HITBOX_BASE =
-  '!z-30 !pointer-events-auto !w-[10px] !-translate-y-1/2 !rounded-full !border-0 !bg-transparent cursor-crosshair nodrag nopan';
+  '!z-30 !pointer-events-auto !w-[10px] !-translate-y-1/2 !rounded-full !border-0 !bg-transparent transition-[top,left] duration-300 ease-out cursor-crosshair nodrag nopan';
 
 const HANDLE_BADGE_BASE =
-  'pointer-events-none absolute z-40 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-full border border-gl-stroke-medium bg-gl-panel text-gl-text-tertiary transition-[opacity,color,box-shadow,border-color] duration-150 nodrag nopan';
+  'pointer-events-none absolute z-40 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-full border border-gl-stroke-medium bg-gl-panel text-gl-text-tertiary transition-[top,left,opacity,color,box-shadow,border-color] duration-300 ease-out nodrag nopan';
 
 const SIDE_ZONE_BASE =
-  'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
+  'pointer-events-auto absolute z-20 cursor-crosshair transition-[top,left,height] duration-300 ease-out nodrag nopan';
 
 let activeConnectionCleanup: (() => void) | null = null;
 
@@ -27,6 +27,8 @@ export interface CardSideHandleProps {
   position: Position.Left | Position.Right;
   visible?: boolean;
   cardTopOffset?: number;
+  cardLeftOffset?: number;
+  cardWidth?: number;
 }
 
 export function CardSideHandle({
@@ -34,6 +36,8 @@ export function CardSideHandle({
   position,
   visible = false,
   cardTopOffset = 0,
+  cardLeftOffset = 0,
+  cardWidth = 0,
 }: CardSideHandleProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const handleDomId = useId();
@@ -44,11 +48,16 @@ export function CardSideHandle({
     () => `calc(50% + ${cardTopOffset / 2}px)`,
     [cardTopOffset],
   );
-  const sideClass = position === Position.Left
-    ? '!-left-[5px]'
-    : '!-right-[5px]';
-  const defaultBadgeSideClass = position === Position.Left ? '-left-[44px]' : '-right-[44px]';
-  const zoneSideClass = position === Position.Left ? '-left-[96px]' : '-right-[96px]';
+  const cardRightEdge = cardLeftOffset + cardWidth;
+  const handleLeft = position === Position.Left
+    ? cardLeftOffset - 5
+    : cardRightEdge - 5;
+  const badgeLeft = position === Position.Left
+    ? cardLeftOffset - 44
+    : cardRightEdge + 22;
+  const zoneLeft = position === Position.Left
+    ? cardLeftOffset - SIDE_ZONE_WIDTH
+    : cardRightEdge;
 
   useEffect(() => () => {
     cleanupRef.current?.();
@@ -405,18 +414,20 @@ export function CardSideHandle({
         className={[
           'card-side-handle',
           HANDLE_HITBOX_BASE,
-          sideClass,
           visible ? '!opacity-100' : '!opacity-0 group-hover:!opacity-100',
         ].join(' ')}
-        style={{ top: handleTop }}
+        style={{
+          top: handleTop,
+          left: `${handleLeft}px`,
+        }}
       />
       <div
         className={[
           'card-side-handle-zone',
           SIDE_ZONE_BASE,
-          zoneSideClass,
         ].join(' ')}
         style={{
+          left: `${zoneLeft}px`,
           top: cardTopOffset,
           width: SIDE_ZONE_WIDTH,
           height: `calc(100% - ${cardTopOffset}px)`,
@@ -428,10 +439,12 @@ export function CardSideHandle({
         className={[
           'card-side-handle-badge',
           HANDLE_BADGE_BASE,
-          defaultBadgeSideClass,
           visible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
         ].join(' ')}
-        style={{ top: handleTop }}
+        style={{
+          top: handleTop,
+          left: `${badgeLeft}px`,
+        }}
       >
         <Plus size={12} className="pointer-events-none" />
       </span>
