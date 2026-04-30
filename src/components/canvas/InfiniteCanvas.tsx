@@ -667,6 +667,7 @@ function InnerCanvas() {
         onPaneScroll={handlePaneClick}
         onMoveStart={handlePaneClick}
         onDoubleClick={handlePaneDoubleClick}
+        connectOnClick={false}
         zoomOnDoubleClick={false}
         nodeDragThreshold={1}
         deleteKeyCode={null}
