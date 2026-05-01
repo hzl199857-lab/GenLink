@@ -34,7 +34,9 @@ export interface ImageGenerationNodeProps {
   onRun?: () => void;
   onUpload?: () => void;
   onToolbarAction?: (action: ImageGenerationToolbarAction) => void;
+  onOpenLightbox?: (data: ImageGenerationNodeData) => void;
   onImageCardClick?: (data: ImageGenerationNodeData) => void;
+  onSelectNode?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
 }
@@ -110,7 +112,9 @@ export function ImageGenerationNode({
   onRun,
   onUpload,
   onToolbarAction,
+  onOpenLightbox,
   onImageCardClick,
+  onSelectNode,
   onPromptPointerDown,
   onPromptFocusWithinChange,
 }: ImageGenerationNodeProps) {
@@ -250,6 +254,7 @@ export function ImageGenerationNode({
           hasGeneratedImage={hasGeneratedImage}
           onUpload={onUpload}
           onAction={onToolbarAction}
+          onOpenLightbox={() => onOpenLightbox?.(data)}
         />
 
         <div
@@ -271,11 +276,14 @@ export function ImageGenerationNode({
                   ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_0_8px_rgba(255,255,255,0.08)]'
                   : 'border-gl-stroke-subtle',
             ].join(' ')}
-            onClick={() => {
+            onClick={(event) => {
+              event.stopPropagation();
+
               if (!hasGeneratedImage) {
                 return;
               }
 
+              onSelectNode?.();
               onImageCardClick?.(data);
             }}
           >

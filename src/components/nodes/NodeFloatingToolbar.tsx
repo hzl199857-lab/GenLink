@@ -24,6 +24,7 @@ export function NodeFloatingToolbar({
 
   return (
     <div
+      data-canvas-menu-ignore="true"
       onPointerDown={(e) => e.stopPropagation()}
       className="absolute -top-[44px] left-1/2 -translate-x-1/2 z-50 bg-gl-panel/90 backdrop-blur-md border border-gl-stroke-soft rounded-gl-pill shadow-gl-toolbar px-2 py-1 flex items-center gap-1 transition-opacity duration-150 ease-out"
     >

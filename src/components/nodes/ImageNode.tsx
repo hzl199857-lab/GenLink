@@ -63,9 +63,12 @@ export function ImageNode({
 
       {/* Image Area */}
       <div className="p-4 pb-2">
-        <div 
+        <div
           className="relative w-full aspect-[4/3] rounded-gl-md overflow-hidden bg-gl-panel-soft cursor-pointer group"
-          onClick={onShowInfo}
+          onClick={(event) => {
+            event.stopPropagation();
+            onShowInfo?.();
+          }}
         >
           {loading ? (
             <div className="absolute inset-0 bg-gl-panel-soft animate-pulse" />

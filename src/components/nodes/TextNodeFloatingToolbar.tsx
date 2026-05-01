@@ -44,6 +44,7 @@ export function TextNodeFloatingToolbar({
       align="center"
     >
       <div
+        data-canvas-menu-ignore="true"
         onPointerDown={(e) => e.stopPropagation()}
         className="bg-gl-panel/95 backdrop-blur-md border border-gl-stroke-soft rounded-gl-pill shadow-gl-toolbar px-3 py-2 flex items-center gap-1.5"
       >

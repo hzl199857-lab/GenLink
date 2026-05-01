@@ -105,6 +105,7 @@ export function TextNodePromptBar({
       align="center"
     >
       <div
+        data-canvas-menu-ignore="true"
         onPointerDownCapture={(e) => {
           onPointerDownWithin?.();
           e.stopPropagation();
@@ -236,7 +237,7 @@ export function TextNodePromptBar({
             </button>
 
             {modelMenuOpen ? (
-              <div className="absolute left-0 top-full mt-2 w-[210px] overflow-hidden rounded-[16px] border border-white/10 bg-[#121417]/98 p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] backdrop-blur-xl">
+              <div className="absolute left-0 top-full mt-2 w-[210px] overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
                 <div className="mb-1 px-2 py-1 text-[15px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
                   Models
                 </div>

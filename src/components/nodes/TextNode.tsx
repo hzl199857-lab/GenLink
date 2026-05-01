@@ -8,7 +8,7 @@ import { CardSideHandle } from './CardSideHandle';
 import { TextNodeFloatingToolbar } from './TextNodeFloatingToolbar';
 import { TextNodePromptBar } from './TextNodePromptBar';
 
-const TEXT_NODE_SCROLL_THRESHOLD_PX = 433;
+const TEXT_NODE_SCROLL_THRESHOLD_PX = 289;
 
 export interface TextNodeProps {
   id?: string;
@@ -153,7 +153,7 @@ export function TextNode({
           ref={cardRef}
           className={[
             'node-connectable-card text-node-drag-handle relative rounded-gl-lg border bg-gl-panel shadow-gl-card',
-            'h-[433px] w-[767px] px-5 py-4',
+            'h-[289px] w-[511px] px-5 py-4',
             'flex cursor-grab flex-col transition-colors duration-150',
             isGenerating
               ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'

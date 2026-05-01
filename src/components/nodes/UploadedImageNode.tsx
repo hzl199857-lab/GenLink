@@ -69,7 +69,10 @@ export function UploadedImageNode({
             : 'shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
         ].join(' ')}
         style={{ aspectRatio: `${imageWidth} / ${imageHeight}` }}
-        onClick={onShowInfo}
+        onClick={(event) => {
+          event.stopPropagation();
+          onShowInfo?.();
+        }}
       >
         {data.imageUrl ? (
           <NextImage

@@ -25,9 +25,9 @@ function InfoRow({
   value: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6">
-      <span className="text-[14px] text-white/42">{label}</span>
-      <span className="text-right text-[16px] font-semibold text-white/90">
+    <div className="flex items-center justify-between gap-3">
+      <span className="shrink-0 whitespace-nowrap text-[11px] text-white/42">{label}</span>
+      <span className="whitespace-nowrap text-right text-[12px] font-semibold text-white/90">
         {value}
       </span>
     </div>
@@ -45,25 +45,26 @@ export function ImageGenerationInfoPopover({
 
   return (
     <div className="pointer-events-none fixed right-6 top-6 z-[70]">
-      <div className="pointer-events-auto w-[320px] rounded-[20px] border border-white/10 bg-[#111214]/96 p-4 shadow-[0_24px_60px_rgba(0,0,0,0.5)] backdrop-blur-xl">
-        <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="pointer-events-auto w-[220px] rounded-[12px] border border-white/10 bg-[#111214]/96 p-2.5 shadow-[0_14px_36px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+        <div className="mb-2 flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-[16px] font-medium text-white/95">
+            <div className="truncate text-[12px] font-medium text-white/95">
               图片信息
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-white/44 transition-colors hover:bg-white/6 hover:text-white/90"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white/44 transition-colors hover:bg-white/6 hover:text-white/90"
             aria-label="Close image information"
             title="Close"
           >
-            <X size={15} />
+            <X size={12} />
           </button>
         </div>
 
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-1.5">
+          <InfoRow label="模型" value={data.model} />
           <InfoRow label="格式" value={data.format} />
           <InfoRow label="大小" value={data.size} />
           <InfoRow label="分辨率" value={data.resolution} />

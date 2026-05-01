@@ -29,6 +29,7 @@ export interface ImageGenerationNodeToolbarProps {
   top: number;
   hasGeneratedImage: boolean;
   onUpload?: () => void;
+  onOpenLightbox?: () => void;
   onAction?: (action: ImageGenerationToolbarAction) => void;
 }
 
@@ -61,9 +62,12 @@ function ToolbarIconButton({
   return (
     <button
       type="button"
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={onClick}
-      className="flex h-10 w-10 items-center justify-center rounded-gl-pill text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick?.();
+      }}
+      className="nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
       title={title}
       aria-label={title}
     >
@@ -77,6 +81,7 @@ export function ImageGenerationNodeToolbar({
   top,
   hasGeneratedImage,
   onUpload,
+  onOpenLightbox,
   onAction,
 }: ImageGenerationNodeToolbarProps) {
   const { zoom } = useViewport();
@@ -85,6 +90,7 @@ export function ImageGenerationNodeToolbar({
 
   return (
     <div
+      data-canvas-menu-ignore="true"
       className="absolute left-1/2 z-20 transition-[top,transform] duration-300 ease-out"
       style={{
         top: `${top}px`,
@@ -102,7 +108,14 @@ export function ImageGenerationNodeToolbar({
               key={action.id}
               title={action.title}
               icon={action.icon}
-              onClick={() => onAction?.(action.id)}
+              onClick={() => {
+                if (action.id === 'expand') {
+                  onOpenLightbox?.();
+                  return;
+                }
+
+                onAction?.(action.id);
+              }}
             />
           ))}
           <div className="mx-1 h-5 w-px bg-white/10" />

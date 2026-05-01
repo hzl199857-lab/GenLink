@@ -349,6 +349,7 @@ export function ImageGenerationPromptBar({
       align="center"
     >
       <div
+        data-canvas-menu-ignore="true"
         onPointerDownCapture={(e) => {
           onPointerDownWithin?.();
           e.stopPropagation();

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import NextImage from 'next/image';
 import { AlignLeft, CircleHelp, Expand, Grip, Image as ImageIcon, Map, Video, X } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
@@ -52,9 +53,14 @@ import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasToolbar } from './CanvasToolbar';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
-let notifyImageToolbarAction: ((action: string) => void) | null = null;
+let notifyImageToolbarAction:
+  | ((action: string, data: ImageGenerationNodeData) => void)
+  | null = null;
 let notifyImageGenerationCardClick:
   | ((data: ImageGenerationNodeData) => void)
+  | null = null;
+let notifyImageGenerationNodeSelect:
+  | ((nodeId: string) => void)
   | null = null;
 let notifyImageGenerationReferenceUpload:
   | ((nodeId: string) => void)
@@ -89,7 +95,7 @@ function formatImageResolution(width?: number, height?: number): string {
     return '-';
   }
 
-  return `${width}×${height}`;
+  return `${width} x ${height}`;
 }
 
 function inferImageSizeBytesFromUrl(url?: string): number | undefined {
@@ -149,6 +155,32 @@ function toImageInfoPopoverData(
       data.generatedImageHeight,
     ),
     createdTime: formatGeneratedAt(data.generatedAt) || undefined,
+  };
+}
+
+type ImageLightboxData = {
+  imageUrl: string;
+  alt: string;
+  width?: number;
+  height?: number;
+};
+
+function toImageGenerationLightboxData(
+  data: ImageGenerationNodeData,
+): ImageLightboxData | null {
+  const imageUrl =
+    data.generatedHostedImageUrl?.trim() ||
+    data.generatedImageUrl?.trim();
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return {
+    imageUrl,
+    alt: data.prompt?.trim() || 'Generated image',
+    width: data.generatedImageWidth,
+    height: data.generatedImageHeight,
   };
 }
 
@@ -284,8 +316,10 @@ function ImageGenerationNodeAdapter({ id, data, selected }: NodeProps) {
       onChange={(next) => updateNodeData<'image_generation'>(id, next)}
       onRun={() => generateImage(id)}
       onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
-      onToolbarAction={(action) => notifyImageToolbarAction?.(action)}
+      onToolbarAction={(action) => notifyImageToolbarAction?.(action, data as ImageGenerationNodeData)}
+      onOpenLightbox={(next) => notifyImageToolbarAction?.('expand', next)}
       onImageCardClick={(next) => notifyImageGenerationCardClick?.(next)}
+      onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
       onPromptPointerDown={() => notifyPromptBarInteraction?.()}
       onPromptFocusWithinChange={setPromptFocused}
     />
@@ -398,8 +432,6 @@ const CANVAS_MIN_ZOOM = 0.2;
 const CANVAS_MAX_ZOOM = 2;
 const CONNECTION_MENU_ANCHOR_NODE_ID = '__connection-menu-anchor__';
 const BLANK_CONNECTION_DROP_EVENT = 'genlink:connection-blank-drop';
-
-type ConnectionMenuAction = 'text' | 'image_generation' | 'video';
 
 type PendingConnectionMenu = {
   screen: { x: number; y: number };
@@ -561,7 +593,7 @@ function CanvasViewportControls() {
           className="canvas-zoom-round-button"
           aria-label={isMiniMapVisible ? 'Hide minimap' : 'Show minimap'}
           aria-pressed={isMiniMapVisible}
-          title={isMiniMapVisible ? '关闭地图' : '打开地图'}
+          title={isMiniMapVisible ? '鍏抽棴鍦板浘' : '鎵撳紑鍦板浘'}
           onClick={() => setIsMiniMapVisible((visible) => !visible)}
         >
           <Map size={14} />
@@ -572,7 +604,7 @@ function CanvasViewportControls() {
             type="button"
             className="canvas-zoom-icon-button"
             aria-label="Drag handle"
-            title="移动"
+            title="绉诲姩"
           >
             <Grip size={15} />
           </button>
@@ -582,7 +614,7 @@ function CanvasViewportControls() {
             className="canvas-zoom-icon-button"
             onClick={() => void fitView({ duration: 220, padding: 0.18 })}
             aria-label="Fit view"
-            title="适应画布"
+            title="閫傚簲鐢诲竷"
           >
             <Expand size={15} />
           </button>
@@ -605,7 +637,7 @@ function CanvasViewportControls() {
           type="button"
           className="canvas-zoom-round-button"
           aria-label="Help"
-          title="帮助"
+          title="甯姪"
         >
           <CircleHelp size={14} />
         </button>
@@ -614,74 +646,62 @@ function CanvasViewportControls() {
   );
 }
 
-function ConnectionCreateMenu({
-  x,
-  y,
-  onSelect,
+function ImageLightbox({
+  data,
+  onClose,
 }: {
-  x: number;
-  y: number;
-  onSelect?: (action: ConnectionMenuAction) => void;
+  data: ImageLightboxData | null;
+  onClose: () => void;
 }) {
-  const items: Array<{
-    action: ConnectionMenuAction;
-    title: string;
-    subtitle?: string;
-    icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-  }> = [
-    {
-      action: 'text',
-      title: '文本生成',
-      subtitle: '脚本、广告词、品牌文案',
-      icon: AlignLeft,
-    },
-    {
-      action: 'image_generation',
-      title: '图片生成',
-      icon: ImageIcon,
-    },
-    {
-      action: 'video',
-      title: '视频生成',
-      icon: Video,
-    },
-  ];
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [data, onClose]);
+
+  if (!data) {
+    return null;
+  }
 
   return (
     <div
-      className="fixed z-[65] w-[288px] rounded-[16px] border border-white/10 bg-[#191A1C]/95 p-3 shadow-[0_18px_42px_rgba(0,0,0,0.48)] backdrop-blur-xl"
-      style={{ left: x, top: y }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/82 p-8 backdrop-blur-md"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image preview"
+      onMouseDown={onClose}
     >
-      <div className="px-1 pb-2 text-[13px] font-medium text-gl-text-muted">引用该节点生成</div>
-      <div className="flex flex-col gap-1">
-        {items.map((item) => {
-          const Icon = item.icon;
-
-          return (
-            <button
-              key={item.action}
-              type="button"
-              onClick={() => onSelect?.(item.action)}
-              className="flex min-h-[52px] w-full items-center gap-3 rounded-[12px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.08]"
-            >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/[0.08] text-gl-text-secondary">
-                <Icon size={17} strokeWidth={2} />
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[15px] font-semibold leading-5 text-gl-text-secondary">
-                  {item.title}
-                </span>
-                {item.subtitle ? (
-                  <span className="mt-0.5 block truncate text-[12px] leading-4 text-gl-text-muted">
-                    {item.subtitle}
-                  </span>
-                ) : null}
-              </span>
-            </button>
-          );
-        })}
+      <button
+        type="button"
+        className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
+        aria-label="Close image preview"
+        title="鍏抽棴"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={onClose}
+      >
+        <X size={18} strokeWidth={2.2} />
+      </button>
+      <div
+        className="relative h-[88vh] w-[88vw] overflow-hidden"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <NextImage
+          src={data.imageUrl}
+          alt={data.alt}
+          fill
+          unoptimized
+          sizes="88vw"
+          className="object-contain"
+        />
       </div>
     </div>
   );
@@ -710,11 +730,21 @@ function InnerCanvas() {
     screen: { x: number; y: number };
     canvas: { x: number; y: number };
   } | null>(null);
+  const closeAddMenuTimeoutRef = useRef<number | null>(null);
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
+  const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
     : null;
+
+  useEffect(() => {
+    return () => {
+      if (closeAddMenuTimeoutRef.current) {
+        window.clearTimeout(closeAddMenuTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const rfNodes = useMemo<ReactFlowNode[]>(() => {
     const nodes: ReactFlowNode[] = storeNodes.map((n) => ({
@@ -843,7 +873,13 @@ function InnerCanvas() {
   }, []);
 
   useEffect(() => {
-    notifyImageToolbarAction = (action) => {
+    notifyImageToolbarAction = (action, data) => {
+      if (action === 'crop' || action === 'expand') {
+        setImageInfoPopover(null);
+        setImageLightbox(toImageGenerationLightboxData(data));
+        return;
+      }
+
       console.log(`image toolbar action pending: ${action}`);
     };
 
@@ -856,6 +892,10 @@ function InnerCanvas() {
 
   useEffect(() => {
     notifyImageGenerationCardClick = (data) => {
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 0);
       setImageInfoPopover(toImageInfoPopoverData(data));
     };
 
@@ -892,6 +932,10 @@ function InnerCanvas() {
 
   useEffect(() => {
     notifyImageNodeCardClick = (data) => {
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 0);
       setImageInfoPopover(toImageNodeInfoPopoverData(data));
     };
 
@@ -904,6 +948,10 @@ function InnerCanvas() {
 
   useEffect(() => {
     notifyUploadedImageNodeCardClick = (data) => {
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 0);
       setImageInfoPopover(toUploadedImageInfoPopoverData(data));
     };
 
@@ -918,6 +966,19 @@ function InnerCanvas() {
     setSelectedEdgeId(null);
     setEdgeDeleteButtonPosition(null);
   }, []);
+
+  useEffect(() => {
+    notifyImageGenerationNodeSelect = (nodeId) => {
+      setSelectedNodeIds(new Set([nodeId]));
+      clearEdgeSelection();
+    };
+
+    return () => {
+      if (notifyImageGenerationNodeSelect) {
+        notifyImageGenerationNodeSelect = null;
+      }
+    };
+  }, [clearEdgeSelection]);
 
   const clearConnectionMenu = useCallback(() => {
     setConnectionMenu(null);
@@ -1186,6 +1247,7 @@ function InnerCanvas() {
     setAddMenu(null);
     clearConnectionMenu();
     setImageInfoPopover(null);
+    setImageLightbox(null);
     clearEdgeSelection();
   }, [clearConnectionMenu, clearEdgeSelection]);
 
@@ -1261,14 +1323,6 @@ function InnerCanvas() {
       targetHandle: pendingConnection.handleId || undefined,
     });
   }, [addEdgeStore, clearEdgeSelection, project]);
-
-  const handleAddNode = useCallback((type: NodeType) => {
-    const center = project({
-      x: window.innerWidth / 2,
-      y: window.innerHeight / 2,
-    });
-    addNodeAtCenter(type, center);
-  }, [addNodeAtCenter, project]);
 
   const openUploadPicker = useCallback((position?: { x: number; y: number }) => {
     referenceUploadNodeIdRef.current = null;
@@ -1350,10 +1404,47 @@ function InnerCanvas() {
     );
   }, [addUploadedImages, project]);
 
+  const openAddMenuAtScreen = useCallback((screen: { x: number; y: number }) => {
+    if (closeAddMenuTimeoutRef.current) {
+      window.clearTimeout(closeAddMenuTimeoutRef.current);
+      closeAddMenuTimeoutRef.current = null;
+    }
+
+    setAddMenu({
+      screen,
+      canvas: project({
+        x: screen.x,
+        y: screen.y,
+      }),
+    });
+    clearConnectionMenu();
+  }, [clearConnectionMenu, project]);
+
+  const keepAddMenuOpen = useCallback(() => {
+    if (closeAddMenuTimeoutRef.current) {
+      window.clearTimeout(closeAddMenuTimeoutRef.current);
+      closeAddMenuTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleCloseAddMenu = useCallback(() => {
+    if (closeAddMenuTimeoutRef.current) {
+      window.clearTimeout(closeAddMenuTimeoutRef.current);
+    }
+
+    closeAddMenuTimeoutRef.current = window.setTimeout(() => {
+      setAddMenu(null);
+      closeAddMenuTimeoutRef.current = null;
+    }, 120);
+  }, []);
+
   const handlePaneDoubleClick = useCallback((event: React.MouseEvent) => {
     const target = event.target;
 
-    if (!(target instanceof Element) || target.closest('.react-flow__node')) {
+    if (
+      !(target instanceof Element) ||
+      target.closest('[data-canvas-menu-ignore="true"], .node-connectable-card, .react-flow__node')
+    ) {
       return;
     }
 
@@ -1370,6 +1461,11 @@ function InnerCanvas() {
   }, [clearConnectionMenu, project]);
 
   const handleAddMenuSelect = useCallback((action: AddNodeMenuAction) => {
+    if (closeAddMenuTimeoutRef.current) {
+      window.clearTimeout(closeAddMenuTimeoutRef.current);
+      closeAddMenuTimeoutRef.current = null;
+    }
+
     if (action === 'text' && addMenu) {
       addNodeAtCenter('text', addMenu.canvas);
     }
@@ -1385,8 +1481,13 @@ function InnerCanvas() {
     setAddMenu(null);
   }, [addMenu, addNodeAtCenter, openUploadPicker]);
 
-  const handleConnectionMenuSelect = useCallback((action: ConnectionMenuAction) => {
+  const handleConnectionMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (!connectionMenu) {
+      return;
+    }
+
+    if (action !== 'text' && action !== 'image_generation' && action !== 'video') {
+      clearConnectionMenu();
       return;
     }
 
@@ -1508,11 +1609,13 @@ function InnerCanvas() {
           x={addMenu.screen.x}
           y={addMenu.screen.y}
           onSelect={handleAddMenuSelect}
+          onMouseEnter={keepAddMenuOpen}
+          onMouseLeave={scheduleCloseAddMenu}
         />
       ) : null}
 
       {connectionMenu ? (
-        <ConnectionCreateMenu
+        <AddNodeMenu
           x={connectionMenu.screen.x}
           y={connectionMenu.screen.y}
           onSelect={handleConnectionMenuSelect}
@@ -1520,15 +1623,18 @@ function InnerCanvas() {
       ) : null}
 
       <CanvasToolbar
-        onAddTextNode={() => handleAddNode('text')}
-        onAddImageGenerationNode={() => handleAddNode('image_generation')}
-        onUploadImage={() => openUploadPicker()}
+        onOpenAddMenu={openAddMenuAtScreen}
+        onScheduleCloseAddMenu={scheduleCloseAddMenu}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
       />
       <ImageGenerationInfoPopover
         open={imageInfoPopover !== null}
         data={imageInfoPopover}
         onClose={() => setImageInfoPopover(null)}
+      />
+      <ImageLightbox
+        data={imageLightbox}
+        onClose={() => setImageLightbox(null)}
       />
       <input
         ref={uploadInputRef}
