@@ -115,6 +115,31 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
         typeof record.referenceImageUrl === "string"
           ? record.referenceImageUrl
           : undefined,
+      referenceImages: Array.isArray(record.referenceImages)
+        ? record.referenceImages
+            .filter((item): item is Record<string, unknown> =>
+              Boolean(item) && typeof item === "object",
+            )
+            .map((item, index) => ({
+              id:
+                typeof item.id === "string" && item.id.trim()
+                  ? item.id
+                  : `reference-${index}`,
+              imageUrl:
+                typeof item.imageUrl === "string" ? item.imageUrl : "",
+              hostedImageUrl:
+                typeof item.hostedImageUrl === "string"
+                  ? item.hostedImageUrl
+                  : undefined,
+              fileName:
+                typeof item.fileName === "string" ? item.fileName : undefined,
+              width: typeof item.width === "number" ? item.width : undefined,
+              height: typeof item.height === "number" ? item.height : undefined,
+              sizeBytes:
+                typeof item.sizeBytes === "number" ? item.sizeBytes : undefined,
+            }))
+            .filter((item) => item.imageUrl.trim())
+        : undefined,
       generatedImageUrl:
         typeof record.generatedImageUrl === "string"
           ? record.generatedImageUrl

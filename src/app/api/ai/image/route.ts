@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { saveImageDataUrl } from "@/lib/image-host";
+import { prisma } from "@/lib/prisma";
 import { VibeApiError, generateImage } from "@/lib/vibe";
 
 export const runtime = "nodejs";
@@ -11,49 +12,35 @@ const IMAGE_JOB_RETENTION_MS = 30 * 60_000;
 
 type ImageJobStatus = "pending" | "completed" | "error";
 
-type ImageJobRecord =
-  | {
-      status: "pending";
-      createdAt: number;
-    }
-  | {
-      status: "completed";
-      createdAt: number;
-      result: {
-        imageUrl: string;
-        hostedImageUrl?: string;
-        model: string;
-        width: number;
-        height: number;
-        format?: string;
-        sizeBytes?: number;
-      };
-    }
-  | {
-      status: "error";
-      createdAt: number;
-      error: string;
-    };
-
-const imageJobs = new Map<string, ImageJobRecord>();
+type ImageJobResult = {
+  imageUrl: string;
+  hostedImageUrl?: string;
+  model: string;
+  width: number;
+  height: number;
+  format?: string;
+  sizeBytes?: number;
+};
 
 interface ImageRequestBody {
   prompt?: unknown;
   model?: unknown;
   size?: unknown;
   quality?: unknown;
+  outputFormat?: unknown;
+  moderation?: unknown;
   n?: unknown;
   apiKey?: unknown;
   images?: unknown;
 }
 
-function cleanupExpiredJobs() {
-  const now = Date.now();
-
-  imageJobs.forEach((job, jobId) => {
-    if (now - job.createdAt > IMAGE_JOB_RETENTION_MS) {
-      imageJobs.delete(jobId);
-    }
+async function cleanupExpiredJobs() {
+  await prisma.imageJob.deleteMany({
+    where: {
+      createdAt: {
+        lt: new Date(Date.now() - IMAGE_JOB_RETENTION_MS),
+      },
+    },
   });
 }
 
@@ -127,6 +114,8 @@ async function runImageJob(
     model?: string;
     size?: string;
     quality?: string;
+    outputFormat?: string;
+    moderation?: string;
     n?: number;
     apiKey?: string;
     images?: Array<{
@@ -145,14 +134,17 @@ async function runImageJob(
         )
       : undefined;
 
-    imageJobs.set(jobId, {
-      status: "completed",
-      createdAt: Date.now(),
-      result: {
-        ...result,
-        hostedImageUrl,
-        format: metadata.format,
-        sizeBytes: metadata.sizeBytes,
+    await prisma.imageJob.update({
+      where: { id: jobId },
+      data: {
+        status: "completed",
+        result: JSON.stringify({
+          ...result,
+          hostedImageUrl,
+          format: metadata.format,
+          sizeBytes: metadata.sizeBytes,
+        } satisfies ImageJobResult),
+        error: null,
       },
     });
   } catch (error) {
@@ -163,17 +155,19 @@ async function runImageJob(
           ? error.message
           : "Internal error";
 
-    imageJobs.set(jobId, {
-      status: "error",
-      createdAt: Date.now(),
-      error: message,
+    await prisma.imageJob.update({
+      where: { id: jobId },
+      data: {
+        status: "error",
+        error: message,
+      },
     });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    cleanupExpiredJobs();
+    await cleanupExpiredJobs();
 
     const body = (await request.json()) as ImageRequestBody;
 
@@ -186,9 +180,11 @@ export async function POST(request: Request) {
 
     const jobId = randomUUID();
 
-    imageJobs.set(jobId, {
-      status: "pending",
-      createdAt: Date.now(),
+    await prisma.imageJob.create({
+      data: {
+        id: jobId,
+        status: "pending",
+      },
     });
 
     void runImageJob(jobId, {
@@ -196,6 +192,10 @@ export async function POST(request: Request) {
       model: typeof body.model === "string" ? body.model : undefined,
       size: typeof body.size === "string" ? body.size : undefined,
       quality: typeof body.quality === "string" ? body.quality : undefined,
+      outputFormat:
+        typeof body.outputFormat === "string" ? body.outputFormat : undefined,
+      moderation:
+        typeof body.moderation === "string" ? body.moderation : undefined,
       n: typeof body.n === "number" ? body.n : undefined,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
       images: normalizeImages(body.images),
@@ -222,7 +222,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  cleanupExpiredJobs();
+  await cleanupExpiredJobs();
 
   const { searchParams } = new URL(request.url);
   const jobId = searchParams.get("jobId")?.trim();
@@ -234,7 +234,9 @@ export async function GET(request: Request) {
     );
   }
 
-  const job = imageJobs.get(jobId);
+  const job = await prisma.imageJob.findUnique({
+    where: { id: jobId },
+  });
 
   if (!job) {
     return NextResponse.json(
@@ -256,14 +258,32 @@ export async function GET(request: Request) {
       ok: true,
       jobId,
       status: "error" satisfies ImageJobStatus,
-      error: job.error,
+      error: job.error || "Image generation failed",
     });
+  }
+
+  if (!job.result) {
+    return NextResponse.json(
+      { ok: false, error: "Image job result is missing" },
+      { status: 500 },
+    );
+  }
+
+  let result: ImageJobResult;
+
+  try {
+    result = JSON.parse(job.result) as ImageJobResult;
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: "Image job result is invalid" },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({
     ok: true,
     jobId,
     status: "completed" satisfies ImageJobStatus,
-    result: job.result,
+    result,
   });
 }

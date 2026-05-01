@@ -98,7 +98,7 @@ type ConnectedImagePayload = {
   hostedImageUrl?: string;
   fileName?: string;
   alt: string;
-  sourceType: "image" | "uploaded_image";
+  sourceType: "image" | "uploaded_image" | "inline_reference";
   width?: number;
   height?: number;
 };
@@ -173,6 +173,57 @@ const IMAGE_SIZE_PRESETS = {
   },
 } as const;
 
+const GEMINI_IMAGE_SIZE_PRESETS = {
+  "1K": {
+    "1:1": "1024x1024",
+    "1:4": "512x2064",
+    "1:8": "352x2928",
+    "2:3": "848x1264",
+    "3:2": "1264x848",
+    "3:4": "896x1200",
+    "4:1": "2064x512",
+    "4:3": "1200x896",
+    "4:5": "928x1152",
+    "5:4": "1152x928",
+    "8:1": "2928x352",
+    "9:16": "768x1376",
+    "16:9": "1376x768",
+    "21:9": "1584x672",
+  },
+  "2K": {
+    "1:1": "2048x2048",
+    "1:4": "1024x4128",
+    "1:8": "704x5856",
+    "2:3": "1696x2528",
+    "3:2": "2528x1696",
+    "3:4": "1792x2400",
+    "4:1": "4128x1024",
+    "4:3": "2400x1792",
+    "4:5": "1856x2304",
+    "5:4": "2304x1856",
+    "8:1": "5856x704",
+    "9:16": "1536x2752",
+    "16:9": "2752x1536",
+    "21:9": "3168x1344",
+  },
+  "4K": {
+    "1:1": "4096x4096",
+    "1:4": "2048x8256",
+    "1:8": "1408x11712",
+    "2:3": "3392x5056",
+    "3:2": "5056x3392",
+    "3:4": "3584x4800",
+    "4:1": "8256x2048",
+    "4:3": "4800x3584",
+    "4:5": "3712x4608",
+    "5:4": "4608x3712",
+    "8:1": "11712x1408",
+    "9:16": "3072x5504",
+    "16:9": "5504x3072",
+    "21:9": "6336x2688",
+  },
+} as const;
+
 const SUPPORTED_IMAGE_ASPECT_RATIOS = [
   "1:1",
   "4:3",
@@ -186,8 +237,26 @@ const SUPPORTED_IMAGE_ASPECT_RATIOS = [
   "21:9",
   "9:21",
 ] as const;
+const GEMINI_SUPPORTED_IMAGE_ASPECT_RATIOS = [
+  "1:1",
+  "1:4",
+  "1:8",
+  "2:3",
+  "3:2",
+  "3:4",
+  "4:1",
+  "4:3",
+  "4:5",
+  "5:4",
+  "8:1",
+  "9:16",
+  "16:9",
+  "21:9",
+] as const;
 
 type SupportedImageAspectRatio = (typeof SUPPORTED_IMAGE_ASPECT_RATIOS)[number];
+type GeminiSupportedImageAspectRatio =
+  (typeof GEMINI_SUPPORTED_IMAGE_ASPECT_RATIOS)[number];
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -195,6 +264,10 @@ function nowIso(): string {
 
 function isClaudeModel(model?: string): boolean {
   return typeof model === "string" && /^claude-/i.test(model);
+}
+
+function isGeminiImageModel(model?: string): boolean {
+  return model === "gemini-3-pro-image-preview";
 }
 
 function createTextNodeData(): TextNodeData {
@@ -213,6 +286,8 @@ function createImageGenerationNodeData(): ImageGenerationNodeData {
     aspectRatio: "auto",
     quality: "1K",
     detail: "medium",
+    outputFormat: "png",
+    moderation: "auto",
     count: 5,
     status: "idle",
   };
@@ -396,6 +471,24 @@ function resolveImageApiQuality(detail?: string): "low" | "medium" | "high" {
   return "medium";
 }
 
+function resolveImageApiOutputFormat(
+  outputFormat?: string,
+): "png" | "jpeg" | "webp" {
+  if (outputFormat === "jpeg" || outputFormat === "webp") {
+    return outputFormat;
+  }
+
+  return "png";
+}
+
+function resolveImageApiModeration(moderation?: string): "auto" | "low" {
+  if (moderation === "low") {
+    return "low";
+  }
+
+  return "auto";
+}
+
 function resolveNearestAspectRatio(
   width?: number,
   height?: number,
@@ -421,13 +514,65 @@ function resolveNearestAspectRatio(
   return best;
 }
 
+function resolveNearestGeminiAspectRatio(
+  width?: number,
+  height?: number,
+): GeminiSupportedImageAspectRatio {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return "1:1";
+  }
+
+  const ratio = width / height;
+  let best: GeminiSupportedImageAspectRatio = GEMINI_SUPPORTED_IMAGE_ASPECT_RATIOS[0];
+  let bestDelta = Number.POSITIVE_INFINITY;
+
+  for (const option of GEMINI_SUPPORTED_IMAGE_ASPECT_RATIOS) {
+    const [w, h] = option.split(":").map(Number);
+    const delta = Math.abs(ratio - w / h);
+
+    if (delta < bestDelta) {
+      best = option;
+      bestDelta = delta;
+    }
+  }
+
+  return best;
+}
+
 function resolveImageSize(
   sizeTier: string | undefined,
   aspectRatio: string | undefined,
   connectedImages: ConnectedImagePayload[],
+  model?: string,
 ): string {
   const normalizedSizeTier =
     sizeTier === "2K" || sizeTier === "4K" ? sizeTier : "1K";
+
+  if (isGeminiImageModel(model)) {
+    const presets = GEMINI_IMAGE_SIZE_PRESETS[normalizedSizeTier];
+
+    if (aspectRatio === "auto") {
+      const primaryImage = connectedImages[0];
+
+      if (!primaryImage) {
+        return presets["1:1"];
+      }
+
+      return presets[
+        resolveNearestGeminiAspectRatio(primaryImage.width, primaryImage.height)
+      ];
+    }
+
+    if (
+      aspectRatio &&
+      Object.prototype.hasOwnProperty.call(presets, aspectRatio)
+    ) {
+      return presets[aspectRatio as keyof typeof presets];
+    }
+
+    return presets["1:1"];
+  }
+
   const presets = IMAGE_SIZE_PRESETS[normalizedSizeTier];
 
   if (aspectRatio === "auto") {
@@ -633,6 +778,52 @@ function getConnectedImagesForTargetNode(
 
     return acc;
   }, []);
+}
+
+function getInlineReferenceImagesForImageGenerationNode(
+  node: Extract<CanvasNode, { type: "image_generation" }>,
+): ConnectedImagePayload[] {
+  return (node.data.referenceImages ?? []).reduce<ConnectedImagePayload[]>(
+    (acc, image, index) => {
+      if (!image.imageUrl.trim()) {
+        return acc;
+      }
+
+      acc.push({
+        id: image.id || `${node.id}-reference-${index}`,
+        imageUrl: image.hostedImageUrl?.trim() || image.imageUrl,
+        originalImageUrl: image.imageUrl,
+        hostedImageUrl: image.hostedImageUrl?.trim() || undefined,
+        fileName: image.fileName,
+        alt: image.fileName?.trim() || `Reference image ${index + 1}`,
+        sourceType: "inline_reference",
+        width: image.width,
+        height: image.height,
+      });
+      return acc;
+    },
+    [],
+  );
+}
+
+function getImageGenerationReferenceImages(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  imageGenerationNodeId: string,
+): ConnectedImagePayload[] {
+  const imageGenerationNode = nodes.find(
+    (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+      node.id === imageGenerationNodeId && node.type === "image_generation",
+  );
+
+  if (!imageGenerationNode) {
+    return [];
+  }
+
+  return [
+    ...getInlineReferenceImagesForImageGenerationNode(imageGenerationNode),
+    ...getConnectedImagesForTargetNode(nodes, edges, imageGenerationNodeId),
+  ];
 }
 
 function getConnectedTextPromptForTargetNode(
@@ -956,7 +1147,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt is required");
     }
 
-    const connectedImages = getConnectedImagesForTargetNode(
+    const connectedImages = getImageGenerationReferenceImages(
       state.nodes,
       state.edges,
       imageGenerationNodeId,
@@ -965,8 +1156,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       imageGenerationNode.data.quality,
       imageGenerationNode.data.aspectRatio,
       connectedImages,
+      imageGenerationNode.data.model,
     );
     const quality = resolveImageApiQuality(imageGenerationNode.data.detail);
+    const outputFormat = resolveImageApiOutputFormat(
+      imageGenerationNode.data.outputFormat,
+    );
+    const moderation = resolveImageApiModeration(
+      imageGenerationNode.data.moderation,
+    );
 
     set((currentState) => ({
       error: null,
@@ -1003,6 +1201,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           model: imageGenerationNode.data.model,
           size,
           quality,
+          outputFormat,
+          moderation,
           apiKey: readStoredImageApiKey() || undefined,
           images:
             connectedImages.length > 0
@@ -1086,7 +1286,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   getConnectedImagesForImageGenerationNode: (imageGenerationNodeId) => {
     const state = get();
-    return getConnectedImagesForTargetNode(
+    return getImageGenerationReferenceImages(
       state.nodes,
       state.edges,
       imageGenerationNodeId,

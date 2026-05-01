@@ -37,8 +37,19 @@ export interface ImageGenerationNodeData {
   aspectRatio?: string;
   quality?: string;
   detail?: string;
+  outputFormat?: string;
+  moderation?: string;
   count?: number;
   referenceImageUrl?: string;
+  referenceImages?: Array<{
+    id: string;
+    imageUrl: string;
+    hostedImageUrl?: string;
+    fileName?: string;
+    width?: number;
+    height?: number;
+    sizeBytes?: number;
+  }>;
   generatedImageUrl?: string;
   generatedHostedImageUrl?: string;
   generatedImageWidth?: number;

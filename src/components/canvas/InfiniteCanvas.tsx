@@ -56,6 +56,9 @@ let notifyImageToolbarAction: ((action: string) => void) | null = null;
 let notifyImageGenerationCardClick:
   | ((data: ImageGenerationNodeData) => void)
   | null = null;
+let notifyImageGenerationReferenceUpload:
+  | ((nodeId: string) => void)
+  | null = null;
 let notifyImageNodeCardClick:
   | ((data: ImageNodeData) => void)
   | null = null;
@@ -280,7 +283,7 @@ function ImageGenerationNodeAdapter({ id, data, selected }: NodeProps) {
       connectedImages={connectedImages}
       onChange={(next) => updateNodeData<'image_generation'>(id, next)}
       onRun={() => generateImage(id)}
-      onUpload={() => console.log('reference image upload pending')}
+      onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
       onToolbarAction={(action) => notifyImageToolbarAction?.(action)}
       onImageCardClick={(next) => notifyImageGenerationCardClick?.(next)}
       onPromptPointerDown={() => notifyPromptBarInteraction?.()}
@@ -695,6 +698,7 @@ function InnerCanvas() {
   const addNode = useCanvasStore((s) => s.addNode);
   const addEdgeStore = useCanvasStore((s) => s.addEdge);
   const deleteEdge = useCanvasStore((s) => s.deleteEdge);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -814,6 +818,7 @@ function InnerCanvas() {
   );
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
+  const referenceUploadNodeIdRef = React.useRef<string | null>(null);
   const copiedNodesRef = useRef<CanvasNode[]>([]);
   const pasteCountRef = useRef(0);
   const promptBarInteractionRef = useRef(false);
@@ -857,6 +862,30 @@ function InnerCanvas() {
     return () => {
       if (notifyImageGenerationCardClick) {
         notifyImageGenerationCardClick = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    notifyImageGenerationReferenceUpload = (nodeId) => {
+      referenceUploadNodeIdRef.current = nodeId;
+      const input = uploadInputRef.current;
+
+      if (!input) {
+        return;
+      }
+
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+        return;
+      }
+
+      input.click();
+    };
+
+    return () => {
+      if (notifyImageGenerationReferenceUpload) {
+        notifyImageGenerationReferenceUpload = null;
       }
     };
   }, []);
@@ -1242,6 +1271,7 @@ function InnerCanvas() {
   }, [addNodeAtCenter, project]);
 
   const openUploadPicker = useCallback((position?: { x: number; y: number }) => {
+    referenceUploadNodeIdRef.current = null;
     uploadPositionRef.current = position ?? project({
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
@@ -1263,14 +1293,46 @@ function InnerCanvas() {
   const handleUploadInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     const position = uploadPositionRef.current;
+    const referenceUploadNodeId = referenceUploadNodeIdRef.current;
 
-    if (files.length > 0 && position) {
+    if (files.length > 0 && referenceUploadNodeId) {
+      void (async () => {
+        const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+
+        if (imageFiles.length === 0) {
+          return;
+        }
+
+        const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
+        const currentNode = storeNodes.find(
+          (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
+            node.id === referenceUploadNodeId && node.type === 'image_generation',
+        );
+
+        if (!currentNode) {
+          return;
+        }
+
+        updateNodeData<'image_generation'>(referenceUploadNodeId, {
+          referenceImages: [
+            ...(currentNode.data.referenceImages ?? []),
+            ...imageDataList.map((image) => ({
+              id: crypto.randomUUID(),
+              ...image,
+            })),
+          ],
+          status: currentNode.data.status === 'error' ? 'idle' : currentNode.data.status,
+          errorMessage: undefined,
+        });
+      })();
+    } else if (files.length > 0 && position) {
       void addUploadedImages(files, position);
     }
 
     event.target.value = '';
     uploadPositionRef.current = null;
-  }, [addUploadedImages]);
+    referenceUploadNodeIdRef.current = null;
+  }, [addUploadedImages, storeNodes, updateNodeData]);
 
   const handleImageDrop = useCallback((event: React.DragEvent) => {
     const files = Array.from(event.dataTransfer.files).filter((item) => item.type.startsWith('image/'));

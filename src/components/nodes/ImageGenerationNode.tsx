@@ -17,6 +17,7 @@ const MIN_CARD_EDGE = 220;
 const CARD_ACCESSORY_TOP_SPACE = 64;
 const CARD_ACCESSORY_GAP = 12;
 const CARD_TOOLBAR_LIFT = 30;
+const GEMINI_IMAGE_MODEL = 'gemini-3-pro-image-preview';
 
 export interface ImageGenerationNodeProps {
   id?: string;
@@ -125,9 +126,15 @@ export function ImageGenerationNode({
   };
 
   const handleModelChange = (next: string) => {
+    const nextAspectRatio =
+      next === GEMINI_IMAGE_MODEL && (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
+        ? '1:1'
+        : data.aspectRatio;
+
     onChange?.({
       ...data,
       model: next,
+      aspectRatio: nextAspectRatio,
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -155,6 +162,24 @@ export function ImageGenerationNode({
     onChange?.({
       ...data,
       detail: next,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  };
+
+  const handleOutputFormatChange = (next: string) => {
+    onChange?.({
+      ...data,
+      outputFormat: next,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  };
+
+  const handleModerationChange = (next: string) => {
+    onChange?.({
+      ...data,
+      moderation: next,
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -296,19 +321,23 @@ export function ImageGenerationNode({
       <ImageGenerationPromptBar
         nodeId={id}
         visible={selected}
-        prompt={data.prompt || ''}
-        model={data.model}
-        aspectRatio={data.aspectRatio}
-        quality={data.quality}
-        detail={data.detail}
-        count={data.count}
-        connectedImages={connectedImages}
-        onPromptChange={handlePromptChange}
-        onModelChange={handleModelChange}
-        onAspectRatioChange={handleAspectRatioChange}
-        onQualityChange={handleQualityChange}
-        onDetailChange={handleDetailChange}
-        onRun={onRun}
+      prompt={data.prompt || ''}
+      model={data.model}
+      aspectRatio={data.aspectRatio}
+      quality={data.quality}
+      detail={data.detail}
+      outputFormat={data.outputFormat}
+      moderation={data.moderation}
+      count={data.count}
+      connectedImages={connectedImages}
+      onPromptChange={handlePromptChange}
+      onModelChange={handleModelChange}
+      onAspectRatioChange={handleAspectRatioChange}
+      onQualityChange={handleQualityChange}
+      onDetailChange={handleDetailChange}
+      onOutputFormatChange={handleOutputFormatChange}
+      onModerationChange={handleModerationChange}
+      onRun={onRun}
         onAddReference={onUpload}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={onPromptFocusWithinChange}

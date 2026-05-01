@@ -25,6 +25,7 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
+      translate="no"
       className={`dark ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="gl-canvas-bg min-h-full bg-gl-app text-gl-text-primary">

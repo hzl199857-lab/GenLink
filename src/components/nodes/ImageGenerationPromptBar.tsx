@@ -8,8 +8,20 @@ import { PromptBarRunControls } from './PromptBarRunControls';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
-const IMAGE_MODELS = ['gpt-image-2'] as const;
+const IMAGE_MODELS = [
+  { id: 'gpt-image-2', label: 'gpt-image-2' },
+  { id: 'gemini-3-pro-image-preview', label: 'Nano banana pro' },
+] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
+const IMAGE_OUTPUT_FORMAT_OPTIONS = [
+  { value: 'png', label: 'PNG' },
+  { value: 'jpeg', label: 'JPEG' },
+  { value: 'webp', label: 'WebP' },
+] as const;
+const IMAGE_MODERATION_OPTIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'low', label: 'Low' },
+] as const;
 const IMAGE_DETAIL_OPTIONS = [
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
@@ -29,6 +41,22 @@ const IMAGE_ASPECT_RATIO_LAYOUT = [
   { value: '21:9', className: 'col-start-3 row-start-3 h-[54px]' },
   { value: '9:21', className: 'col-start-4 row-start-3 h-[54px]' },
 ] as const;
+const GEMINI_IMAGE_ASPECT_RATIO_LAYOUT = [
+  { value: '1:1', className: 'col-start-1 row-start-1 h-[54px]' },
+  { value: '1:4', className: 'col-start-2 row-start-1 h-[54px]' },
+  { value: '1:8', className: 'col-start-3 row-start-1 h-[54px]' },
+  { value: '2:3', className: 'col-start-4 row-start-1 h-[54px]' },
+  { value: '3:2', className: 'col-start-5 row-start-1 h-[54px]' },
+  { value: '3:4', className: 'col-start-1 row-start-2 h-[54px]' },
+  { value: '4:1', className: 'col-start-2 row-start-2 h-[54px]' },
+  { value: '4:3', className: 'col-start-3 row-start-2 h-[54px]' },
+  { value: '4:5', className: 'col-start-4 row-start-2 h-[54px]' },
+  { value: '5:4', className: 'col-start-5 row-start-2 h-[54px]' },
+  { value: '8:1', className: 'col-start-1 row-start-3 h-[54px]' },
+  { value: '9:16', className: 'col-start-2 row-start-3 h-[54px]' },
+  { value: '16:9', className: 'col-start-3 row-start-3 h-[54px]' },
+  { value: '21:9', className: 'col-start-4 row-start-3 h-[54px]' },
+] as const;
 
 const CIRCLED_NUMBER_LABELS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'] as const;
 
@@ -44,6 +72,8 @@ export interface ImageGenerationPromptBarProps {
   aspectRatio?: string;
   quality?: string;
   detail?: string;
+  outputFormat?: string;
+  moderation?: string;
   count?: number;
   connectedImages?: Array<{
     id: string;
@@ -57,6 +87,8 @@ export interface ImageGenerationPromptBarProps {
   onAspectRatioChange?: (next: string) => void;
   onQualityChange?: (next: string) => void;
   onDetailChange?: (next: string) => void;
+  onOutputFormatChange?: (next: string) => void;
+  onModerationChange?: (next: string) => void;
   onRun?: () => void;
   onAddReference?: () => void;
   onPointerDownWithin?: () => void;
@@ -133,6 +165,7 @@ function BottomMenuButton({
   return (
     <button
       type="button"
+      translate="no"
       onClick={onClick}
       className={[
         'flex h-9 items-center gap-1.5 rounded-gl-pill border px-3 text-[14px] font-medium transition-all',
@@ -141,8 +174,10 @@ function BottomMenuButton({
           : 'border-transparent text-gl-text-secondary hover:border-white/14 hover:bg-white/[0.05] hover:text-gl-text-primary',
       ].join(' ')}
     >
-      <span className="text-gl-text-tertiary">{icon}</span>
-      <span>{label}</span>
+      <span className="text-gl-text-tertiary" translate="no">
+        {icon}
+      </span>
+      <span translate="no">{label}</span>
       <ChevronDown
         size={14}
         className={active ? 'rotate-180 transition-transform' : 'transition-transform'}
@@ -177,9 +212,21 @@ function getRatioShapeClass(ratio: string) {
       return 'h-[8px] w-[18px]';
     case '9:21':
       return 'h-[18px] w-[8px]';
+    case '1:4':
+      return 'h-[18px] w-[5px]';
+    case '1:8':
+      return 'h-[18px] w-[3px]';
+    case '4:1':
+      return 'h-[5px] w-[18px]';
+    case '8:1':
+      return 'h-[3px] w-[18px]';
     default:
       return 'h-[12px] w-[12px]';
   }
+}
+
+function getImageModelLabel(model: string): string {
+  return IMAGE_MODELS.find((option) => option.id === model)?.label ?? model;
 }
 
 function RatioIcon({
@@ -224,10 +271,12 @@ export function ImageGenerationPromptBar({
   nodeId,
   visible,
   prompt,
-  model = IMAGE_MODELS[0],
+  model = IMAGE_MODELS[0].id,
   aspectRatio = 'auto',
   quality = IMAGE_SIZE_OPTIONS[0],
   detail = 'medium',
+  outputFormat = IMAGE_OUTPUT_FORMAT_OPTIONS[0].value,
+  moderation = IMAGE_MODERATION_OPTIONS[0].value,
   count = 5,
   connectedImages = [],
   onPromptChange,
@@ -235,6 +284,8 @@ export function ImageGenerationPromptBar({
   onAspectRatioChange,
   onQualityChange,
   onDetailChange,
+  onOutputFormatChange,
+  onModerationChange,
   onRun,
   onAddReference,
   onPointerDownWithin,
@@ -246,11 +297,13 @@ export function ImageGenerationPromptBar({
   const [expanded, setExpanded] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [formatMenuOpen, setFormatMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const formatMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!modelMenuOpen && !settingsMenuOpen) {
+    if (!modelMenuOpen && !settingsMenuOpen && !formatMenuOpen) {
       return;
     }
 
@@ -259,23 +312,32 @@ export function ImageGenerationPromptBar({
 
       if (
         modelMenuRef.current?.contains(target) ||
-        settingsMenuRef.current?.contains(target)
+        settingsMenuRef.current?.contains(target) ||
+        formatMenuRef.current?.contains(target)
       ) {
         return;
       }
 
       setModelMenuOpen(false);
       setSettingsMenuOpen(false);
+      setFormatMenuOpen(false);
     };
 
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
-  }, [modelMenuOpen, settingsMenuOpen]);
+  }, [modelMenuOpen, settingsMenuOpen, formatMenuOpen]);
 
   if (!visible) return null;
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
-  const settingsLabel = `${aspectRatio} · ${quality}`;
+  const isGeminiImageModel = model === 'gemini-3-pro-image-preview';
+  const modelLabel = getImageModelLabel(model);
+  const modelAspectRatio = isGeminiImageModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
+  const aspectRatioLayout = isGeminiImageModel
+    ? GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
+    : IMAGE_ASPECT_RATIO_LAYOUT;
+  const settingsLabel = `${modelAspectRatio} · ${quality}`;
+  const formatLabel = `${outputFormat.toUpperCase()} · ${moderation}`;
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
 
   return (
@@ -401,11 +463,11 @@ export function ImageGenerationPromptBar({
           </div>
 
           <div className="mt-auto flex items-end justify-between gap-3 pt-6">
-            <div className="flex flex-wrap items-center gap-1">
+            <div className="notranslate flex flex-wrap items-center gap-1" translate="no">
               <div className="relative" ref={modelMenuRef}>
                 <BottomMenuButton
                   icon={<Sparkles size={14} />}
-                  label={model}
+                  label={modelLabel}
                   active={modelMenuOpen}
                   onClick={() => {
                     setModelMenuOpen((open) => !open);
@@ -414,20 +476,21 @@ export function ImageGenerationPromptBar({
                 />
 
                 {modelMenuOpen ? (
-                  <div className="absolute bottom-full left-0 mb-2 w-[210px] overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)]">
+                  <div className="absolute bottom-full left-0 mb-2 w-[210px] overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
                     <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
                       Model
                     </div>
                     <div className="flex flex-col gap-0.5">
                       {IMAGE_MODELS.map((option) => {
-                        const selected = option === model;
+                        const selected = option.id === model;
 
                         return (
                           <button
-                            key={option}
+                            key={option.id}
                             type="button"
+                            translate="no"
                             onClick={() => {
-                              onModelChange?.(option);
+                              onModelChange?.(option.id);
                               setModelMenuOpen(false);
                             }}
                             className={[
@@ -437,7 +500,7 @@ export function ImageGenerationPromptBar({
                                 : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
                             ].join(' ')}
                           >
-                            <span className="truncate">{option}</span>
+                            <span className="truncate">{option.label}</span>
                             {selected ? (
                               <Check size={16} className="text-gl-text-primary" />
                             ) : null}
@@ -451,7 +514,7 @@ export function ImageGenerationPromptBar({
 
               <div className="relative" ref={settingsMenuRef}>
                 <BottomMenuButton
-                  icon={<RatioIcon ratio={aspectRatio} active={settingsMenuOpen} />}
+                  icon={<RatioIcon ratio={modelAspectRatio} active={settingsMenuOpen} />}
                   label={settingsLabel}
                   active={settingsMenuOpen}
                   onClick={() => {
@@ -461,9 +524,9 @@ export function ImageGenerationPromptBar({
                 />
 
                 {settingsMenuOpen ? (
-                  <div className="absolute bottom-full left-0 mb-2 w-[340px] overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)]">
+                  <div className="absolute bottom-full left-0 mb-2 w-[340px] overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
                     <div className="flex flex-col gap-3">
-                      <div>
+                      <div className="notranslate" translate="no">
                         <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
                           画质
                         </div>
@@ -475,6 +538,7 @@ export function ImageGenerationPromptBar({
                               <button
                                 key={option}
                                 type="button"
+                                translate="no"
                                 onClick={() => onQualityChange?.(option)}
                                 className={[
                                   'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
@@ -496,13 +560,14 @@ export function ImageGenerationPromptBar({
                         </div>
                         <div className="rounded-[14px] bg-white/[0.06] p-2">
                           <div className="grid grid-cols-5 gap-1">
-                            {IMAGE_ASPECT_RATIO_LAYOUT.map((item) => {
-                              const selected = item.value === aspectRatio;
+                            {aspectRatioLayout.map((item) => {
+                              const selected = item.value === modelAspectRatio;
 
                               return (
-                                <button
+                              <button
                                   key={item.value}
                                   type="button"
+                                  translate="no"
                                   onClick={() => onAspectRatioChange?.(item.value)}
                                   className={[
                                     'flex w-[57px] flex-col items-center rounded-[12px] px-1 pb-1.5 pt-2.5 text-[12px] font-medium transition-colors duration-150',
@@ -530,6 +595,7 @@ export function ImageGenerationPromptBar({
                         </div>
                       </div>
 
+                      {isGeminiImageModel ? null : (
                       <div>
                         <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
                           精细度
@@ -542,7 +608,85 @@ export function ImageGenerationPromptBar({
                               <button
                                 key={option.value}
                                 type="button"
+                                translate="no"
                                 onClick={() => onDetailChange?.(option.value)}
+                                className={[
+                                  'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
+                                  selected
+                                    ? 'bg-white/[0.1] text-gl-text-primary'
+                                    : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
+                                ].join(' ')}
+                              >
+                                {option.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {isGeminiImageModel ? null : (
+              <div className="relative" ref={formatMenuRef}>
+                <BottomMenuButton
+                  icon={<Sparkles size={14} />}
+                  label={formatLabel}
+                  active={formatMenuOpen}
+                  onClick={() => {
+                    setFormatMenuOpen((open) => !open);
+                    setModelMenuOpen(false);
+                    setSettingsMenuOpen(false);
+                  }}
+                />
+
+                {formatMenuOpen ? (
+                  <div className="absolute bottom-full left-0 mb-2 w-[340px] overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
+                    <div className="flex flex-col gap-3">
+                      <div>
+                        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
+                          图片格式
+                        </div>
+                        <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-white/[0.06] p-1">
+                          {IMAGE_OUTPUT_FORMAT_OPTIONS.map((option) => {
+                            const selected = option.value === outputFormat;
+
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                translate="no"
+                                onClick={() => onOutputFormatChange?.(option.value)}
+                                className={[
+                                  'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
+                                  selected
+                                    ? 'bg-white/[0.1] text-gl-text-primary'
+                                    : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
+                                ].join(' ')}
+                              >
+                                {option.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
+                          内容审核
+                        </div>
+                        <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-white/[0.06] p-1">
+                          {IMAGE_MODERATION_OPTIONS.map((option) => {
+                            const selected = option.value === moderation;
+
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                translate="no"
+                                onClick={() => onModerationChange?.(option.value)}
                                 className={[
                                   'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
                                   selected
@@ -560,6 +704,7 @@ export function ImageGenerationPromptBar({
                   </div>
                 ) : null}
               </div>
+              )}
             </div>
 
             <PromptBarRunControls

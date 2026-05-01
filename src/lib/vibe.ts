@@ -10,6 +10,52 @@ const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 const DEFAULT_IMAGE_SIZE = "1024x1024";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const IMAGE_REQUEST_TIMEOUT_MS = 6 * 60_000;
+const GEMINI_IMAGE_SIZE_BY_DIMENSIONS = new Map<string, string>(
+  [
+    ["1024x1024", "1K"],
+    ["512x2064", "1K"],
+    ["352x2928", "1K"],
+    ["848x1264", "1K"],
+    ["1264x848", "1K"],
+    ["896x1200", "1K"],
+    ["2064x512", "1K"],
+    ["1200x896", "1K"],
+    ["928x1152", "1K"],
+    ["1152x928", "1K"],
+    ["2928x352", "1K"],
+    ["768x1376", "1K"],
+    ["1376x768", "1K"],
+    ["1584x672", "1K"],
+    ["2048x2048", "2K"],
+    ["1024x4128", "2K"],
+    ["704x5856", "2K"],
+    ["1696x2528", "2K"],
+    ["2528x1696", "2K"],
+    ["1792x2400", "2K"],
+    ["4128x1024", "2K"],
+    ["2400x1792", "2K"],
+    ["1856x2304", "2K"],
+    ["2304x1856", "2K"],
+    ["5856x704", "2K"],
+    ["1536x2752", "2K"],
+    ["2752x1536", "2K"],
+    ["3168x1344", "2K"],
+    ["4096x4096", "4K"],
+    ["2048x8256", "4K"],
+    ["1408x11712", "4K"],
+    ["3392x5056", "4K"],
+    ["5056x3392", "4K"],
+    ["3584x4800", "4K"],
+    ["8256x2048", "4K"],
+    ["4800x3584", "4K"],
+    ["3712x4608", "4K"],
+    ["4608x3712", "4K"],
+    ["11712x1408", "4K"],
+    ["3072x5504", "4K"],
+    ["5504x3072", "4K"],
+    ["6336x2688", "4K"],
+  ] as const,
+);
 
 export interface GenerateTextParams {
   prompt: string;
@@ -43,6 +89,8 @@ export interface GenerateImageParams {
   model?: string;
   size?: string;
   quality?: string;
+  outputFormat?: string;
+  moderation?: string;
   n?: number;
   apiKey?: string;
   images?: Array<{
@@ -137,6 +185,15 @@ interface VibeGeminiImageResponse {
     status?: string;
   };
 }
+
+type GeminiContentPart =
+  | { text: string }
+  | {
+      inlineData: {
+        mimeType: string;
+        data: string;
+      };
+    };
 
 async function createImageFilePart(
   image: {
@@ -370,6 +427,12 @@ function toGeminiAspectRatio(size?: string): string {
 
 function toGeminiImageSize(size?: string): string {
   const { width, height } = parseImageSize(size);
+  const exactSize = GEMINI_IMAGE_SIZE_BY_DIMENSIONS.get(`${width}x${height}`);
+
+  if (exactSize) {
+    return exactSize;
+  }
+
   const maxDimension = Math.max(width, height);
 
   if (maxDimension <= 768) {
@@ -385,6 +448,54 @@ function toGeminiImageSize(size?: string): string {
   }
 
   return "4K";
+}
+
+async function createGeminiImageParts(
+  images?: Array<{
+    url: string;
+    fileName?: string;
+  }>,
+): Promise<GeminiContentPart[]> {
+  const parts: GeminiContentPart[] = [];
+
+  for (const image of images ?? []) {
+    const url = image.url.trim();
+
+    if (!url) {
+      continue;
+    }
+
+    const dataUrl = parseDataUrl(url);
+
+    if (dataUrl) {
+      parts.push({
+        inlineData: {
+          mimeType: dataUrl.mediaType,
+          data: dataUrl.data,
+        },
+      });
+      continue;
+    }
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new VibeApiError(
+        response.status,
+        `Failed to fetch reference image ${parts.length + 1}`,
+      );
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+    parts.push({
+      inlineData: {
+        mimeType: response.headers.get("content-type") || "image/png",
+        data: bytes.toString("base64"),
+      },
+    });
+  }
+
+  return parts;
 }
 
 async function requestJson<T>(
@@ -878,6 +989,8 @@ async function generateImageOpenAI(
   const model = params.model ?? DEFAULT_IMAGE_MODEL;
   const size = params.size ?? DEFAULT_IMAGE_SIZE;
   const quality = params.quality;
+  const outputFormat = params.outputFormat ?? "png";
+  const moderation = params.moderation ?? "auto";
   let json: VibeImageResponse;
 
   if (params.images?.length) {
@@ -891,6 +1004,14 @@ async function generateImageOpenAI(
 
     if (quality) {
       formData.append("quality", quality);
+    }
+
+    if (outputFormat) {
+      formData.append("output_format", outputFormat);
+    }
+
+    if (moderation) {
+      formData.append("moderation", moderation);
     }
 
     const imageBlobs = await Promise.all(
@@ -919,6 +1040,8 @@ async function generateImageOpenAI(
         prompt: params.prompt,
         size,
         quality,
+        output_format: outputFormat,
+        moderation,
         n: params.n ?? 1,
       },
       params.apiKey,
@@ -950,6 +1073,7 @@ async function generateImageGemini(
 ): Promise<GenerateImageResult> {
   const model = params.model ?? DEFAULT_IMAGE_MODEL;
   const size = params.size ?? DEFAULT_IMAGE_SIZE;
+  const imageParts = await createGeminiImageParts(params.images);
 
   const json = await requestJsonWithBaseUrl<VibeGeminiImageResponse>(
     VIBE_GEMINI_BASE_URL,
@@ -957,7 +1081,7 @@ async function generateImageGemini(
     {
       contents: [
         {
-          parts: [{ text: params.prompt }],
+          parts: [{ text: params.prompt }, ...imageParts],
         },
       ],
       generationConfig: {
