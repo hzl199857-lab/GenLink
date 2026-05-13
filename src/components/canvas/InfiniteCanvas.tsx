@@ -1592,6 +1592,10 @@ function ImageLightbox({
 function InnerCanvas() {
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
+  const dirty = useCanvasStore((s) => s.dirty);
+  const saveMessage = useCanvasStore((s) => s.saveMessage);
+  const saveProject = useCanvasStore((s) => s.saveProject);
+  const setSaveMessage = useCanvasStore((s) => s.setSaveMessage);
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
@@ -2593,8 +2597,39 @@ function InnerCanvas() {
     setApiSettingsOpen(false);
   }, []);
 
+  const handleSaveProject = useCallback(async () => {
+    await saveProject();
+    setSaveMessage('保存成功');
+    window.setTimeout(() => {
+      setSaveMessage(null);
+    }, 2200);
+  }, [saveProject, setSaveMessage]);
+
+  useEffect(() => {
+    if (!dirty) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const latestState = useCanvasStore.getState();
+
+      if (!latestState.dirty || latestState.loading) {
+        return;
+      }
+
+      void latestState.saveProject().catch(() => {});
+    }, 5 * 60 * 1000);
+
+    return () => window.clearInterval(timer);
+  }, [dirty]);
+
   return (
     <>
+      {saveMessage ? (
+        <div className="fixed right-6 top-6 z-[95] rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
+          {saveMessage}
+        </div>
+      ) : null}
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
@@ -2686,6 +2721,7 @@ function InnerCanvas() {
         onScheduleCloseAddMenu={scheduleCloseAddMenu}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
         onToggleHistory={toggleHistoryPopover}
+        onSaveProject={() => void handleSaveProject()}
         historyOpen={historyAnchor !== null}
       />
       <GenerationHistoryPopover

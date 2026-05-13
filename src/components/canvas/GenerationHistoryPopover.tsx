@@ -3,14 +3,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { Maximize2 } from 'lucide-react';
-import type { ImageHistoryItem, ImageHistoryListItem } from '@/types/canvas';
+import type { ImageHistoryItem, ProjectOutputHistoryItem } from '@/types/canvas';
+import { useCanvasStore } from '@/store/canvas-store';
 
 type HistoryTab = 'images' | 'videos';
-
-type ImageHistoryResponse =
-  | { ok: true; items: ImageHistoryListItem[] }
-  | { ok: true; item: ImageHistoryItem }
-  | { ok: false; error: string };
 
 const PANEL_WIDTH = 320;
 const PANEL_HEIGHT = 320;
@@ -37,15 +33,15 @@ function formatDateKey(value: string): string {
   return `${year}-${month}-${day}`;
 }
 
-function groupImageHistoryItems(items: ImageHistoryListItem[]) {
-  const groups = new Map<string, ImageHistoryListItem[]>();
+function groupHistoryItems(items: ProjectOutputHistoryItem[]) {
+  const groups = new Map<string, ProjectOutputHistoryItem[]>();
 
   for (const item of items) {
-    const dateKey = formatDateKey(item.generatedAt);
-    const group = groups.get(dateKey);
+    const dateKey = formatDateKey(item.modifiedAt);
+    const current = groups.get(dateKey);
 
-    if (group) {
-      group.push(item);
+    if (current) {
+      current.push(item);
     } else {
       groups.set(dateKey, [item]);
     }
@@ -55,10 +51,6 @@ function groupImageHistoryItems(items: ImageHistoryListItem[]) {
     date,
     items: groupedItems,
   }));
-}
-
-function getImageUrl(item: ImageHistoryListItem): string {
-  return item.hostedImageUrl?.trim() || item.imageUrl?.trim() || '';
 }
 
 function getPanelPosition(anchor: { x: number; y: number }): { left: number; top: number } {
@@ -82,9 +74,10 @@ export function GenerationHistoryPopover({
   onSelectImage,
 }: GenerationHistoryPopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const listCurrentProjectHistory = useCanvasStore((state) => state.listCurrentProjectHistory);
   const [activeTab, setActiveTab] = useState<HistoryTab>('images');
-  const [items, setItems] = useState<ImageHistoryListItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<ProjectOutputHistoryItem[]>([]);
+  const [loading, setLoading] = useState(open);
   const [error, setError] = useState<string | null>(null);
   const [selectingItemId, setSelectingItemId] = useState<string | null>(null);
 
@@ -93,37 +86,30 @@ export function GenerationHistoryPopover({
       return;
     }
 
-    const controller = new AbortController();
+    let cancelled = false;
 
-    fetch('/api/image-history?limit=160', { signal: controller.signal })
-      .then(async (response) => {
-        const json = (await response.json()) as ImageHistoryResponse;
-
-        if (!response.ok || !json.ok) {
-          throw new Error('error' in json ? json.error : '加载失败');
+    void listCurrentProjectHistory()
+      .then((nextItems) => {
+        if (!cancelled) {
+          setItems(nextItems);
+          setError(null);
         }
-
-        if (!('items' in json)) {
-          throw new Error('鍔犺浇澶辫触');
-        }
-
-        setItems(json.items);
       })
       .catch((nextError) => {
-        if (controller.signal.aborted) {
-          return;
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : '加载失败');
         }
-
-        setError(nextError instanceof Error ? nextError.message : '加载失败');
       })
       .finally(() => {
-        if (!controller.signal.aborted) {
+        if (!cancelled) {
           setLoading(false);
         }
       });
 
-    return () => controller.abort();
-  }, [open]);
+    return () => {
+      cancelled = true;
+    };
+  }, [listCurrentProjectHistory, open]);
 
   useEffect(() => {
     if (!open) {
@@ -152,10 +138,18 @@ export function GenerationHistoryPopover({
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [onClose, open]);
 
-  const groups = useMemo(() => groupImageHistoryItems(items), [items]);
+  const imageItems = useMemo(
+    () => items.filter((item) => item.kind === 'image'),
+    [items],
+  );
+  const videoItems = useMemo(
+    () => items.filter((item) => item.kind === 'video'),
+    [items],
+  );
+  const groups = useMemo(() => groupHistoryItems(imageItems), [imageItems]);
 
-  const handleSelectItem = async (item: ImageHistoryListItem) => {
-    if (selectingItemId) {
+  const handleSelectItem = async (item: ProjectOutputHistoryItem) => {
+    if (selectingItemId || !item.nodeData) {
       return;
     }
 
@@ -163,16 +157,19 @@ export function GenerationHistoryPopover({
     setError(null);
 
     try {
-      const response = await fetch(`/api/image-history?id=${encodeURIComponent(item.id)}`);
-      const json = (await response.json()) as ImageHistoryResponse;
-
-      if (!response.ok || !json.ok || !('item' in json)) {
-        throw new Error('error' in json ? json.error : '鍔犺浇澶辫触');
-      }
-
-      onSelectImage(json.item);
+      onSelectImage({
+        id: item.id,
+        imageUrl: item.previewUrl,
+        model: item.model,
+        width: item.width,
+        height: item.height,
+        format: item.format,
+        sizeBytes: item.sizeBytes,
+        generatedAt: item.createdAt,
+        nodeData: item.nodeData,
+      });
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '鍔犺浇澶辫触');
+      setError(nextError instanceof Error ? nextError.message : '读取历史失败');
     } finally {
       setSelectingItemId(null);
     }
@@ -203,7 +200,7 @@ export function GenerationHistoryPopover({
             ].join(' ')}
             onClick={() => setActiveTab('images')}
           >
-            图片历史 ({items.length})
+            图片历史 ({imageItems.length})
           </button>
           <button
             type="button"
@@ -215,7 +212,7 @@ export function GenerationHistoryPopover({
             ].join(' ')}
             onClick={() => setActiveTab('videos')}
           >
-            视频历史
+            视频历史 ({videoItems.length})
           </button>
         </div>
         <button
@@ -228,11 +225,7 @@ export function GenerationHistoryPopover({
       </div>
 
       <div className="generation-history-scrollable h-[284px] overflow-y-auto px-3.5 py-3">
-        {activeTab === 'videos' ? (
-          <div className="flex h-full items-center justify-center text-[10px] text-white/34">
-            暂无视频历史
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="flex h-full items-center justify-center text-[10px] text-white/38">
             加载中...
           </div>
@@ -240,6 +233,23 @@ export function GenerationHistoryPopover({
           <div className="flex h-full items-center justify-center text-[10px] text-[#ff7878]">
             {error}
           </div>
+        ) : activeTab === 'videos' ? (
+          videoItems.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-[10px] text-white/34">
+              暂无视频历史
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2.5">
+              {videoItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex h-[68px] items-center rounded-md border border-white/8 bg-black/20 px-3 text-[11px] text-white/72"
+                >
+                  {item.fileName}
+                </div>
+              ))}
+            </div>
+          )
         ) : groups.length === 0 ? (
           <div className="flex h-full items-center justify-center text-[10px] text-white/34">
             暂无图片历史
@@ -253,31 +263,28 @@ export function GenerationHistoryPopover({
                 </h3>
                 <div className="grid grid-cols-3 gap-2.5">
                   {group.items.map((item) => {
-                    const imageUrl = getImageUrl(item);
                     const selecting = selectingItemId === item.id;
 
                     return (
                       <button
                         key={item.id}
                         type="button"
-                        disabled={selectingItemId !== null}
+                        disabled={selectingItemId !== null || !item.nodeData}
                         className="relative h-[92px] overflow-hidden rounded-md bg-black/30 text-left outline-none ring-1 ring-white/0 transition hover:scale-[1.015] hover:ring-white/36 focus-visible:ring-white/70 disabled:cursor-wait disabled:hover:scale-100"
                         onClick={() => handleSelectItem(item)}
                       >
-                        {imageUrl ? (
-                          <NextImage
-                            src={imageUrl}
-                            alt="Generated image history"
-                            fill
-                            unoptimized
-                            loading="lazy"
-                            sizes="92px"
-                            className="object-cover"
-                          />
-                        ) : null}
+                        <NextImage
+                          src={item.previewUrl}
+                          alt="Project image history"
+                          fill
+                          unoptimized
+                          loading="lazy"
+                          sizes="92px"
+                          className="object-cover"
+                        />
                         {selecting ? (
                           <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-[10px] text-white/70">
-                            鍔犺浇涓?..
+                            加载中...
                           </div>
                         ) : null}
                       </button>

@@ -66,6 +66,7 @@ export interface ImageGenerationNodeData {
   }>;
   generatedImageUrl?: string;
   generatedHostedImageUrl?: string;
+  generatedOutputFileName?: string;
   generatedImageWidth?: number;
   generatedImageHeight?: number;
   generatedImageFormat?: string;
@@ -145,6 +146,7 @@ export interface ImageHistoryItem {
   id: string;
   imageUrl: string;
   hostedImageUrl?: string;
+  fileName?: string;
   model?: string;
   width?: number;
   height?: number;
@@ -164,4 +166,21 @@ export interface ImageHistoryListItem {
   format?: string;
   sizeBytes?: number;
   generatedAt: string;
+}
+
+export interface ProjectOutputHistoryItem {
+  id: string;
+  sourceKey?: string;
+  fileName: string;
+  kind: "image" | "video";
+  previewUrl: string;
+  createdAt: string;
+  modifiedAt: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  model?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  nodeData?: ImageGenerationNodeData;
 }

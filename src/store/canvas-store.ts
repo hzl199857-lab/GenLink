@@ -3,6 +3,20 @@
 import { create } from "zustand";
 
 import { stripImagePromptSectionLabels } from "@/lib/image-prompt";
+import { buildProjectSnapshot, getProjectSnapshotSignature } from "@/lib/project-snapshot";
+import {
+  deleteProjectDirectory,
+  duplicateProjectDirectory,
+  hydrateProjectSnapshotPreviewUrls,
+  listProjectLibrary,
+  loadProjectSnapshot as loadProjectSnapshotFromDisk,
+  persistGeneratedOutput,
+  readProjectHistory,
+  revokeObjectUrls,
+  type ProjectHandleRecord,
+  renameProjectDirectory,
+  saveProjectSnapshot,
+} from "@/lib/project-storage";
 import type {
   AITextResultNodeData,
   CanvasEdge,
@@ -11,16 +25,11 @@ import type {
   ImageGenerationNodeData,
   ImageNodeData,
   NodeType,
+  ProjectOutputHistoryItem,
   ProjectSnapshot,
   TextNodeData,
   UploadedImageNodeData,
 } from "@/types/canvas";
-
-type ProjectListItem = {
-  id: string;
-  name: string;
-  updatedAt: string;
-};
 
 type ApiErrorResponse = {
   ok: false;
@@ -226,6 +235,7 @@ type AiTextStreamEvent =
 type ConnectedImagePayload = {
   id: string;
   imageUrl: string;
+  previewUrl: string;
   originalImageUrl: string;
   hostedImageUrl?: string;
   fileName?: string;
@@ -233,31 +243,6 @@ type ConnectedImagePayload = {
   sourceType: "image" | "uploaded_image" | "inline_reference";
   width?: number;
   height?: number;
-};
-
-type ProjectsListSuccessResponse = {
-  ok: true;
-  projects: Array<{
-    id: string;
-    name: string;
-    createdAt: string;
-    updatedAt: string;
-  }>;
-};
-
-type ProjectMutationSuccessResponse = {
-  ok: true;
-  project: {
-    id: string;
-    name: string;
-    createdAt: string;
-    updatedAt: string;
-  };
-};
-
-type ProjectSnapshotSuccessResponse = {
-  ok: true;
-  snapshot: ProjectSnapshot;
 };
 
 const TEXT_SYSTEM_PROMPT =
@@ -567,19 +552,18 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
 function createSnapshot(state: {
   projectId: string | null;
   projectName: string;
+  projectCreatedAt?: string | null;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
 }): ProjectSnapshot {
-  const timestamp = nowIso();
-
-  return {
+  return buildProjectSnapshot({
     id: state.projectId ?? crypto.randomUUID(),
-    name: state.projectName.trim() || "Untitled",
-    nodes: state.nodes,
+    name: state.projectName,
+    nodes: sanitizeNodesForPersistence(state.nodes),
     edges: state.edges,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
+    createdAt: state.projectCreatedAt ?? undefined,
+    updatedAt: nowIso(),
+  });
 }
 
 function toErrorMessage(error: unknown): string {
@@ -607,6 +591,82 @@ function toErrorMessage(error: unknown): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isObjectUrl(value?: string): boolean {
+  return typeof value === "string" && value.startsWith("blob:");
+}
+
+function sanitizeImageGenerationNodeDataForPersistence(
+  data: ImageGenerationNodeData,
+): ImageGenerationNodeData {
+  const nextData: ImageGenerationNodeData = {
+    ...data,
+    generatedHostedImageUrl: isObjectUrl(data.generatedHostedImageUrl)
+      ? undefined
+      : data.generatedHostedImageUrl,
+  };
+
+  if (nextData.generationResults?.length) {
+    nextData.generationResults = nextData.generationResults.map((result) => ({
+      ...result,
+      hostedImageUrl: isObjectUrl(result.hostedImageUrl)
+        ? undefined
+        : result.hostedImageUrl,
+    }));
+  }
+
+  return nextData;
+}
+
+function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
+  return nodes.map((node) => {
+    if (node.type !== "image_generation") {
+      return node;
+    }
+
+    return {
+      ...node,
+      data: sanitizeImageGenerationNodeDataForPersistence(node.data),
+    };
+  });
+}
+
+function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
+  const urls = new Set<string>();
+
+  for (const node of nodes) {
+    if (node.type !== "image_generation") {
+      continue;
+    }
+
+    if (isObjectUrl(node.data.generatedHostedImageUrl)) {
+      urls.add(node.data.generatedHostedImageUrl as string);
+    }
+
+    for (const result of node.data.generationResults ?? []) {
+      if (isObjectUrl(result.hostedImageUrl)) {
+        urls.add(result.hostedImageUrl as string);
+      }
+    }
+  }
+
+  return [...urls];
+}
+
+function computeDirtyState(state: {
+  projectName: string;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  lastSavedSignature: string;
+}): boolean {
+  const currentSignature = getProjectSnapshotSignature({
+    name: state.projectName,
+    nodes: state.nodes,
+    edges: state.edges,
+  });
+
+  return currentSignature !== state.lastSavedSignature;
 }
 
 async function pollImageGenerationJob(
@@ -682,18 +742,6 @@ async function submitImageGenerationJob(params: {
   }
 
   return pollImageGenerationJob(json.jobId, params.apiKey);
-}
-
-async function assertOkResponse<TSuccess extends { ok: true }>(
-  response: Response,
-): Promise<TSuccess> {
-  const json = (await response.json()) as TSuccess | ApiErrorResponse;
-
-  if (!response.ok || ("ok" in json && json.ok === false)) {
-    throw new Error("error" in json ? json.error : "Request failed");
-  }
-
-  return json as TSuccess;
 }
 
 function resolveImageApiQuality(detail?: string): "low" | "medium" | "high" {
@@ -960,6 +1008,7 @@ function getConnectedImagesForTargetNode(
         imageUrl:
           sourceNode.data.hostedImageUrl?.trim() ||
           sourceNode.data.imageUrl,
+        previewUrl: sourceNode.data.imageUrl,
         originalImageUrl: sourceNode.data.imageUrl,
         hostedImageUrl: sourceNode.data.hostedImageUrl?.trim() || undefined,
         fileName: sourceNode.data.fileName,
@@ -981,6 +1030,9 @@ function getConnectedImagesForTargetNode(
         imageUrl:
           sourceNode.data.hostedImageUrl?.trim() ||
           sourceNode.data.imageUrl,
+        previewUrl:
+          sourceNode.data.hostedImageUrl?.trim() ||
+          sourceNode.data.imageUrl,
         originalImageUrl: sourceNode.data.imageUrl,
         hostedImageUrl: sourceNode.data.hostedImageUrl?.trim() || undefined,
         fileName: undefined,
@@ -993,14 +1045,25 @@ function getConnectedImagesForTargetNode(
     }
 
     if (sourceNode.type === "image_generation") {
-      if (!sourceNode.data.generatedImageUrl?.trim()) {
+      const requestUrl =
+        sourceNode.data.generatedImageUrl?.trim() ||
+        sourceNode.data.generatedHostedImageUrl?.trim() ||
+        "";
+      const previewUrl =
+        sourceNode.data.generatedHostedImageUrl?.trim() ||
+        sourceNode.data.generatedImageUrl?.trim() ||
+        "";
+
+      if (!requestUrl || !previewUrl) {
         return acc;
       }
 
       acc.push({
         id: sourceNode.id,
-        imageUrl: sourceNode.data.generatedImageUrl,
-        originalImageUrl: sourceNode.data.generatedImageUrl,
+        imageUrl: requestUrl,
+        previewUrl,
+        originalImageUrl: requestUrl,
+        hostedImageUrl: sourceNode.data.generatedHostedImageUrl?.trim() || undefined,
         alt: sourceNode.data.prompt?.trim() || "Generated image",
         sourceType: "image",
         width: sourceNode.data.generatedImageWidth,
@@ -1025,6 +1088,7 @@ function getInlineReferenceImagesForImageGenerationNode(
       acc.push({
         id: image.id || `${node.id}-reference-${index}`,
         imageUrl: image.hostedImageUrl?.trim() || image.imageUrl,
+        previewUrl: image.imageUrl,
         originalImageUrl: image.imageUrl,
         hostedImageUrl: image.hostedImageUrl?.trim() || undefined,
         fileName: image.fileName,
@@ -1150,10 +1214,17 @@ function getConnectedTextPromptForTargetNode(
 export interface CanvasState {
   projectId: string | null;
   projectName: string;
+  projectCreatedAt: string | null;
+  currentProject: ProjectHandleRecord | null;
+  currentProjectPreviewUrls: string[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   loading: boolean;
   error: string | null;
+  dirty: boolean;
+  lastSavedAt: string | null;
+  lastSavedSignature: string;
+  saveMessage: string | null;
 
   addNode: (node: CanvasNode) => void;
   addNodes: (nodes: CanvasNode[]) => void;
@@ -1185,24 +1256,59 @@ export interface CanvasState {
   ) => ConnectedImagePayload[];
 
   setProjectName: (name: string) => void;
+  setSaveMessage: (message: string | null) => void;
+  markCleanFromSnapshot: (snapshot: ProjectSnapshot) => void;
   newProject: (name?: string) => void;
-  saveProject: () => Promise<string>;
-  loadProject: (id: string) => Promise<void>;
-  listProjects: () => Promise<ProjectListItem[]>;
-  deleteProject: (id: string) => Promise<void>;
+  saveProject: () => Promise<ProjectSnapshot>;
+  loadProject: (project: ProjectHandleRecord) => Promise<void>;
+  listProjects: () => Promise<ProjectHandleRecord[]>;
+  deleteProject: (project: ProjectHandleRecord) => Promise<void>;
+  renameProject: (
+    project: ProjectHandleRecord,
+    nextName: string,
+  ) => Promise<ProjectHandleRecord>;
+  duplicateProject: (
+    project: ProjectHandleRecord,
+  ) => Promise<ProjectHandleRecord>;
+  attachProject: (project: ProjectHandleRecord, snapshot: ProjectSnapshot) => void;
+  persistProjectOutput: (params: {
+    sourceKey: string;
+    imageUrl: string;
+    generatedAt: string;
+    nodeData: ImageGenerationNodeData;
+    title?: string;
+    model?: string;
+    width?: number;
+    height?: number;
+    format?: string;
+    sizeBytes?: number;
+  }) => Promise<void>;
+  listCurrentProjectHistory: () => Promise<ProjectOutputHistoryItem[]>;
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   projectId: null,
   projectName: "Untitled",
+  projectCreatedAt: null,
+  currentProject: null,
+  currentProjectPreviewUrls: [],
   nodes: [],
   edges: [],
   loading: false,
   error: null,
+  dirty: false,
+  lastSavedAt: null,
+  lastSavedSignature: getProjectSnapshotSignature({
+    name: "Untitled",
+    nodes: [],
+    edges: [],
+  }),
+  saveMessage: null,
 
   addNode: (node) => {
     set((state) => ({
       nodes: [...state.nodes, node],
+      dirty: true,
       error: null,
     }));
   },
@@ -1214,6 +1320,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     set((state) => ({
       nodes: [...state.nodes, ...nodes],
+      dirty: true,
       error: null,
     }));
   },
@@ -1222,6 +1329,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const node = createNode(type, viewportCenter);
     set((state) => ({
       nodes: [...state.nodes, node],
+      dirty: true,
       error: null,
     }));
     return node;
@@ -1259,7 +1367,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nodes = state.nodes.slice();
       nodes[index] = nextNode;
 
-      return { nodes };
+      return {
+        nodes,
+        dirty: true,
+      };
     });
   },
 
@@ -1283,7 +1394,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nodes = state.nodes.slice();
       nodes[index] = { ...currentNode, position };
 
-      return { nodes };
+      return {
+        nodes,
+        dirty: true,
+      };
     });
   },
 
@@ -1293,6 +1407,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter(
         (edge) => edge.source !== id && edge.target !== id,
       ),
+      dirty: true,
     }));
   },
 
@@ -1308,12 +1423,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter(
         (edge) => !idSet.has(edge.source) && !idSet.has(edge.target),
       ),
+      dirty: true,
     }));
   },
 
   addEdge: (edge) => {
     set((state) => ({
       edges: [...state.edges, edge],
+      dirty: true,
       error: null,
     }));
   },
@@ -1321,6 +1438,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   deleteEdge: (id) => {
     set((state) => ({
       edges: state.edges.filter((edge) => edge.id !== id),
+      dirty: true,
     }));
   },
 
@@ -1357,6 +1475,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     set((state) => ({
       error: null,
+      dirty: true,
       nodes: state.nodes.map((node) =>
         node.id === textNodeId && node.type === "text"
           ? {
@@ -1402,6 +1521,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           streamedText += delta;
 
           set((currentState) => ({
+            dirty: true,
             nodes: currentState.nodes.map((node) =>
               node.id === textNodeId && node.type === "text"
                 ? {
@@ -1421,6 +1541,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set((state) => ({
         error: null,
+        dirty: true,
         nodes: setTextNodeStatus(
           state.nodes.map((node) =>
             node.id === textNodeId && node.type === "text"
@@ -1443,13 +1564,38 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set((state) => ({
         error: message,
+        dirty: true,
         nodes: setTextNodeStatus(state.nodes, textNodeId, "error", message),
       }));
     }
   },
 
   setProjectName: (name) => {
-    set({ projectName: name, error: null });
+    set((state) => ({
+      projectName: name,
+      dirty: computeDirtyState({
+        projectName: name,
+        nodes: state.nodes,
+        edges: state.edges,
+        lastSavedSignature: state.lastSavedSignature,
+      }),
+      error: null,
+    }));
+  },
+
+  setSaveMessage: (message) => {
+    set({ saveMessage: message });
+  },
+
+  markCleanFromSnapshot: (snapshot) => {
+    set({
+      projectId: snapshot.id,
+      projectName: snapshot.name,
+      projectCreatedAt: snapshot.createdAt,
+      lastSavedAt: snapshot.updatedAt,
+      lastSavedSignature: getProjectSnapshotSignature(snapshot),
+      dirty: false,
+    });
   },
 
   getConnectedImagesForTextNode: (textNodeId) => {
@@ -1586,6 +1732,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set((currentState) => ({
         error: null,
+        dirty: true,
         nodes: currentState.nodes.map((node) =>
           node.id === imageGenerationNodeId && node.type === "image_generation"
             ? {
@@ -1629,6 +1776,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           }));
 
           set((currentState) => ({
+            dirty: true,
             nodes: appendImageGenerationNodeResults(
               currentState.nodes,
               imageGenerationNodeId,
@@ -1645,6 +1793,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           };
 
           set((currentState) => ({
+            dirty: true,
             nodes: appendImageGenerationNodeResults(
               currentState.nodes,
               imageGenerationNodeId,
@@ -1673,10 +1822,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         )
         .map((result) => result.errorMessage);
 
+      if (primaryResult?.imageUrl) {
+        await get().persistProjectOutput({
+          sourceKey: `${imageGenerationNodeId}:${primaryResult.generatedAt}:${primaryResult.imageUrl}`,
+          imageUrl: primaryResult.hostedImageUrl?.trim() || primaryResult.imageUrl,
+          generatedAt: primaryResult.generatedAt,
+          nodeData: {
+            ...historyNodeData,
+            generatedImageUrl: primaryResult.imageUrl,
+            generatedHostedImageUrl: primaryResult.hostedImageUrl,
+            generatedImageWidth: primaryResult.width,
+            generatedImageHeight: primaryResult.height,
+            generatedImageFormat: primaryResult.format,
+            generatedImageSizeBytes: primaryResult.sizeBytes,
+            generatedModel: primaryResult.model,
+            generatedAt: primaryResult.generatedAt,
+            generationResults: [primaryResult],
+          },
+          title: latestImageGenerationNode.data.title,
+          model: primaryResult.model,
+          width: primaryResult.width,
+          height: primaryResult.height,
+          format: primaryResult.format,
+          sizeBytes: primaryResult.sizeBytes,
+        });
+      }
+
       set((currentState) => ({
         error: primaryResult
           ? null
           : failureMessages[0] || "Image generation failed",
+        dirty: true,
         nodes: appendImageGenerationNodeResults(
           currentState.nodes,
           imageGenerationNodeId,
@@ -1703,6 +1879,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set((currentState) => ({
         error: message,
+        dirty: true,
         nodes: currentState.nodes.map((node) =>
           node.id === imageGenerationNodeId &&
           node.type === "image_generation"
@@ -1864,6 +2041,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set((currentState) => ({
         nodes: [...currentState.nodes, ...nextNodes],
+        dirty: true,
         error: null,
       }));
     } catch (error) {
@@ -1883,13 +2061,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   newProject: (name) => {
+    const previewUrls = get().currentProjectPreviewUrls;
+    revokeObjectUrls(previewUrls);
+
+    const nextName = name?.trim() || "Untitled";
     set({
       projectId: null,
-      projectName: name?.trim() || "Untitled",
+      projectName: nextName,
+      projectCreatedAt: null,
+      currentProject: null,
+      currentProjectPreviewUrls: [],
       nodes: [],
       edges: [],
       loading: false,
       error: null,
+      dirty: false,
+      lastSavedAt: null,
+      lastSavedSignature: getProjectSnapshotSignature({
+        name: nextName,
+        nodes: [],
+        edges: [],
+      }),
+      saveMessage: null,
     });
   },
 
@@ -1898,52 +2091,33 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     try {
       const state = get();
-      const snapshot = createSnapshot(state);
 
-      const response = state.projectId
-        ? await fetch(`/api/projects/${state.projectId}`, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ snapshot }),
-          })
-        : await fetch("/api/projects", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              name: snapshot.name,
-              snapshot,
-            }),
-          });
-
-      if (state.projectId) {
-        const json = await assertOkResponse<ProjectSnapshotSuccessResponse>(response);
-
-        set({
-          projectId: json.snapshot.id,
-          projectName: json.snapshot.name,
-          nodes: json.snapshot.nodes,
-          edges: json.snapshot.edges,
-          loading: false,
-          error: null,
-        });
-
-        return json.snapshot.id;
+      if (!state.currentProject) {
+        throw new Error("当前没有打开的项目");
       }
 
-      const json = await assertOkResponse<ProjectMutationSuccessResponse>(response);
+      const snapshot = createSnapshot(state);
+      const updatedProject = await saveProjectSnapshot(state.currentProject, snapshot);
+      const savedSnapshot = {
+        ...snapshot,
+        name: updatedProject.name,
+        updatedAt: updatedProject.updatedAt,
+      };
 
       set({
-        projectId: json.project.id,
-        projectName: json.project.name,
+        projectId: savedSnapshot.id,
+        projectName: savedSnapshot.name,
+        projectCreatedAt: savedSnapshot.createdAt,
+        currentProject: updatedProject,
+        currentProjectPreviewUrls: state.currentProjectPreviewUrls,
         loading: false,
         error: null,
+        dirty: false,
+        lastSavedAt: savedSnapshot.updatedAt,
+        lastSavedSignature: getProjectSnapshotSignature(savedSnapshot),
       });
 
-      return json.project.id;
+      return savedSnapshot;
     } catch (error) {
       const message = toErrorMessage(error);
       set({ loading: false, error: message });
@@ -1951,20 +2125,29 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  loadProject: async (id) => {
-    set({ loading: true, error: null });
+  loadProject: async (project) => {
+    set({ loading: true, error: null, saveMessage: null });
 
     try {
-      const response = await fetch(`/api/projects/${id}`);
-      const json = await assertOkResponse<ProjectSnapshotSuccessResponse>(response);
+      const previousPreviewUrls = get().currentProjectPreviewUrls;
+      const snapshot = await loadProjectSnapshotFromDisk(project);
+      const hydrated = await hydrateProjectSnapshotPreviewUrls(project, snapshot);
+
+      revokeObjectUrls(previousPreviewUrls);
 
       set({
-        projectId: json.snapshot.id,
-        projectName: json.snapshot.name,
-        nodes: json.snapshot.nodes,
-        edges: json.snapshot.edges,
+        projectId: hydrated.snapshot.id,
+        projectName: hydrated.snapshot.name,
+        projectCreatedAt: hydrated.snapshot.createdAt,
+        currentProject: project,
+        currentProjectPreviewUrls: hydrated.previewUrls,
+        nodes: hydrated.snapshot.nodes,
+        edges: hydrated.snapshot.edges,
         loading: false,
         error: null,
+        dirty: false,
+        lastSavedAt: hydrated.snapshot.updatedAt,
+        lastSavedSignature: getProjectSnapshotSignature(hydrated.snapshot),
       });
     } catch (error) {
       const message = toErrorMessage(error);
@@ -1977,14 +2160,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({ error: null });
 
     try {
-      const response = await fetch("/api/projects");
-      const json = await assertOkResponse<ProjectsListSuccessResponse>(response);
-
-      return json.projects.map((project) => ({
-        id: project.id,
-        name: project.name,
-        updatedAt: project.updatedAt,
-      }));
+      return await listProjectLibrary();
     } catch (error) {
       const message = toErrorMessage(error);
       set({ error: message });
@@ -1992,17 +2168,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  deleteProject: async (id) => {
+  deleteProject: async (project) => {
     set({ loading: true, error: null });
 
     try {
-      const response = await fetch(`/api/projects/${id}`, {
-        method: "DELETE",
-      });
+      await deleteProjectDirectory(project);
 
-      await assertOkResponse<{ ok: true }>(response);
-
-      if (get().projectId === id) {
+      if (get().projectId === project.id) {
         get().newProject();
       } else {
         set({ loading: false, error: null });
@@ -2012,5 +2184,151 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set({ loading: false, error: message });
       throw error;
     }
+  },
+
+  renameProject: async (project, nextName) => {
+    set({ loading: true, error: null });
+
+    try {
+      const renamedProject = await renameProjectDirectory(project, nextName);
+
+      if (get().projectId === project.id) {
+        set((state) => ({
+          projectName: renamedProject.name,
+          currentProject: renamedProject,
+          loading: false,
+          error: null,
+          dirty: computeDirtyState({
+            projectName: renamedProject.name,
+            nodes: state.nodes,
+            edges: state.edges,
+            lastSavedSignature: state.lastSavedSignature,
+          }),
+        }));
+      } else {
+        set({ loading: false, error: null });
+      }
+
+      return renamedProject;
+    } catch (error) {
+      const message = toErrorMessage(error);
+      set({ loading: false, error: message });
+      throw error;
+    }
+  },
+
+  duplicateProject: async (project) => {
+    set({ loading: true, error: null });
+
+    try {
+      const duplicatedProject = await duplicateProjectDirectory(project);
+      set({ loading: false, error: null });
+      return duplicatedProject;
+    } catch (error) {
+      const message = toErrorMessage(error);
+      set({ loading: false, error: message });
+      throw error;
+    }
+  },
+
+  attachProject: (project, snapshot) => {
+    const previousPreviewUrls = get().currentProjectPreviewUrls;
+    revokeObjectUrls(previousPreviewUrls);
+    const nextPreviewUrls = collectPreviewUrlsFromNodes(snapshot.nodes);
+
+    set({
+      projectId: snapshot.id,
+      projectName: snapshot.name,
+      projectCreatedAt: snapshot.createdAt,
+      currentProject: project,
+      currentProjectPreviewUrls: nextPreviewUrls,
+      nodes: snapshot.nodes,
+      edges: snapshot.edges,
+      loading: false,
+      error: null,
+      dirty: false,
+      lastSavedAt: snapshot.updatedAt,
+      lastSavedSignature: getProjectSnapshotSignature(snapshot),
+      saveMessage: null,
+    });
+  },
+
+  persistProjectOutput: async (params) => {
+    const state = get();
+
+    if (!state.currentProject) {
+      return;
+    }
+
+    const persisted = await persistGeneratedOutput(state.currentProject, params);
+
+    set((currentState) => {
+      let previousPreviewUrl: string | null = null;
+
+      const nodes = currentState.nodes.map((node) => {
+        if (node.type !== "image_generation") {
+          return node;
+        }
+
+        const sourceKey = `${node.id}:${params.generatedAt}:${params.nodeData.generatedImageUrl ?? ""}`;
+
+        if (sourceKey !== params.sourceKey) {
+          return node;
+        }
+
+        previousPreviewUrl = node.data.generatedHostedImageUrl?.trim() || null;
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            generatedHostedImageUrl: persisted.previewUrl,
+            generatedOutputFileName: persisted.fileName,
+            generationResults: node.data.generationResults?.map((result) => {
+              if (
+                result.status !== "completed" ||
+                result.generatedAt !== params.generatedAt ||
+                result.imageUrl !== params.nodeData.generatedImageUrl
+              ) {
+                return result;
+              }
+
+              return {
+                ...result,
+                hostedImageUrl: persisted.previewUrl,
+              };
+            }),
+          },
+        };
+      });
+
+      if (
+        previousPreviewUrl &&
+        previousPreviewUrl !== persisted.previewUrl &&
+        currentState.currentProjectPreviewUrls.includes(previousPreviewUrl)
+      ) {
+        revokeObjectUrls([previousPreviewUrl]);
+      }
+
+      const previewUrls = currentState.currentProjectPreviewUrls.filter(
+        (url) => url !== previousPreviewUrl,
+      );
+      previewUrls.push(persisted.previewUrl);
+
+      return {
+        nodes,
+        currentProjectPreviewUrls: previewUrls,
+      };
+    });
+  },
+
+  listCurrentProjectHistory: async () => {
+    const state = get();
+
+    if (!state.currentProject) {
+      return [];
+    }
+
+    return readProjectHistory(state.currentProject);
   },
 }));

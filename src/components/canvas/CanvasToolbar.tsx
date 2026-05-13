@@ -1,7 +1,16 @@
 'use client';
 
 import React, { useRef } from 'react';
-import { Clock3, Folder, LayoutList, MessageCircle, Plus, Settings, X } from 'lucide-react';
+import {
+  Clock3,
+  Folder,
+  LayoutList,
+  MessageCircle,
+  Plus,
+  Save,
+  Settings,
+  X,
+} from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 export interface CanvasToolbarProps {
@@ -9,6 +18,7 @@ export interface CanvasToolbarProps {
   onScheduleCloseAddMenu?: () => void;
   onOpenApiSettings?: () => void;
   onToggleHistory?: (anchor: DOMRect) => void;
+  onSaveProject?: () => void;
   historyOpen?: boolean;
 }
 
@@ -49,6 +59,7 @@ export function CanvasToolbar({
   onScheduleCloseAddMenu,
   onOpenApiSettings,
   onToggleHistory,
+  onSaveProject,
   historyOpen = false,
 }: CanvasToolbarProps) {
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -61,12 +72,10 @@ export function CanvasToolbar({
     }
 
     const rect = button.getBoundingClientRect();
-    const screen = {
+    onOpenAddMenu({
       x: rect.right + 18,
       y: rect.top - 6,
-    };
-
-    onOpenAddMenu(screen);
+    });
   };
 
   return (
@@ -107,6 +116,7 @@ export function CanvasToolbar({
             historyToggle
             onClick={(event) => onToggleHistory?.(event.currentTarget.getBoundingClientRect())}
           />
+          <ToolbarButton icon={Save} title="保存" onClick={() => onSaveProject?.()} />
         </div>
 
         <div className="mb-2 mt-1 h-px w-3 rounded-full bg-white/10" />

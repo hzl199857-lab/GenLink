@@ -75,6 +75,7 @@ export interface ImageGenerationPromptBarProps {
   connectedImages?: Array<{
     id: string;
     imageUrl: string;
+    previewUrl?: string;
     alt: string;
     width?: number;
     height?: number;
@@ -406,7 +407,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                     className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
                   >
                     <NextImage
-                      src={image.imageUrl}
+                      src={image.previewUrl || image.imageUrl}
                       alt={image.alt || `Connected image ${index + 1}`}
                       fill
                       unoptimized
