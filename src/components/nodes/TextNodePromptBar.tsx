@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
 import {
@@ -11,14 +11,10 @@ import {
   Check,
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
-const CIRCLED_NUMBER_LABELS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'] as const;
-
-function getThumbnailIndexLabel(index: number): string {
-  return CIRCLED_NUMBER_LABELS[index] ?? String(index + 1);
-}
 
 const MODEL_OPTIONS = [
   'gemini-3-flash',
@@ -46,7 +42,7 @@ export interface TextNodePromptBarProps {
   onFocusWithinChange?: (focused: boolean) => void;
 }
 
-export function TextNodePromptBar({
+export const TextNodePromptBar = memo(function TextNodePromptBar({
   nodeId,
   visible,
   prompt,
@@ -129,13 +125,16 @@ export function TextNodePromptBar({
         className="text-node-prompt-bar relative flex w-[600px] max-w-[calc(100vw-48px)] flex-col gap-4 rounded-gl-lg border border-gl-stroke-soft bg-gl-panel/90 px-5 py-3 shadow-gl-toolbar backdrop-blur-md"
         style={{ transform: 'scale(0.9)', transformOrigin: 'top center' }}
       >
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="absolute right-5 top-4 z-10 flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-secondary"
-          title={expanded ? '收起' : '展开'}
-        >
-          {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        </button>
+        <div className="group/tooltip absolute right-5 top-4 z-10">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            aria-label={expanded ? '收起' : '展开'}
+            className="flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-secondary"
+          >
+            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+          <Tooltip label={expanded ? '收起' : '展开'} side="top" />
+        </div>
 
         {connectedImages.length > 0 ? (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 nodrag nopan">
@@ -143,7 +142,6 @@ export function TextNodePromptBar({
               <div
                 key={image.id}
                 className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                title={image.alt || `Connected image ${index + 1}`}
               >
                 <NextImage
                   src={image.imageUrl}
@@ -153,8 +151,8 @@ export function TextNodePromptBar({
                   sizes="50px"
                   className="object-cover"
                 />
-                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[13px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                  {getThumbnailIndexLabel(index)}
+                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                  {index + 1}
                 </span>
               </div>
             ))}
@@ -162,9 +160,9 @@ export function TextNodePromptBar({
         ) : null}
 
         <div className="relative">
-        <div
-          className="overflow-hidden"
-          style={{
+          <div
+            className="overflow-hidden"
+            style={{
               height: expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT,
               transition: 'height 500ms ease-in-out',
             }}
@@ -210,31 +208,34 @@ export function TextNodePromptBar({
 
         <div className="flex items-center justify-between">
           <div className="relative -ml-2.5" ref={modelMenuRef}>
-            <button
-              type="button"
-              onClick={() => setModelMenuOpen((open) => !open)}
-              className={[
-                'group flex h-[42px] items-center gap-[9px] rounded-gl-pill border px-4',
-                'text-[15px] font-medium text-gl-text-secondary transition-all duration-150',
-                modelMenuOpen
-                  ? 'border-white/16 bg-white/[0.06] text-gl-text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]'
-                  : 'border-transparent bg-transparent hover:border-white/14 hover:bg-white/[0.05] hover:text-gl-text-primary',
-              ].join(' ')}
-              title="选择模型"
-            >
-              <Sparkles
-                size={15}
-                className="text-gl-text-tertiary group-hover:text-gl-text-secondary"
-              />
-              <span className="leading-none">{model}</span>
-              <ChevronDown
-                size={15}
+            <div className="group/tooltip relative inline-flex">
+              <button
+                type="button"
+                onClick={() => setModelMenuOpen((open) => !open)}
+                aria-label="选择模型"
                 className={[
-                  'text-gl-text-tertiary transition-transform duration-150',
-                  modelMenuOpen ? 'rotate-180' : '',
+                  'group flex h-[42px] items-center gap-[9px] rounded-gl-pill border px-4',
+                  'text-[15px] font-medium text-gl-text-secondary transition-all duration-150',
+                  modelMenuOpen
+                    ? 'border-white/16 bg-white/[0.06] text-gl-text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]'
+                    : 'border-transparent bg-transparent hover:border-white/14 hover:bg-white/[0.05] hover:text-gl-text-primary',
                 ].join(' ')}
-              />
-            </button>
+              >
+                <Sparkles
+                  size={15}
+                  className="text-gl-text-tertiary group-hover:text-gl-text-secondary"
+                />
+                <span className="leading-none">{model}</span>
+                <ChevronDown
+                  size={15}
+                  className={[
+                    'text-gl-text-tertiary transition-transform duration-150',
+                    modelMenuOpen ? 'rotate-180' : '',
+                  ].join(' ')}
+                />
+              </button>
+              <Tooltip label="选择模型" side="top" />
+            </div>
 
             {modelMenuOpen ? (
               <div className="absolute left-0 top-full mt-2 w-[210px] overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
@@ -272,9 +273,9 @@ export function TextNodePromptBar({
             ) : null}
           </div>
 
-          <PromptBarRunControls label="1" labelTitle="Credits" onRun={onRun} />
+          <PromptBarRunControls label="1" labelTitle="额度" runTitle="运行" onRun={onRun} />
         </div>
       </div>
     </NodeToolbar>
   );
-}
+});

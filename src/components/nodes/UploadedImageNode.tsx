@@ -6,11 +6,14 @@ import { Position } from 'reactflow';
 import { Image as ImageIcon, Upload } from 'lucide-react';
 import type { UploadedImageNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
+import { EditableNodeTitle } from './EditableNodeTitle';
 
 export interface UploadedImageNodeProps {
   data: UploadedImageNodeData;
   selected?: boolean;
   onReplace?: (file: File) => void;
+  onTitleChange?: (nextTitle: string | undefined) => void;
+  onSelectNode?: () => void;
   onShowInfo?: () => void;
 }
 
@@ -22,18 +25,31 @@ export function UploadedImageNode({
   data,
   selected = false,
   onReplace,
+  onTitleChange,
+  onSelectNode,
   onShowInfo,
 }: UploadedImageNodeProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const imageWidth = Math.max(data.width || 320, 1);
   const imageHeight = Math.max(data.height || 320, 1);
+  const explicitDisplayWidth = data.displayWidth;
+  const explicitDisplayHeight = data.displayHeight;
+  const hasExplicitDisplaySize =
+    typeof explicitDisplayWidth === 'number' &&
+    explicitDisplayWidth > 0 &&
+    typeof explicitDisplayHeight === 'number' &&
+    explicitDisplayHeight > 0;
   const imageAspectRatio = imageWidth / imageHeight;
   const fittedWidthByHeight = MAX_CARD_HEIGHT * imageAspectRatio;
-  const cardWidth = Math.min(
-    MAX_CARD_WIDTH,
-    Math.max(MIN_CARD_WIDTH, Math.min(imageWidth, fittedWidthByHeight)),
-  );
-  const estimatedCardHeight = cardWidth * (imageHeight / imageWidth);
+  const cardWidth = hasExplicitDisplaySize
+    ? explicitDisplayWidth
+    : Math.min(
+        MAX_CARD_WIDTH,
+        Math.max(MIN_CARD_WIDTH, Math.min(imageWidth, fittedWidthByHeight)),
+      );
+  const estimatedCardHeight = hasExplicitDisplaySize
+    ? explicitDisplayHeight
+    : cardWidth * (imageHeight / imageWidth);
   const showAccessories = selected;
   const useTightReplaceButton = cardWidth < 310 || estimatedCardHeight < 140;
   const useCompactReplaceButton = cardWidth < 340 || estimatedCardHeight < 180;
@@ -58,7 +74,13 @@ export function UploadedImageNode({
     <div className="relative group node-connectable-root" style={{ width: cardWidth }}>
       <div className="-mt-2 mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
         <ImageIcon size={24} />
-        <span className="text-[22px] font-medium leading-none">image</span>
+        <EditableNodeTitle
+          value={data.title}
+          fallbackValue="image"
+          className="text-[22px] font-medium leading-none"
+          inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
+          onCommit={onTitleChange}
+        />
       </div>
 
       <div
@@ -71,6 +93,7 @@ export function UploadedImageNode({
         style={{ aspectRatio: `${imageWidth} / ${imageHeight}` }}
         onClick={(event) => {
           event.stopPropagation();
+          onSelectNode?.();
           onShowInfo?.();
         }}
       >

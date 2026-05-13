@@ -2,6 +2,7 @@ import type {
   AITextResultNodeData,
   CanvasEdge,
   CanvasNode,
+  ImageGenerationResultItem,
   ImageGenerationNodeData,
   ImageNodeData,
   NodeType,
@@ -74,6 +75,7 @@ function normalizeAITextResultNodeData(value: unknown): AITextResultNodeData {
     const record = value as Record<string, unknown>;
 
     return {
+      title: typeof record.title === "string" ? record.title : undefined,
       content: typeof record.content === "string" ? record.content : "",
       model: typeof record.model === "string" ? record.model : "",
       tokens: typeof record.tokens === "number" ? record.tokens : undefined,
@@ -89,6 +91,7 @@ function normalizeAITextResultNodeData(value: unknown): AITextResultNodeData {
   }
 
   return {
+    title: "AI Text Result",
     content: "",
     model: "",
     generatedAt: new Date(0).toISOString(),
@@ -98,6 +101,47 @@ function normalizeAITextResultNodeData(value: unknown): AITextResultNodeData {
 function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeData {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
+    const rawParallelCount =
+      typeof record.parallelCount === "number"
+        ? record.parallelCount
+        : typeof record.count === "number"
+          ? record.count
+          : undefined;
+    const parallelCount =
+      rawParallelCount === 2 || rawParallelCount === 4 ? rawParallelCount : 1;
+    const generationResults: ImageGenerationResultItem[] | undefined =
+      Array.isArray(record.generationResults)
+        ? record.generationResults
+            .filter((item): item is Record<string, unknown> =>
+              Boolean(item) && typeof item === "object",
+            )
+            .map((item) => ({
+              status: item.status === "error" ? "error" : "completed",
+              imageUrl:
+                typeof item.imageUrl === "string" ? item.imageUrl : undefined,
+              hostedImageUrl:
+                typeof item.hostedImageUrl === "string"
+                  ? item.hostedImageUrl
+                  : undefined,
+              model: typeof item.model === "string" ? item.model : undefined,
+              width: typeof item.width === "number" ? item.width : undefined,
+              height: typeof item.height === "number" ? item.height : undefined,
+              format:
+                typeof item.format === "string" ? item.format : undefined,
+              sizeBytes:
+                typeof item.sizeBytes === "number"
+                  ? item.sizeBytes
+                  : undefined,
+              generatedAt:
+                typeof item.generatedAt === "string"
+                  ? item.generatedAt
+                  : new Date(0).toISOString(),
+              errorMessage:
+                typeof item.errorMessage === "string"
+                  ? item.errorMessage
+                  : undefined,
+            }))
+        : undefined;
 
     return {
       title: typeof record.title === "string" ? record.title : "Image",
@@ -110,7 +154,7 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
       aspectRatio: typeof record.aspectRatio === "string" ? record.aspectRatio : "auto",
       quality: typeof record.quality === "string" ? record.quality : "1K",
       detail: typeof record.detail === "string" ? record.detail : "medium",
-      count: typeof record.count === "number" ? record.count : 5,
+      parallelCount,
       referenceImageUrl:
         typeof record.referenceImageUrl === "string"
           ? record.referenceImageUrl
@@ -168,6 +212,7 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
         typeof record.generatedAt === "string"
           ? record.generatedAt
           : undefined,
+      generationResults,
       status:
         record.status === "idle" ||
         record.status === "generating" ||
@@ -186,7 +231,7 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
     aspectRatio: "auto",
     quality: "1K",
     detail: "medium",
-    count: 5,
+    parallelCount: 1,
     status: "idle",
   };
 }
@@ -196,6 +241,7 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
     const record = value as Record<string, unknown>;
 
     return {
+      title: typeof record.title === "string" ? record.title : undefined,
       imageUrl: typeof record.imageUrl === "string" ? record.imageUrl : "",
       hostedImageUrl:
         typeof record.hostedImageUrl === "string"
@@ -219,6 +265,7 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
   }
 
   return {
+    title: "Image",
     imageUrl: "",
     prompt: "",
     generatedAt: new Date(0).toISOString(),
@@ -230,6 +277,7 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
     const record = value as Record<string, unknown>;
 
     return {
+      title: typeof record.title === "string" ? record.title : undefined,
       imageUrl: typeof record.imageUrl === "string" ? record.imageUrl : "",
       hostedImageUrl:
         typeof record.hostedImageUrl === "string"
@@ -238,12 +286,17 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
       fileName: typeof record.fileName === "string" ? record.fileName : undefined,
       width: typeof record.width === "number" ? record.width : 320,
       height: typeof record.height === "number" ? record.height : 320,
+      displayWidth:
+        typeof record.displayWidth === "number" ? record.displayWidth : undefined,
+      displayHeight:
+        typeof record.displayHeight === "number" ? record.displayHeight : undefined,
       sizeBytes:
         typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
     };
   }
 
   return {
+    title: "image",
     imageUrl: "",
     width: 320,
     height: 320,

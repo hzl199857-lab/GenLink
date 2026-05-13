@@ -3,18 +3,21 @@
 import React from 'react';
 import { Sparkles } from 'lucide-react';
 import type { AITextResultNodeData } from '../../types/canvas';
+import { EditableNodeTitle } from './EditableNodeTitle';
 import { NodeShell } from './NodeShell';
 
 export interface AITextResultNodeProps {
   id?: string;
   data: AITextResultNodeData;
   selected?: boolean;
+  onTitleChange?: (nextTitle: string | undefined) => void;
 }
 
 export function AITextResultNode({
   id,
   data,
   selected = false,
+  onTitleChange,
 }: AITextResultNodeProps) {
   // Ensure the date is valid before parsing
   let formattedTime = '';
@@ -35,7 +38,13 @@ export function AITextResultNode({
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-gl-stroke-subtle text-gl-accent-cool">
         <Sparkles size={14} />
-        <span className="text-[12px] font-medium text-gl-text-secondary">AI Text Result</span>
+        <EditableNodeTitle
+          value={data.title}
+          fallbackValue="AI Text Result"
+          className="text-[12px] font-medium text-gl-text-secondary"
+          inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[12px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
+          onCommit={onTitleChange}
+        />
         {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
       </div>
 

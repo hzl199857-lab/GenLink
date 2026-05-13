@@ -69,6 +69,57 @@ body {
   transform-origin: center;
 }
 
+.image-result-gallery-card {
+  animation: image-result-gallery-card-spring 560ms cubic-bezier(0.16, 1.24, 0.26, 1) both;
+  transform-origin: center;
+}
+
+.image-result-gallery-card:nth-child(1) {
+  animation: none;
+}
+
+.image-result-gallery-card:nth-child(2) {
+  animation-delay: 0ms;
+}
+
+.image-result-gallery-card:nth-child(3) {
+  animation-delay: 48ms;
+}
+
+.image-result-gallery-card:nth-child(4) {
+  animation-delay: 96ms;
+}
+
+.image-card-floating-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  min-width: 72px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(58, 55, 52, 0.88);
+  color: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  transition:
+    background 140ms ease,
+    transform 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.image-card-floating-pill:hover {
+  background: rgba(72, 68, 64, 0.94);
+  transform: translateY(-1px);
+  box-shadow:
+    0 14px 28px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
 .canvas-minimap-panel {
   margin: 0 0 68px 14px;
   transform: translateY(-50px);
@@ -289,6 +340,15 @@ body {
   display: none;
 }
 
+.generation-history-scrollable {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.generation-history-scrollable::-webkit-scrollbar {
+  display: none;
+}
+
 @property --text-node-running-angle {
   syntax: "<angle>";
   inherits: false;
@@ -310,5 +370,29 @@ body {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes image-result-gallery-card-spring {
+  0% {
+    opacity: 0;
+    transform: translate3d(-42px, 16px, 0) scale(0.86);
+    filter: blur(8px);
+  }
+
+  56% {
+    opacity: 1;
+    transform: translate3d(4px, -3px, 0) scale(1.03);
+    filter: blur(0);
+  }
+
+  78% {
+    transform: translate3d(-1px, 1px, 0) scale(0.992);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
   }
 }

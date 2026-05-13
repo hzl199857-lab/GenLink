@@ -2,10 +2,12 @@
 
 import { create } from "zustand";
 
+import { stripImagePromptSectionLabels } from "@/lib/image-prompt";
 import type {
   AITextResultNodeData,
   CanvasEdge,
   CanvasNode,
+  ImageGenerationResultItem,
   ImageGenerationNodeData,
   ImageNodeData,
   NodeType,
@@ -43,19 +45,74 @@ type ImageJobPollResponse =
       jobId: string;
       status: "completed";
       result: {
-        imageUrl: string;
-        hostedImageUrl?: string;
         model: string;
-        width: number;
-        height: number;
-        format?: string;
-        sizeBytes?: number;
+        images: Array<{
+          imageUrl: string;
+          hostedImageUrl?: string;
+          model: string;
+          width: number;
+          height: number;
+          format?: string;
+          sizeBytes?: number;
+        }>;
       };
     };
 
-export const CANVAS_TEXT_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
-export const CANVAS_IMAGE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
-function readStoredApiKey(storageKey: string): string {
+type ImageGenerationRunResult = {
+  model: string;
+  images: Array<{
+    imageUrl: string;
+    hostedImageUrl?: string;
+    model: string;
+    width: number;
+    height: number;
+    format?: string;
+    sizeBytes?: number;
+  }>;
+};
+
+type SplitGridDimension = 2 | 3 | 5;
+
+const inFlightImageGenerationNodeIds = new Set<string>();
+const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
+const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
+const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
+const IMAGE_JOB_POLL_INTERVAL_MS = 2_000;
+const SPLIT_OUTPUT_GROUP_GAP = 48;
+const SPLIT_OUTPUT_TILE_GAP = 12;
+const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
+
+function resolveParallelCount(value?: number): 1 | 2 | 4 {
+  return value === 2 || value === 4 ? value : 1;
+}
+
+export type ApiProvider = "vibe" | "comfly" | "zhenzhen";
+export type ApiModelKind = "text" | "image";
+
+export type StoredApiSettings = {
+  textProvider: ApiProvider;
+  imageProvider: ApiProvider;
+  textApiKeys: Record<ApiProvider, string>;
+  imageApiKeys: Record<ApiProvider, string>;
+};
+
+const DEFAULT_API_PROVIDER: ApiProvider = "vibe";
+const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
+  vibe: "VibeAPI",
+  comfly: "Comfly",
+  zhenzhen: "贞贞的AI工坊",
+};
+
+export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
+export const CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY = "genlink.imageApiProvider";
+export const CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
+export const CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyTextApiKey";
+export const CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenTextApiKey";
+export const CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
+export const CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyImageApiKey";
+export const CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenImageApiKey";
+
+function readStoredValue(storageKey: string): string {
   if (typeof window === "undefined") {
     return "";
   }
@@ -63,12 +120,87 @@ function readStoredApiKey(storageKey: string): string {
   return window.localStorage.getItem(storageKey)?.trim() ?? "";
 }
 
-function readStoredTextApiKey(): string {
-  return readStoredApiKey(CANVAS_TEXT_API_KEY_STORAGE_KEY);
+export function normalizeApiProvider(value?: string): ApiProvider {
+  switch (value?.trim().toLowerCase()) {
+    case "comfly":
+      return "comfly";
+    case "zhenzhen":
+      return "zhenzhen";
+    default:
+      return DEFAULT_API_PROVIDER;
+  }
 }
 
-function readStoredImageApiKey(): string {
-  return readStoredApiKey(CANVAS_IMAGE_API_KEY_STORAGE_KEY);
+export function getApiProviderLabel(provider: ApiProvider): string {
+  return API_PROVIDER_LABELS[provider];
+}
+
+function getApiProviderStorageKey(kind: ApiModelKind): string {
+  return kind === "text"
+    ? CANVAS_TEXT_API_PROVIDER_STORAGE_KEY
+    : CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY;
+}
+
+function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string {
+  if (kind === "text") {
+    switch (provider) {
+      case "comfly":
+        return CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY;
+      case "zhenzhen":
+        return CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY;
+      default:
+        return CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY;
+    }
+  }
+
+  switch (provider) {
+    case "comfly":
+      return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+    case "zhenzhen":
+      return CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY;
+    default:
+      return CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY;
+  }
+}
+
+export function readStoredSelectedApiProvider(kind: ApiModelKind): ApiProvider {
+  return normalizeApiProvider(readStoredValue(getApiProviderStorageKey(kind)));
+}
+
+export function readStoredApiKey(
+  kind: ApiModelKind,
+  provider: ApiProvider,
+): string {
+  return readStoredValue(getApiKeyStorageKey(kind, provider));
+}
+
+export function readStoredApiSettings(): StoredApiSettings {
+  return {
+    textProvider: readStoredSelectedApiProvider("text"),
+    imageProvider: readStoredSelectedApiProvider("image"),
+    textApiKeys: {
+      vibe: readStoredApiKey("text", "vibe"),
+      comfly: readStoredApiKey("text", "comfly"),
+      zhenzhen: readStoredApiKey("text", "zhenzhen"),
+    },
+    imageApiKeys: {
+      vibe: readStoredApiKey("image", "vibe"),
+      comfly: readStoredApiKey("image", "comfly"),
+      zhenzhen: readStoredApiKey("image", "zhenzhen"),
+    },
+  };
+}
+
+function assertStoredApiKey(kind: ApiModelKind, provider: ApiProvider): string {
+  const apiKey = readStoredApiKey(kind, provider);
+
+  if (!apiKey) {
+    throw new Error(
+      `请先在 API 设置中配置${kind === "text" ? "语言模型" : "图像模型"}的 ${getApiProviderLabel(provider)} API Key`,
+    );
+  }
+
+  return apiKey;
 }
 
 type AiTextStreamEvent =
@@ -272,6 +404,7 @@ function isGeminiImageModel(model?: string): boolean {
 
 function createTextNodeData(): TextNodeData {
   return {
+    title: "Text",
     text: "",
     model: "gpt-5.4",
     status: "idle",
@@ -288,13 +421,14 @@ function createImageGenerationNodeData(): ImageGenerationNodeData {
     detail: "medium",
     outputFormat: "png",
     moderation: "auto",
-    count: 5,
+    parallelCount: 1,
     status: "idle",
   };
 }
 
 function createAITextResultNodeData(): AITextResultNodeData {
   return {
+    title: "AI Text Result",
     content: "",
     model: "",
     generatedAt: nowIso(),
@@ -303,6 +437,7 @@ function createAITextResultNodeData(): AITextResultNodeData {
 
 function createImageNodeData(): ImageNodeData {
   return {
+    title: "Image",
     imageUrl: "",
     prompt: "",
     generatedAt: nowIso(),
@@ -311,10 +446,82 @@ function createImageNodeData(): ImageNodeData {
 
 function createUploadedImageNodeData(): UploadedImageNodeData {
   return {
+    title: "image",
     imageUrl: "",
     width: 320,
     height: 320,
   };
+}
+
+function sanitizeSplitNodeTitle(value?: string): string {
+  const title = value?.trim();
+  return title ? title : "image";
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to load source image"));
+    image.decoding = "async";
+    image.crossOrigin = "anonymous";
+    image.src = src;
+  });
+}
+
+function getImageGenerationPreviewDimensions(
+  sourceWidth: number,
+  sourceHeight: number,
+): { width: number; height: number } {
+  const safeWidth = Math.max(sourceWidth, 1);
+  const safeHeight = Math.max(sourceHeight, 1);
+  const aspectRatio = safeWidth / safeHeight;
+
+  if (aspectRatio >= 1) {
+    return {
+      width: IMAGE_GENERATION_NODE_STAGE_WIDTH,
+      height: Math.max(
+        IMAGE_GENERATION_NODE_MIN_EDGE,
+        Math.round(IMAGE_GENERATION_NODE_STAGE_WIDTH / aspectRatio),
+      ),
+    };
+  }
+
+  return {
+    width: Math.max(
+      IMAGE_GENERATION_NODE_MIN_EDGE,
+      Math.round(IMAGE_GENERATION_NODE_STAGE_WIDTH * aspectRatio),
+    ),
+    height: IMAGE_GENERATION_NODE_STAGE_WIDTH,
+  };
+}
+
+function getSplitDisplaySizeMatchingPreview(
+  sourceWidth: number,
+  sourceHeight: number,
+): { cardWidth: number; cardHeight: number; totalHeight: number } {
+  const preview = getImageGenerationPreviewDimensions(sourceWidth, sourceHeight);
+
+  return {
+    cardWidth: preview.width,
+    cardHeight: preview.height,
+    totalHeight: UPLOADED_IMAGE_NODE_HEADER_HEIGHT + preview.height,
+  };
+}
+
+function getGridSegmentLengths(total: number, segments: number): number[] {
+  const lengths: number[] = [];
+  let offset = 0;
+
+  for (let index = 0; index < segments; index += 1) {
+    const nextOffset =
+      index === segments - 1 ? total : offset + Math.floor(total / segments);
+    lengths.push(nextOffset - offset);
+    offset = nextOffset;
+  }
+
+  return lengths;
 }
 
 function createNode(type: NodeType, position: { x: number; y: number }): CanvasNode {
@@ -380,54 +587,42 @@ function toErrorMessage(error: unknown): string {
     return error.message;
   }
 
+  if (typeof error === "string" && error.trim()) {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const message =
+      "message" in error && typeof error.message === "string"
+        ? error.message
+        : null;
+
+    if (message?.trim()) {
+      return message;
+    }
+  }
+
   return "Internal error";
-}
-
-async function persistGeneratedImage(
-  imageUrl: string,
-  prompt: string,
-): Promise<string | undefined> {
-  if (!imageUrl.startsWith("data:")) {
-    return undefined;
-  }
-
-  const response = await fetch("/api/image-hosting/upload", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      dataUrl: imageUrl,
-      fileName: `${prompt || "generated-image"}.png`,
-    }),
-  });
-
-  const json = (await response.json()) as
-    | {
-        ok: true;
-        result: {
-          imageUrl: string;
-        };
-      }
-    | ApiErrorResponse;
-
-  if (!response.ok || !("ok" in json) || json.ok === false) {
-    throw new Error("error" in json ? json.error : "Image hosting failed");
-  }
-
-  return json.result.imageUrl;
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function pollImageGenerationJob(jobId: string): Promise<Extract<ImageJobPollResponse, { ok: true; status: "completed" }>["result"]> {
+async function pollImageGenerationJob(
+  jobId: string,
+  apiKey?: string,
+): Promise<Extract<ImageJobPollResponse, { ok: true; status: "completed" }>["result"]> {
   const startedAt = Date.now();
-  const timeoutMs = 10 * 60_000;
 
-  while (Date.now() - startedAt < timeoutMs) {
-    const response = await fetch(`/api/ai/image?jobId=${encodeURIComponent(jobId)}`, {
+  while (Date.now() - startedAt < IMAGE_JOB_POLL_TIMEOUT_MS) {
+    const query = new URLSearchParams({ jobId });
+
+    if (apiKey?.trim()) {
+      query.set("apiKey", apiKey.trim());
+    }
+
+    const response = await fetch(`/api/ai/image?${query.toString()}`, {
       method: "GET",
       cache: "no-store",
     });
@@ -445,10 +640,48 @@ async function pollImageGenerationJob(jobId: string): Promise<Extract<ImageJobPo
       throw new Error(json.error || "Image generation failed");
     }
 
-    await sleep(2000);
+    await sleep(IMAGE_JOB_POLL_INTERVAL_MS);
   }
 
   throw new Error("Image generation polling timed out");
+}
+
+async function submitImageGenerationJob(params: {
+  prompt: string;
+  model?: string;
+  size?: string;
+  quality?: string;
+  outputFormat?: string;
+  moderation?: string;
+  apiKey?: string;
+  provider?: ApiProvider;
+  historyNodeData?: ImageGenerationNodeData;
+  images?: Array<{
+    url: string;
+    fileName?: string;
+  }>;
+}): Promise<ImageGenerationRunResult> {
+  const response = await fetch("/api/ai/image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+
+  const json = (await response.json()) as
+    | {
+        ok: true;
+        jobId: string;
+        status: "pending";
+      }
+    | ApiErrorResponse;
+
+  if (!response.ok || !("ok" in json) || json.ok === false) {
+    throw new Error("error" in json ? json.error : "Request failed");
+  }
+
+  return pollImageGenerationJob(json.jobId, params.apiKey);
 }
 
 async function assertOkResponse<TSuccess extends { ok: true }>(
@@ -806,6 +1039,65 @@ function getInlineReferenceImagesForImageGenerationNode(
   );
 }
 
+function appendImageGenerationNodeResults(
+  nodes: CanvasNode[],
+  imageGenerationNodeId: string,
+  results: ImageGenerationResultItem[],
+): CanvasNode[] {
+  return nodes.map((node) => {
+    if (node.id !== imageGenerationNodeId || node.type !== "image_generation") {
+      return node;
+    }
+
+    const generationResults = [...(node.data.generationResults ?? [])];
+
+    for (const result of results) {
+      const existingIndex = generationResults.findIndex(
+        (item) =>
+          item.generatedAt === result.generatedAt &&
+          item.imageUrl === result.imageUrl &&
+          item.model === result.model,
+      );
+
+      if (existingIndex >= 0) {
+        generationResults[existingIndex] = {
+          ...generationResults[existingIndex],
+          ...result,
+        };
+      } else {
+        generationResults.push(result);
+      }
+    }
+
+    const currentImageUrl = node.data.generatedImageUrl?.trim() || "";
+    const firstCompletedResult = generationResults.find(
+      (item) => item.status === "completed" && item.imageUrl?.trim(),
+    );
+    const shouldSetPrimaryImage =
+      !currentImageUrl && Boolean(firstCompletedResult?.imageUrl?.trim());
+
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        generationResults,
+        ...(shouldSetPrimaryImage && firstCompletedResult
+          ? {
+              generatedImageUrl: firstCompletedResult.imageUrl,
+              generatedHostedImageUrl: firstCompletedResult.hostedImageUrl,
+              generatedImageWidth: firstCompletedResult.width,
+              generatedImageHeight: firstCompletedResult.height,
+              generatedImageFormat: firstCompletedResult.format,
+              generatedImageSizeBytes: firstCompletedResult.sizeBytes,
+              generatedModel: firstCompletedResult.model,
+              generatedAt: firstCompletedResult.generatedAt,
+            }
+          : {}),
+      },
+    };
+  });
+}
+
 function getImageGenerationReferenceImages(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -864,6 +1156,7 @@ export interface CanvasState {
   error: string | null;
 
   addNode: (node: CanvasNode) => void;
+  addNodes: (nodes: CanvasNode[]) => void;
   addNodeAtCenter: (
     type: NodeType,
     viewportCenter: { x: number; y: number },
@@ -874,12 +1167,17 @@ export interface CanvasState {
   ) => void;
   updateNodePosition: (id: string, position: { x: number; y: number }) => void;
   deleteNode: (id: string) => void;
+  deleteNodes: (ids: string[]) => void;
   addEdge: (edge: CanvasEdge) => void;
   deleteEdge: (id: string) => void;
 
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
   generateImageFromImageGenerationNode: (
     imageGenerationNodeId: string,
+  ) => Promise<void>;
+  splitImageGenerationNodeToGrid: (
+    imageGenerationNodeId: string,
+    dimension: SplitGridDimension,
   ) => Promise<void>;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
@@ -909,6 +1207,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
+  addNodes: (nodes) => {
+    if (nodes.length === 0) {
+      return;
+    }
+
+    set((state) => ({
+      nodes: [...state.nodes, ...nodes],
+      error: null,
+    }));
+  },
+
   addNodeAtCenter: (type, viewportCenter) => {
     const node = createNode(type, viewportCenter);
     set((state) => ({
@@ -920,43 +1229,62 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   updateNodeData: (id, partial) => {
     set((state) => {
-      let found = false;
+      const index = state.nodes.findIndex((node) => node.id === id);
 
-      const nodes = state.nodes.map((node) => {
-        if (node.id !== id) {
-          return node;
-        }
-
-        found = true;
-
-        switch (node.type) {
-          case "text":
-            return { ...node, data: { ...node.data, ...partial } };
-          case "image_generation":
-            return { ...node, data: { ...node.data, ...partial } };
-          case "ai_text_result":
-            return { ...node, data: { ...node.data, ...partial } };
-          case "image":
-            return { ...node, data: { ...node.data, ...partial } };
-          case "uploaded_image":
-            return { ...node, data: { ...node.data, ...partial } };
-        }
-      });
-
-      if (!found) {
+      if (index < 0) {
         console.warn(`Node "${id}" not found for updateNodeData`);
+        return state;
       }
+
+      const currentNode = state.nodes[index];
+      const nextData = { ...currentNode.data, ...partial };
+      const currentDataRecord = currentNode.data as Record<string, unknown>;
+      const nextDataRecord = nextData as Record<string, unknown>;
+      let changed = false;
+
+      for (const key of Object.keys(partial) as Array<keyof typeof partial>) {
+        const stringKey = String(key);
+
+        if (currentDataRecord[stringKey] !== nextDataRecord[stringKey]) {
+          changed = true;
+          break;
+        }
+      }
+
+      if (!changed) {
+        return state;
+      }
+
+      const nextNode = { ...currentNode, data: nextData } as CanvasNode;
+      const nodes = state.nodes.slice();
+      nodes[index] = nextNode;
 
       return { nodes };
     });
   },
 
   updateNodePosition: (id, position) => {
-    set((state) => ({
-      nodes: state.nodes.map((node) =>
-        node.id === id ? { ...node, position } : node,
-      ),
-    }));
+    set((state) => {
+      const index = state.nodes.findIndex((node) => node.id === id);
+
+      if (index < 0) {
+        return state;
+      }
+
+      const currentNode = state.nodes[index];
+
+      if (
+        currentNode.position.x === position.x &&
+        currentNode.position.y === position.y
+      ) {
+        return state;
+      }
+
+      const nodes = state.nodes.slice();
+      nodes[index] = { ...currentNode, position };
+
+      return { nodes };
+    });
   },
 
   deleteNode: (id) => {
@@ -964,6 +1292,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: state.nodes.filter((node) => node.id !== id),
       edges: state.edges.filter(
         (edge) => edge.source !== id && edge.target !== id,
+      ),
+    }));
+  },
+
+  deleteNodes: (ids) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const idSet = new Set(ids);
+
+    set((state) => ({
+      nodes: state.nodes.filter((node) => !idSet.has(node.id)),
+      edges: state.edges.filter(
+        (edge) => !idSet.has(edge.source) && !idSet.has(edge.target),
       ),
     }));
   },
@@ -1030,6 +1373,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
 
     try {
+      const textProvider = readStoredSelectedApiProvider("text");
+      const apiKey = assertStoredApiKey("text", textProvider);
       const response = await fetch("/api/ai/text", {
         method: "POST",
         headers: {
@@ -1040,7 +1385,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           model: textNode.data.model,
           systemPrompt: TEXT_SYSTEM_PROMPT,
           temperature: 0.9,
-          apiKey: readStoredTextApiKey() || undefined,
+          provider: textProvider,
+          apiKey,
           images: connectedImages.map((image) => ({
             url: isClaudeModel(textNode.data.model)
               ? image.originalImageUrl
@@ -1126,136 +1472,226 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Image generation node not found");
     }
 
-    const connectedTextPrompt = getConnectedTextPromptForTargetNode(
-      state.nodes,
-      state.edges,
-      imageGenerationNodeId,
-    );
-    const directPrompt = imageGenerationNode.data.prompt?.trim() || "";
-    const effectivePrompt = [
-      connectedTextPrompt
-        ? `Upstream text node content:\n${connectedTextPrompt}`
-        : "",
-      directPrompt
-        ? `Additional image instructions:\n${directPrompt}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-    if (!effectivePrompt) {
-      throw new Error("Prompt is required");
+    if (imageGenerationNode.data.status === "generating") {
+      return;
     }
 
-    const connectedImages = getImageGenerationReferenceImages(
-      state.nodes,
-      state.edges,
-      imageGenerationNodeId,
-    );
-    const size = resolveImageSize(
-      imageGenerationNode.data.quality,
-      imageGenerationNode.data.aspectRatio,
-      connectedImages,
-      imageGenerationNode.data.model,
-    );
-    const quality = resolveImageApiQuality(imageGenerationNode.data.detail);
-    const outputFormat = resolveImageApiOutputFormat(
-      imageGenerationNode.data.outputFormat,
-    );
-    const moderation = resolveImageApiModeration(
-      imageGenerationNode.data.moderation,
-    );
+    if (inFlightImageGenerationNodeIds.has(imageGenerationNodeId)) {
+      return;
+    }
 
-    set((currentState) => ({
-      error: null,
-      nodes: currentState.nodes.map((node) =>
-        node.id === imageGenerationNodeId && node.type === "image_generation"
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                generatedImageUrl: undefined,
-                generatedHostedImageUrl: undefined,
-                generatedImageWidth: undefined,
-                generatedImageHeight: undefined,
-                generatedImageFormat: undefined,
-                generatedImageSizeBytes: undefined,
-                generatedModel: undefined,
-                generatedAt: undefined,
-                status: "generating",
-                errorMessage: undefined,
-              },
-            }
-          : node,
-      ),
-    }));
+    inFlightImageGenerationNodeIds.add(imageGenerationNodeId);
 
     try {
-      const response = await fetch("/api/ai/image", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: effectivePrompt,
-          model: imageGenerationNode.data.model,
-          size,
-          quality,
-          outputFormat,
-          moderation,
-          apiKey: readStoredImageApiKey() || undefined,
-          images:
-            connectedImages.length > 0
-              ? connectedImages.map((image) => ({
-                  url: image.originalImageUrl,
-                  fileName: image.fileName,
-                }))
-              : undefined,
-        }),
-      });
+      const latestState = get();
+      const latestImageGenerationNode = latestState.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+          node.id === imageGenerationNodeId && node.type === "image_generation",
+      );
 
-      const json = (await response.json()) as
-        | {
-            ok: true;
-            jobId: string;
-            status: "pending";
-          }
-        | ApiErrorResponse;
-
-      if (!response.ok || !("ok" in json) || json.ok === false) {
-        throw new Error("error" in json ? json.error : "Request failed");
+      if (!latestImageGenerationNode) {
+        throw new Error("Image generation node not found");
       }
 
-      const result = await pollImageGenerationJob(json.jobId);
-      const hostedImageUrl =
-        result.hostedImageUrl ||
-        (await persistGeneratedImage(
-          result.imageUrl,
-          directPrompt || connectedTextPrompt,
-        ).catch((error) => {
-          console.warn("generated image hosting failed", error);
-          return undefined;
-        }));
+      const connectedTextPrompt = getConnectedTextPromptForTargetNode(
+        latestState.nodes,
+        latestState.edges,
+        imageGenerationNodeId,
+      );
+      const directPrompt = latestImageGenerationNode.data.prompt?.trim() || "";
+      const effectivePrompt = [
+        connectedTextPrompt
+          ? `Upstream text node content:\n${connectedTextPrompt}`
+          : "",
+        directPrompt
+          ? `Additional image instructions:\n${directPrompt}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      if (!effectivePrompt) {
+        throw new Error("Prompt is required");
+      }
+
+      const connectedImages = getImageGenerationReferenceImages(
+        latestState.nodes,
+        latestState.edges,
+        imageGenerationNodeId,
+      );
+      const size = resolveImageSize(
+        latestImageGenerationNode.data.quality,
+        latestImageGenerationNode.data.aspectRatio,
+        connectedImages,
+        latestImageGenerationNode.data.model,
+      );
+      const quality = resolveImageApiQuality(
+        latestImageGenerationNode.data.detail,
+      );
+      const outputFormat = resolveImageApiOutputFormat(
+        latestImageGenerationNode.data.outputFormat,
+      );
+      const moderation = resolveImageApiModeration(
+        latestImageGenerationNode.data.moderation,
+      );
+      const parallelCount = resolveParallelCount(
+        latestImageGenerationNode.data.parallelCount,
+      );
+      const imageProvider = readStoredSelectedApiProvider("image");
+      const apiKey = assertStoredApiKey("image", imageProvider);
+      const baseJobParams = {
+        prompt: effectivePrompt,
+        model: latestImageGenerationNode.data.model,
+        size,
+        quality,
+        outputFormat,
+        moderation,
+        provider: imageProvider,
+        apiKey,
+        images:
+          connectedImages.length > 0
+            ? connectedImages.map((image) => ({
+                url: image.imageUrl,
+                fileName: image.fileName,
+              }))
+            : undefined,
+      };
+      const historyDisplayPrompt = directPrompt
+        ? stripImagePromptSectionLabels(directPrompt)
+        : stripImagePromptSectionLabels(effectivePrompt);
+      const historyNodeData: ImageGenerationNodeData = {
+        ...latestImageGenerationNode.data,
+        prompt: historyDisplayPrompt,
+        effectivePromptOverride: undefined,
+        referenceImages: connectedImages.map((image) => ({
+          id: image.id,
+          imageUrl: image.originalImageUrl,
+          hostedImageUrl: image.hostedImageUrl,
+          fileName: image.fileName,
+          width: image.width,
+          height: image.height,
+        })),
+        generatedImageUrl: undefined,
+        generatedHostedImageUrl: undefined,
+        generatedImageWidth: undefined,
+        generatedImageHeight: undefined,
+        generatedImageFormat: undefined,
+        generatedImageSizeBytes: undefined,
+        generatedModel: undefined,
+        generatedAt: undefined,
+        generationResults: undefined,
+        status: "idle",
+        errorMessage: undefined,
+      };
 
       set((currentState) => ({
         error: null,
         nodes: currentState.nodes.map((node) =>
-          node.id === imageGenerationNodeId &&
-          node.type === "image_generation"
+          node.id === imageGenerationNodeId && node.type === "image_generation"
             ? {
                 ...node,
                 data: {
                   ...node.data,
-                  generatedImageUrl: result.imageUrl,
-                  generatedHostedImageUrl: hostedImageUrl,
-                  generatedImageWidth: result.width,
-                  generatedImageHeight: result.height,
-                  generatedImageFormat: result.format,
-                  generatedImageSizeBytes: result.sizeBytes,
-                  generatedModel: result.model,
-                  generatedAt: nowIso(),
-                  status: "idle",
+                  generatedImageUrl: undefined,
+                  generatedHostedImageUrl: undefined,
+                  generatedImageWidth: undefined,
+                  generatedImageHeight: undefined,
+                  generatedImageFormat: undefined,
+                  generatedImageSizeBytes: undefined,
+                  generatedModel: undefined,
+                  generatedAt: undefined,
+                  generationResults: undefined,
+                  status: "generating",
                   errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const jobRuns = Array.from({ length: parallelCount }, async () => {
+        try {
+          const result = await submitImageGenerationJob({
+            ...baseJobParams,
+            historyNodeData,
+          });
+          const generatedAt = nowIso();
+          const generationResults: ImageGenerationResultItem[] = result.images.map((image) => ({
+            status: "completed" as const,
+            imageUrl: image.imageUrl,
+            hostedImageUrl: image.hostedImageUrl,
+            model: image.model,
+            width: image.width,
+            height: image.height,
+            format: image.format,
+            sizeBytes: image.sizeBytes,
+            generatedAt,
+          }));
+
+          set((currentState) => ({
+            nodes: appendImageGenerationNodeResults(
+              currentState.nodes,
+              imageGenerationNodeId,
+              generationResults,
+            ),
+          }));
+
+          return generationResults;
+        } catch (error) {
+          const failureResult: ImageGenerationResultItem = {
+            status: "error" as const,
+            generatedAt: nowIso(),
+            errorMessage: toErrorMessage(error),
+          };
+
+          set((currentState) => ({
+            nodes: appendImageGenerationNodeResults(
+              currentState.nodes,
+              imageGenerationNodeId,
+              [failureResult],
+            ),
+          }));
+
+          return [failureResult];
+        }
+      });
+
+      const generationResults: ImageGenerationResultItem[] = (
+        await Promise.all(jobRuns)
+      ).flat();
+      const primaryResult = generationResults.find(
+        (result) => result.status === "completed" && result.imageUrl,
+      );
+      const failureMessages = generationResults
+        .filter(
+          (
+            result,
+          ): result is ImageGenerationResultItem & {
+            status: "error";
+            errorMessage: string;
+          } => result.status === "error" && typeof result.errorMessage === "string",
+        )
+        .map((result) => result.errorMessage);
+
+      set((currentState) => ({
+        error: primaryResult
+          ? null
+          : failureMessages[0] || "Image generation failed",
+        nodes: appendImageGenerationNodeResults(
+          currentState.nodes,
+          imageGenerationNodeId,
+          generationResults,
+        ).map((node) =>
+          node.id === imageGenerationNodeId && node.type === "image_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: primaryResult ? "idle" : "error",
+                  errorMessage:
+                    failureMessages.length > 0
+                      ? failureMessages.join("\n")
+                      : undefined,
                 },
               }
             : node,
@@ -1274,13 +1710,166 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 ...node,
                 data: {
                   ...node.data,
+                  generatedImageUrl: undefined,
+                  generatedHostedImageUrl: undefined,
+                  generatedImageWidth: undefined,
+                  generatedImageHeight: undefined,
+                  generatedImageFormat: undefined,
+                  generatedImageSizeBytes: undefined,
+                  generatedModel: undefined,
+                  generatedAt: undefined,
+                  generationResults: [
+                    {
+                      status: "error",
+                      generatedAt: nowIso(),
+                      errorMessage: message,
+                    },
+                  ],
                   status: "error",
                   errorMessage: message,
                 },
               }
-            : node,
+          : node,
         ),
       }));
+    } finally {
+      inFlightImageGenerationNodeIds.delete(imageGenerationNodeId);
+    }
+  },
+
+  splitImageGenerationNodeToGrid: async (imageGenerationNodeId, dimension) => {
+    const state = get();
+    const imageGenerationNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+        node.id === imageGenerationNodeId && node.type === "image_generation",
+    );
+
+    if (!imageGenerationNode) {
+      throw new Error("Image generation node not found");
+    }
+
+    const sourceUrl =
+      imageGenerationNode.data.generatedHostedImageUrl?.trim() ||
+      imageGenerationNode.data.generatedImageUrl?.trim() ||
+      "";
+
+    if (!sourceUrl) {
+      throw new Error("Source image is missing");
+    }
+
+    try {
+      const sourceImage = await loadImageElement(sourceUrl);
+      const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
+      const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
+
+      if (!naturalWidth || !naturalHeight) {
+        throw new Error("Invalid source image dimensions");
+      }
+
+      const columnWidths = getGridSegmentLengths(naturalWidth, dimension);
+      const rowHeights = getGridSegmentLengths(naturalHeight, dimension);
+      const previewDimensions = getImageGenerationPreviewDimensions(
+        naturalWidth,
+        naturalHeight,
+      );
+      const tileLayouts = rowHeights.map(() =>
+        columnWidths.map(() =>
+          getSplitDisplaySizeMatchingPreview(
+            naturalWidth,
+            naturalHeight,
+          ),
+        ),
+      );
+      const columnCardWidths = columnWidths.map((_, columnIndex) =>
+        Math.max(...tileLayouts.map((row) => row[columnIndex].cardWidth)),
+      );
+      const rowTotalHeights = rowHeights.map((_, rowIndex) =>
+        Math.max(...tileLayouts[rowIndex].map((tile) => tile.totalHeight)),
+      );
+      const baseTitle = sanitizeSplitNodeTitle(imageGenerationNode.data.title);
+      const startX =
+        imageGenerationNode.position.x +
+        previewDimensions.width +
+        SPLIT_OUTPUT_GROUP_GAP;
+      const startY = imageGenerationNode.position.y;
+      const nextNodes: CanvasNode[] = [];
+      let sourceY = 0;
+      let titleIndex = 1;
+
+      for (let rowIndex = 0; rowIndex < rowHeights.length; rowIndex += 1) {
+        const tileHeight = rowHeights[rowIndex];
+        let sourceX = 0;
+
+        for (let columnIndex = 0; columnIndex < columnWidths.length; columnIndex += 1) {
+          const tileWidth = columnWidths[columnIndex];
+          const cropCanvas = document.createElement("canvas");
+          cropCanvas.width = tileWidth;
+          cropCanvas.height = tileHeight;
+
+          const context = cropCanvas.getContext("2d");
+
+          if (!context) {
+            throw new Error("Canvas 2D context is unavailable");
+          }
+
+          context.drawImage(
+            sourceImage,
+            sourceX,
+            sourceY,
+            tileWidth,
+            tileHeight,
+            0,
+            0,
+            tileWidth,
+            tileHeight,
+          );
+
+          const imageUrl = cropCanvas.toDataURL("image/png");
+          const positionX =
+            startX +
+            columnCardWidths
+              .slice(0, columnIndex)
+              .reduce((sum, value) => sum + value, 0) +
+            columnIndex * SPLIT_OUTPUT_TILE_GAP;
+          const positionY =
+            startY +
+            rowTotalHeights
+              .slice(0, rowIndex)
+              .reduce((sum, value) => sum + value, 0) +
+            rowIndex * SPLIT_OUTPUT_TILE_GAP;
+
+          nextNodes.push({
+            id: crypto.randomUUID(),
+            type: "uploaded_image",
+            position: {
+              x: positionX,
+              y: positionY,
+            },
+            data: {
+              title: `${baseTitle}-${titleIndex}`,
+              imageUrl,
+              width: tileWidth,
+              height: tileHeight,
+              displayWidth: tileLayouts[rowIndex][columnIndex].cardWidth,
+              displayHeight: tileLayouts[rowIndex][columnIndex].cardHeight,
+            },
+          });
+
+          sourceX += tileWidth;
+          titleIndex += 1;
+        }
+
+        sourceY += tileHeight;
+      }
+
+      set((currentState) => ({
+        nodes: [...currentState.nodes, ...nextNodes],
+        error: null,
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+      set({ error: message });
+      throw error;
     }
   },
 

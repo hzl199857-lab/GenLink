@@ -48,10 +48,32 @@ model CanvasEdge {
 model ImageJob {
   id        String   @id
   status    String
+  provider  String?
+  upstreamTaskId String?
+  historyNodeData String?
   result    String?
   error     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([createdAt])
+  @@index([upstreamTaskId])
+}
+
+model ImageHistoryItem {
+  id             String   @id @default(cuid())
+  imageJobId     String?
+  resultIndex    Int?
+  imageUrl       String
+  hostedImageUrl String?
+  model          String?
+  width          Int?
+  height         Int?
+  format         String?
+  sizeBytes      Int?
+  generatedAt    DateTime
+  nodeData       String
+  createdAt      DateTime @default(now())
+
+  @@index([generatedAt])
 }

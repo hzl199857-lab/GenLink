@@ -29,9 +29,23 @@ export interface TextNodeData {
   errorMessage?: string;
 }
 
+export interface ImageGenerationResultItem {
+  status: "completed" | "error";
+  imageUrl?: string;
+  hostedImageUrl?: string;
+  model?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  sizeBytes?: number;
+  generatedAt: string;
+  errorMessage?: string;
+}
+
 export interface ImageGenerationNodeData {
   title?: string;
   prompt?: string;
+  effectivePromptOverride?: string;
   model?: string;
   generatedModel?: string;
   aspectRatio?: string;
@@ -39,7 +53,7 @@ export interface ImageGenerationNodeData {
   detail?: string;
   outputFormat?: string;
   moderation?: string;
-  count?: number;
+  parallelCount?: 1 | 2 | 4;
   referenceImageUrl?: string;
   referenceImages?: Array<{
     id: string;
@@ -57,11 +71,13 @@ export interface ImageGenerationNodeData {
   generatedImageFormat?: string;
   generatedImageSizeBytes?: number;
   generatedAt?: string;
+  generationResults?: ImageGenerationResultItem[];
   status?: "idle" | "generating" | "error";
   errorMessage?: string;
 }
 
 export interface AITextResultNodeData {
+  title?: string;
   content: string;
   model: string;
   tokens?: number;
@@ -70,6 +86,7 @@ export interface AITextResultNodeData {
 }
 
 export interface ImageNodeData {
+  title?: string;
   imageUrl: string;
   hostedImageUrl?: string;
   prompt: string;
@@ -82,11 +99,14 @@ export interface ImageNodeData {
 }
 
 export interface UploadedImageNodeData {
+  title?: string;
   imageUrl: string;
   hostedImageUrl?: string;
   fileName?: string;
   width: number;
   height: number;
+  displayWidth?: number;
+  displayHeight?: number;
   sizeBytes?: number;
 }
 
@@ -119,4 +139,29 @@ export interface ProjectSnapshot {
   edges: CanvasEdge[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ImageHistoryItem {
+  id: string;
+  imageUrl: string;
+  hostedImageUrl?: string;
+  model?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  sizeBytes?: number;
+  generatedAt: string;
+  nodeData: ImageGenerationNodeData;
+}
+
+export interface ImageHistoryListItem {
+  id: string;
+  imageUrl?: string;
+  hostedImageUrl?: string;
+  model?: string;
+  width?: number;
+  height?: number;
+  format?: string;
+  sizeBytes?: number;
+  generatedAt: string;
 }

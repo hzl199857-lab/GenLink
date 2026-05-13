@@ -1,13 +1,15 @@
 import 'server-only';
 
 import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
+import {
+  getLocalImageDirectory,
+  LOCAL_IMAGE_ROUTE_PREFIX,
+} from '@/lib/local-image-storage';
 import { VibeApiError } from '@/lib/vibe';
 
-const LOCAL_IMAGE_DIR = path.resolve(process.cwd(), 'img');
-const LOCAL_IMAGE_ROUTE_PREFIX = '/api/image-hosting/file';
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_STEM_LENGTH = 80;
 
@@ -54,9 +56,7 @@ function normalizeFileStem(fileName?: string): string {
   return normalized.slice(0, MAX_FILE_STEM_LENGTH);
 }
 
-export function getLocalImageDirectory(): string {
-  return LOCAL_IMAGE_DIR;
-}
+export { getLocalImageDirectory };
 
 export async function saveImageDataUrl(
   dataUrl: string,
@@ -73,12 +73,14 @@ export async function saveImageDataUrl(
     throw new VibeApiError(400, 'Image is too large to save');
   }
 
-  await mkdir(LOCAL_IMAGE_DIR, { recursive: true });
+  const localImageDir = getLocalImageDirectory();
+
+  await mkdir(localImageDir, { recursive: true });
 
   const extension = extensionFromMimeType(mimeType);
   const stem = normalizeFileStem(fileName);
   const savedFileName = `${new Date().toISOString().slice(0, 10)}-${randomUUID()}-${stem}.${extension}`;
-  const absolutePath = path.join(LOCAL_IMAGE_DIR, savedFileName);
+  const absolutePath = path.join(localImageDir, savedFileName);
 
   await writeFile(absolutePath, bytes);
 

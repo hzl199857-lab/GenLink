@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { Position, useUpdateNodeInternals } from 'reactflow';
 import { AlignLeft } from 'lucide-react';
 import type { TextNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
+import { EditableNodeTitle } from './EditableNodeTitle';
 import { TextNodeFloatingToolbar } from './TextNodeFloatingToolbar';
 import { TextNodePromptBar } from './TextNodePromptBar';
 
@@ -14,6 +15,7 @@ export interface TextNodeProps {
   id?: string;
   data: TextNodeData;
   selected?: boolean;
+  dragging?: boolean;
   editing?: boolean;
   connectedImages?: Array<{
     id: string;
@@ -23,27 +25,34 @@ export interface TextNodeProps {
   onChange?: (next: TextNodeData) => void;
   onStartEdit?: () => void;
   onEndEdit?: () => void;
+  onTitleChange?: (nextTitle: string | undefined) => void;
   onRun?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
 }
 
-export function TextNode({
+export const TextNode = memo(function TextNode({
   id,
   data,
   selected = false,
+  dragging = false,
   editing = false,
   connectedImages = [],
   onChange,
   onStartEdit,
   onEndEdit,
+  onTitleChange,
   onRun,
   onPromptPointerDown,
   onPromptFocusWithinChange,
 }: TextNodeProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const isComposingRef = useRef(false);
   const updateNodeInternals = useUpdateNodeInternals();
+  const [suppressTransientUi, setSuppressTransientUi] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
+  const [draftText, setDraftText] = useState(data.text || '');
   const [cardMetrics, setCardMetrics] = useState({
     left: 0,
     width: 0,
@@ -53,8 +62,26 @@ export function TextNode({
     event.stopPropagation();
   };
 
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onChange?.({ ...data, text: e.target.value });
+  const handleContentChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextText = event.currentTarget.value;
+    const composing =
+      isComposingRef.current ||
+      ('isComposing' in event.nativeEvent && Boolean(event.nativeEvent.isComposing));
+
+    setDraftText(nextText);
+
+    if (!composing) {
+      onChange?.({ ...data, text: nextText });
+    }
+  };
+
+  const handleContentBlur = (event: React.FocusEvent<HTMLTextAreaElement>) => {
+    if (isComposingRef.current || isComposing) {
+      return;
+    }
+
+    onChange?.({ ...data, text: event.currentTarget.value });
+    onEndEdit?.();
   };
 
   const handlePromptChange = (next: string) => {
@@ -87,8 +114,31 @@ export function TextNode({
     console.log('heading level requested', level);
   };
 
-  const showAccessories = selected;
+  const uiVisible = selected && !dragging && !suppressTransientUi;
+  const showAccessories = uiVisible;
   const isGenerating = data.status === 'generating';
+
+  useEffect(() => {
+    if (!isComposingRef.current) {
+      setDraftText(data.text || '');
+    }
+  }, [data.text]);
+
+  useEffect(() => {
+    if (!suppressTransientUi) {
+      return;
+    }
+
+    const clearSuppression = () => setSuppressTransientUi(false);
+
+    window.addEventListener('pointerup', clearSuppression);
+    window.addEventListener('pointercancel', clearSuppression);
+
+    return () => {
+      window.removeEventListener('pointerup', clearSuppression);
+      window.removeEventListener('pointercancel', clearSuppression);
+    };
+  }, [suppressTransientUi]);
 
   useEffect(() => {
     const stageElement = stageRef.current;
@@ -143,10 +193,24 @@ export function TextNode({
 
   return (
     <div className="relative">
-      <div ref={stageRef} className="relative inline-block group node-connectable-root">
+      <div
+        ref={stageRef}
+        className="relative inline-block group node-connectable-root"
+        onPointerDownCapture={() => {
+          if (!selected) {
+            setSuppressTransientUi(true);
+          }
+        }}
+      >
         <div className="-mt-2 mb-1.5 ml-1 flex select-none items-center gap-1.5 text-gl-text-tertiary nodrag nopan">
           <AlignLeft size={24} />
-          <span className="text-[22px] font-medium leading-none">{data.title || 'Text'}</span>
+          <EditableNodeTitle
+            value={data.title}
+            fallbackValue="Text"
+            className="text-[22px] font-medium leading-none"
+            inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
+            onCommit={onTitleChange}
+          />
         </div>
 
         <div
@@ -166,22 +230,34 @@ export function TextNode({
           {editing ? (
             <textarea
               autoFocus
-              value={data.text}
+              value={draftText}
               onChange={handleContentChange}
-            onBlur={onEndEdit}
-            onWheelCapture={handleContentWheel}
-            onWheel={handleContentWheel}
-            placeholder="双击开始编辑..."
-            className="text-node-scrollable nodrag nopan w-full flex-1 resize-none overflow-y-auto border-none bg-transparent pr-1 text-[16px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted break-words"
-            style={{ maxHeight: TEXT_NODE_SCROLL_THRESHOLD_PX }}
-          />
-        ) : (
-          <div
-            onWheelCapture={handleContentWheel}
-            onWheel={handleContentWheel}
-            className="text-node-scrollable flex-1 w-full overflow-y-auto whitespace-pre-wrap break-words pr-1 text-[16px] leading-7"
-            style={{ maxHeight: TEXT_NODE_SCROLL_THRESHOLD_PX }}
-          >
+              onBlur={handleContentBlur}
+              onCompositionStart={() => {
+                isComposingRef.current = true;
+                setIsComposing(true);
+              }}
+              onCompositionEnd={(event) => {
+                const nextText = event.currentTarget.value;
+
+                isComposingRef.current = false;
+                setIsComposing(false);
+                setDraftText(nextText);
+                onChange?.({ ...data, text: nextText });
+              }}
+              onWheelCapture={handleContentWheel}
+              onWheel={handleContentWheel}
+              placeholder="双击开始编辑..."
+              className="text-node-scrollable nodrag nopan w-full flex-1 resize-none overflow-y-auto border-none bg-transparent pr-1 text-[16px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted break-words"
+              style={{ maxHeight: TEXT_NODE_SCROLL_THRESHOLD_PX }}
+            />
+          ) : (
+            <div
+              onWheelCapture={handleContentWheel}
+              onWheel={handleContentWheel}
+              className="text-node-scrollable w-full flex-1 overflow-y-auto whitespace-pre-wrap break-words pr-1 text-[16px] leading-7"
+              style={{ maxHeight: TEXT_NODE_SCROLL_THRESHOLD_PX }}
+            >
               {data.text ? (
                 <span className="text-gl-text-secondary">{data.text}</span>
               ) : (
@@ -215,15 +291,16 @@ export function TextNode({
 
       <TextNodeFloatingToolbar
         nodeId={id}
-        visible={selected}
+        visible={uiVisible}
         onPickBgColor={() => console.log('bg color picker')}
         onSetHeading={handleSetHeading}
         onCopyContent={handleCopyContent}
       />
 
-      <TextNodePromptBar
-        nodeId={id}
-        visible={selected}
+        <TextNodePromptBar
+          key={uiVisible ? 'visible' : 'hidden'}
+          nodeId={id}
+          visible={uiVisible}
         prompt={data.aiPrompt || ''}
         model={data.model || 'gpt-5.4'}
         connectedImages={connectedImages}
@@ -235,4 +312,4 @@ export function TextNode({
       />
     </div>
   );
-}
+});

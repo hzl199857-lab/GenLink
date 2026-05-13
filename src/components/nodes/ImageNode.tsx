@@ -4,7 +4,9 @@ import React from 'react';
 import NextImage from 'next/image';
 import { Image as ImageIcon, Maximize2, RefreshCw } from 'lucide-react';
 import type { ImageNodeData } from '../../types/canvas';
+import { EditableNodeTitle } from './EditableNodeTitle';
 import { NodeShell } from './NodeShell';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 export interface ImageNodeProps {
   id?: string;
@@ -13,6 +15,8 @@ export interface ImageNodeProps {
   loading?: boolean;
   onOpenFullscreen?: () => void;
   onRegenerate?: () => void;
+  onTitleChange?: (nextTitle: string | undefined) => void;
+  onSelectNode?: () => void;
   onShowInfo?: () => void;
 }
 
@@ -23,6 +27,8 @@ export function ImageNode({
   loading = false,
   onOpenFullscreen,
   onRegenerate,
+  onTitleChange,
+  onSelectNode,
   onShowInfo,
 }: ImageNodeProps) {
   let formattedTime = '';
@@ -44,19 +50,31 @@ export function ImageNode({
       <div className="flex items-center justify-between border-b border-gl-stroke-subtle px-4 py-3">
         <div className="-mt-2 flex items-center gap-1.5 text-gl-accent-cyan">
           <ImageIcon size={24} />
-          <span className="text-[22px] font-medium leading-none text-gl-text-secondary">Image</span>
+          <EditableNodeTitle
+            value={data.title}
+            fallbackValue="Image"
+            className="text-[22px] font-medium leading-none text-gl-text-secondary"
+            inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
+            onCommit={onTitleChange}
+          />
           {id && <span className="text-gl-text-muted font-mono text-[10px] ml-1">#{id.slice(0, 6)}</span>}
         </div>
         <div className="flex items-center gap-2">
           {onRegenerate && (
-            <button onClick={onRegenerate} className="text-gl-text-tertiary hover:text-gl-text-primary transition-colors">
-              <RefreshCw size={14} />
-            </button>
+            <div className="group/tooltip relative">
+              <button onClick={onRegenerate} aria-label="重新生成" className="text-gl-text-tertiary hover:text-gl-text-primary transition-colors">
+                <RefreshCw size={14} />
+              </button>
+              <Tooltip label="重新生成" side="top" />
+            </div>
           )}
           {onOpenFullscreen && (
-            <button onClick={onOpenFullscreen} className="text-gl-text-tertiary hover:text-gl-text-primary transition-colors">
-              <Maximize2 size={14} />
-            </button>
+            <div className="group/tooltip relative">
+              <button onClick={onOpenFullscreen} aria-label="全屏查看" className="text-gl-text-tertiary hover:text-gl-text-primary transition-colors">
+                <Maximize2 size={14} />
+              </button>
+              <Tooltip label="全屏查看" side="top" />
+            </div>
           )}
         </div>
       </div>
@@ -67,6 +85,7 @@ export function ImageNode({
           className="relative w-full aspect-[4/3] rounded-gl-md overflow-hidden bg-gl-panel-soft cursor-pointer group"
           onClick={(event) => {
             event.stopPropagation();
+            onSelectNode?.();
             onShowInfo?.();
           }}
         >

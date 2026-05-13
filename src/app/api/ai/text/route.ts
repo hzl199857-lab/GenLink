@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { VibeApiError, generateText, generateTextStream } from "@/lib/vibe";
+import {
+  VibeApiError,
+  generateText,
+  generateTextStream,
+  type ImageApiProvider,
+} from "@/lib/vibe";
 
 export const runtime = "nodejs";
 
@@ -10,9 +15,18 @@ interface TextRequestBody {
   systemPrompt?: unknown;
   temperature?: unknown;
   maxTokens?: unknown;
+  provider?: unknown;
   apiKey?: unknown;
   images?: unknown;
   stream?: unknown;
+}
+
+function parseProvider(value: unknown): ImageApiProvider | undefined {
+  if (value === "vibe" || value === "comfly" || value === "zhenzhen") {
+    return value;
+  }
+
+  return undefined;
 }
 
 export async function POST(request: Request) {
@@ -49,6 +63,7 @@ export async function POST(request: Request) {
       temperature:
         typeof body.temperature === "number" ? body.temperature : undefined,
       maxTokens: typeof body.maxTokens === "number" ? body.maxTokens : undefined,
+      provider: parseProvider(body.provider),
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
       images,
     };

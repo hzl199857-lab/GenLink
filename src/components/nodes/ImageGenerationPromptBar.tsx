@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
 import { Sparkles, Maximize2, Minimize2, ChevronDown, Check } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
@@ -12,6 +13,7 @@ const IMAGE_MODELS = [
   { id: 'gpt-image-2', label: 'gpt-image-2' },
   { id: 'gemini-3-pro-image-preview', label: 'Nano banana pro' },
 ] as const;
+const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
 const IMAGE_OUTPUT_FORMAT_OPTIONS = [
   { value: 'png', label: 'PNG' },
@@ -19,8 +21,8 @@ const IMAGE_OUTPUT_FORMAT_OPTIONS = [
   { value: 'webp', label: 'WebP' },
 ] as const;
 const IMAGE_MODERATION_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'low', label: 'Low' },
+  { value: 'auto', label: '自动' },
+  { value: 'low', label: '低' },
 ] as const;
 const IMAGE_DETAIL_OPTIONS = [
   { value: 'low', label: '低' },
@@ -58,12 +60,6 @@ const GEMINI_IMAGE_ASPECT_RATIO_LAYOUT = [
   { value: '21:9', className: 'col-start-4 row-start-3 h-[54px]' },
 ] as const;
 
-const CIRCLED_NUMBER_LABELS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'] as const;
-
-function getThumbnailIndexLabel(index: number): string {
-  return CIRCLED_NUMBER_LABELS[index] ?? String(index + 1);
-}
-
 export interface ImageGenerationPromptBarProps {
   nodeId?: string;
   visible: boolean;
@@ -74,7 +70,8 @@ export interface ImageGenerationPromptBarProps {
   detail?: string;
   outputFormat?: string;
   moderation?: string;
-  count?: number;
+  parallelCount?: 1 | 2 | 4;
+  generating?: boolean;
   connectedImages?: Array<{
     id: string;
     imageUrl: string;
@@ -89,6 +86,7 @@ export interface ImageGenerationPromptBarProps {
   onDetailChange?: (next: string) => void;
   onOutputFormatChange?: (next: string) => void;
   onModerationChange?: (next: string) => void;
+  onParallelCountChange?: (next: 1 | 2 | 4) => void;
   onRun?: () => void;
   onAddReference?: () => void;
   onPointerDownWithin?: () => void;
@@ -105,14 +103,17 @@ function ToolSquareButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-white/[0.08] text-gl-text-secondary transition-colors hover:bg-white/[0.12] hover:text-gl-text-primary"
-      title={title}
-    >
-      {children}
-    </button>
+    <div className="group/tooltip relative">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-white/[0.08] text-gl-text-secondary transition-colors hover:bg-white/[0.12] hover:text-gl-text-primary"
+        aria-label={title}
+      >
+        {children}
+      </button>
+      <Tooltip label={title} side="top" />
+    </div>
   );
 }
 
@@ -267,7 +268,7 @@ function RatioIcon({
   );
 }
 
-export function ImageGenerationPromptBar({
+export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   nodeId,
   visible,
   prompt,
@@ -277,7 +278,8 @@ export function ImageGenerationPromptBar({
   detail = 'medium',
   outputFormat = IMAGE_OUTPUT_FORMAT_OPTIONS[0].value,
   moderation = IMAGE_MODERATION_OPTIONS[0].value,
-  count = 5,
+  parallelCount = 1,
+  generating = false,
   connectedImages = [],
   onPromptChange,
   onModelChange,
@@ -286,6 +288,7 @@ export function ImageGenerationPromptBar({
   onDetailChange,
   onOutputFormatChange,
   onModerationChange,
+  onParallelCountChange,
   onRun,
   onAddReference,
   onPointerDownWithin,
@@ -298,12 +301,14 @@ export function ImageGenerationPromptBar({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
+  const [parallelMenuOpen, setParallelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const formatMenuRef = useRef<HTMLDivElement | null>(null);
+  const parallelMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!modelMenuOpen && !settingsMenuOpen && !formatMenuOpen) {
+    if (!modelMenuOpen && !settingsMenuOpen && !formatMenuOpen && !parallelMenuOpen) {
       return;
     }
 
@@ -313,7 +318,8 @@ export function ImageGenerationPromptBar({
       if (
         modelMenuRef.current?.contains(target) ||
         settingsMenuRef.current?.contains(target) ||
-        formatMenuRef.current?.contains(target)
+        formatMenuRef.current?.contains(target) ||
+        parallelMenuRef.current?.contains(target)
       ) {
         return;
       }
@@ -321,11 +327,12 @@ export function ImageGenerationPromptBar({
       setModelMenuOpen(false);
       setSettingsMenuOpen(false);
       setFormatMenuOpen(false);
+      setParallelMenuOpen(false);
     };
 
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
-  }, [modelMenuOpen, settingsMenuOpen, formatMenuOpen]);
+  }, [modelMenuOpen, settingsMenuOpen, formatMenuOpen, parallelMenuOpen]);
 
   if (!visible) return null;
 
@@ -336,8 +343,8 @@ export function ImageGenerationPromptBar({
   const aspectRatioLayout = isGeminiImageModel
     ? GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
     : IMAGE_ASPECT_RATIO_LAYOUT;
-  const settingsLabel = `${modelAspectRatio} · ${quality}`;
-  const formatLabel = `${outputFormat.toUpperCase()} · ${moderation}`;
+  const settingsLabel = `${modelAspectRatio} / ${quality}`;
+  const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
 
   return (
@@ -373,14 +380,17 @@ export function ImageGenerationPromptBar({
         className="text-node-prompt-bar relative w-[720px] max-w-[calc(100vw-48px)] rounded-[22px] border border-white/10 bg-gl-panel/95 px-4 py-3 shadow-gl-toolbar backdrop-blur-xl"
         style={{ transform: 'scale(0.9)', transformOrigin: 'top center' }}
       >
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="absolute right-4 top-4 flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-white/[0.06] hover:text-gl-text-secondary"
-          title={expanded ? '收起' : '展开'}
-        >
-          {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        </button>
+        <div className="group absolute right-4 top-4">
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="flex h-6 w-6 items-center justify-center rounded-full text-gl-text-tertiary transition-colors hover:bg-white/[0.06] hover:text-gl-text-secondary"
+            aria-label={expanded ? '收起' : '展开'}
+          >
+            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+          <Tooltip label={expanded ? '收起' : '展开'} side="top" />
+        </div>
 
         <div className="flex min-h-[104px] flex-col">
           <div className="mb-4 flex items-start gap-2">
@@ -394,7 +404,6 @@ export function ImageGenerationPromptBar({
                   <div
                     key={image.id}
                     className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                    title={image.alt || `Connected image ${index + 1}`}
                   >
                     <NextImage
                       src={image.imageUrl}
@@ -404,8 +413,8 @@ export function ImageGenerationPromptBar({
                       sizes="50px"
                       className="object-cover"
                     />
-                    <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[13px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                      {getThumbnailIndexLabel(index)}
+                    <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                      {index + 1}
                     </span>
                   </div>
                 ))}
@@ -473,6 +482,8 @@ export function ImageGenerationPromptBar({
                   onClick={() => {
                     setModelMenuOpen((open) => !open);
                     setSettingsMenuOpen(false);
+                    setFormatMenuOpen(false);
+                    setParallelMenuOpen(false);
                   }}
                 />
 
@@ -521,6 +532,8 @@ export function ImageGenerationPromptBar({
                   onClick={() => {
                     setSettingsMenuOpen((open) => !open);
                     setModelMenuOpen(false);
+                    setFormatMenuOpen(false);
+                    setParallelMenuOpen(false);
                   }}
                 />
 
@@ -565,7 +578,7 @@ export function ImageGenerationPromptBar({
                               const selected = item.value === modelAspectRatio;
 
                               return (
-                              <button
+                                <button
                                   key={item.value}
                                   type="button"
                                   translate="no"
@@ -597,33 +610,33 @@ export function ImageGenerationPromptBar({
                       </div>
 
                       {isGeminiImageModel ? null : (
-                      <div>
-                        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
-                          精细度
-                        </div>
-                        <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-white/[0.06] p-1">
-                          {IMAGE_DETAIL_OPTIONS.map((option) => {
-                            const selected = option.value === detail;
+                        <div>
+                          <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
+                            细节
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-white/[0.06] p-1">
+                            {IMAGE_DETAIL_OPTIONS.map((option) => {
+                              const selected = option.value === detail;
 
-                            return (
-                              <button
-                                key={option.value}
-                                type="button"
-                                translate="no"
-                                onClick={() => onDetailChange?.(option.value)}
-                                className={[
-                                  'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
-                                  selected
-                                    ? 'bg-white/[0.1] text-gl-text-primary'
-                                    : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
-                                ].join(' ')}
-                              >
-                                {option.label}
-                              </button>
-                            );
-                          })}
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  translate="no"
+                                  onClick={() => onDetailChange?.(option.value)}
+                                  className={[
+                                    'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
+                                    selected
+                                      ? 'bg-white/[0.1] text-gl-text-primary'
+                                      : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
+                                  ].join(' ')}
+                                >
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
                       )}
                     </div>
                   </div>
@@ -631,92 +644,138 @@ export function ImageGenerationPromptBar({
               </div>
 
               {isGeminiImageModel ? null : (
-              <div className="relative" ref={formatMenuRef}>
-                <BottomMenuButton
-                  icon={<Sparkles size={14} />}
-                  label={formatLabel}
-                  active={formatMenuOpen}
-                  onClick={() => {
-                    setFormatMenuOpen((open) => !open);
-                    setModelMenuOpen(false);
-                    setSettingsMenuOpen(false);
-                  }}
-                />
+                <div className="relative" ref={formatMenuRef}>
+                  <BottomMenuButton
+                    icon={<Sparkles size={14} />}
+                    label={formatLabel}
+                    active={formatMenuOpen}
+                    onClick={() => {
+                      setFormatMenuOpen((open) => !open);
+                      setModelMenuOpen(false);
+                      setSettingsMenuOpen(false);
+                      setParallelMenuOpen(false);
+                    }}
+                  />
 
-                {formatMenuOpen ? (
-                  <div className="absolute bottom-full left-0 mb-2 w-[340px] overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
-                    <div className="flex flex-col gap-3">
-                      <div>
-                        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
-                          图片格式
+                  {formatMenuOpen ? (
+                    <div className="absolute bottom-full left-0 mb-2 w-[340px] overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
+                      <div className="flex flex-col gap-3">
+                        <div>
+                          <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
+                            图片格式
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-white/[0.06] p-1">
+                            {IMAGE_OUTPUT_FORMAT_OPTIONS.map((option) => {
+                              const selected = option.value === outputFormat;
+
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  translate="no"
+                                  onClick={() => onOutputFormatChange?.(option.value)}
+                                  className={[
+                                    'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
+                                    selected
+                                      ? 'bg-white/[0.1] text-gl-text-primary'
+                                      : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
+                                  ].join(' ')}
+                                >
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-white/[0.06] p-1">
-                          {IMAGE_OUTPUT_FORMAT_OPTIONS.map((option) => {
-                            const selected = option.value === outputFormat;
 
-                            return (
-                              <button
-                                key={option.value}
-                                type="button"
-                                translate="no"
-                                onClick={() => onOutputFormatChange?.(option.value)}
-                                className={[
-                                  'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
-                                  selected
-                                    ? 'bg-white/[0.1] text-gl-text-primary'
-                                    : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
-                                ].join(' ')}
-                              >
-                                {option.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
+                        <div>
+                          <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
+                            内容审核
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-white/[0.06] p-1">
+                            {IMAGE_MODERATION_OPTIONS.map((option) => {
+                              const selected = option.value === moderation;
 
-                      <div>
-                        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
-                          内容审核
-                        </div>
-                        <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-white/[0.06] p-1">
-                          {IMAGE_MODERATION_OPTIONS.map((option) => {
-                            const selected = option.value === moderation;
-
-                            return (
-                              <button
-                                key={option.value}
-                                type="button"
-                                translate="no"
-                                onClick={() => onModerationChange?.(option.value)}
-                                className={[
-                                  'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
-                                  selected
-                                    ? 'bg-white/[0.1] text-gl-text-primary'
-                                    : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
-                                ].join(' ')}
-                              >
-                                {option.label}
-                              </button>
-                            );
-                          })}
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  translate="no"
+                                  onClick={() => onModerationChange?.(option.value)}
+                                  className={[
+                                    'flex h-10 items-center justify-center rounded-[11px] text-[15px] font-medium transition-colors duration-150',
+                                    selected
+                                      ? 'bg-white/[0.1] text-gl-text-primary'
+                                      : 'text-gl-text-muted hover:bg-white/[0.05] hover:text-gl-text-primary',
+                                  ].join(' ')}
+                                >
+                                  {option.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ) : null}
-              </div>
+                  ) : null}
+                </div>
               )}
             </div>
 
-            <PromptBarRunControls
-              label={String(count)}
-              labelTitle="Image count"
-              runTitle="Run"
-              onRun={onRun}
-            />
+            <div className="relative" ref={parallelMenuRef}>
+              <PromptBarRunControls
+                label={`x${parallelCount}`}
+                labelTitle="并行任务数"
+                labelActive={parallelMenuOpen}
+                onLabelClick={() => {
+                  if (generating) {
+                    return;
+                  }
+
+                  setParallelMenuOpen((open) => !open);
+                  setModelMenuOpen(false);
+                  setSettingsMenuOpen(false);
+                  setFormatMenuOpen(false);
+                }}
+                runTitle={generating ? '生成中' : '开始生成'}
+                runDisabled={generating}
+                onRun={onRun}
+              />
+
+              {parallelMenuOpen ? (
+                <div className="absolute bottom-full right-8 mb-2 w-[92px] overflow-hidden rounded-[14px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
+                  <div className="flex flex-col gap-0.5">
+                    {PARALLEL_COUNT_OPTIONS.map((option) => {
+                      const selected = option === parallelCount;
+
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          translate="no"
+                          onClick={() => {
+                            onParallelCountChange?.(option);
+                            setParallelMenuOpen(false);
+                          }}
+                          className={[
+                            'flex h-9 w-full items-center justify-between rounded-[10px] px-3 text-left text-[14px] transition-colors duration-150',
+                            selected
+                              ? 'bg-white/[0.08] text-gl-text-primary'
+                              : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
+                          ].join(' ')}
+                        >
+                          <span>{`x${option}`}</span>
+                          {selected ? <Check size={14} /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
     </NodeToolbar>
   );
-}
+});

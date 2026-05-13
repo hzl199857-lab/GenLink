@@ -30,6 +30,7 @@ export interface CardSideHandleProps {
   type: HandleType;
   position: Position.Left | Position.Right;
   visible?: boolean;
+  disabled?: boolean;
   cardTopOffset?: number;
   cardLeftOffset?: number;
   cardWidth?: number;
@@ -39,6 +40,7 @@ export function CardSideHandle({
   type,
   position,
   visible = false,
+  disabled = false,
   cardTopOffset = 0,
   cardLeftOffset = 0,
   cardWidth = 0,
@@ -462,6 +464,10 @@ export function CardSideHandle({
     cleanupRef.current = cleanup;
     activeConnectionCleanup = cleanup;
   }, [handleDomId, nodeId, store, type]);
+
+  if (disabled) {
+    return null;
+  }
 
   return (
     <div

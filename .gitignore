@@ -58,6 +58,9 @@ dev.log
 # local caches
 .eslintcache
 
+# generated local images
+/img/
+
 # local scaffold residue
 genlink-scaffold/
 

@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import NextImage from 'next/image';
-import { AlignLeft, CircleHelp, Expand, Grip, Image as ImageIcon, Map, Video, X } from 'lucide-react';
+import { Expand, Map as MapIcon, X } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
@@ -16,19 +16,31 @@ import ReactFlow, {
   Node as ReactFlowNode,
   Edge as ReactFlowEdge,
   NodeProps,
+  type MiniMapNodeProps,
   BackgroundVariant,
   Position,
   type OnConnectStartParams,
+  useStore,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
 import {
-  CANVAS_IMAGE_API_KEY_STORAGE_KEY,
-  CANVAS_TEXT_API_KEY_STORAGE_KEY,
+  CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY,
+  CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY,
+  CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY,
+  CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_API_PROVIDER_STORAGE_KEY,
+  CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY,
+  readStoredApiSettings,
+  type StoredApiSettings,
   useCanvasStore,
 } from '@/store/canvas-store';
 import type {
+  CanvasEdge,
   CanvasNode,
+  ImageHistoryItem,
   NodeType,
   TextNodeData,
   ImageGenerationNodeData,
@@ -51,25 +63,25 @@ import { NodeFloatingToolbar } from '../nodes/NodeFloatingToolbar';
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasToolbar } from './CanvasToolbar';
+import { GenerationHistoryPopover } from './GenerationHistoryPopover';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
 let notifyImageToolbarAction:
   | ((action: string, data: ImageGenerationNodeData) => void)
   | null = null;
-let notifyImageGenerationCardClick:
-  | ((data: ImageGenerationNodeData) => void)
-  | null = null;
 let notifyImageGenerationNodeSelect:
+  | ((nodeId: string) => void)
+  | null = null;
+let notifyCanvasNodeSelect:
+  | ((nodeId: string) => void)
+  | null = null;
+let notifyCanvasImageInfoRequest:
   | ((nodeId: string) => void)
   | null = null;
 let notifyImageGenerationReferenceUpload:
   | ((nodeId: string) => void)
-  | null = null;
-let notifyImageNodeCardClick:
-  | ((data: ImageNodeData) => void)
-  | null = null;
-let notifyUploadedImageNodeCardClick:
-  | ((data: UploadedImageNodeData) => void)
   | null = null;
 
 function formatImageSize(bytes?: number): string {
@@ -146,15 +158,25 @@ function formatGeneratedAt(value?: string): string {
 function toImageInfoPopoverData(
   data: ImageGenerationNodeData,
 ): ImageGenerationInfoPopoverData {
+  const imageUrl =
+    data.generatedHostedImageUrl?.trim() ||
+    data.generatedImageUrl?.trim();
+  const currentResult = imageUrl
+    ? data.generationResults?.find((result) => {
+        const resultUrl = result.hostedImageUrl?.trim() || result.imageUrl?.trim();
+        return resultUrl === imageUrl;
+      })
+    : undefined;
+
   return {
-    model: data.generatedModel?.trim() || data.model?.trim() || '-',
-    format: data.generatedImageFormat?.trim() || 'PNG',
-    size: formatImageSize(data.generatedImageSizeBytes),
+    model: currentResult?.model?.trim() || data.generatedModel?.trim() || data.model?.trim() || '-',
+    format: currentResult?.format?.trim() || data.generatedImageFormat?.trim() || 'PNG',
+    size: formatImageSize(currentResult?.sizeBytes ?? data.generatedImageSizeBytes),
     resolution: formatImageResolution(
-      data.generatedImageWidth,
-      data.generatedImageHeight,
+      currentResult?.width ?? data.generatedImageWidth,
+      currentResult?.height ?? data.generatedImageHeight,
     ),
-    createdTime: formatGeneratedAt(data.generatedAt) || undefined,
+    createdTime: formatGeneratedAt(currentResult?.generatedAt ?? data.generatedAt) || undefined,
   };
 }
 
@@ -164,6 +186,31 @@ type ImageLightboxData = {
   width?: number;
   height?: number;
 };
+
+type ResolvedImageMetadata = {
+  width: number;
+  height: number;
+};
+
+function readImageDimensions(imageUrl: string): Promise<ResolvedImageMetadata> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.onload = () => {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+
+      if (!width || !height) {
+        reject(new Error('Image dimensions are unavailable'));
+        return;
+      }
+
+      resolve({ width, height });
+    };
+    image.onerror = () => reject(new Error('Failed to read image dimensions'));
+    image.src = imageUrl;
+  });
+}
 
 function toImageGenerationLightboxData(
   data: ImageGenerationNodeData,
@@ -232,6 +279,244 @@ function toUploadedImageInfoPopoverData(
   };
 }
 
+async function toResolvedImageGenerationInfoPopoverData(
+  data: ImageGenerationNodeData,
+): Promise<ImageGenerationInfoPopoverData> {
+  const base = toImageInfoPopoverData(data);
+  const imageUrl =
+    data.generatedHostedImageUrl?.trim() ||
+    data.generatedImageUrl?.trim();
+
+  if (!imageUrl) {
+    return base;
+  }
+
+  try {
+    const { width, height } = await readImageDimensions(imageUrl);
+    return {
+      ...base,
+      resolution: formatImageResolution(width, height),
+    };
+  } catch {
+    return base;
+  }
+}
+
+async function toResolvedImageNodeInfoPopoverData(
+  data: ImageNodeData,
+): Promise<ImageGenerationInfoPopoverData> {
+  const base = toImageNodeInfoPopoverData(data);
+  const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
+
+  if (!imageUrl) {
+    return base;
+  }
+
+  try {
+    const { width, height } = await readImageDimensions(imageUrl);
+    return {
+      ...base,
+      resolution: formatImageResolution(width, height),
+    };
+  } catch {
+    return base;
+  }
+}
+
+async function toResolvedUploadedImageInfoPopoverData(
+  data: UploadedImageNodeData,
+): Promise<ImageGenerationInfoPopoverData> {
+  const base = toUploadedImageInfoPopoverData(data);
+  const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
+
+  if (!imageUrl) {
+    return base;
+  }
+
+  try {
+    const { width, height } = await readImageDimensions(imageUrl);
+    return {
+      ...base,
+      resolution: formatImageResolution(width, height),
+    };
+  } catch {
+    return base;
+  }
+}
+
+async function toResolvedCanvasNodeInfoPopoverData(
+  node: CanvasNode | ReactFlowNode,
+): Promise<ImageGenerationInfoPopoverData | null> {
+  if (node.type === 'image_generation') {
+    const data = node.data as ImageGenerationNodeData;
+    const imageUrl =
+      data.generatedHostedImageUrl?.trim() ||
+      data.generatedImageUrl?.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return toResolvedImageGenerationInfoPopoverData(data);
+  }
+
+  if (node.type === 'image') {
+    return toResolvedImageNodeInfoPopoverData(node.data as ImageNodeData);
+  }
+
+  if (node.type === 'uploaded_image') {
+    return toResolvedUploadedImageInfoPopoverData(node.data as UploadedImageNodeData);
+  }
+
+  return null;
+}
+
+function isCanvasImageNodeType(type: string): type is CanvasNode['type'] {
+  return type === 'image_generation' || type === 'image' || type === 'uploaded_image';
+}
+
+function parseCanvasAspectRatio(value?: string): number | null {
+  if (!value || value === 'auto') {
+    return null;
+  }
+
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+
+  if (!width || !height || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return width / height;
+}
+
+function resolveImageGenerationCardDimensions(
+  data: ImageGenerationNodeData,
+): { width: number; height: number } {
+  const generatedAspectRatio =
+    data.generatedImageWidth && data.generatedImageHeight && data.generatedImageWidth > 0 && data.generatedImageHeight > 0
+      ? data.generatedImageWidth / data.generatedImageHeight
+      : null;
+  const referenceImage = data.referenceImages?.find(
+    (image) => image.width && image.height && image.width > 0 && image.height > 0,
+  );
+  const referenceAspectRatio =
+    referenceImage?.width && referenceImage?.height
+      ? referenceImage.width / referenceImage.height
+      : null;
+  const resolvedAspectRatio =
+    parseCanvasAspectRatio(data.aspectRatio) ?? generatedAspectRatio ?? referenceAspectRatio ?? 16 / 9;
+
+  if (resolvedAspectRatio >= 1) {
+    const width = IMAGE_GENERATION_MAX_CARD_EDGE;
+    const height = Math.max(
+      IMAGE_GENERATION_MIN_CARD_EDGE,
+      Math.round(width / resolvedAspectRatio),
+    );
+
+    return { width, height };
+  }
+
+  const height = IMAGE_GENERATION_MAX_CARD_EDGE;
+  const width = Math.max(
+    IMAGE_GENERATION_MIN_CARD_EDGE,
+    Math.round(height * resolvedAspectRatio),
+  );
+
+  return { width, height };
+}
+
+function resolveUploadedImageCardDimensions(
+  data: UploadedImageNodeData,
+): { width: number; height: number } {
+  if (data.displayWidth && data.displayHeight && data.displayWidth > 0 && data.displayHeight > 0) {
+    return {
+      width: data.displayWidth,
+      height: data.displayHeight,
+    };
+  }
+
+  const imageWidth = Math.max(data.width || 320, 1);
+  const imageHeight = Math.max(data.height || 320, 1);
+  const imageAspectRatio = imageWidth / imageHeight;
+  const fittedWidthByHeight = UPLOADED_IMAGE_MAX_CARD_HEIGHT * imageAspectRatio;
+  const width = Math.min(
+    UPLOADED_IMAGE_MAX_CARD_WIDTH,
+    Math.max(
+      UPLOADED_IMAGE_MIN_CARD_WIDTH,
+      Math.min(imageWidth, fittedWidthByHeight),
+    ),
+  );
+
+  return {
+    width,
+    height: width * (imageHeight / imageWidth),
+  };
+}
+
+function resolveMiniMapVisibleNodeRect(
+  node: ReactFlowNode,
+): { x: number; y: number; width: number; height: number; radius: number } {
+  if (node.type === 'text') {
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: TEXT_NODE_CARD_WIDTH,
+      height: TEXT_NODE_CARD_HEIGHT,
+      radius: 18,
+    };
+  }
+
+  if (node.type === 'image_generation') {
+    const dimensions = resolveImageGenerationCardDimensions(node.data as ImageGenerationNodeData);
+    const stageHeight = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
+
+    return {
+      x: node.position.x + Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - dimensions.width) / 2),
+      y: node.position.y + stageHeight - dimensions.height,
+      width: dimensions.width,
+      height: dimensions.height,
+      radius: 18,
+    };
+  }
+
+  if (node.type === 'uploaded_image') {
+    const dimensions = resolveUploadedImageCardDimensions(node.data as UploadedImageNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: dimensions.width,
+      height: dimensions.height,
+      radius: 22,
+    };
+  }
+
+  if (node.type === 'image') {
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: IMAGE_NODE_CARD_WIDTH,
+      height: IMAGE_NODE_CARD_HEIGHT,
+      radius: 18,
+    };
+  }
+
+  return {
+    x: node.position.x,
+    y: node.position.y,
+    width: node.width ?? 0,
+    height: node.height ?? 0,
+    radius: 18,
+  };
+}
+
 // --- Adapters ---
 function readImageFile(file: File): Promise<UploadedImageNodeData> {
   return new Promise((resolve, reject) => {
@@ -275,60 +560,105 @@ function createUploadedImageNode(
   };
 }
 
-function TextNodeAdapter({ id, data, selected }: NodeProps) {
+const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateText = useCanvasStore((s) => s.generateTextFromTextNode);
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForTextNode(id));
   const [editing, setEditing] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
+  const isActive = (selected || promptFocused) && !dragging;
+  const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+
+  useEffect(() => {
+    const handleClearNodeUi = () => {
+      setPromptFocused(false);
+      setEditing(false);
+    };
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
 
   return (
     <TextNode
       id={id}
       data={data as TextNodeData}
-      selected={selected || promptFocused}
+      selected={isActive}
+      dragging={!!dragging}
       editing={editing}
       connectedImages={connectedImages}
       onChange={(next) => updateNodeData<'text'>(id, next)}
-      onStartEdit={() => setEditing(true)}
+      onTitleChange={(nextTitle) => updateNodeData<'text'>(id, { title: nextTitle })}
+      onStartEdit={() => {
+        handleSelectNode();
+        setEditing(true);
+      }}
       onEndEdit={() => setEditing(false)}
       onRun={() => generateText(id)}
-      onPromptPointerDown={() => notifyPromptBarInteraction?.()}
-      onPromptFocusWithinChange={setPromptFocused}
+      onPromptPointerDown={() => {
+        handleSelectNode();
+        notifyPromptBarInteraction?.();
+      }}
+      onPromptFocusWithinChange={(focused) => {
+        if (focused) {
+          handleSelectNode();
+        }
+        setPromptFocused(focused);
+      }}
     />
   );
-}
+});
 
-function ImageGenerationNodeAdapter({ id, data, selected }: NodeProps) {
+const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateImage = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForImageGenerationNode(id),
   );
   const [promptFocused, setPromptFocused] = useState(false);
+  const isActive = (selected || promptFocused) && !dragging;
+  const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+
+  useEffect(() => {
+    const handleClearNodeUi = () => setPromptFocused(false);
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
 
   return (
     <ImageGenerationNode
       id={id}
       data={data as ImageGenerationNodeData}
-      selected={selected || promptFocused}
+      selected={isActive}
+      dragging={!!dragging}
       connectedImages={connectedImages}
       onChange={(next) => updateNodeData<'image_generation'>(id, next)}
+      onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
       onRun={() => generateImage(id)}
       onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
       onToolbarAction={(action) => notifyImageToolbarAction?.(action, data as ImageGenerationNodeData)}
       onOpenLightbox={(next) => notifyImageToolbarAction?.('expand', next)}
-      onImageCardClick={(next) => notifyImageGenerationCardClick?.(next)}
-      onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
-      onPromptPointerDown={() => notifyPromptBarInteraction?.()}
-      onPromptFocusWithinChange={setPromptFocused}
+      onImageCardClick={() => notifyCanvasImageInfoRequest?.(id)}
+      onSelectNode={handleSelectNode}
+      onPromptPointerDown={() => {
+        handleSelectNode();
+        notifyPromptBarInteraction?.();
+      }}
+      onPromptFocusWithinChange={(focused) => {
+        if (focused) {
+          handleSelectNode();
+        }
+        setPromptFocused(focused);
+      }}
     />
   );
-}
+});
 
-function AITextResultNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
+const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const addNode = useCanvasStore((s) => s.addNode);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
 
   const handleCopy = () => {
     addNode({
@@ -354,15 +684,17 @@ function AITextResultNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) 
         id={id}
         data={data as AITextResultNodeData}
         selected={selected}
+        onTitleChange={(nextTitle) => updateNodeData<'ai_text_result'>(id, { title: nextTitle })}
       />
       <CardSideHandle type="source" position={Position.Right} visible={!!selected} />
     </div>
   );
-}
+});
 
-function ImageNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
+const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const addNode = useCanvasStore((s) => s.addNode);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
 
   const handleCopy = () => {
     addNode({
@@ -389,14 +721,16 @@ function ImageNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
         data={data as ImageNodeData}
         selected={selected}
         loading={false}
-        onShowInfo={() => notifyImageNodeCardClick?.(data as ImageNodeData)}
+        onTitleChange={(nextTitle) => updateNodeData<'image'>(id, { title: nextTitle })}
+        onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
+        onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
       />
       <CardSideHandle type="source" position={Position.Right} visible={!!selected} />
     </div>
   );
-}
+});
 
-function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
+const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
 
   const handleReplace = async (file: File) => {
@@ -409,10 +743,12 @@ function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
       data={data as UploadedImageNodeData}
       selected={selected}
       onReplace={handleReplace}
-      onShowInfo={() => notifyUploadedImageNodeCardClick?.(data as UploadedImageNodeData)}
+      onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
+      onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
+      onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
     />
   );
-}
+});
 
 const nodeTypes = {
   text: TextNodeAdapter,
@@ -430,8 +766,43 @@ const IMAGE_IMPORT_SPACING_X = 48;
 const IMAGE_IMPORT_SPACING_Y = 48;
 const CANVAS_MIN_ZOOM = 0.2;
 const CANVAS_MAX_ZOOM = 2;
+const CANVAS_EDGE_STYLE_STORAGE_KEY = 'genlink.canvasEdgeStyle';
+const CANVAS_EDGE_STYLE_CHANGE_EVENT = 'genlink:canvas-edge-style-change';
+const TEXT_NODE_CARD_WIDTH = 511;
+const TEXT_NODE_CARD_HEIGHT = 289;
+const IMAGE_NODE_CARD_WIDTH = 420;
+const IMAGE_NODE_CARD_HEIGHT = 420 * 3 / 4;
+const IMAGE_GENERATION_MAX_CARD_EDGE = 540;
+const IMAGE_GENERATION_MIN_CARD_EDGE = 220;
+const IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE = 64;
+const IMAGE_GENERATION_CARD_ACCESSORY_GAP = 12;
+const UPLOADED_IMAGE_MAX_CARD_WIDTH = 420;
+const UPLOADED_IMAGE_MAX_CARD_HEIGHT = 540;
+const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
+const HISTORY_NODE_WIDTH = 540;
+const HISTORY_NODE_HEIGHT = 740;
+const HISTORY_NODE_GAP = 72;
+const LIGHTBOX_MIN_ZOOM = 0.5;
+const LIGHTBOX_MAX_ZOOM = 5;
+const LIGHTBOX_WHEEL_ZOOM_STEP = 0.0018;
+const LIGHTBOX_RESET_ZOOM_EPSILON = 0.03;
 const CONNECTION_MENU_ANCHOR_NODE_ID = '__connection-menu-anchor__';
 const BLANK_CONNECTION_DROP_EVENT = 'genlink:connection-blank-drop';
+const CANVAS_NODE_UI_CLEAR_EVENT = 'genlink:canvas-node-ui-clear';
+
+type CanvasEdgeStyle = 'straight' | 'curve';
+
+type LightboxImageSize = {
+  width: number;
+  height: number;
+};
+
+type LightboxViewState = {
+  imageUrl: string;
+  zoom: number;
+  pan: { x: number; y: number };
+  imageSize: LightboxImageSize | null;
+};
 
 type PendingConnectionMenu = {
   screen: { x: number; y: number };
@@ -444,6 +815,11 @@ type BlankConnectionDropEventDetail = {
   handleId: string | null;
   handleType: 'source' | 'target';
   screen: { x: number; y: number };
+};
+
+type ConnectedCopyBuffer = {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
 };
 
 function cloneNodeData<T>(data: T): T {
@@ -467,6 +843,54 @@ function cloneCanvasNode(
   } as CanvasNode;
 }
 
+function getIncomingAndInternalEdgesForCopy(
+  edges: CanvasEdge[],
+  selectedNodeIds: Set<string>,
+): CanvasEdge[] {
+  return edges.filter((edge) => selectedNodeIds.has(edge.target));
+}
+
+function createConnectedCopyBuffer(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  selectedNodeIds: Set<string>,
+): ConnectedCopyBuffer {
+  const copiedNodes = nodes.map((node) => cloneCanvasNode(node, 0));
+  const copiedNodeIdsByOriginalId = new Map<string, string>(
+    nodes.map((node, index) => [node.id, copiedNodes[index].id]),
+  );
+  const copiedEdges = getIncomingAndInternalEdgesForCopy(edges, selectedNodeIds)
+    .map((edge) => ({
+      ...edge,
+      id: crypto.randomUUID(),
+      source: copiedNodeIdsByOriginalId.get(edge.source) ?? edge.source,
+      target: copiedNodeIdsByOriginalId.get(edge.target) ?? edge.target,
+    }));
+
+  return {
+    nodes: copiedNodes,
+    edges: copiedEdges,
+  };
+}
+
+function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a === b) {
+    return true;
+  }
+
+  if (a.size !== b.size) {
+    return false;
+  }
+
+  for (const value of a) {
+    if (!b.has(value)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function getImageImportPosition(
   basePosition: { x: number; y: number },
   index: number,
@@ -478,6 +902,80 @@ function getImageImportPosition(
     x: basePosition.x + column * IMAGE_IMPORT_SPACING_X,
     y: basePosition.y + row * IMAGE_IMPORT_SPACING_Y,
   };
+}
+
+function getNodeBoundsForHistoryPlacement(node: CanvasNode): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} {
+  const width =
+    node.type === 'image_generation'
+      ? HISTORY_NODE_WIDTH
+      : node.type === 'text'
+        ? 360
+        : node.type === 'ai_text_result'
+          ? 420
+          : 360;
+  const height =
+    node.type === 'image_generation'
+      ? HISTORY_NODE_HEIGHT
+      : node.type === 'text'
+        ? 260
+        : node.type === 'ai_text_result'
+          ? 300
+          : 360;
+
+  return {
+    left: node.position.x - HISTORY_NODE_GAP,
+    top: node.position.y - HISTORY_NODE_GAP,
+    right: node.position.x + width + HISTORY_NODE_GAP,
+    bottom: node.position.y + height + HISTORY_NODE_GAP,
+  };
+}
+
+function rectanglesOverlap(
+  a: { left: number; top: number; right: number; bottom: number },
+  b: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function findOpenHistoryNodePosition(
+  preferredPosition: { x: number; y: number },
+  nodes: CanvasNode[],
+): { x: number; y: number } {
+  const occupiedBounds = nodes.map(getNodeBoundsForHistoryPlacement);
+  const stepX = HISTORY_NODE_WIDTH + HISTORY_NODE_GAP;
+  const stepY = HISTORY_NODE_HEIGHT + HISTORY_NODE_GAP;
+  const candidates: Array<{ x: number; y: number }> = [preferredPosition];
+
+  for (let ring = 1; ring <= 8; ring += 1) {
+    for (let xOffset = -ring; xOffset <= ring; xOffset += 1) {
+      for (let yOffset = -ring; yOffset <= ring; yOffset += 1) {
+        if (Math.max(Math.abs(xOffset), Math.abs(yOffset)) !== ring) {
+          continue;
+        }
+
+        candidates.push({
+          x: preferredPosition.x + xOffset * stepX,
+          y: preferredPosition.y + yOffset * stepY,
+        });
+      }
+    }
+  }
+
+  return candidates.find((candidate) => {
+    const candidateBounds = {
+      left: candidate.x,
+      top: candidate.y,
+      right: candidate.x + HISTORY_NODE_WIDTH,
+      bottom: candidate.y + HISTORY_NODE_HEIGHT,
+    };
+
+    return !occupiedBounds.some((bounds) => rectanglesOverlap(candidateBounds, bounds));
+  }) ?? candidates[candidates.length - 1];
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -507,6 +1005,10 @@ function getClipboardImageFiles(data: DataTransfer | null): File[] {
   }
 
   return Array.from(data.files).filter((file) => file.type.startsWith('image/'));
+}
+
+function clearCanvasNodeUi() {
+  window.dispatchEvent(new Event(CANVAS_NODE_UI_CLEAR_EVENT));
 }
 
 function getEdgeDeleteButtonPosition(point: { x: number; y: number }): { x: number; y: number } {
@@ -559,11 +1061,192 @@ function clampZoomLevel(zoom: number): number {
   return Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, zoom));
 }
 
-function CanvasViewportControls() {
+function clampLightboxZoomLevel(zoom: number): number {
+  return Math.min(LIGHTBOX_MAX_ZOOM, Math.max(LIGHTBOX_MIN_ZOOM, zoom));
+}
+
+function getInitialLightboxImageSize(data: ImageLightboxData | null): LightboxImageSize | null {
+  if (!data?.width || !data.height) {
+    return null;
+  }
+
+  return {
+    width: data.width,
+    height: data.height,
+  };
+}
+
+function createLightboxViewState(data: ImageLightboxData | null): LightboxViewState {
+  return {
+    imageUrl: data?.imageUrl ?? '',
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    imageSize: getInitialLightboxImageSize(data),
+  };
+}
+
+function getContainedImageSize(
+  containerWidth: number,
+  containerHeight: number,
+  imageSize: LightboxImageSize | null,
+): LightboxImageSize {
+  if (!imageSize?.width || !imageSize.height) {
+    return {
+      width: containerWidth,
+      height: containerHeight,
+    };
+  }
+
+  const ratio = Math.min(
+    containerWidth / imageSize.width,
+    containerHeight / imageSize.height,
+  );
+
+  return {
+    width: imageSize.width * ratio,
+    height: imageSize.height * ratio,
+  };
+}
+
+function clampLightboxPan(
+  pan: { x: number; y: number },
+  zoom: number,
+  containerRect: Pick<DOMRect, 'width' | 'height'>,
+  imageSize: LightboxImageSize | null,
+): { x: number; y: number } {
+  if (zoom <= 1) {
+    return { x: 0, y: 0 };
+  }
+
+  const containedSize = getContainedImageSize(
+    containerRect.width,
+    containerRect.height,
+    imageSize,
+  );
+  const maxX = Math.max(0, (containedSize.width * zoom - containerRect.width) / 2);
+  const maxY = Math.max(0, (containedSize.height * zoom - containerRect.height) / 2);
+
+  return {
+    x: Math.min(maxX, Math.max(-maxX, pan.x)),
+    y: Math.min(maxY, Math.max(-maxY, pan.y)),
+  };
+}
+
+function readStoredCanvasEdgeStyle(): CanvasEdgeStyle {
+  if (typeof window === 'undefined') {
+    return 'straight';
+  }
+
+  return window.localStorage.getItem(CANVAS_EDGE_STYLE_STORAGE_KEY) === 'curve'
+    ? 'curve'
+    : 'straight';
+}
+
+function subscribeToCanvasEdgeStyleChange(onStoreChange: () => void): () => void {
+  window.addEventListener(CANVAS_EDGE_STYLE_CHANGE_EVENT, onStoreChange);
+  return () => window.removeEventListener(CANVAS_EDGE_STYLE_CHANGE_EVENT, onStoreChange);
+}
+
+function getServerCanvasEdgeStyleSnapshot(): CanvasEdgeStyle {
+  return 'straight';
+}
+
+function useStoredCanvasEdgeStyle(): CanvasEdgeStyle {
+  return useSyncExternalStore(
+    subscribeToCanvasEdgeStyleChange,
+    readStoredCanvasEdgeStyle,
+    getServerCanvasEdgeStyleSnapshot,
+  );
+}
+
+function setStoredCanvasEdgeStyle(edgeStyle: CanvasEdgeStyle) {
+  window.localStorage.setItem(CANVAS_EDGE_STYLE_STORAGE_KEY, edgeStyle);
+  window.dispatchEvent(new Event(CANVAS_EDGE_STYLE_CHANGE_EVENT));
+}
+
+function getReactFlowEdgeType(edgeStyle: CanvasEdgeStyle): ReactFlowEdge['type'] {
+  return edgeStyle === 'curve' ? 'default' : 'smoothstep';
+}
+
+function openFileInput(input: HTMLInputElement) {
+  if (typeof input.showPicker === 'function') {
+    try {
+      input.showPicker();
+      return;
+    } catch {
+      // Fallback for browsers that reject showPicker on visually hidden inputs.
+    }
+  }
+
+  input.click();
+}
+
+const CanvasMiniMapNode = memo(function CanvasMiniMapNode({
+  id,
+  x,
+  y,
+  color,
+  strokeColor,
+  strokeWidth,
+  className,
+  shapeRendering,
+  selected,
+  onClick,
+}: MiniMapNodeProps) {
+  const node = useStore(
+    useCallback((state) => state.nodeInternals.get(id), [id]),
+  );
+
+  if (!node || id === CONNECTION_MENU_ANCHOR_NODE_ID) {
+    return <g />;
+  }
+
+  const rect = resolveMiniMapVisibleNodeRect(node as ReactFlowNode);
+  const baseX = node.positionAbsolute?.x ?? node.position.x;
+  const baseY = node.positionAbsolute?.y ?? node.position.y;
+  const rectX = x + rect.x - baseX;
+  const rectY = y + rect.y - baseY;
+
+  return (
+    <rect
+      className={[
+        'react-flow__minimap-node',
+        selected ? 'selected' : '',
+        className,
+      ].filter(Boolean).join(' ')}
+      x={rectX}
+      y={rectY}
+      rx={rect.radius}
+      ry={rect.radius}
+      width={rect.width}
+      height={rect.height}
+      fill={color}
+      stroke={selected ? 'rgba(255,255,255,0.28)' : strokeColor}
+      strokeWidth={selected ? Math.max(2, strokeWidth) : strokeWidth}
+      shapeRendering={shapeRendering}
+      onClick={onClick ? (event) => onClick(event, id) : undefined}
+    />
+  );
+});
+
+function CanvasViewportControls({
+  edgeStyle,
+  onToggleEdgeStyle,
+}: {
+  edgeStyle: CanvasEdgeStyle;
+  onToggleEdgeStyle: () => void;
+}) {
   const { zoom } = useViewport();
   const { zoomTo, fitView } = useReactFlow();
   const [isMiniMapVisible, setIsMiniMapVisible] = useState(true);
   const clampedZoom = clampZoomLevel(zoom);
+  const edgeStyleLabel = edgeStyle === 'straight'
+    ? '\u76f4\u7ebf'
+    : '\u66f2\u7ebf';
+  const nextEdgeStyleLabel = edgeStyle === 'straight'
+    ? '\u5207\u6362\u4e3a\u66f2\u7ebf'
+    : '\u5207\u6362\u4e3a\u76f4\u7ebf';
+  const minimapLabel = isMiniMapVisible ? '关闭小地图' : '开启小地图';
 
   return (
     <>
@@ -582,42 +1265,86 @@ function CanvasViewportControls() {
           nodeColor={() => 'rgba(118,126,145,0.46)'}
           nodeStrokeColor={() => 'rgba(255,255,255,0.08)'}
           nodeBorderRadius={3}
+          nodeComponent={CanvasMiniMapNode}
           pannable
           zoomable
         />
       ) : null}
 
       <Panel position="bottom-left" className="canvas-zoom-panel">
-        <button
-          type="button"
-          className="canvas-zoom-round-button"
-          aria-label={isMiniMapVisible ? 'Hide minimap' : 'Show minimap'}
-          aria-pressed={isMiniMapVisible}
-          title={isMiniMapVisible ? '鍏抽棴鍦板浘' : '鎵撳紑鍦板浘'}
-          onClick={() => setIsMiniMapVisible((visible) => !visible)}
-        >
-          <Map size={14} />
-        </button>
+        <div className="group/tooltip relative">
+          <button
+            type="button"
+            className="canvas-zoom-round-button"
+            aria-label={minimapLabel}
+            aria-pressed={isMiniMapVisible}
+            onClick={() => setIsMiniMapVisible((visible) => !visible)}
+          >
+            <MapIcon size={14} />
+          </button>
+          <Tooltip label={minimapLabel} side="top" className="!px-1.5 !py-0.5 !text-[9px]" />
+        </div>
 
         <div className="canvas-zoom-shell flex items-center gap-2 rounded-full bg-[#202124] px-2 py-1.5 shadow-[0_14px_34px_rgba(0,0,0,0.32)] backdrop-blur-xl">
-          <button
-            type="button"
-            className="canvas-zoom-icon-button"
-            aria-label="Drag handle"
-            title="绉诲姩"
-          >
-            <Grip size={15} />
-          </button>
+          <div className="group/tooltip relative">
+            <button
+              type="button"
+              className="canvas-zoom-icon-button"
+              aria-label={nextEdgeStyleLabel}
+              aria-pressed={edgeStyle === 'curve'}
+              onClick={onToggleEdgeStyle}
+            >
+              {edgeStyle === 'straight' ? (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 15 15"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M2.5 4.5H6.5V10.5H12.5"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="2.5" cy="4.5" r="1.2" fill="currentColor" />
+                  <circle cx="12.5" cy="10.5" r="1.2" fill="currentColor" />
+                </svg>
+              ) : (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 15 15"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M2.5 10.5C5.1 3.6 9.9 11.4 12.5 4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="2.5" cy="10.5" r="1.2" fill="currentColor" />
+                  <circle cx="12.5" cy="4.5" r="1.2" fill="currentColor" />
+                </svg>
+              )}
+            </button>
+            <Tooltip label={edgeStyleLabel} side="top" />
+          </div>
 
-          <button
-            type="button"
-            className="canvas-zoom-icon-button"
-            onClick={() => void fitView({ duration: 220, padding: 0.18 })}
-            aria-label="Fit view"
-            title="閫傚簲鐢诲竷"
-          >
-            <Expand size={15} />
-          </button>
+          <div className="group/tooltip relative">
+            <button
+              type="button"
+              className="canvas-zoom-icon-button"
+              onClick={() => void fitView({ duration: 220, padding: 0.18 })}
+              aria-label="重置"
+            >
+              <Expand size={15} />
+            </button>
+            <Tooltip label="重置" side="top" />
+          </div>
 
           <input
             type="range"
@@ -629,18 +1356,10 @@ function CanvasViewportControls() {
               void zoomTo(Number(event.target.value), { duration: 120 });
             }}
             className="canvas-zoom-slider"
-            aria-label="Canvas zoom"
+            aria-label="????"
           />
         </div>
 
-        <button
-          type="button"
-          className="canvas-zoom-round-button"
-          aria-label="Help"
-          title="甯姪"
-        >
-          <CircleHelp size={14} />
-        </button>
       </Panel>
     </>
   );
@@ -653,6 +1372,21 @@ function ImageLightbox({
   data: ImageLightboxData | null;
   onClose: () => void;
 }) {
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startPan: { x: number; y: number };
+  } | null>(null);
+  const [viewState, setViewState] = useState<LightboxViewState>(() =>
+    createLightboxViewState(data),
+  );
+  const activeViewState = data?.imageUrl === viewState.imageUrl
+    ? viewState
+    : createLightboxViewState(data);
+  const canPan = activeViewState.zoom > 1;
+  const imageUrl = data?.imageUrl;
+
   useEffect(() => {
     if (!data) {
       return;
@@ -668,6 +1402,139 @@ function ImageLightbox({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [data, onClose]);
 
+  useEffect(() => {
+    dragStateRef.current = null;
+
+    if (!data || data.width && data.height) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void readImageDimensions(data.imageUrl).then(({ width, height }) => {
+      if (cancelled) {
+        return;
+      }
+
+      setViewState((currentState) => {
+        if (currentState.imageUrl !== data.imageUrl) {
+          return {
+            ...createLightboxViewState(data),
+            imageSize: { width, height },
+          };
+        }
+
+        return {
+          ...currentState,
+          imageSize: { width, height },
+        };
+      });
+    }).catch(() => {
+      // Lightbox panning can still work with the viewport bounds as a fallback.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pointerFromCenter = {
+      x: event.clientX - rect.left - rect.width / 2,
+      y: event.clientY - rect.top - rect.height / 2,
+    };
+
+    setViewState((currentState) => {
+      const currentViewState = currentState.imageUrl === imageUrl
+        ? currentState
+        : createLightboxViewState(data ?? null);
+      const currentZoom = currentViewState.zoom;
+      const nextZoom = clampLightboxZoomLevel(
+        currentZoom * (1 - event.deltaY * LIGHTBOX_WHEEL_ZOOM_STEP),
+      );
+
+      if (Math.abs(nextZoom - 1) < LIGHTBOX_RESET_ZOOM_EPSILON) {
+        return createLightboxViewState(data ?? null);
+      }
+
+      const zoomRatio = nextZoom / currentZoom;
+      const nextPan = {
+        x: pointerFromCenter.x - (pointerFromCenter.x - currentViewState.pan.x) * zoomRatio,
+        y: pointerFromCenter.y - (pointerFromCenter.y - currentViewState.pan.y) * zoomRatio,
+      };
+
+      return {
+        ...currentViewState,
+        zoom: nextZoom,
+        pan: clampLightboxPan(nextPan, nextZoom, rect, currentViewState.imageSize),
+      };
+    });
+  }, [data, imageUrl]);
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canPan || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPan: activeViewState.pan,
+    };
+  }, [activeViewState.pan, canPan]);
+
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const nextPan = {
+      x: dragState.startPan.x + event.clientX - dragState.startX,
+      y: dragState.startPan.y + event.clientY - dragState.startY,
+    };
+
+    setViewState((currentState) => {
+      if (currentState.imageUrl !== imageUrl) {
+        return currentState;
+      }
+
+      return {
+        ...currentState,
+        pan: clampLightboxPan(nextPan, currentState.zoom, rect, currentState.imageSize),
+      };
+    });
+  }, [imageUrl]);
+
+  const handlePointerEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    dragStateRef.current = null;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
   if (!data) {
     return null;
   }
@@ -680,19 +1547,29 @@ function ImageLightbox({
       aria-label="Image preview"
       onMouseDown={onClose}
     >
-      <button
-        type="button"
-        className="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
-        aria-label="Close image preview"
-        title="鍏抽棴"
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={onClose}
-      >
-        <X size={18} strokeWidth={2.2} />
-      </button>
+      <div className="group/tooltip absolute right-5 top-5">
+        <button
+          type="button"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
+          aria-label="??????"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={onClose}
+        >
+          <X size={18} strokeWidth={2.2} />
+        </button>
+        <Tooltip label="??" side="left" />
+      </div>
       <div
-        className="relative h-[88vh] w-[88vw] overflow-hidden"
+        className={[
+          'relative h-[88vh] w-[88vw] touch-none select-none overflow-hidden',
+          canPan ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in',
+        ].join(' ')}
         onMouseDown={(event) => event.stopPropagation()}
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
       >
         <NextImage
           src={data.imageUrl}
@@ -700,7 +1577,11 @@ function ImageLightbox({
           fill
           unoptimized
           sizes="88vw"
-          className="object-contain"
+          draggable={false}
+          className="pointer-events-none object-contain transition-transform duration-100 ease-out"
+          style={{
+            transform: `translate3d(${activeViewState.pan.x}px, ${activeViewState.pan.y}px, 0) scale(${activeViewState.zoom})`,
+          }}
         />
       </div>
     </div>
@@ -713,9 +1594,11 @@ function InnerCanvas() {
   const storeEdges = useCanvasStore((s) => s.edges);
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
+  const addNodes = useCanvasStore((s) => s.addNodes);
+  const splitImageGenerationNodeToGrid = useCanvasStore((s) => s.splitImageGenerationNodeToGrid);
   const updateNodePosition = useCanvasStore((s) => s.updateNodePosition);
   const deleteNode = useCanvasStore((s) => s.deleteNode);
-  const addNode = useCanvasStore((s) => s.addNode);
+  const deleteNodes = useCanvasStore((s) => s.deleteNodes);
   const addEdgeStore = useCanvasStore((s) => s.addEdge);
   const deleteEdge = useCanvasStore((s) => s.deleteEdge);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
@@ -734,6 +1617,9 @@ function InnerCanvas() {
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
+  const [historyAnchor, setHistoryAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [historyOpenKey, setHistoryOpenKey] = useState(0);
+  const edgeStyle = useStoredCanvasEdgeStyle();
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
     : null;
@@ -746,6 +1632,10 @@ function InnerCanvas() {
     };
   }, []);
 
+  const handleToggleEdgeStyle = useCallback(() => {
+    setStoredCanvasEdgeStyle(edgeStyle === 'straight' ? 'curve' : 'straight');
+  }, [edgeStyle]);
+
   const rfNodes = useMemo<ReactFlowNode[]>(() => {
     const nodes: ReactFlowNode[] = storeNodes.map((n) => ({
       id: n.id,
@@ -756,6 +1646,8 @@ function InnerCanvas() {
       dragHandle:
         n.type === 'text'
           ? '.text-node-drag-handle'
+          : n.type === 'image_generation'
+            ? '.image-generation-node-drag-handle'
           : undefined,
     }));
 
@@ -781,6 +1673,7 @@ function InnerCanvas() {
   }, [connectionMenu, storeNodes, selectedNodeIds]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
+    const edgeType = getReactFlowEdgeType(edgeStyle);
     const edges: ReactFlowEdge[] = storeEdges.map((e) => ({
       id: e.id,
       source: e.source,
@@ -788,6 +1681,7 @@ function InnerCanvas() {
       sourceHandle: e.sourceHandle,
       targetHandle: e.targetHandle,
       selected: activeSelectedEdgeId === e.id,
+      type: edgeType,
       interactionWidth: 28,
       style: activeSelectedEdgeId === e.id
         ? {
@@ -824,6 +1718,7 @@ function InnerCanvas() {
         targetHandle: connection.handleType === 'target'
           ? connection.handleId || undefined
           : undefined,
+        type: edgeType,
         interactionWidth: 0,
         style: {
           stroke: 'rgba(190,205,225,0.42)',
@@ -833,24 +1728,17 @@ function InnerCanvas() {
     }
 
     return edges;
-  }, [activeSelectedEdgeId, connectionMenu, storeEdges]);
+  }, [activeSelectedEdgeId, connectionMenu, edgeStyle, storeEdges]);
 
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
-  const [textApiKey, setTextApiKey] = useState(() =>
-    typeof window === 'undefined'
-      ? ''
-      : window.localStorage.getItem(CANVAS_TEXT_API_KEY_STORAGE_KEY) ?? '',
-  );
-  const [imageApiKey, setImageApiKey] = useState(() =>
-    typeof window === 'undefined'
-      ? ''
-      : window.localStorage.getItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY) ?? '',
-  );
+  const [apiSettings, setApiSettings] = useState<StoredApiSettings>(() => readStoredApiSettings());
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const referenceUploadNodeIdRef = React.useRef<string | null>(null);
   const copiedNodesRef = useRef<CanvasNode[]>([]);
+  const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
   const pasteCountRef = useRef(0);
+  const connectedPasteCountRef = useRef(0);
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
   const suppressNextPaneClearRef = useRef(false);
@@ -880,6 +1768,26 @@ function InnerCanvas() {
         return;
       }
 
+      if (action === 'split-2x2-crop' || action === 'split-3x3-crop' || action === 'split-5x5-crop') {
+        const dimension = action === 'split-2x2-crop' ? 2 : action === 'split-3x3-crop' ? 3 : 5;
+        const targetNode = storeNodes.find(
+          (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
+            node.type === 'image_generation' &&
+            node.data.generatedImageUrl === data.generatedImageUrl &&
+            node.data.generatedHostedImageUrl === data.generatedHostedImageUrl &&
+            node.data.generatedAt === data.generatedAt,
+        );
+
+        if (!targetNode) {
+          return;
+        }
+
+        void splitImageGenerationNodeToGrid(targetNode.id, dimension).catch((error) => {
+          console.error('split image generation node failed', error);
+        });
+        return;
+      }
+
       console.log(`image toolbar action pending: ${action}`);
     };
 
@@ -888,23 +1796,7 @@ function InnerCanvas() {
         notifyImageToolbarAction = null;
       }
     };
-  }, []);
-
-  useEffect(() => {
-    notifyImageGenerationCardClick = (data) => {
-      suppressNextPaneClearRef.current = true;
-      window.setTimeout(() => {
-        suppressNextPaneClearRef.current = false;
-      }, 0);
-      setImageInfoPopover(toImageInfoPopoverData(data));
-    };
-
-    return () => {
-      if (notifyImageGenerationCardClick) {
-        notifyImageGenerationCardClick = null;
-      }
-    };
-  }, []);
+  }, [splitImageGenerationNodeToGrid, storeNodes]);
 
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {
@@ -914,13 +1806,7 @@ function InnerCanvas() {
       if (!input) {
         return;
       }
-
-      if (typeof input.showPicker === 'function') {
-        input.showPicker();
-        return;
-      }
-
-      input.click();
+      openFileInput(input);
     };
 
     return () => {
@@ -930,47 +1816,21 @@ function InnerCanvas() {
     };
   }, []);
 
-  useEffect(() => {
-    notifyImageNodeCardClick = (data) => {
-      suppressNextPaneClearRef.current = true;
-      window.setTimeout(() => {
-        suppressNextPaneClearRef.current = false;
-      }, 0);
-      setImageInfoPopover(toImageNodeInfoPopoverData(data));
-    };
-
-    return () => {
-      if (notifyImageNodeCardClick) {
-        notifyImageNodeCardClick = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    notifyUploadedImageNodeCardClick = (data) => {
-      suppressNextPaneClearRef.current = true;
-      window.setTimeout(() => {
-        suppressNextPaneClearRef.current = false;
-      }, 0);
-      setImageInfoPopover(toUploadedImageInfoPopoverData(data));
-    };
-
-    return () => {
-      if (notifyUploadedImageNodeCardClick) {
-        notifyUploadedImageNodeCardClick = null;
-      }
-    };
-  }, []);
-
   const clearEdgeSelection = useCallback(() => {
     setSelectedEdgeId(null);
     setEdgeDeleteButtonPosition(null);
   }, []);
 
+  const selectSingleNode = useCallback((nodeId: string) => {
+    setSelectedNodeIds((current) =>
+      current.size === 1 && current.has(nodeId) ? current : new Set([nodeId]),
+    );
+    clearEdgeSelection();
+  }, [clearEdgeSelection]);
+
   useEffect(() => {
     notifyImageGenerationNodeSelect = (nodeId) => {
-      setSelectedNodeIds(new Set([nodeId]));
-      clearEdgeSelection();
+      selectSingleNode(nodeId);
     };
 
     return () => {
@@ -978,7 +1838,45 @@ function InnerCanvas() {
         notifyImageGenerationNodeSelect = null;
       }
     };
-  }, [clearEdgeSelection]);
+  }, [selectSingleNode]);
+
+  useEffect(() => {
+    notifyCanvasNodeSelect = (nodeId) => {
+      selectSingleNode(nodeId);
+    };
+
+    return () => {
+      if (notifyCanvasNodeSelect) {
+        notifyCanvasNodeSelect = null;
+      }
+    };
+  }, [selectSingleNode]);
+
+  useEffect(() => {
+    notifyCanvasImageInfoRequest = (nodeId) => {
+      const node = storeNodes.find((item) => item.id === nodeId);
+
+      if (!node || !isCanvasImageNodeType(node.type)) {
+        return;
+      }
+
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 0);
+
+      selectSingleNode(nodeId);
+      void toResolvedCanvasNodeInfoPopoverData(node).then((next) => {
+        setImageInfoPopover(next);
+      });
+    };
+
+    return () => {
+      if (notifyCanvasImageInfoRequest) {
+        notifyCanvasImageInfoRequest = null;
+      }
+    };
+  }, [selectSingleNode, storeNodes]);
 
   const clearConnectionMenu = useCallback(() => {
     setConnectionMenu(null);
@@ -992,7 +1890,8 @@ function InnerCanvas() {
         return;
       }
 
-      setSelectedNodeIds(new Set());
+      clearCanvasNodeUi();
+      setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
       clearEdgeSelection();
       setAddMenu(null);
       setImageInfoPopover(null);
@@ -1029,12 +1928,34 @@ function InnerCanvas() {
       return;
     }
 
-    selectedNodeIds.forEach((nodeId) => {
-      deleteNode(nodeId);
-    });
+    deleteNodes(Array.from(selectedNodeIds));
+    clearCanvasNodeUi();
+    setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
+  }, [deleteNodes, selectedNodeIds]);
 
-    setSelectedNodeIds(new Set());
-  }, [deleteNode, selectedNodeIds]);
+  const handleNodeClick = useCallback((
+    event: React.MouseEvent,
+    node: ReactFlowNode,
+  ) => {
+    clearEdgeSelection();
+
+    if (event.shiftKey) {
+      setSelectedNodeIds((current) => {
+        const next = new Set(current);
+
+        if (next.has(node.id)) {
+          next.delete(node.id);
+        } else {
+          next.add(node.id);
+        }
+
+        return next;
+      });
+      return;
+    }
+
+    selectSingleNode(node.id);
+  }, [clearEdgeSelection, selectSingleNode]);
 
   const handleCopySelectedNodes = useCallback(() => {
     if (selectedNodeIds.size === 0) {
@@ -1048,9 +1969,31 @@ function InnerCanvas() {
     }
 
     copiedNodesRef.current = selectedNodes.map((node) => cloneCanvasNode(node, 0));
+    connectedCopyBufferRef.current = null;
     pasteCountRef.current = 0;
     return true;
   }, [selectedNodeIds, storeNodes]);
+
+  const handleCopySelectedNodesWithUpstream = useCallback(() => {
+    if (selectedNodeIds.size === 0) {
+      return false;
+    }
+
+    const selectedNodes = storeNodes.filter((node) => selectedNodeIds.has(node.id));
+
+    if (selectedNodes.length === 0) {
+      return false;
+    }
+
+    connectedCopyBufferRef.current = createConnectedCopyBuffer(
+      selectedNodes,
+      storeEdges,
+      selectedNodeIds,
+    );
+    copiedNodesRef.current = [];
+    connectedPasteCountRef.current = 0;
+    return true;
+  }, [selectedNodeIds, storeEdges, storeNodes]);
 
   const handlePasteNodes = useCallback(() => {
     if (copiedNodesRef.current.length === 0) {
@@ -1063,11 +2006,44 @@ function InnerCanvas() {
       cloneCanvasNode(node, pasteCountRef.current),
     );
 
-    pastedNodes.forEach((node) => addNode(node));
+    addNodes(pastedNodes);
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
     clearEdgeSelection();
     return true;
-  }, [addNode, clearEdgeSelection]);
+  }, [addNodes, clearEdgeSelection]);
+
+  const handlePasteNodesWithUpstream = useCallback(() => {
+    const copyBuffer = connectedCopyBufferRef.current;
+
+    if (!copyBuffer || copyBuffer.nodes.length === 0) {
+      return false;
+    }
+
+    connectedPasteCountRef.current += 1;
+
+    const pastedNodes = copyBuffer.nodes.map((node) =>
+      cloneCanvasNode(node, connectedPasteCountRef.current),
+    );
+    const pastedNodeIdsByCopiedId = new Map<string, string>(
+      copyBuffer.nodes.map((node, index) => [node.id, pastedNodes[index].id]),
+    );
+    const validNodeIds = new Set([
+      ...storeNodes.map((node) => node.id),
+      ...pastedNodes.map((node) => node.id),
+    ]);
+    const pastedEdges = copyBuffer.edges.map((edge) => ({
+      ...edge,
+      id: crypto.randomUUID(),
+      source: pastedNodeIdsByCopiedId.get(edge.source) ?? edge.source,
+      target: pastedNodeIdsByCopiedId.get(edge.target) ?? edge.target,
+    })).filter((edge) => validNodeIds.has(edge.source) && validNodeIds.has(edge.target));
+
+    addNodes(pastedNodes);
+    pastedEdges.forEach(addEdgeStore);
+    setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
+    clearEdgeSelection();
+    return true;
+  }, [addEdgeStore, addNodes, clearEdgeSelection, storeNodes]);
 
   const addUploadedImages = useCallback(async (
     files: File[],
@@ -1080,26 +2056,21 @@ function InnerCanvas() {
     }
 
     const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
-    const nextNodeIds = new Set<string>();
-
-    imageDataList.forEach((data, index) => {
-      const node = createUploadedImageNode(
+    const nextNodes = imageDataList.map((data, index) =>
+      createUploadedImageNode(
         data,
         getImageImportPosition(basePosition, index),
-      );
-      nextNodeIds.add(node.id);
-      addNode(node);
-    });
+      ),
+    );
+    const nextNodeIds = new Set(nextNodes.map((node) => node.id));
+
+    addNodes(nextNodes);
 
     setSelectedNodeIds(nextNodeIds);
     clearEdgeSelection();
-  }, [addNode, clearEdgeSelection]);
+  }, [addNodes, clearEdgeSelection]);
 
   useEffect(() => {
-    if (!selectedEdgeId && selectedNodeIds.size === 0) {
-      return;
-    }
-
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) {
         return;
@@ -1108,6 +2079,14 @@ function InnerCanvas() {
       const key = event.key.toLowerCase();
       const isModifierPressed = event.ctrlKey || event.metaKey;
 
+      if (isModifierPressed && event.shiftKey && key === 'c') {
+        event.preventDefault();
+        if (handleCopySelectedNodesWithUpstream()) {
+          return;
+        }
+        return;
+      }
+
       if (isModifierPressed && key === 'c') {
         if (handleCopySelectedNodes()) {
           event.preventDefault();
@@ -1115,7 +2094,17 @@ function InnerCanvas() {
         return;
       }
 
+      if (isModifierPressed && event.shiftKey && key === 'v') {
+        event.preventDefault();
+        handlePasteNodesWithUpstream();
+        return;
+      }
+
       if (event.key !== 'Delete' && event.key !== 'Backspace') {
+        return;
+      }
+
+      if (!selectedEdgeId && selectedNodeIds.size === 0) {
         return;
       }
 
@@ -1133,9 +2122,11 @@ function InnerCanvas() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     clearEdgeSelection,
+    handleCopySelectedNodesWithUpstream,
     handleCopySelectedNodes,
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
+    handlePasteNodesWithUpstream,
     selectedEdgeId,
     selectedNodeIds,
   ]);
@@ -1172,32 +2163,6 @@ function InnerCanvas() {
   }, [addUploadedImages, clearConnectionMenu, clearEdgeSelection, handlePasteNodes, project]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    const selectionChanges = changes.filter((change) => change.type === 'select');
-
-    if (selectionChanges.length > 0) {
-      if (promptBarInteractionRef.current) {
-        return;
-      }
-
-      const activeElement = document.activeElement;
-
-      if (!(activeElement instanceof Element) || !activeElement.closest('.text-node-prompt-bar')) {
-        setSelectedNodeIds((current) => {
-          const next = new Set(current);
-
-          selectionChanges.forEach((change) => {
-            if (change.selected) {
-              next.add(change.id);
-            } else {
-              next.delete(change.id);
-            }
-          });
-
-          return next;
-        });
-      }
-    }
-
     changes.forEach((change) => {
       if (change.type === 'position' && change.position) {
         updateNodePosition(change.id, change.position);
@@ -1207,7 +2172,7 @@ function InnerCanvas() {
 
           const next = new Set(current);
           next.delete(change.id);
-          return next;
+          return areSetsEqual(current, next) ? current : next;
         });
         deleteNode(change.id);
       }
@@ -1229,7 +2194,7 @@ function InnerCanvas() {
     event.preventDefault();
     event.stopPropagation();
 
-    setSelectedNodeIds(new Set());
+    setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
     setAddMenu(null);
     clearConnectionMenu();
     setSelectedEdgeId(edge.id);
@@ -1239,17 +2204,43 @@ function InnerCanvas() {
     }));
   }, [clearConnectionMenu]);
 
-  const handlePaneClick = useCallback(() => {
-    if (suppressNextPaneClearRef.current) {
+  const isInteractiveCanvasTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    return Boolean(target.closest('[data-canvas-menu-ignore="true"]'));
+  }, []);
+
+  const isNodeInternalTarget = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    return Boolean(
+      target.closest(
+        '[data-canvas-menu-ignore="true"], .node-connectable-root, .node-connectable-card, .react-flow__node',
+      ),
+    );
+  }, []);
+
+  const handlePaneClick = useCallback((event?: { target?: EventTarget | null }) => {
+    if (suppressNextPaneClearRef.current || isInteractiveCanvasTarget(event?.target ?? null)) {
       return;
+    }
+
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
     }
 
     setAddMenu(null);
     clearConnectionMenu();
     setImageInfoPopover(null);
     setImageLightbox(null);
+    clearCanvasNodeUi();
+    setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
     clearEdgeSelection();
-  }, [clearConnectionMenu, clearEdgeSelection]);
+  }, [clearConnectionMenu, clearEdgeSelection, isInteractiveCanvasTarget]);
 
   const onConnect = useCallback((connection: Connection) => {
     clearConnectionMenu();
@@ -1290,6 +2281,7 @@ function InnerCanvas() {
         return;
       }
 
+      clearCanvasNodeUi();
       setSelectedNodeIds(new Set());
       clearEdgeSelection();
       setAddMenu(null);
@@ -1335,13 +2327,7 @@ function InnerCanvas() {
     if (!input) {
       return;
     }
-
-    if (typeof input.showPicker === 'function') {
-      input.showPicker();
-      return;
-    }
-
-    input.click();
+    openFileInput(input);
   }, [project]);
 
   const handleUploadInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1439,12 +2425,7 @@ function InnerCanvas() {
   }, []);
 
   const handlePaneDoubleClick = useCallback((event: React.MouseEvent) => {
-    const target = event.target;
-
-    if (
-      !(target instanceof Element) ||
-      target.closest('[data-canvas-menu-ignore="true"], .node-connectable-card, .react-flow__node')
-    ) {
+    if (isNodeInternalTarget(event.target)) {
       return;
     }
 
@@ -1458,7 +2439,7 @@ function InnerCanvas() {
       canvas: canvasPosition,
     });
     clearConnectionMenu();
-  }, [clearConnectionMenu, project]);
+  }, [clearConnectionMenu, isNodeInternalTarget, project]);
 
   const handleAddMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (closeAddMenuTimeoutRef.current) {
@@ -1480,6 +2461,74 @@ function InnerCanvas() {
 
     setAddMenu(null);
   }, [addMenu, addNodeAtCenter, openUploadPicker]);
+
+  const toggleHistoryPopover = useCallback((anchor: DOMRect) => {
+    setHistoryAnchor((current) => {
+      if (current) {
+        return null;
+      }
+
+      return {
+        x: anchor.right + 16,
+        y: anchor.top - 72,
+      };
+    });
+    setHistoryOpenKey((key) => key + 1);
+    setAddMenu(null);
+    clearConnectionMenu();
+  }, [clearConnectionMenu]);
+
+  const handleSelectHistoryImage = useCallback((item: ImageHistoryItem) => {
+    const displayPrompt = getImageHistoryDisplayPrompt(item.nodeData);
+    const center = project({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    });
+    const position = findOpenHistoryNodePosition(
+      {
+        x: center.x - HISTORY_NODE_WIDTH / 2,
+        y: center.y - 260,
+      },
+      storeNodes,
+    );
+    const node: Extract<CanvasNode, { type: 'image_generation' }> = {
+      id: crypto.randomUUID(),
+      type: 'image_generation',
+      position,
+      data: {
+        ...item.nodeData,
+        title: item.nodeData.title?.trim() || 'Image',
+        prompt: displayPrompt,
+        effectivePromptOverride: undefined,
+        generatedImageUrl: item.imageUrl,
+        generatedHostedImageUrl: item.hostedImageUrl,
+        generatedImageWidth: item.width,
+        generatedImageHeight: item.height,
+        generatedImageFormat: item.format,
+        generatedImageSizeBytes: item.sizeBytes,
+        generatedModel: item.model,
+        generatedAt: item.generatedAt,
+        generationResults: [{
+          status: 'completed',
+          imageUrl: item.imageUrl,
+          hostedImageUrl: item.hostedImageUrl,
+          model: item.model,
+          width: item.width,
+          height: item.height,
+          format: item.format,
+          sizeBytes: item.sizeBytes,
+          generatedAt: item.generatedAt,
+        }],
+        status: 'idle',
+        errorMessage: undefined,
+      },
+    };
+
+    addNodes([node]);
+    setSelectedNodeIds(new Set([node.id]));
+    clearEdgeSelection();
+    setHistoryAnchor(null);
+  }, [addNodes, clearEdgeSelection, project, storeNodes]);
 
   const handleConnectionMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (!connectionMenu) {
@@ -1518,7 +2567,9 @@ function InnerCanvas() {
       });
     }
 
-    setSelectedNodeIds(new Set([nextNode.id]));
+    setSelectedNodeIds((current) =>
+      current.size === 1 && current.has(nextNode.id) ? current : new Set([nextNode.id]),
+    );
     clearEdgeSelection();
     clearConnectionMenu();
   }, [
@@ -1529,11 +2580,16 @@ function InnerCanvas() {
     connectionMenu,
   ]);
 
-  const handleSaveApiKeys = useCallback((values: { textApiKey: string; imageApiKey: string }) => {
-    window.localStorage.setItem(CANVAS_TEXT_API_KEY_STORAGE_KEY, values.textApiKey);
-    window.localStorage.setItem(CANVAS_IMAGE_API_KEY_STORAGE_KEY, values.imageApiKey);
-    setTextApiKey(values.textApiKey);
-    setImageApiKey(values.imageApiKey);
+  const handleSaveApiSettings = useCallback((values: StoredApiSettings) => {
+    window.localStorage.setItem(CANVAS_TEXT_API_PROVIDER_STORAGE_KEY, values.textProvider);
+    window.localStorage.setItem(CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY, values.imageProvider);
+    window.localStorage.setItem(CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY, values.textApiKeys.vibe);
+    window.localStorage.setItem(CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY, values.textApiKeys.comfly);
+    window.localStorage.setItem(CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY, values.textApiKeys.zhenzhen);
+    window.localStorage.setItem(CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY, values.imageApiKeys.vibe);
+    window.localStorage.setItem(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY, values.imageApiKeys.comfly);
+    window.localStorage.setItem(CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen);
+    setApiSettings(values);
     setApiSettingsOpen(false);
   }, []);
 
@@ -1546,7 +2602,7 @@ function InnerCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onEdgeClick={handleEdgeClick}
-        onNodeClick={clearEdgeSelection}
+        onNodeClick={handleNodeClick}
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
@@ -1563,7 +2619,7 @@ function InnerCanvas() {
         defaultEdgeOptions={{
           animated: false,
           style: { stroke: 'rgba(190,205,225,0.3)', strokeWidth: 2.8 },
-          type: 'smoothstep',
+          type: getReactFlowEdgeType(edgeStyle),
         }}
         fitView
         onDrop={handleImageDrop}
@@ -1581,7 +2637,10 @@ function InnerCanvas() {
           variant={BackgroundVariant.Dots}
           className="gl-canvas-bg"
         />
-        <CanvasViewportControls />
+        <CanvasViewportControls
+          edgeStyle={edgeStyle}
+          onToggleEdgeStyle={handleToggleEdgeStyle}
+        />
       </ReactFlow>
 
       {activeSelectedEdgeId && edgeDeleteButtonPosition ? (
@@ -1626,6 +2685,15 @@ function InnerCanvas() {
         onOpenAddMenu={openAddMenuAtScreen}
         onScheduleCloseAddMenu={scheduleCloseAddMenu}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
+        onToggleHistory={toggleHistoryPopover}
+        historyOpen={historyAnchor !== null}
+      />
+      <GenerationHistoryPopover
+        key={historyOpenKey}
+        open={historyAnchor !== null}
+        anchor={historyAnchor}
+        onClose={() => setHistoryAnchor(null)}
+        onSelectImage={handleSelectHistoryImage}
       />
       <ImageGenerationInfoPopover
         open={imageInfoPopover !== null}
@@ -1633,6 +2701,7 @@ function InnerCanvas() {
         onClose={() => setImageInfoPopover(null)}
       />
       <ImageLightbox
+        key={imageLightbox?.imageUrl ?? 'image-lightbox-closed'}
         data={imageLightbox}
         onClose={() => setImageLightbox(null)}
       />
@@ -1645,11 +2714,11 @@ function InnerCanvas() {
         onChange={handleUploadInputChange}
       />
       <ApiSettingsPanel
+        key={apiSettingsOpen ? 'api-settings-open' : 'api-settings-closed'}
         open={apiSettingsOpen}
-        initialTextApiKey={textApiKey}
-        initialImageApiKey={imageApiKey}
+        initialSettings={apiSettings}
         onClose={() => setApiSettingsOpen(false)}
-        onSave={handleSaveApiKeys}
+        onSave={handleSaveApiSettings}
       />
     </>
   );
