@@ -1,6 +1,6 @@
 # GenLink
 
-TapNow-like AI-native creative canvas scaffolded with Next.js App Router, TypeScript, Tailwind, React Flow, Zustand, and Prisma.
+AI-native creative canvas scaffolded with Next.js App Router, TypeScript, Tailwind, React Flow, Zustand, and Prisma.
 
 ## Current Status
 - **Core MVP Completed:** Infinite canvas UI, React Flow integration, custom node components (Text, Prompt, AI Text, Image), floating toolbars, and global Zustand state management are fully implemented.
