@@ -63,6 +63,11 @@ export interface CreateProjectResult {
   snapshot: ProjectSnapshot;
 }
 
+export interface ImportProjectsResult {
+  projects: ProjectHandleRecord[];
+  skippedCount: number;
+}
+
 export interface PersistProjectOutputParams {
   sourceKey: string;
   imageUrl: string;
@@ -508,6 +513,85 @@ export async function createProjectAtParentDirectory(params: {
     await tryRemoveProjectDirectory(params.parentHandle, sanitizedName);
     throw error;
   }
+}
+
+export async function importProjectsFromParentDirectory(
+  parentHandle: FileSystemDirectoryHandle,
+): Promise<ImportProjectsResult> {
+  await requestDirectoryPermission(parentHandle);
+
+  const importedProjects: ProjectHandleRecord[] = [];
+  let skippedCount = 0;
+
+  try {
+    const snapshot = await readProjectSnapshotInternal(parentHandle);
+    const timestamp = new Date().toISOString();
+    const projectName = sanitizeDirectoryName(snapshot.name || parentHandle.name);
+    const record: PersistedProjectRecord = {
+      id: snapshot.id,
+      name: projectName || parentHandle.name,
+      createdAt: snapshot.createdAt || timestamp,
+      updatedAt: snapshot.updatedAt || timestamp,
+      directoryName: parentHandle.name,
+      projectHandle: parentHandle,
+      parentHandle,
+    };
+
+    await persistProjectRecord(record);
+
+    return {
+      projects: [{
+        ...toProjectLibraryItem(record),
+        projectHandle: parentHandle,
+        parentHandle,
+      }],
+      skippedCount,
+    };
+  } catch {
+    // If the selected directory is not itself a project, scan its children.
+  }
+
+  const iterableParent = parentHandle as FileSystemDirectoryHandle & {
+    values: () => AsyncIterable<FileSystemHandle>;
+  };
+
+  for await (const childHandle of iterableParent.values()) {
+    if (childHandle.kind !== "directory") {
+      continue;
+    }
+
+    const projectHandle = childHandle as FileSystemDirectoryHandle;
+
+    try {
+      await requestDirectoryPermission(projectHandle, false);
+      const snapshot = await readProjectSnapshotInternal(projectHandle);
+      const timestamp = new Date().toISOString();
+      const projectName = sanitizeDirectoryName(snapshot.name || projectHandle.name);
+      const record: PersistedProjectRecord = {
+        id: snapshot.id,
+        name: projectName || projectHandle.name,
+        createdAt: snapshot.createdAt || timestamp,
+        updatedAt: snapshot.updatedAt || timestamp,
+        directoryName: projectHandle.name,
+        projectHandle,
+        parentHandle,
+      };
+
+      await persistProjectRecord(record);
+      importedProjects.push({
+        ...toProjectLibraryItem(record),
+        projectHandle,
+        parentHandle,
+      });
+    } catch {
+      skippedCount += 1;
+    }
+  }
+
+  return {
+    projects: sortProjects(importedProjects),
+    skippedCount,
+  };
 }
 
 export async function loadProjectSnapshot(

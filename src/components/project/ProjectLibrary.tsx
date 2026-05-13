@@ -1,30 +1,31 @@
 'use client';
 
+import Image from 'next/image';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   Copy,
   Ellipsis,
   FolderOpen,
+  FolderPlus,
   Pencil,
   Plus,
   Trash2,
 } from 'lucide-react';
 import {
   createProjectAtParentDirectory,
+  importProjectsFromParentDirectory,
   pickProjectParentDirectory,
   type ProjectHandleRecord,
 } from '@/lib/project-storage';
 import { useCanvasStore } from '@/store/canvas-store';
+import {
+  getProjectDirectoryLabel,
+  type CreateProjectDraft,
+} from './CreateProjectDialog';
 
 interface ProjectLibraryProps {
   onOpenProject: () => void;
-}
-
-interface CreateProjectDraft {
-  projectName: string;
-  parentHandle: FileSystemDirectoryHandle | null;
-  parentDirectoryLabel: string;
 }
 
 function formatDate(value: string): string {
@@ -39,10 +40,6 @@ function formatDate(value: string): string {
     month: '2-digit',
     day: '2-digit',
   });
-}
-
-function getDirectoryLabel(handle: FileSystemDirectoryHandle): string {
-  return handle.name?.trim() || '已选择目录';
 }
 
 function ProjectMenu({
@@ -63,10 +60,10 @@ function ProjectMenu({
   }
 
   return (
-    <div className="absolute right-0 top-8 z-20 w-[132px] rounded-[12px] border border-white/10 bg-[#2a2b2e] py-1.5 text-[12px] text-white shadow-[0_14px_36px_rgba(0,0,0,0.42)]">
+    <div className="absolute right-0 top-8 z-20 w-[132px] rounded-[12px] border border-white/10 bg-[#2a2b2e] p-2 text-[12px] text-white shadow-[0_14px_36px_rgba(0,0,0,0.42)]">
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-white/84 transition hover:bg-white/7 hover:text-white"
+        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-white/84 transition hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none"
         onClick={onOpen}
       >
         <FolderOpen size={13} />
@@ -74,7 +71,7 @@ function ProjectMenu({
       </button>
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-white/84 transition hover:bg-white/7 hover:text-white"
+        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-white/84 transition hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none"
         onClick={onRename}
       >
         <Pencil size={13} />
@@ -82,7 +79,7 @@ function ProjectMenu({
       </button>
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-white/84 transition hover:bg-white/7 hover:text-white"
+        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-white/84 transition hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none"
         onClick={onDuplicate}
       >
         <Copy size={13} />
@@ -90,7 +87,7 @@ function ProjectMenu({
       </button>
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[#ffb0b0] transition hover:bg-white/7"
+        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[#ffb0b0] transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
         onClick={onDelete}
       >
         <Trash2 size={13} />
@@ -104,7 +101,8 @@ function ProjectCard({
   project,
   menuOpen,
   onCardClick,
-  onToggleMenu,
+  onOpenMenu,
+  onScheduleCloseMenu,
   onOpen,
   onRename,
   onDuplicate,
@@ -113,7 +111,8 @@ function ProjectCard({
   project: ProjectHandleRecord;
   menuOpen: boolean;
   onCardClick: () => void;
-  onToggleMenu: () => void;
+  onOpenMenu: () => void;
+  onScheduleCloseMenu: () => void;
   onOpen: () => void;
   onRename: () => void;
   onDuplicate: () => void;
@@ -135,13 +134,23 @@ function ProjectCard({
           </div>
         </div>
 
-        <div className="relative shrink-0">
+        <div
+          className="relative shrink-0"
+          onMouseEnter={onOpenMenu}
+          onMouseLeave={onScheduleCloseMenu}
+          onFocus={onOpenMenu}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              onScheduleCloseMenu();
+            }
+          }}
+        >
           <button
             type="button"
             className="flex h-7 w-7 items-center justify-center rounded-[9px] text-white/44 transition hover:bg-white/7 hover:text-white/84"
             onClick={(event) => {
               event.stopPropagation();
-              onToggleMenu();
+              onOpenMenu();
             }}
           >
             <Ellipsis size={15} />
@@ -339,6 +348,32 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
     parentDirectoryLabel: '',
   });
   const dialogRef = useRef<HTMLDivElement>(null);
+  const closeMenuTimeoutRef = useRef<number | null>(null);
+
+  const clearCloseMenuTimeout = useCallback(() => {
+    if (closeMenuTimeoutRef.current) {
+      window.clearTimeout(closeMenuTimeoutRef.current);
+      closeMenuTimeoutRef.current = null;
+    }
+  }, []);
+
+  const openProjectMenu = useCallback((projectId: string) => {
+    clearCloseMenuTimeout();
+    setMenuProjectId(projectId);
+  }, [clearCloseMenuTimeout]);
+
+  const closeProjectMenu = useCallback(() => {
+    clearCloseMenuTimeout();
+    setMenuProjectId(null);
+  }, [clearCloseMenuTimeout]);
+
+  const scheduleCloseProjectMenu = useCallback((projectId: string) => {
+    clearCloseMenuTimeout();
+    closeMenuTimeoutRef.current = window.setTimeout(() => {
+      setMenuProjectId((current) => (current === projectId ? null : current));
+      closeMenuTimeoutRef.current = null;
+    }, 180);
+  }, [clearCloseMenuTimeout]);
 
   const refreshProjects = useCallback(async () => {
     setLoading(true);
@@ -363,6 +398,10 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
   }, [refreshProjects]);
 
   useEffect(() => {
+    return () => clearCloseMenuTimeout();
+  }, [clearCloseMenuTimeout]);
+
+  useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) {
         return;
@@ -372,12 +411,12 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
         return;
       }
 
-      setMenuProjectId(null);
+      closeProjectMenu();
     };
 
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
-  }, []);
+  }, [closeProjectMenu]);
 
   const orderedProjects = useMemo(
     () =>
@@ -398,6 +437,25 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
     setCreateDialogOpen(true);
   };
 
+  const handleImportProjects = async () => {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const parentHandle = await pickProjectParentDirectory();
+      const result = await importProjectsFromParentDirectory(parentHandle);
+      await refreshProjects();
+
+      if (result.projects.length === 0) {
+        setError('没有在所选目录下找到可导入的项目，请选择包含项目文件夹的父目录。');
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '导入项目失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handlePickCreateDirectory = async () => {
     setError(null);
 
@@ -406,7 +464,7 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
       setCreateDraft((current) => ({
         ...current,
         parentHandle,
-        parentDirectoryLabel: getDirectoryLabel(parentHandle),
+        parentDirectoryLabel: getProjectDirectoryLabel(parentHandle),
       }));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '选择目录失败');
@@ -514,22 +572,34 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
   return (
     <div className="min-h-screen bg-[#0f1012] text-white">
       <div className="px-6 pt-5">
-        <div className="text-[20px] font-semibold tracking-[0.08em] text-white/92">
-          GenLink
-        </div>
+        <Image
+          src="/genlink-wordmark.png"
+          alt="GenLink"
+          width={3024}
+          height={1296}
+          priority
+          className="h-auto w-[198px] object-contain"
+        />
       </div>
 
       <div className="mx-auto max-w-[1360px] px-16 pb-14 pt-7">
         <div className="flex items-center gap-3 text-[12px] font-medium text-white/72">
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 transition hover:text-white/92"
+            className="inline-flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 transition hover:bg-white/10 hover:text-white/92 focus-visible:bg-white/10 focus-visible:text-white/92 focus-visible:outline-none"
           >
             <ChevronLeft size={15} />
             返回
           </button>
           <div className="h-3.5 w-px bg-white/14" />
-          <div className="text-white/72">全部项目</div>
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] text-white/72 transition hover:bg-white/10 hover:text-white/92 focus-visible:bg-white/10 focus-visible:text-white/92 focus-visible:outline-none"
+            onClick={() => void handleImportProjects()}
+          >
+            <FolderPlus size={14} />
+            批量导入
+          </button>
         </div>
 
         {error ? (
@@ -546,9 +616,8 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
               project={project}
               menuOpen={menuProjectId === project.id}
               onCardClick={() => void handleOpenProject(project)}
-              onToggleMenu={() =>
-                setMenuProjectId((current) => (current === project.id ? null : project.id))
-              }
+              onOpenMenu={() => openProjectMenu(project.id)}
+              onScheduleCloseMenu={() => scheduleCloseProjectMenu(project.id)}
               onOpen={() => void handleOpenProject(project)}
               onRename={() => setRenameProjectTarget(project)}
               onDuplicate={() => void handleDuplicateProject(project)}

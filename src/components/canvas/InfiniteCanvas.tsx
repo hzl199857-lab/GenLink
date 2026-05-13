@@ -37,6 +37,10 @@ import {
   type StoredApiSettings,
   useCanvasStore,
 } from '@/store/canvas-store';
+import {
+  createProjectAtParentDirectory,
+  pickProjectParentDirectory,
+} from '@/lib/project-storage';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -62,10 +66,16 @@ import {
 import { NodeFloatingToolbar } from '../nodes/NodeFloatingToolbar';
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
+import { CanvasHeader } from './CanvasHeader';
 import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
+import {
+  CreateProjectDialog,
+  getProjectDirectoryLabel,
+  type CreateProjectDraft,
+} from '@/components/project/CreateProjectDialog';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
 let notifyImageToolbarAction:
@@ -546,6 +556,100 @@ function readImageFile(file: File): Promise<UploadedImageNodeData> {
     reader.onerror = () => reject(new Error('Failed to read image file'));
     reader.readAsDataURL(file);
   });
+}
+
+function isBrowserObjectUrl(value?: string): boolean {
+  return typeof value === 'string' && value.startsWith('blob:');
+}
+
+function isImageGenerationRequestUrl(value?: string): boolean {
+  const trimmed = value?.trim() || '';
+
+  return Boolean(
+    trimmed.startsWith('data:') ||
+      trimmed.startsWith('/api/image-hosting/file/') ||
+      /^https?:\/\//i.test(trimmed),
+  );
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === 'string' && reader.result.trim()) {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error('Invalid image data'));
+    };
+    reader.onerror = () => reject(new Error('Failed to read image data'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function uploadImageDataUrl(dataUrl: string, fileName?: string): Promise<string> {
+  const response = await fetch('/api/image-hosting/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ dataUrl, fileName }),
+  });
+  const json = (await response.json()) as
+    | { ok: true; result: { imageUrl: string } }
+    | { ok: false; error: string };
+
+  if (!response.ok || !json.ok) {
+    throw new Error('error' in json ? json.error : 'Failed to host history image');
+  }
+
+  return json.result.imageUrl;
+}
+
+async function resolveHistoryImageUrls(item: ImageHistoryItem): Promise<{
+  requestUrl: string;
+  previewUrl: string;
+  hostedImageUrl?: string;
+}> {
+  const hostedImageUrl = item.hostedImageUrl?.trim();
+  const imageUrl = item.imageUrl.trim();
+
+  if (isImageGenerationRequestUrl(hostedImageUrl)) {
+    return {
+      requestUrl: hostedImageUrl || imageUrl,
+      previewUrl: imageUrl || hostedImageUrl || '',
+      hostedImageUrl: imageUrl || hostedImageUrl || '',
+    };
+  }
+
+  if (isImageGenerationRequestUrl(imageUrl) && !isBrowserObjectUrl(imageUrl)) {
+    const resolved = {
+      requestUrl: imageUrl,
+      previewUrl: imageUrl,
+    };
+
+    return hostedImageUrl
+      ? { ...resolved, hostedImageUrl }
+      : resolved;
+  }
+
+  const response = await fetch(imageUrl);
+
+  if (!response.ok) {
+    throw new Error('Failed to read history image');
+  }
+
+  const blob = await response.blob();
+  const dataUrl = await blobToDataUrl(blob);
+  const requestUrl = await uploadImageDataUrl(dataUrl, item.fileName || `history-${item.id}.png`);
+
+  return {
+    requestUrl,
+    previewUrl: imageUrl,
+    hostedImageUrl: imageUrl,
+  };
 }
 
 function createUploadedImageNode(
@@ -1588,14 +1692,24 @@ function ImageLightbox({
   );
 }
 
+interface InnerCanvasProps {
+  onBackToLibrary?: () => void;
+}
+
 // --- Inner Canvas ---
-function InnerCanvas() {
+function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
+  const projectName = useCanvasStore((s) => s.projectName);
+  const currentProject = useCanvasStore((s) => s.currentProject);
+  const loading = useCanvasStore((s) => s.loading);
   const dirty = useCanvasStore((s) => s.dirty);
   const saveMessage = useCanvasStore((s) => s.saveMessage);
   const saveProject = useCanvasStore((s) => s.saveProject);
   const setSaveMessage = useCanvasStore((s) => s.setSaveMessage);
+  const attachProject = useCanvasStore((s) => s.attachProject);
+  const renameProject = useCanvasStore((s) => s.renameProject);
+  const deleteProject = useCanvasStore((s) => s.deleteProject);
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
@@ -1623,6 +1737,13 @@ function InnerCanvas() {
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
   const [historyAnchor, setHistoryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectDialogBusy, setProjectDialogBusy] = useState(false);
+  const [createDraft, setCreateDraft] = useState<CreateProjectDraft>({
+    projectName: '',
+    parentHandle: null,
+    parentDirectoryLabel: '',
+  });
   const edgeStyle = useStoredCanvasEdgeStyle();
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
@@ -2466,6 +2587,13 @@ function InnerCanvas() {
     setAddMenu(null);
   }, [addMenu, addNodeAtCenter, openUploadPicker]);
 
+  const showProjectMessage = useCallback((message: string) => {
+    setSaveMessage(message);
+    window.setTimeout(() => {
+      setSaveMessage(null);
+    }, 2200);
+  }, [setSaveMessage]);
+
   const toggleHistoryPopover = useCallback((anchor: DOMRect) => {
     setHistoryAnchor((current) => {
       if (current) {
@@ -2482,8 +2610,17 @@ function InnerCanvas() {
     clearConnectionMenu();
   }, [clearConnectionMenu]);
 
-  const handleSelectHistoryImage = useCallback((item: ImageHistoryItem) => {
+  const handleSelectHistoryImage = useCallback(async (item: ImageHistoryItem) => {
     const displayPrompt = getImageHistoryDisplayPrompt(item.nodeData);
+    let resolvedImage: Awaited<ReturnType<typeof resolveHistoryImageUrls>>;
+
+    try {
+      resolvedImage = await resolveHistoryImageUrls(item);
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '历史图片加载失败');
+      return;
+    }
+
     const center = project({
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
@@ -2504,8 +2641,9 @@ function InnerCanvas() {
         title: item.nodeData.title?.trim() || 'Image',
         prompt: displayPrompt,
         effectivePromptOverride: undefined,
-        generatedImageUrl: item.imageUrl,
-        generatedHostedImageUrl: item.hostedImageUrl,
+        generatedImageUrl: resolvedImage.requestUrl,
+        generatedHostedImageUrl: resolvedImage.previewUrl,
+        generatedOutputFileName: item.fileName,
         generatedImageWidth: item.width,
         generatedImageHeight: item.height,
         generatedImageFormat: item.format,
@@ -2514,8 +2652,8 @@ function InnerCanvas() {
         generatedAt: item.generatedAt,
         generationResults: [{
           status: 'completed',
-          imageUrl: item.imageUrl,
-          hostedImageUrl: item.hostedImageUrl,
+          imageUrl: resolvedImage.requestUrl,
+          hostedImageUrl: resolvedImage.previewUrl,
           model: item.model,
           width: item.width,
           height: item.height,
@@ -2532,7 +2670,7 @@ function InnerCanvas() {
     setSelectedNodeIds(new Set([node.id]));
     clearEdgeSelection();
     setHistoryAnchor(null);
-  }, [addNodes, clearEdgeSelection, project, storeNodes]);
+  }, [addNodes, clearEdgeSelection, project, showProjectMessage, storeNodes]);
 
   const handleConnectionMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (!connectionMenu) {
@@ -2605,6 +2743,93 @@ function InnerCanvas() {
     }, 2200);
   }, [saveProject, setSaveMessage]);
 
+  const handleRenameCurrentProject = useCallback(async (nextName: string) => {
+    const project = useCanvasStore.getState().currentProject;
+
+    if (!project) {
+      showProjectMessage('当前没有打开的项目');
+      return;
+    }
+
+    try {
+      await renameProject(project, nextName);
+      showProjectMessage('重命名成功');
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '重命名失败');
+    }
+  }, [renameProject, showProjectMessage]);
+
+  const handleOpenCreateProjectDialog = useCallback(() => {
+    setCreateDraft({
+      projectName: '',
+      parentHandle: null,
+      parentDirectoryLabel: '',
+    });
+    setProjectDialogOpen(true);
+  }, []);
+
+  const handlePickProjectDirectory = useCallback(async () => {
+    try {
+      const parentHandle = await pickProjectParentDirectory();
+      setCreateDraft((current) => ({
+        ...current,
+        parentHandle,
+        parentDirectoryLabel: getProjectDirectoryLabel(parentHandle),
+      }));
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '选择目录失败');
+    }
+  }, [showProjectMessage]);
+
+  const handleConfirmCreateProject = useCallback(async () => {
+    if (!createDraft.parentHandle || !createDraft.projectName.trim()) {
+      return;
+    }
+
+    setProjectDialogBusy(true);
+
+    try {
+      const created = await createProjectAtParentDirectory({
+        parentHandle: createDraft.parentHandle,
+        projectName: createDraft.projectName.trim(),
+      });
+
+      attachProject(created.project, created.snapshot);
+      setProjectDialogOpen(false);
+      setCreateDraft({
+        projectName: '',
+        parentHandle: null,
+        parentDirectoryLabel: '',
+      });
+      showProjectMessage('创建成功');
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '创建项目失败');
+    } finally {
+      setProjectDialogBusy(false);
+    }
+  }, [attachProject, createDraft.parentHandle, createDraft.projectName, showProjectMessage]);
+
+  const handleDeleteCurrentProject = useCallback(async () => {
+    const project = useCanvasStore.getState().currentProject;
+
+    if (!project) {
+      showProjectMessage('当前没有打开的项目');
+      return;
+    }
+
+    if (!window.confirm(`确认删除项目“${project.name}”吗？`)) {
+      return;
+    }
+
+    try {
+      await deleteProject(project);
+      showProjectMessage('删除成功');
+      onBackToLibrary?.();
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '删除项目失败');
+    }
+  }, [deleteProject, onBackToLibrary, showProjectMessage]);
+
   useEffect(() => {
     if (!dirty) {
       return;
@@ -2626,10 +2851,18 @@ function InnerCanvas() {
   return (
     <>
       {saveMessage ? (
-        <div className="fixed right-6 top-6 z-[95] rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
+        <div className="fixed right-6 top-16 z-[95] rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
           {saveMessage}
         </div>
       ) : null}
+      <CanvasHeader
+        projectName={projectName}
+        busy={loading}
+        onProjectNameCommit={handleRenameCurrentProject}
+        onBackToLibrary={onBackToLibrary}
+        onCreateProject={handleOpenCreateProjectDialog}
+        onDeleteProject={currentProject ? handleDeleteCurrentProject : undefined}
+      />
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
@@ -2756,15 +2989,35 @@ function InnerCanvas() {
         onClose={() => setApiSettingsOpen(false)}
         onSave={handleSaveApiSettings}
       />
+      <CreateProjectDialog
+        open={projectDialogOpen}
+        draft={createDraft}
+        loading={projectDialogBusy}
+        onChangeProjectName={(value) =>
+          setCreateDraft((current) => ({
+            ...current,
+            projectName: value,
+          }))
+        }
+        onPickDirectory={() => void handlePickProjectDirectory()}
+        onConfirm={() => void handleConfirmCreateProject()}
+        onClose={() => {
+          if (projectDialogBusy) {
+            return;
+          }
+
+          setProjectDialogOpen(false);
+        }}
+      />
     </>
   );
 }
 
 // --- Wrapper ---
-export function InfiniteCanvas() {
+export function InfiniteCanvas({ onBackToLibrary }: InnerCanvasProps) {
   return (
     <ReactFlowProvider>
-      <InnerCanvas />
+      <InnerCanvas onBackToLibrary={onBackToLibrary} />
     </ReactFlowProvider>
   );
 }

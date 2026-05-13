@@ -12,7 +12,7 @@ export default function HomePage() {
       {mode === 'library' ? (
         <ProjectLibrary onOpenProject={() => setMode('canvas')} />
       ) : (
-        <InfiniteCanvas />
+        <InfiniteCanvas onBackToLibrary={() => setMode('library')} />
       )}
     </main>
   );

@@ -544,10 +544,15 @@ function buildImageJobResult(
   return {
     model: result.model,
     images: result.images.map((image) => {
-      const metadata = inferImageMetadata(image.imageUrl);
+      const imageDataUrl = image.hostedImageUrl?.startsWith("data:")
+        ? image.hostedImageUrl
+        : image.imageUrl;
+      const metadata = inferImageMetadata(imageDataUrl);
 
       return {
-        ...image,
+        imageUrl: image.imageUrl,
+        hostedImageUrl: image.hostedImageUrl,
+        model: image.model,
         width: metadata.width ?? image.width,
         height: metadata.height ?? image.height,
         format: metadata.format,
@@ -563,12 +568,16 @@ async function attachHostedImageUrlsToJob(
 ): Promise<ImageJobResult> {
   const images = await Promise.all(
     result.images.map(async (image, index) => {
-      if (!image.imageUrl.startsWith("data:") || image.hostedImageUrl) {
+      const imageDataUrl = image.hostedImageUrl?.startsWith("data:")
+        ? image.hostedImageUrl
+        : image.imageUrl;
+
+      if (!imageDataUrl.startsWith("data:") || image.hostedImageUrl?.startsWith("/api/")) {
         return image;
       }
 
       const hostedImageUrl = await saveImageDataUrl(
-        image.imageUrl,
+        imageDataUrl,
         `generated-image-${jobId}-${index + 1}.png`,
       );
 
@@ -587,7 +596,9 @@ async function attachHostedImageUrlsToJob(
 
 function hasUnhostedDataUrlImages(result: ImageJobResult): boolean {
   return result.images.some(
-    (image) => image.imageUrl.startsWith("data:") && !image.hostedImageUrl,
+    (image) =>
+      (image.imageUrl.startsWith("data:") || image.hostedImageUrl?.startsWith("data:")) &&
+      !image.hostedImageUrl?.startsWith("/api/"),
   );
 }
 

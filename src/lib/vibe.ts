@@ -60,6 +60,7 @@ const DEFAULT_IMAGE_SIZE = "1024x1024";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const IMAGE_REQUEST_TIMEOUT_MS = 6 * 60_000;
 const COMFLY_TASK_STATUS_TIMEOUT_MS = 15_000;
+const OUTPUT_IMAGE_FETCH_TIMEOUT_MS = 60_000;
 const DEFAULT_COMFLY_RESPONSE_FORMAT = "b64_json";
 const COMFLY_ASYNC_RESPONSE_FORMAT = "url";
 const COMFLY_TEXT_MODEL_MAP = new Map<string, string>([
@@ -169,6 +170,7 @@ export interface GenerateImageParams {
 
 export interface GenerateImageResultItem {
   imageUrl: string;
+  hostedImageUrl?: string;
   model: string;
   width: number;
   height: number;
@@ -1202,11 +1204,11 @@ async function requestComflyTaskStatusPreviewWithBaseUrl(
   }
 }
 
-function buildComflyAsyncImageResult(
+async function buildComflyAsyncImageResult(
   taskResponse: ComflyAsyncTaskStatusResponse,
   fallbackModel: string,
   size?: string,
-): GenerateImageResult {
+): Promise<GenerateImageResult> {
   const taskPayload = normalizeMaybeJson(
     taskResponse.data?.data ??
       taskResponse.data?.task_result ??
@@ -1218,13 +1220,15 @@ function buildComflyAsyncImageResult(
   const taskPayloadRecord = asJsonObject(taskPayload);
   const model = stringValue(taskPayloadRecord?.model) ?? fallbackModel;
   const dimensions = parseImageSize(size);
-  const images = extractComflyImageUrls(taskPayload)
-    .map((imageUrl) => ({
+  const images = await Promise.all(
+    extractComflyImageUrls(taskPayload).map(async (imageUrl) => ({
       imageUrl,
+      hostedImageUrl: await normalizeGeneratedImageUrl(imageUrl),
       model,
       width: dimensions.width,
       height: dimensions.height,
-    }) satisfies GenerateImageResultItem);
+    }) satisfies GenerateImageResultItem),
+  );
 
   if (!images.length) {
     throw new VibeApiError(502, "Comfly returned no image data", taskResponse);
@@ -1489,6 +1493,70 @@ function toDataImageUrl(
   }
 
   return `data:${fallbackMimeType};base64,${normalized}`;
+}
+
+async function fetchRemoteImageAsDataUrl(imageUrl: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OUTPUT_IMAGE_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(imageUrl, {
+      signal: controller.signal,
+      headers: {
+        Accept: "image/*",
+      },
+    });
+
+    if (!response.ok) {
+      throw new VibeApiError(
+        response.status,
+        `Failed to fetch generated image (${response.status})`,
+      );
+    }
+
+    const mediaType = response.headers.get("content-type")?.split(";")[0] || "image/png";
+
+    if (!mediaType.startsWith("image/")) {
+      throw new VibeApiError(502, "Generated image URL did not return an image");
+    }
+
+    const bytes = Buffer.from(await response.arrayBuffer());
+
+    if (bytes.byteLength === 0) {
+      throw new VibeApiError(502, "Generated image URL returned empty data");
+    }
+
+    return `data:${mediaType};base64,${bytes.toString("base64")}`;
+  } catch (error) {
+    if (error instanceof VibeApiError) {
+      throw error;
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new VibeApiError(504, "Generated image download timed out");
+    }
+
+    throw new VibeApiError(
+      502,
+      error instanceof Error ? error.message : "Failed to fetch generated image",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function normalizeGeneratedImageUrl(imageUrl: string): Promise<string> {
+  const trimmed = imageUrl.trim();
+
+  if (!trimmed || parseDataUrl(trimmed)) {
+    return trimmed;
+  }
+
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return fetchRemoteImageAsDataUrl(trimmed);
 }
 
 function extractComflyTaskStatus(json: ComflyAsyncTaskStatusResponse): string {
@@ -2096,13 +2164,19 @@ async function generateImageComflySync(
         } satisfies GenerateImageResultItem;
       })
       .filter((image): image is GenerateImageResultItem => Boolean(image)) ?? [];
+  const normalizedImages = await Promise.all(
+    images.map(async (image) => ({
+      ...image,
+      hostedImageUrl: await normalizeGeneratedImageUrl(image.imageUrl),
+    })),
+  );
 
-  if (!images.length) {
+  if (!normalizedImages.length) {
     throw new VibeApiError(502, `${providerLabel} returned no image data`, json);
   }
 
   return {
-    images,
+    images: normalizedImages,
     model,
   };
 }
@@ -2262,7 +2336,7 @@ export async function getComflyImageTaskResult(params: {
   if (status === "SUCCESS" || status === "SUCCEEDED" || status === "COMPLETED") {
     return {
       status: "completed",
-      result: buildComflyAsyncImageResult(
+      result: await buildComflyAsyncImageResult(
         json,
         params.model ?? DEFAULT_IMAGE_MODEL,
         params.size,
