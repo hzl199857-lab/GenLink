@@ -627,12 +627,74 @@ async function waitForHostedImageUrls(
   return latestResult;
 }
 
+async function waitForPersistedHostedImageJobResult(
+  jobId: string,
+): Promise<ImageJobResult | undefined> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < 60_000) {
+    const persistedResult = await readPersistedImageJobResult(jobId);
+
+    if (persistedResult && !hasUnhostedDataUrlImages(persistedResult)) {
+      return persistedResult;
+    }
+
+    await sleep(500);
+  }
+
+  return undefined;
+}
+
 async function completeImageJob(
   jobId: string,
   result: GenerateImageOutput,
 ): Promise<ImageJobResult> {
   const baseResult = buildImageJobResult(result);
   const needsHostedImageUrl = hasUnhostedDataUrlImages(baseResult);
+
+  if (needsHostedImageUrl) {
+    const claimedJob = await prisma.imageJob.updateMany({
+      where: {
+        id: jobId,
+        result: null,
+        status: {
+          not: "finalizing",
+        },
+      },
+      data: {
+        status: "finalizing",
+        error: null,
+      },
+    });
+
+    if (claimedJob.count === 0) {
+      const persistedResult = await readPersistedImageJobResult(jobId);
+
+      if (persistedResult) {
+        const finalResult = hasUnhostedDataUrlImages(persistedResult)
+          ? waitForHostedImageUrls(jobId, persistedResult)
+          : persistedResult;
+
+        await persistImageHistoryItems(jobId, await finalResult);
+        return finalResult;
+      }
+
+      const finalizingResult = await waitForPersistedHostedImageJobResult(jobId);
+
+      if (finalizingResult) {
+        await persistImageHistoryItems(jobId, finalizingResult);
+        return finalizingResult;
+      }
+
+      throw new VibeApiError(504, "Image result finalization timed out");
+    }
+
+    const enrichedResult = await attachHostedImageUrlsToJob(jobId, baseResult);
+    await persistCompletedImageJob(jobId, enrichedResult);
+    await persistImageHistoryItems(jobId, enrichedResult);
+
+    return enrichedResult;
+  }
 
   const claimedJob = await prisma.imageJob.updateMany({
     where: {
@@ -650,16 +712,9 @@ async function completeImageJob(
     const persistedResult = await readPersistedImageJobResult(jobId);
 
     if (!persistedResult) {
-      if (!needsHostedImageUrl) {
-        await persistCompletedImageJob(jobId, baseResult);
-        await persistImageHistoryItems(jobId, baseResult);
-        return baseResult;
-      }
-
-      const enrichedResult = await attachHostedImageUrlsToJob(jobId, baseResult);
-      await persistCompletedImageJob(jobId, enrichedResult);
-      await persistImageHistoryItems(jobId, enrichedResult);
-      return enrichedResult;
+      await persistCompletedImageJob(jobId, baseResult);
+      await persistImageHistoryItems(jobId, baseResult);
+      return baseResult;
     }
 
     const finalResult = hasUnhostedDataUrlImages(persistedResult)
@@ -670,16 +725,8 @@ async function completeImageJob(
     return finalResult;
   }
 
-  if (!needsHostedImageUrl) {
-    await persistImageHistoryItems(jobId, baseResult);
-    return baseResult;
-  }
-
-  const enrichedResult = await attachHostedImageUrlsToJob(jobId, baseResult);
-  await persistCompletedImageJob(jobId, enrichedResult);
-  await persistImageHistoryItems(jobId, enrichedResult);
-
-  return enrichedResult;
+  await persistImageHistoryItems(jobId, baseResult);
+  return baseResult;
 }
 
 async function runComflyImageJob(jobId: string, params: ImageJobParams) {
@@ -967,6 +1014,14 @@ export async function GET(request: Request) {
       });
     }
 
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      status: "pending" satisfies ImageJobStatus,
+    });
+  }
+
+  if (job.status === "finalizing") {
     return NextResponse.json({
       ok: true,
       jobId,

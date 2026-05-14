@@ -181,27 +181,27 @@ export function ApiSettingsPanel({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[510px] rounded-[14px] border border-[#23262d] bg-[#121315] shadow-[0_18px_40px_rgba(0,0,0,0.42)]"
+        className="w-full max-w-[520px] origin-center scale-[0.75] overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] shadow-[0_10px_40px_rgba(0,0,0,0.8)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between border-b border-white/10 px-5 pb-3 pt-5">
-          <h2 className="text-[15px] font-semibold text-white">模型配置</h2>
+        <div className="flex items-center justify-between px-6 py-4">
+          <h2 className="text-[16px] font-semibold tracking-[1px] text-white">模型配置</h2>
 
           <div className="group/tooltip relative">
             <button
               type="button"
               onClick={onClose}
               aria-label="关闭"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[#8d96aa] transition-colors hover:bg-white/5 hover:text-white"
+              className="flex h-7 w-7 items-center justify-center rounded-sm text-[#666666] transition-colors hover:bg-white/5 hover:text-[#cccccc]"
             >
-              <X size={14} />
+              <X size={18} />
             </button>
             <Tooltip label="关闭" side="left" />
           </div>
         </div>
 
-        <div className="px-5 pt-4">
-          <div className="flex items-center gap-7 border-b border-white/10">
+        <div className="border-b border-[#222222] px-6">
+          <div className="flex items-center gap-[30px]">
             {MODEL_TABS.map((tab) => {
               const isActive = tab.key === activeTab;
               return (
@@ -209,13 +209,13 @@ export function ApiSettingsPanel({
                   key={tab.key}
                   type="button"
                   onClick={() => setActiveTab(tab.key)}
-                  className={`relative pb-2.5 text-[13px] transition-colors ${
-                    isActive ? 'text-[#25e56a]' : 'text-[#8b95aa] hover:text-[#d6deed]'
+                  className={`relative py-3 text-[14px] transition-colors ${
+                    isActive ? 'font-medium text-[#ccff00]' : 'text-[#777777] hover:text-[#aaaaaa]'
                   }`}
                 >
                   {tab.label}
                   {isActive ? (
-                    <span className="absolute inset-x-0 bottom-0 h-[2px] bg-[#25e56a]" />
+                    <span className="absolute inset-x-0 bottom-[-1px] h-[2px] bg-[#ccff00]" />
                   ) : null}
                 </button>
               );
@@ -223,10 +223,10 @@ export function ApiSettingsPanel({
           </div>
         </div>
 
-        <div className="px-5 py-4">
-          <div className="mb-3 text-[12px] font-medium text-[#cdd5e3]">选择 API 服务商</div>
+        <div className="px-6 py-6">
+          <div className="mb-4 text-[13px] text-[#aaaaaa]">选择 API 服务商</div>
 
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             {PROVIDERS.map((provider) => {
               const isExpanded = currentDraft.expandedProvider === provider.key;
               const isSelected = currentDraft.selectedProvider === provider.key;
@@ -236,32 +236,32 @@ export function ApiSettingsPanel({
               return (
                 <div
                   key={`${activeTab}-${provider.key}`}
-                  className={`overflow-hidden rounded-[10px] border transition-colors ${
+                  className={`overflow-hidden rounded border transition-colors ${
                     isExpanded
-                      ? 'border-[#25e56a] bg-[#121513]'
+                      ? 'border-[#ccff00] bg-[#141414]'
                       : isSelected
-                        ? 'border-[#3a434d] bg-[#15171b]'
-                        : 'border-[#30343d] bg-[#141519]'
+                        ? 'border-[#333333] bg-[#141414]'
+                        : 'border-[#222222] bg-[#141414] hover:border-[#333333]'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+                  <div className="flex items-center justify-between gap-4 px-5 py-4">
                     <div>
-                      <div className="text-[13px] font-semibold text-[#f5f7fb]">
+                      <div className="text-[15px] font-semibold text-white">
                         {provider.label}
                       </div>
-                      <div className="mt-1 text-[11px] text-[#74809a]">{provider.url}</div>
+                      <div className="mt-1.5 text-[12px] text-[#666666]">{provider.url}</div>
                     </div>
 
                     {isExpanded ? (
-                      <span className="text-[12px] font-medium text-[#25e56a]">填写中</span>
+                      <span className="text-[13px] font-medium text-[#ccff00]">填写中</span>
                     ) : (
                       <button
                         type="button"
                         onClick={() => handleProviderUse(provider.key)}
-                        className={`min-w-[60px] rounded-[7px] border px-3 py-1.5 text-[12px] transition-colors ${
+                        className={`min-w-[66px] rounded-sm border px-[18px] py-1.5 text-[13px] transition-colors ${
                           isSelected
-                            ? 'border-[#25e56a] text-[#25e56a]'
-                            : 'border-[#2a2e36] text-[#c3ccdc] hover:border-[#3a404c] hover:text-white'
+                            ? 'border-[#ccff00] text-[#ccff00]'
+                            : 'border-[#333333] text-[#888888] hover:border-[#555555] hover:text-white'
                         }`}
                       >
                         使用
@@ -270,18 +270,18 @@ export function ApiSettingsPanel({
                   </div>
 
                   {isExpanded ? (
-                    <div className="border-t border-white/10 px-4 pb-3.5 pt-3.5">
-                      <label className="mb-2 block text-[11px] text-[#8d97ab]">
+                    <div className="border-t border-[#222222] px-5 pb-4 pt-4">
+                      <label className="mb-2 block text-[12px] text-[#888888]">
                         {provider.apiKeyLabel}
                       </label>
 
-                      <div className="flex items-center rounded-[7px] border border-[#2b3038] bg-[#0f1216] px-3.5">
+                      <div className="flex items-center rounded border border-[#222222] bg-[#050505] px-3.5 transition-colors focus-within:border-[#333333]">
                         <input
                           type={isRevealed ? 'text' : 'password'}
                           value={apiKeyValue}
                           onChange={(event) => handleApiKeyChange(provider.key, event.target.value)}
                           placeholder={`请输入 ${provider.label} 的 API Key`}
-                          className="h-9 w-full bg-transparent text-[12px] text-white outline-none placeholder:text-[#5f697d]"
+                          className="h-10 w-full bg-transparent text-[13px] text-white outline-none placeholder:text-[#555555]"
                         />
                         <div className="group/tooltip relative">
                           <button
@@ -296,7 +296,7 @@ export function ApiSettingsPanel({
                               }))
                             }
                             aria-label={isRevealed ? '隐藏' : '显示'}
-                            className="ml-2 flex h-7 w-7 items-center justify-center rounded-md text-[#7d879a] transition-colors hover:bg-white/5 hover:text-white"
+                            className="ml-2 flex h-7 w-7 items-center justify-center rounded-sm text-[#666666] transition-colors hover:bg-white/5 hover:text-[#cccccc]"
                           >
                             {isRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
                           </button>
@@ -308,14 +308,14 @@ export function ApiSettingsPanel({
                         <button
                           type="button"
                           onClick={handleProviderCancel}
-                          className="rounded-[7px] border border-[#2b3038] px-3 py-1.5 text-[12px] text-[#b9c2d3] transition-colors hover:bg-white/5 hover:text-white"
+                          className="rounded-sm border border-[#222222] px-4 py-2 text-[13px] text-[#aaaaaa] transition-colors hover:border-[#444444] hover:text-white"
                         >
                           取消
                         </button>
                         <button
                           type="button"
                           onClick={handleProviderConfirm}
-                          className="rounded-[7px] bg-[#24db66] px-3 py-1.5 text-[12px] font-medium text-[#071109] transition-colors hover:bg-[#42e37c]"
+                          className="rounded-sm border border-transparent bg-[#ccff00] px-4 py-2 text-[13px] font-semibold text-[#101500] shadow-[0_0_0_1px_rgba(204,255,0,0.18),0_0_18px_rgba(204,255,0,0.18)] transition-colors hover:bg-[#d8ff33] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ccff00]"
                         >
                           确定
                         </button>
@@ -327,23 +327,23 @@ export function ApiSettingsPanel({
             })}
           </div>
 
-          <p className="mt-2.5 text-[11px] leading-5 text-[#77829a]">
+          <p className="mt-4 text-[12px] leading-5 text-[#666666]">
             切换服务商时，请先填写对应 API Key 再确认。
           </p>
         </div>
 
-        <div className="flex items-center justify-end gap-2.5 border-t border-white/10 px-5 py-4">
+        <div className="flex items-center justify-end gap-3 border-t border-[#222222] px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[8px] border border-[#2b3038] px-4 py-2 text-[12px] text-[#c6cfdf] transition-colors hover:bg-white/5 hover:text-white"
+            className="rounded-sm border border-[#222222] px-6 py-2.5 text-[14px] text-[#aaaaaa] transition-colors hover:border-[#444444] hover:text-white"
           >
             取消
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="rounded-[8px] bg-[#24db66] px-5 py-2 text-[12px] font-medium text-[#071109] transition-colors hover:bg-[#42e37c]"
+            className="rounded-sm border border-transparent bg-[#ccff00] px-6 py-2.5 text-[14px] font-semibold text-[#101500] shadow-[0_0_0_1px_rgba(204,255,0,0.18),0_0_18px_rgba(204,255,0,0.18)] transition-colors hover:bg-[#d8ff33] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ccff00]"
           >
             保存
           </button>

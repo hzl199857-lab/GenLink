@@ -589,6 +589,20 @@ function toErrorMessage(error: unknown): string {
   return "Internal error";
 }
 
+function toProjectOutputSaveErrorMessage(error: unknown): string {
+  const message = toErrorMessage(error);
+
+  if (
+    message === "Failed to fetch" ||
+    message === "Failed to read generated image" ||
+    message === "Failed to read hosted generated image"
+  ) {
+    return "\u56fe\u7247\u5df2\u751f\u6210\uff0c\u4f46\u4fdd\u5b58\u5230\u9879\u76ee\u5386\u53f2\u5931\u8d25\uff1a\u65e0\u6cd5\u8bfb\u53d6\u751f\u6210\u56fe\u7247";
+  }
+
+  return `\u56fe\u7247\u5df2\u751f\u6210\uff0c\u4f46\u4fdd\u5b58\u5230\u9879\u76ee\u5386\u53f2\u5931\u8d25\uff1a${message}`;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -682,11 +696,22 @@ async function pollImageGenerationJob(
       query.set("apiKey", apiKey.trim());
     }
 
-    const response = await fetch(`/api/ai/image?${query.toString()}`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    const json = (await response.json()) as ImageJobPollResponse;
+    let response: Response;
+
+    try {
+      response = await fetch(`/api/ai/image?${query.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+    } catch {
+      await sleep(IMAGE_JOB_POLL_INTERVAL_MS);
+      continue;
+    }
+
+    const responseText = await response.text();
+    const json = responseText
+      ? (JSON.parse(responseText) as ImageJobPollResponse)
+      : ({ ok: false, error: "Image polling returned an empty response" } as const);
 
     if (!response.ok || ("ok" in json && json.ok === false)) {
       throw new Error("error" in json ? json.error : "Image polling failed");
@@ -1274,6 +1299,7 @@ export interface CanvasState {
   persistProjectOutput: (params: {
     sourceKey: string;
     imageUrl: string;
+    fileName?: string;
     generatedAt: string;
     nodeData: ImageGenerationNodeData;
     title?: string;
@@ -1822,31 +1848,49 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         )
         .map((result) => result.errorMessage);
 
-      if (primaryResult?.imageUrl) {
-        await get().persistProjectOutput({
-          sourceKey: `${imageGenerationNodeId}:${primaryResult.generatedAt}:${primaryResult.imageUrl}`,
-          imageUrl: primaryResult.hostedImageUrl?.trim() || primaryResult.imageUrl,
-          generatedAt: primaryResult.generatedAt,
-          nodeData: {
-            ...historyNodeData,
-            generatedImageUrl: primaryResult.imageUrl,
-            generatedHostedImageUrl: primaryResult.hostedImageUrl,
-            generatedImageWidth: primaryResult.width,
-            generatedImageHeight: primaryResult.height,
-            generatedImageFormat: primaryResult.format,
-            generatedImageSizeBytes: primaryResult.sizeBytes,
-            generatedModel: primaryResult.model,
-            generatedAt: primaryResult.generatedAt,
-            generationResults: [primaryResult],
-          },
-          title: latestImageGenerationNode.data.title,
-          model: primaryResult.model,
-          width: primaryResult.width,
-          height: primaryResult.height,
-          format: primaryResult.format,
-          sizeBytes: primaryResult.sizeBytes,
-        });
-      }
+      const completedResults = generationResults.filter(
+        (
+          result,
+        ): result is ImageGenerationResultItem & {
+          status: "completed";
+          imageUrl: string;
+        } => result.status === "completed" && Boolean(result.imageUrl),
+      );
+
+      void (async () => {
+        for (const result of completedResults) {
+          try {
+            await get().persistProjectOutput({
+              sourceKey: `${imageGenerationNodeId}:${result.generatedAt}:${result.imageUrl}`,
+              imageUrl: result.hostedImageUrl?.trim() || result.imageUrl,
+              fileName: latestImageGenerationNode.data.title,
+              generatedAt: result.generatedAt,
+              nodeData: {
+                ...historyNodeData,
+                generatedImageUrl: result.imageUrl,
+                generatedHostedImageUrl: result.hostedImageUrl,
+                generatedImageWidth: result.width,
+                generatedImageHeight: result.height,
+                generatedImageFormat: result.format,
+                generatedImageSizeBytes: result.sizeBytes,
+                generatedModel: result.model,
+                generatedAt: result.generatedAt,
+                generationResults: [result],
+              },
+              title: latestImageGenerationNode.data.title,
+              model: result.model,
+              width: result.width,
+              height: result.height,
+              format: result.format,
+              sizeBytes: result.sizeBytes,
+            });
+          } catch (error) {
+            set({
+              saveMessage: toProjectOutputSaveErrorMessage(error),
+            });
+          }
+        }
+      })();
 
       set((currentState) => ({
         error: primaryResult
@@ -2276,14 +2320,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           return node;
         }
 
-        previousPreviewUrl = node.data.generatedHostedImageUrl?.trim() || null;
+        const matchesPrimaryImage =
+          node.data.generatedAt === params.generatedAt &&
+          node.data.generatedImageUrl === params.nodeData.generatedImageUrl;
+
+        previousPreviewUrl = matchesPrimaryImage
+          ? node.data.generatedHostedImageUrl?.trim() || null
+          : null;
 
         return {
           ...node,
           data: {
             ...node.data,
-            generatedHostedImageUrl: persisted.previewUrl,
-            generatedOutputFileName: persisted.fileName,
+            ...(matchesPrimaryImage
+              ? {
+                  generatedHostedImageUrl: persisted.previewUrl,
+                  generatedOutputFileName: persisted.fileName,
+                }
+              : {}),
             generationResults: node.data.generationResults?.map((result) => {
               if (
                 result.status !== "completed" ||

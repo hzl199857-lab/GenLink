@@ -58,13 +58,11 @@ function normalizeFileStem(fileName?: string): string {
 
 export { getLocalImageDirectory };
 
-export async function saveImageDataUrl(
-  dataUrl: string,
+async function saveImageBytes(
+  bytes: Buffer,
+  mimeType: string,
   fileName?: string,
 ): Promise<string> {
-  const { mimeType, base64 } = parseDataUrl(dataUrl);
-  const bytes = Buffer.from(base64, 'base64');
-
   if (bytes.byteLength === 0) {
     throw new VibeApiError(400, 'Image data is empty');
   }
@@ -85,4 +83,39 @@ export async function saveImageDataUrl(
   await writeFile(absolutePath, bytes);
 
   return `${LOCAL_IMAGE_ROUTE_PREFIX}/${encodeURIComponent(savedFileName)}`;
+}
+
+export async function saveImageDataUrl(
+  dataUrl: string,
+  fileName?: string,
+): Promise<string> {
+  const { mimeType, base64 } = parseDataUrl(dataUrl);
+  const bytes = Buffer.from(base64, 'base64');
+
+  return saveImageBytes(bytes, mimeType, fileName);
+}
+
+export async function saveRemoteImageUrl(
+  imageUrl: string,
+  fileName?: string,
+): Promise<string> {
+  const response = await fetch(imageUrl, {
+    headers: {
+      Accept: 'image/*',
+    },
+  });
+
+  if (!response.ok) {
+    throw new VibeApiError(response.status, `Failed to fetch image (${response.status})`);
+  }
+
+  const mimeType = response.headers.get('content-type')?.split(';')[0] || 'image/png';
+
+  if (!mimeType.startsWith('image/')) {
+    throw new VibeApiError(400, 'URL did not return an image');
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+
+  return saveImageBytes(bytes, mimeType, fileName);
 }

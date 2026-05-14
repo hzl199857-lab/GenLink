@@ -16,9 +16,9 @@ export const metadata: Metadata = {
   title: "GenLink",
   description: "AI-native creative canvas for connected prompts and outputs.",
   icons: {
-    icon: "/logo.png",
-    shortcut: "/logo.png",
-    apple: "/logo.png",
+    icon: "/icon.png",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
   },
 };
 

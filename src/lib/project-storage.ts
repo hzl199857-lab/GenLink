@@ -71,6 +71,7 @@ export interface ImportProjectsResult {
 export interface PersistProjectOutputParams {
   sourceKey: string;
   imageUrl: string;
+  fileName?: string;
   generatedAt: string;
   nodeData: ImageGenerationNodeData;
   title?: string;
@@ -187,13 +188,94 @@ function inferOutputKind(
   return null;
 }
 
+async function hostImageUrlForBrowserRead(
+  imageUrl: string,
+  fileName?: string,
+): Promise<string> {
+  const trimmedImageUrl = imageUrl.trim();
+  const response = await fetch("/api/image-hosting/upload", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(
+      trimmedImageUrl.startsWith("data:")
+        ? { dataUrl: trimmedImageUrl, fileName }
+        : { imageUrl: trimmedImageUrl, fileName },
+    ),
+  });
+  const json = (await response.json()) as
+    | { ok: true; result: { imageUrl: string } }
+    | { ok: false; error: string };
+
+  if (!response.ok || !json.ok) {
+    throw new Error("error" in json ? json.error : "Image hosting failed");
+  }
+
+  return json.result.imageUrl;
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+
+  if (!match) {
+    throw new Error("Invalid generated image data URL");
+  }
+
+  const mimeType = match[1] || "image/png";
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] || "";
+  const binary = isBase64 ? atob(payload) : decodeURIComponent(payload);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function readImageOutputBlob(
+  imageUrl: string,
+  fileName?: string,
+): Promise<Blob> {
+  const trimmedImageUrl = imageUrl.trim();
+
+  if (trimmedImageUrl.startsWith("data:")) {
+    return dataUrlToBlob(trimmedImageUrl);
+  }
+
+  try {
+    const response = await fetch(trimmedImageUrl);
+
+    if (!response.ok) {
+      throw new Error("Failed to read generated image");
+    }
+
+    return await response.blob();
+  } catch {
+    if (trimmedImageUrl.startsWith("blob:")) {
+      throw new Error("Failed to read generated image");
+    }
+
+    const hostedImageUrl = await hostImageUrlForBrowserRead(trimmedImageUrl, fileName);
+    const response = await fetch(hostedImageUrl);
+
+    if (!response.ok) {
+      throw new Error("Failed to read hosted generated image");
+    }
+
+    return response.blob();
+  }
+}
+
 function ensureFileSystemAccessSupport(): void {
   if (
     typeof window === "undefined" ||
     typeof window.indexedDB === "undefined" ||
     typeof window.showDirectoryPicker !== "function"
   ) {
-    throw new Error("当前环境不支持项目文件系统访问");
+    throw new Error("\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u9879\u76ee\u6587\u4ef6\u7cfb\u7edf\u8bbf\u95ee");
   }
 }
 
@@ -203,7 +285,7 @@ function openProjectDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = window.indexedDB.open(PROJECT_DB_NAME, PROJECT_DB_VERSION);
 
-    request.onerror = () => reject(request.error ?? new Error("项目库初始化失败"));
+    request.onerror = () => reject(request.error ?? new Error("\u9879\u76ee\u5e93\u521d\u59cb\u5316\u5931\u8d25"));
     request.onupgradeneeded = () => {
       const database = request.result;
 
@@ -232,7 +314,7 @@ async function withProjectStore<T>(
           resolve(value);
         };
         transaction.onerror = () => {
-          reject(transaction.error ?? new Error("项目库操作失败"));
+          reject(transaction.error ?? new Error("\u9879\u76ee\u5e93\u64cd\u4f5c\u5931\u8d25"));
         };
       })
       .catch((error) => {
@@ -245,7 +327,7 @@ async function withProjectStore<T>(
 function requestAsPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("项目库读取失败"));
+    request.onerror = () => reject(request.error ?? new Error("\u9879\u76ee\u5e93\u8bfb\u53d6\u5931\u8d25"));
   });
 }
 
@@ -289,7 +371,7 @@ async function requestDirectoryPermission(
     : "denied";
 
   if (requested !== "granted") {
-    throw new Error("未获得目录访问权限");
+    throw new Error("\u672a\u83b7\u5f97\u76ee\u5f55\u8bbf\u95ee\u6743\u9650");
   }
 }
 
@@ -322,6 +404,41 @@ async function writeBlobFile(
   const writable = await fileHandle.createWritable();
   await writable.write(blob);
   await writable.close();
+}
+
+async function fileExists(
+  directoryHandle: FileSystemDirectoryHandle,
+  fileName: string,
+): Promise<boolean> {
+  try {
+    await directoryHandle.getFileHandle(fileName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getAvailableFileName(
+  directoryHandle: FileSystemDirectoryHandle,
+  baseName: string,
+  extension: string,
+  currentFileName?: string,
+): Promise<string> {
+  const firstFileName = `${baseName}.${extension}`;
+
+  if (firstFileName === currentFileName || !(await fileExists(directoryHandle, firstFileName))) {
+    return firstFileName;
+  }
+
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${baseName}-${index}.${extension}`;
+
+    if (candidate === currentFileName || !(await fileExists(directoryHandle, candidate))) {
+      return candidate;
+    }
+  }
+
+  return `${baseName}-${crypto.randomUUID()}.${extension}`;
 }
 
 async function directoryEntryExists(
@@ -428,14 +545,14 @@ async function readProjectSnapshotInternal(
     !Array.isArray(parsed.nodes) ||
     !Array.isArray(parsed.edges)
   ) {
-    throw new Error("项目文件损坏，无法读取");
+    throw new Error("\u9879\u76ee\u6587\u4ef6\u635f\u574f\uff0c\u65e0\u6cd5\u8bfb\u53d6");
   }
 
   return parsed;
 }
 
 function getUniqueCopyName(baseName: string, existingNames: Set<string>): string {
-  const preferred = `${baseName} - 副本`;
+  const preferred = `${baseName} - \u526f\u672c`;
 
   if (!existingNames.has(preferred)) {
     return preferred;
@@ -464,13 +581,13 @@ export async function createProjectAtParentDirectory(params: {
   const sanitizedName = sanitizeDirectoryName(params.projectName);
 
   if (!sanitizedName) {
-    throw new Error("项目名不能为空");
+    throw new Error("\u9879\u76ee\u540d\u4e0d\u80fd\u4e3a\u7a7a");
   }
 
   await requestDirectoryPermission(params.parentHandle);
 
   if (await directoryEntryExists(params.parentHandle, sanitizedName)) {
-    throw new Error("该目录下已存在同名项目");
+    throw new Error("\u8be5\u76ee\u5f55\u4e0b\u5df2\u5b58\u5728\u540c\u540d\u9879\u76ee");
   }
 
   const timestamp = new Date().toISOString();
@@ -665,7 +782,7 @@ export async function renameProjectDirectory(
   const sanitizedName = sanitizeDirectoryName(nextName);
 
   if (!sanitizedName) {
-    throw new Error("项目名不能为空");
+    throw new Error("\u9879\u76ee\u540d\u4e0d\u80fd\u4e3a\u7a7a");
   }
 
   if (sanitizedName === project.directoryName) {
@@ -675,7 +792,7 @@ export async function renameProjectDirectory(
   await requestDirectoryPermission(project.parentHandle);
 
   if (await directoryEntryExists(project.parentHandle, sanitizedName)) {
-    throw new Error("该目录下已存在同名项目");
+    throw new Error("\u8be5\u76ee\u5f55\u4e0b\u5df2\u5b58\u5728\u540c\u540d\u9879\u76ee");
   }
 
   const nextHandle = await project.parentHandle.getDirectoryHandle(sanitizedName, {
@@ -791,25 +908,25 @@ export async function persistGeneratedOutput(
   const outputHandle = await project.projectHandle.getDirectoryHandle(OUTPUT_DIRECTORY_NAME, {
     create: true,
   });
-  const response = await fetch(params.imageUrl);
-
-  if (!response.ok) {
-    throw new Error("生成结果写入项目目录失败");
-  }
-
-  const blob = await response.blob();
+  const blob = await readImageOutputBlob(params.imageUrl, params.fileName);
   const extension = inferExtension(params.format, blob.type);
   const safeStem = sanitizeFileStem(params.title || params.nodeData.title || "image");
   const timestamp = params.generatedAt.replace(/[:.]/g, "-");
-  const fileName = `${timestamp}-${safeStem}.${extension}`;
+  const manifest = await readOutputHistoryManifest(project.projectHandle);
+  const existingIndex = manifest.items.findIndex((item) => item.sourceKey === params.sourceKey);
+  const currentFileName =
+    existingIndex >= 0 ? manifest.items[existingIndex]?.fileName : undefined;
+  const fileName = await getAvailableFileName(
+    outputHandle,
+    `${timestamp}-${safeStem}`,
+    extension,
+    currentFileName,
+  );
 
   await writeBlobFile(outputHandle, fileName, blob);
 
-  const manifest = await readOutputHistoryManifest(project.projectHandle);
-  const existingIndex = manifest.items.findIndex((item) => item.sourceKey === params.sourceKey);
-
   if (existingIndex >= 0) {
-    const previousFileName = manifest.items[existingIndex]?.fileName;
+    const previousFileName = currentFileName;
 
     if (previousFileName && previousFileName !== fileName) {
       try {

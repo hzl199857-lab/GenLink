@@ -23,6 +23,7 @@ import {
   getProjectDirectoryLabel,
   type CreateProjectDraft,
 } from './CreateProjectDialog';
+import { DeleteProjectDialog } from './DeleteProjectDialog';
 
 interface ProjectLibraryProps {
   onOpenProject: () => void;
@@ -341,6 +342,7 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
   const [error, setError] = useState<string | null>(null);
   const [menuProjectId, setMenuProjectId] = useState<string | null>(null);
   const [renameProjectTarget, setRenameProjectTarget] = useState<ProjectHandleRecord | null>(null);
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectHandleRecord | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState<CreateProjectDraft>({
     projectName: '',
@@ -515,8 +517,8 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
     }
   };
 
-  const handleDeleteProject = async (project: ProjectHandleRecord) => {
-    if (!window.confirm(`确认删除项目“${project.name}”吗？`)) {
+  const handleDeleteProject = async () => {
+    if (!deleteProjectTarget) {
       return;
     }
 
@@ -524,8 +526,9 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
     setError(null);
 
     try {
-      await deleteProject(project);
+      await deleteProject(deleteProjectTarget);
       await refreshProjects();
+      setDeleteProjectTarget(null);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '删除项目失败');
     } finally {
@@ -575,14 +578,14 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
         <Image
           src="/genlink-wordmark.png"
           alt="GenLink"
-          width={3024}
-          height={1296}
+          width={2266}
+          height={336}
           priority
-          className="h-auto w-[198px] object-contain"
+          className="h-auto w-[132px] object-contain"
         />
       </div>
 
-      <div className="mx-auto max-w-[1360px] px-16 pb-14 pt-7">
+      <div className="mx-auto max-w-[1360px] px-16 pb-14 pt-6">
         <div className="flex items-center gap-3 text-[12px] font-medium text-white/72">
           <button
             type="button"
@@ -621,7 +624,10 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
               onOpen={() => void handleOpenProject(project)}
               onRename={() => setRenameProjectTarget(project)}
               onDuplicate={() => void handleDuplicateProject(project)}
-              onDelete={() => void handleDeleteProject(project)}
+              onDelete={() => {
+                setDeleteProjectTarget(project);
+                closeProjectMenu();
+              }}
             />
           ))}
         </div>
@@ -661,6 +667,20 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
           onClose={() => setRenameProjectTarget(null)}
         />
       ) : null}
+
+      <DeleteProjectDialog
+        open={deleteProjectTarget !== null}
+        projectName={deleteProjectTarget?.name ?? ''}
+        loading={busy}
+        onConfirm={() => void handleDeleteProject()}
+        onClose={() => {
+          if (busy) {
+            return;
+          }
+
+          setDeleteProjectTarget(null);
+        }}
+      />
     </div>
   );
 }

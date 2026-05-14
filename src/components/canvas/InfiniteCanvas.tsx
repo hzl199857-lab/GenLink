@@ -76,6 +76,7 @@ import {
   getProjectDirectoryLabel,
   type CreateProjectDraft,
 } from '@/components/project/CreateProjectDialog';
+import { DeleteProjectDialog } from '@/components/project/DeleteProjectDialog';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
 let notifyImageToolbarAction:
@@ -1739,6 +1740,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
+  const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState<CreateProjectDraft>({
     projectName: '',
     parentHandle: null,
@@ -2809,7 +2811,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
   }, [attachProject, createDraft.parentHandle, createDraft.projectName, showProjectMessage]);
 
-  const handleDeleteCurrentProject = useCallback(async () => {
+  const handleRequestDeleteCurrentProject = useCallback(() => {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
@@ -2817,12 +2819,21 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
-    if (!window.confirm(`确认删除项目“${project.name}”吗？`)) {
+    setDeleteProjectDialogOpen(true);
+  }, [showProjectMessage]);
+
+  const handleConfirmDeleteCurrentProject = useCallback(async () => {
+    const project = useCanvasStore.getState().currentProject;
+
+    if (!project) {
+      showProjectMessage('当前没有打开的项目');
+      setDeleteProjectDialogOpen(false);
       return;
     }
 
     try {
       await deleteProject(project);
+      setDeleteProjectDialogOpen(false);
       showProjectMessage('删除成功');
       onBackToLibrary?.();
     } catch (error) {
@@ -2861,7 +2872,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onProjectNameCommit={handleRenameCurrentProject}
         onBackToLibrary={onBackToLibrary}
         onCreateProject={handleOpenCreateProjectDialog}
-        onDeleteProject={currentProject ? handleDeleteCurrentProject : undefined}
+        onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
       />
       <ReactFlow
         nodes={rfNodes}
@@ -3007,6 +3018,19 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           }
 
           setProjectDialogOpen(false);
+        }}
+      />
+      <DeleteProjectDialog
+        open={deleteProjectDialogOpen && currentProject !== null}
+        projectName={currentProject?.name ?? projectName}
+        loading={loading}
+        onConfirm={() => void handleConfirmDeleteCurrentProject()}
+        onClose={() => {
+          if (loading) {
+            return;
+          }
+
+          setDeleteProjectDialogOpen(false);
         }}
       />
     </>
