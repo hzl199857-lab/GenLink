@@ -10,7 +10,7 @@ import {
 
 // GenLink Vibe API client for server-side route handlers and actions only.
 
-export type ImageApiProvider = "vibe" | "comfly" | "zhenzhen";
+export type ImageApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen";
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -20,6 +20,8 @@ function resolveApiProvider(value?: string): ImageApiProvider {
   switch (value?.trim().toLowerCase()) {
     case "comfly":
       return "comfly";
+    case "fucheers":
+      return "fucheers";
     case "zhenzhen":
       return "zhenzhen";
     default:
@@ -31,6 +33,12 @@ const VIBE_BASE_URL = normalizeBaseUrl(
   process.env.VIBE_BASE_URL ?? "https://www.vibeapi.cn/v1",
 );
 const VIBE_GEMINI_BASE_URL = normalizeBaseUrl("https://www.vibeapi.cn");
+const FUCHEERS_BASE_URL = normalizeBaseUrl(
+  process.env.FUCHEERS_BASE_URL ?? "https://www.fucheers.top/v1",
+);
+const FUCHEERS_GEMINI_BASE_URL = normalizeBaseUrl(
+  process.env.FUCHEERS_GEMINI_BASE_URL ?? "https://www.fucheers.top",
+);
 const COMFLY_BASE_URL = normalizeBaseUrl(process.env.COMFLY_BASE_URL ?? "");
 const COMFLY_IMAGE_BASE_URL = normalizeBaseUrl(
   process.env.COMFLY_IMAGE_BASE_URL ?? COMFLY_BASE_URL,
@@ -643,6 +651,12 @@ function isComflyCompatibleProvider(
   return provider === "comfly" || provider === "zhenzhen";
 }
 
+function isVibeCompatibleProvider(
+  provider: ImageApiProvider,
+): provider is "vibe" | "fucheers" {
+  return provider === "vibe" || provider === "fucheers";
+}
+
 function getComflyCompatibleProviderLabel(provider: "comfly" | "zhenzhen"): string {
   return provider === "zhenzhen" ? "贞贞的AI工坊" : "Comfly";
 }
@@ -660,7 +674,23 @@ function getProviderLabel(baseUrl: string, fallback = "Upstream API"): string {
     return "Vibe API";
   }
 
+  if (baseUrl === FUCHEERS_BASE_URL || baseUrl === FUCHEERS_GEMINI_BASE_URL) {
+    return "Fucheers API";
+  }
+
   return fallback;
+}
+
+function getVibeCompatibleBaseUrl(provider: "vibe" | "fucheers"): string {
+  return provider === "fucheers" ? FUCHEERS_BASE_URL : VIBE_BASE_URL;
+}
+
+function getVibeCompatibleGeminiBaseUrl(provider: "vibe" | "fucheers"): string {
+  return provider === "fucheers" ? FUCHEERS_GEMINI_BASE_URL : VIBE_GEMINI_BASE_URL;
+}
+
+function getVibeCompatibleProviderLabel(provider: "vibe" | "fucheers"): string {
+  return provider === "fucheers" ? "Fucheers API" : "Vibe API";
 }
 
 function createOpenAiUserContent(
@@ -835,22 +865,6 @@ async function createGeminiImageParts(
   return parts;
 }
 
-async function requestJson<T>(
-  path: string,
-  body: Record<string, unknown>,
-  apiKey?: string,
-  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
-): Promise<T> {
-  return requestJsonWithBaseUrl<T>(
-    VIBE_BASE_URL,
-    path,
-    body,
-    apiKey,
-    createHeaders,
-    timeoutMs,
-  );
-}
-
 async function requestJsonWithBaseUrl<T>(
   baseUrl: string,
   path: string,
@@ -977,21 +991,6 @@ async function requestStreamWithBaseUrl(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-async function requestForm<T>(
-  path: string,
-  formData: FormData,
-  apiKey?: string,
-  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
-): Promise<T> {
-  return requestFormWithBaseUrl<T>(
-    VIBE_BASE_URL,
-    path,
-    formData,
-    apiKey,
-    timeoutMs,
-  );
 }
 
 async function requestFormWithBaseUrl<T>(
@@ -1668,10 +1667,10 @@ export async function generateTextStream(
       ? getConfiguredComflyTextBaseUrl()
       : textProvider === "zhenzhen"
         ? getConfiguredZhenzhenTextBaseUrl()
-        : VIBE_BASE_URL;
+        : getVibeCompatibleBaseUrl(textProvider);
   const providerLabel = isComflyCompatibleProvider(textProvider)
     ? getComflyCompatibleProviderLabel(textProvider)
-    : "Vibe API";
+    : getVibeCompatibleProviderLabel(textProvider);
   const path = isClaude ? "/messages" : "/chat/completions";
   const body = isClaude
     ? {
@@ -1876,10 +1875,10 @@ export async function generateText(
       ? getConfiguredComflyTextBaseUrl()
       : textProvider === "zhenzhen"
         ? getConfiguredZhenzhenTextBaseUrl()
-        : VIBE_BASE_URL;
+        : getVibeCompatibleBaseUrl(textProvider);
   const providerLabel = isComflyCompatibleProvider(textProvider)
     ? getComflyCompatibleProviderLabel(textProvider)
-    : "Vibe API";
+    : getVibeCompatibleProviderLabel(textProvider);
 
   if (isClaudeModel(requestedModel)) {
     const json = await requestJsonWithBaseUrl<ClaudeMessageResponse>(
@@ -1967,6 +1966,12 @@ async function generateImageOpenAI(
   const quality = params.quality;
   const outputFormat = params.outputFormat ?? "png";
   const moderation = params.moderation ?? "auto";
+  const imageProvider = resolveApiProvider(params.provider ?? IMAGE_API_PROVIDER);
+  const vibeCompatibleProvider = isVibeCompatibleProvider(imageProvider)
+    ? imageProvider
+    : "vibe";
+  const baseUrl = getVibeCompatibleBaseUrl(vibeCompatibleProvider);
+  const providerLabel = getVibeCompatibleProviderLabel(vibeCompatibleProvider);
   let json: VibeImageResponse;
 
   if (params.images?.length) {
@@ -2002,11 +2007,13 @@ async function generateImageOpenAI(
       );
     });
 
-    json = await requestForm<VibeImageResponse>(
+    json = await requestFormWithBaseUrl<VibeImageResponse>(
+      baseUrl,
       "/images/edits",
       formData,
       params.apiKey,
       IMAGE_REQUEST_TIMEOUT_MS,
+      providerLabel,
     );
   } else {
     const requestBody: {
@@ -2030,11 +2037,14 @@ async function generateImageOpenAI(
       requestBody.n = params.n;
     }
 
-    json = await requestJson<VibeImageResponse>(
+    json = await requestJsonWithBaseUrl<VibeImageResponse>(
+      baseUrl,
       "/images/generations",
       requestBody,
       params.apiKey,
+      createHeaders,
       IMAGE_REQUEST_TIMEOUT_MS,
+      providerLabel,
     );
   }
 
@@ -2058,7 +2068,7 @@ async function generateImageOpenAI(
       .filter((image): image is GenerateImageResultItem => Boolean(image)) ?? [];
 
   if (!images.length) {
-    throw new VibeApiError(502, "Vibe API returned no image data", json);
+    throw new VibeApiError(502, `${providerLabel} returned no image data`, json);
   }
 
   return {
@@ -2390,10 +2400,16 @@ async function generateImageGemini(
 ): Promise<GenerateImageResult> {
   const model = params.model ?? DEFAULT_IMAGE_MODEL;
   const size = params.size ?? DEFAULT_IMAGE_SIZE;
+  const imageProvider = resolveApiProvider(params.provider ?? IMAGE_API_PROVIDER);
+  const vibeCompatibleProvider = isVibeCompatibleProvider(imageProvider)
+    ? imageProvider
+    : "vibe";
+  const baseUrl = getVibeCompatibleGeminiBaseUrl(vibeCompatibleProvider);
+  const providerLabel = getVibeCompatibleProviderLabel(vibeCompatibleProvider);
   const imageParts = await createGeminiImageParts(params.images);
 
   const json = await requestJsonWithBaseUrl<VibeGeminiImageResponse>(
-    VIBE_GEMINI_BASE_URL,
+    baseUrl,
     `/v1beta/models/${model}:generateContent`,
     {
       contents: [
@@ -2412,6 +2428,7 @@ async function generateImageGemini(
     params.apiKey,
     createHeaders,
     IMAGE_REQUEST_TIMEOUT_MS,
+    providerLabel,
   );
 
   const imagePart = json.candidates?.[0]?.content?.parts?.find(
@@ -2420,7 +2437,7 @@ async function generateImageGemini(
   const inlineData = imagePart?.inlineData;
 
   if (!inlineData?.data) {
-    throw new VibeApiError(502, "Vibe API returned no image data", json);
+    throw new VibeApiError(502, `${providerLabel} returned no image data`, json);
   }
 
   const mimeType = inlineData.mimeType ?? "image/png";

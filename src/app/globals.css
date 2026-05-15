@@ -123,38 +123,39 @@ body {
 .canvas-minimap-panel {
   margin: 0 0 68px 14px;
   transform: translateY(-50px);
+}
+
+.canvas-minimap-frame {
   overflow: hidden;
   border-radius: 10px;
   background: #19191b !important;
   box-shadow: none;
   backdrop-filter: none;
+  cursor: grab;
+  touch-action: none;
 }
 
-.canvas-minimap-panel.react-flow__minimap,
-.canvas-minimap-panel.react-flow__minimap svg {
+.canvas-minimap-frame:active {
+  cursor: grabbing;
+}
+
+.canvas-minimap-svg {
+  display: block;
   background: #19191b !important;
 }
 
-.react-flow__minimap-mask {
-  fill: #19191b;
-  stroke: transparent;
-}
-
-.react-flow__minimap-node {
+.canvas-minimap-node {
   fill: rgba(118, 126, 145, 0.46);
   stroke: rgba(255, 255, 255, 0.08);
   stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
-.react-flow__minimap .react-flow__minimap-node {
-  rx: 3px;
-  ry: 3px;
-}
-
-.react-flow__minimap-svg {
-  display: block;
-  border-radius: 10px;
-  background: #19191b !important;
+.canvas-minimap-viewport {
+  fill: rgba(255, 255, 255, 0.02);
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 .canvas-zoom-panel {
@@ -162,6 +163,42 @@ body {
   align-items: center;
   gap: 6px;
   margin: 0 0 12px 14px;
+}
+
+.canvas-corner-action-panel {
+  margin: 0 18px 18px 0;
+}
+
+.canvas-corner-action-button {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border: 0;
+  border-radius: 999px;
+  background-color: transparent;
+  background-image: url("/canvas-corner-button.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  cursor: pointer;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.42));
+  transition:
+    filter 140ms ease,
+    transform 140ms ease;
+}
+
+.canvas-corner-action-button:hover,
+.canvas-corner-action-button:focus-visible {
+  background-image: url("/canvas-corner-button-hover.png");
+  filter:
+    drop-shadow(0 0 12px rgba(255, 255, 255, 0.18))
+    drop-shadow(0 14px 28px rgba(0, 0, 0, 0.46));
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.canvas-corner-action-button:active {
+  transform: scale(0.96);
 }
 
 .canvas-zoom-shell {

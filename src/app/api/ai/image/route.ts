@@ -133,7 +133,12 @@ function normalizeImageGenerationNodeData(
 }
 
 function parseProvider(value: unknown): ImageApiProvider | undefined {
-  if (value === "vibe" || value === "comfly" || value === "zhenzhen") {
+  if (
+    value === "vibe" ||
+    value === "fucheers" ||
+    value === "comfly" ||
+    value === "zhenzhen"
+  ) {
     return value;
   }
 
@@ -920,6 +925,14 @@ export async function POST(request: Request) {
           : null,
       },
     });
+
+    if (process.env.NODE_ENV !== "production") {
+      console.info(
+        `[GenLink image] job=${jobId} provider=${provider ?? "default"} branch=${
+          provider === "comfly" || provider === "zhenzhen" ? "comfly-compatible" : "vibe-compatible"
+        }`,
+      );
+    }
 
     if (provider === "comfly" || provider === "zhenzhen") {
       void runComflyImageJob(jobId, jobParams);

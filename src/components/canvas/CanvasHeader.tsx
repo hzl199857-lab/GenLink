@@ -4,7 +4,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
-import logoImage from '../../../logo.png';
+
+const HEADER_LOGO_SRC = '/project-library-logo.png';
+const HEADER_WORDMARK_SRC = '/genlink-wordmark.png';
 
 export interface CanvasHeaderProps {
   projectName: string;
@@ -63,21 +65,29 @@ export function CanvasHeader({
   return (
     <div
       data-canvas-menu-ignore="true"
-      className="fixed left-5 top-5 z-50 flex max-w-[min(360px,calc(100vw-40px))] items-center gap-2.5"
+      className="fixed left-5 top-5 z-50 flex max-w-[min(460px,calc(100vw-40px))] items-center gap-0.5"
     >
       <div className="group/header-menu relative flex shrink-0 items-center">
         <button
           type="button"
-          aria-label="Logo"
-          className="flex h-9 w-9 items-center justify-center rounded-[9px] transition hover:bg-white/8 focus-visible:bg-white/8 focus-visible:outline-none"
+          aria-label="打开项目菜单"
+          className="flex h-9 items-center gap-2 rounded-[10px] px-2 pr-2.5 transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
         >
           <Image
-            src={logoImage}
-            alt="Logo"
-            width={32}
-            height={32}
+            src={HEADER_LOGO_SRC}
+            alt=""
+            width={1090}
+            height={980}
             priority
-            className="h-8 w-8 rounded-[8px] object-cover"
+            className="h-[16px] w-[18px] object-contain"
+          />
+          <Image
+            src={HEADER_WORDMARK_SRC}
+            alt="GenLink"
+            width={2266}
+            height={336}
+            priority
+            className="h-auto w-[59px] object-contain"
           />
         </button>
         <div className="pointer-events-none absolute left-0 top-full z-[80] pt-2 opacity-0 transition duration-150 group-hover/header-menu:pointer-events-auto group-hover/header-menu:opacity-100 group-focus-within/header-menu:pointer-events-auto group-focus-within/header-menu:opacity-100">
@@ -111,6 +121,8 @@ export function CanvasHeader({
         </div>
       </div>
 
+      <div className="ml-4 mr-2 h-4 w-px shrink-0 bg-white/30" aria-hidden="true" />
+
       {editing ? (
         <input
           ref={inputRef}
@@ -130,14 +142,14 @@ export function CanvasHeader({
               cancelProjectNameEdit();
             }
           }}
-          className="h-7 min-w-0 max-w-[300px] rounded-[7px] border border-white/16 bg-[#18191c] px-2 text-[15px] font-medium leading-5 text-white outline-none transition focus:border-white/32"
+          className="h-7 min-w-0 max-w-[300px] rounded-[7px] border border-white/16 bg-[#18191c] px-2 text-[12px] font-medium leading-5 text-white outline-none transition focus:border-white/32"
           style={{ width: `${Math.max(draft.length + 2, 10)}ch` }}
         />
       ) : (
         <div className="group/tooltip relative min-w-0">
           <button
             type="button"
-            className="block max-w-[300px] truncate rounded-[7px] px-1.5 py-1 text-left text-[15px] font-medium leading-5 text-white transition hover:bg-white/8 focus-visible:bg-white/8 focus-visible:outline-none"
+            className="block max-w-[300px] truncate rounded-[7px] px-1.5 py-1 text-left text-[12px] font-medium leading-5 text-white transition hover:bg-white/8 focus-visible:bg-white/8 focus-visible:outline-none"
             title={displayProjectName}
             onClick={() => {
               setDraft(displayProjectName);

@@ -22,7 +22,12 @@ interface TextRequestBody {
 }
 
 function parseProvider(value: unknown): ImageApiProvider | undefined {
-  if (value === "vibe" || value === "comfly" || value === "zhenzhen") {
+  if (
+    value === "vibe" ||
+    value === "fucheers" ||
+    value === "comfly" ||
+    value === "zhenzhen"
+  ) {
     return value;
   }
 

@@ -14,6 +14,7 @@ export interface ApiSettingsPanelProps {
   open: boolean;
   initialSettings: StoredApiSettings;
   onClose?: () => void;
+  onApply?: (values: StoredApiSettings) => void;
   onSave?: (values: StoredApiSettings) => void;
 }
 
@@ -47,6 +48,12 @@ const PROVIDERS: Array<{
     apiKeyLabel: 'VibeAPI Key',
   },
   {
+    key: 'fucheers',
+    label: 'Fucheers API',
+    url: 'https://www.fucheers.top',
+    apiKeyLabel: 'Fucheers API Key',
+  },
+  {
     key: 'zhenzhen',
     label: '真真 AI 工坊',
     url: 'https://ai.t8star.cn',
@@ -55,31 +62,65 @@ const PROVIDERS: Array<{
 ];
 
 function createDraftFromSettings(settings: StoredApiSettings) {
+  const emptyApiKeys: Record<ApiProvider, string> = {
+    vibe: '',
+    fucheers: '',
+    comfly: '',
+    zhenzhen: '',
+  };
+
   return {
     text: {
       selectedProvider: settings.textProvider,
       expandedProvider: null,
-      apiKeys: { ...settings.textApiKeys },
+      apiKeys: { ...emptyApiKeys, ...settings.textApiKeys },
     },
     image: {
       selectedProvider: settings.imageProvider,
       expandedProvider: null,
-      apiKeys: { ...settings.imageApiKeys },
+      apiKeys: { ...emptyApiKeys, ...settings.imageApiKeys },
     },
   } satisfies Record<ApiModelKind, ProviderDraft>;
+}
+
+function createSettingsFromDrafts(
+  drafts: Record<ApiModelKind, ProviderDraft>,
+): StoredApiSettings {
+  const textProvider = drafts.text.expandedProvider ?? drafts.text.selectedProvider;
+  const imageProvider = drafts.image.expandedProvider ?? drafts.image.selectedProvider;
+
+  return {
+    textProvider,
+    imageProvider,
+    textApiKeys: {
+      vibe: (drafts.text.apiKeys.vibe ?? '').trim(),
+      fucheers: (drafts.text.apiKeys.fucheers ?? '').trim(),
+      comfly: (drafts.text.apiKeys.comfly ?? '').trim(),
+      zhenzhen: (drafts.text.apiKeys.zhenzhen ?? '').trim(),
+    },
+    imageApiKeys: {
+      vibe: (drafts.image.apiKeys.vibe ?? '').trim(),
+      fucheers: (drafts.image.apiKeys.fucheers ?? '').trim(),
+      comfly: (drafts.image.apiKeys.comfly ?? '').trim(),
+      zhenzhen: (drafts.image.apiKeys.zhenzhen ?? '').trim(),
+    },
+  };
 }
 
 export function ApiSettingsPanel({
   open,
   initialSettings,
   onClose,
+  onApply,
   onSave,
 }: ApiSettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<ApiModelKind>('text');
-  const [drafts, setDrafts] = useState(() => createDraftFromSettings(initialSettings));
+  const [drafts, setDrafts] = useState<Record<ApiModelKind, ProviderDraft>>(() =>
+    createDraftFromSettings(initialSettings),
+  );
   const [revealed, setRevealed] = useState<Record<ApiModelKind, Record<ApiProvider, boolean>>>({
-    text: { vibe: false, comfly: false, zhenzhen: false },
-    image: { vibe: false, comfly: false, zhenzhen: false },
+    text: { vibe: false, fucheers: false, comfly: false, zhenzhen: false },
+    image: { vibe: false, fucheers: false, comfly: false, zhenzhen: false },
   });
 
   if (!open) {
@@ -93,6 +134,7 @@ export function ApiSettingsPanel({
       ...current,
       [activeTab]: {
         ...current[activeTab],
+        selectedProvider: provider,
         expandedProvider: provider,
       },
     }));
@@ -141,14 +183,16 @@ export function ApiSettingsPanel({
       return;
     }
 
-    setDrafts((current) => ({
-      ...current,
+    const nextDrafts: Record<ApiModelKind, ProviderDraft> = {
+      ...drafts,
       [activeTab]: {
-        ...current[activeTab],
+        ...currentDraft,
         selectedProvider: expandedProvider,
         expandedProvider: null,
       },
-    }));
+    };
+
+    setDrafts(nextDrafts);
     setRevealed((current) => ({
       ...current,
       [activeTab]: {
@@ -156,23 +200,12 @@ export function ApiSettingsPanel({
         [expandedProvider]: false,
       },
     }));
+
+    onApply?.(createSettingsFromDrafts(nextDrafts));
   };
 
   const handleSave = () => {
-    onSave?.({
-      textProvider: drafts.text.selectedProvider,
-      imageProvider: drafts.image.selectedProvider,
-      textApiKeys: {
-        vibe: drafts.text.apiKeys.vibe.trim(),
-        comfly: drafts.text.apiKeys.comfly.trim(),
-        zhenzhen: drafts.text.apiKeys.zhenzhen.trim(),
-      },
-      imageApiKeys: {
-        vibe: drafts.image.apiKeys.vibe.trim(),
-        comfly: drafts.image.apiKeys.comfly.trim(),
-        zhenzhen: drafts.image.apiKeys.zhenzhen.trim(),
-      },
-    });
+    onSave?.(createSettingsFromDrafts(drafts));
   };
 
   return (
@@ -231,7 +264,7 @@ export function ApiSettingsPanel({
               const isExpanded = currentDraft.expandedProvider === provider.key;
               const isSelected = currentDraft.selectedProvider === provider.key;
               const isRevealed = revealed[activeTab][provider.key];
-              const apiKeyValue = currentDraft.apiKeys[provider.key];
+              const apiKeyValue = currentDraft.apiKeys[provider.key] ?? '';
 
               return (
                 <div

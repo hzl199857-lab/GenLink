@@ -575,14 +575,24 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
   return (
     <div className="min-h-screen bg-[#0f1012] text-white">
       <div className="px-6 pt-5">
-        <Image
-          src="/genlink-wordmark.png"
-          alt="GenLink"
-          width={2266}
-          height={336}
-          priority
-          className="h-auto w-[132px] object-contain"
-        />
+        <div className="flex items-center gap-2">
+          <Image
+            src="/project-library-logo.png"
+            alt=""
+            width={1090}
+            height={980}
+            priority
+            className="h-[24px] w-[27px] object-contain"
+          />
+          <Image
+            src="/genlink-wordmark.png"
+            alt="GenLink"
+            width={2266}
+            height={336}
+            priority
+            className="h-auto w-[88px] object-contain"
+          />
+        </div>
       </div>
 
       <div className="mx-auto max-w-[1360px] px-16 pb-14 pt-6">

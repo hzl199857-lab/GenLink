@@ -6,7 +6,6 @@ import { Expand, Map as MapIcon, X } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
-  MiniMap,
   Panel,
   useReactFlow,
   useViewport,
@@ -16,7 +15,6 @@ import ReactFlow, {
   Node as ReactFlowNode,
   Edge as ReactFlowEdge,
   NodeProps,
-  type MiniMapNodeProps,
   BackgroundVariant,
   Position,
   type OnConnectStartParams,
@@ -27,10 +25,12 @@ import 'reactflow/dist/style.css';
 import {
   CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY,
   CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY,
+  CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_API_PROVIDER_STORAGE_KEY,
   CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY,
   readStoredApiSettings,
@@ -472,7 +472,7 @@ function resolveUploadedImageCardDimensions(
 }
 
 function resolveMiniMapVisibleNodeRect(
-  node: ReactFlowNode,
+  node: CanvasNode | ReactFlowNode,
 ): { x: number; y: number; width: number; height: number; radius: number } {
   if (node.type === 'text') {
     return {
@@ -493,6 +493,16 @@ function resolveMiniMapVisibleNodeRect(
       y: node.position.y + stageHeight - dimensions.height,
       width: dimensions.width,
       height: dimensions.height,
+      radius: 18,
+    };
+  }
+
+  if (node.type === 'ai_text_result') {
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: 420,
+      height: 300,
       radius: 18,
     };
   }
@@ -522,9 +532,144 @@ function resolveMiniMapVisibleNodeRect(
   return {
     x: node.position.x,
     y: node.position.y,
-    width: node.width ?? 0,
-    height: node.height ?? 0,
+    width: 'width' in node ? node.width ?? 360 : 360,
+    height: 'height' in node ? node.height ?? 260 : 260,
     radius: 18,
+  };
+}
+
+type CanvasMiniMapRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius: number;
+};
+
+type CanvasMiniMapBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+type CanvasMiniMapLayout = {
+  bounds: CanvasMiniMapBounds;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  nodes: Array<CanvasMiniMapRect & { id: string }>;
+  viewport: CanvasMiniMapRect;
+};
+
+function getCanvasMiniMapBounds(rects: CanvasMiniMapRect[]): CanvasMiniMapBounds | null {
+  if (!rects.length) {
+    return null;
+  }
+
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const rect of rects) {
+    left = Math.min(left, rect.x);
+    top = Math.min(top, rect.y);
+    right = Math.max(right, rect.x + rect.width);
+    bottom = Math.max(bottom, rect.y + rect.height);
+  }
+
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
+    return null;
+  }
+
+  const width = Math.max(1, right - left);
+  const height = Math.max(1, bottom - top);
+
+  return { left, top, right, bottom, width, height };
+}
+
+function clampMiniMapRectToFrame(rect: CanvasMiniMapRect): CanvasMiniMapRect {
+  const left = Math.max(0, Math.min(CANVAS_MINIMAP_WIDTH, rect.x));
+  const top = Math.max(0, Math.min(CANVAS_MINIMAP_HEIGHT, rect.y));
+  const right = Math.max(0, Math.min(CANVAS_MINIMAP_WIDTH, rect.x + rect.width));
+  const bottom = Math.max(0, Math.min(CANVAS_MINIMAP_HEIGHT, rect.y + rect.height));
+
+  return {
+    x: left,
+    y: top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+    radius: rect.radius,
+  };
+}
+
+function getCanvasMiniMapLayout(
+  nodes: CanvasNode[],
+  viewport: { x: number; y: number; zoom: number },
+  flowSize: { width: number; height: number },
+): CanvasMiniMapLayout | null {
+  const nodeRects = nodes.map((node) => ({
+    id: node.id,
+    ...resolveMiniMapVisibleNodeRect(node),
+  }));
+  const contentBounds = getCanvasMiniMapBounds(nodeRects);
+
+  if (!contentBounds) {
+    return null;
+  }
+
+  const zoom = viewport.zoom || 1;
+  const viewportWorldRect = {
+    x: -viewport.x / zoom,
+    y: -viewport.y / zoom,
+    width: flowSize.width / zoom,
+    height: flowSize.height / zoom,
+    radius: 0,
+  };
+  const viewportBounds = getCanvasMiniMapBounds([viewportWorldRect]);
+  const bounds = getCanvasMiniMapBounds([
+    {
+      x: contentBounds.left,
+      y: contentBounds.top,
+      width: contentBounds.width,
+      height: contentBounds.height,
+      radius: 0,
+    },
+    ...(viewportBounds ? [viewportWorldRect] : []),
+  ]);
+
+  if (!bounds) {
+    return null;
+  }
+
+  const drawableWidth = CANVAS_MINIMAP_WIDTH - CANVAS_MINIMAP_PADDING * 2;
+  const drawableHeight = CANVAS_MINIMAP_HEIGHT - CANVAS_MINIMAP_PADDING * 2;
+  const scale = Math.min(drawableWidth / bounds.width, drawableHeight / bounds.height);
+  const contentWidth = bounds.width * scale;
+  const contentHeight = bounds.height * scale;
+  const offsetX = (CANVAS_MINIMAP_WIDTH - contentWidth) / 2;
+  const offsetY = (CANVAS_MINIMAP_HEIGHT - contentHeight) / 2;
+  const toMiniMapRect = (rect: CanvasMiniMapRect): CanvasMiniMapRect => ({
+    x: offsetX + (rect.x - bounds.left) * scale,
+    y: offsetY + (rect.y - bounds.top) * scale,
+    width: Math.max(1, rect.width * scale),
+    height: Math.max(1, rect.height * scale),
+    radius: Math.min(3, Math.max(1, rect.radius * scale)),
+  });
+
+  return {
+    bounds,
+    scale,
+    offsetX,
+    offsetY,
+    nodes: nodeRects.map((rect) => ({
+      id: rect.id,
+      ...toMiniMapRect(rect),
+    })),
+    viewport: clampMiniMapRectToFrame(toMiniMapRect(viewportWorldRect)),
   };
 }
 
@@ -884,6 +1029,9 @@ const IMAGE_GENERATION_CARD_ACCESSORY_GAP = 12;
 const UPLOADED_IMAGE_MAX_CARD_WIDTH = 420;
 const UPLOADED_IMAGE_MAX_CARD_HEIGHT = 540;
 const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
+const CANVAS_MINIMAP_WIDTH = 200;
+const CANVAS_MINIMAP_HEIGHT = 150;
+const CANVAS_MINIMAP_PADDING = 14;
 const HISTORY_NODE_WIDTH = 540;
 const HISTORY_NODE_HEIGHT = 740;
 const HISTORY_NODE_GAP = 72;
@@ -1286,60 +1434,111 @@ function openFileInput(input: HTMLInputElement) {
   input.click();
 }
 
-const CanvasMiniMapNode = memo(function CanvasMiniMapNode({
-  id,
-  x,
-  y,
-  color,
-  strokeColor,
-  strokeWidth,
-  className,
-  shapeRendering,
-  selected,
-  onClick,
-}: MiniMapNodeProps) {
-  const node = useStore(
-    useCallback((state) => state.nodeInternals.get(id), [id]),
+const CanvasMiniMap = memo(function CanvasMiniMap({ nodes }: { nodes: CanvasNode[] }) {
+  const viewport = useViewport();
+  const { setViewport } = useReactFlow();
+  const flowSize = useStore(
+    useCallback((state) => ({
+      width: state.width,
+      height: state.height,
+    }), []),
+  );
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const layout = useMemo(
+    () => getCanvasMiniMapLayout(nodes, viewport, flowSize),
+    [flowSize, nodes, viewport],
   );
 
-  if (!node || id === CONNECTION_MENU_ANCHOR_NODE_ID) {
-    return <g />;
+  const focusMiniMapPoint = useCallback((clientX: number, clientY: number) => {
+    if (!layout || !panelRef.current) {
+      return;
+    }
+
+    const bounds = panelRef.current.getBoundingClientRect();
+    const miniMapX = Math.max(0, Math.min(CANVAS_MINIMAP_WIDTH, clientX - bounds.left));
+    const miniMapY = Math.max(0, Math.min(CANVAS_MINIMAP_HEIGHT, clientY - bounds.top));
+    const canvasX = layout.bounds.left + (miniMapX - layout.offsetX) / layout.scale;
+    const canvasY = layout.bounds.top + (miniMapY - layout.offsetY) / layout.scale;
+
+    void setViewport({
+      x: flowSize.width / 2 - canvasX * viewport.zoom,
+      y: flowSize.height / 2 - canvasY * viewport.zoom,
+      zoom: viewport.zoom,
+    }, { duration: 120 });
+  }, [flowSize.height, flowSize.width, layout, setViewport, viewport.zoom]);
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    focusMiniMapPoint(event.clientX, event.clientY);
+  }, [focusMiniMapPoint]);
+
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      return;
+    }
+
+    focusMiniMapPoint(event.clientX, event.clientY);
+  }, [focusMiniMapPoint]);
+
+  if (!layout) {
+    return null;
   }
 
-  const rect = resolveMiniMapVisibleNodeRect(node as ReactFlowNode);
-  const baseX = node.positionAbsolute?.x ?? node.position.x;
-  const baseY = node.positionAbsolute?.y ?? node.position.y;
-  const rectX = x + rect.x - baseX;
-  const rectY = y + rect.y - baseY;
-
   return (
-    <rect
-      className={[
-        'react-flow__minimap-node',
-        selected ? 'selected' : '',
-        className,
-      ].filter(Boolean).join(' ')}
-      x={rectX}
-      y={rectY}
-      rx={rect.radius}
-      ry={rect.radius}
-      width={rect.width}
-      height={rect.height}
-      fill={color}
-      stroke={selected ? 'rgba(255,255,255,0.28)' : strokeColor}
-      strokeWidth={selected ? Math.max(2, strokeWidth) : strokeWidth}
-      shapeRendering={shapeRendering}
-      onClick={onClick ? (event) => onClick(event, id) : undefined}
-    />
+    <Panel position="bottom-left" className="canvas-minimap-panel">
+      <div
+        ref={panelRef}
+        className="canvas-minimap-frame"
+        style={{
+          width: CANVAS_MINIMAP_WIDTH,
+          height: CANVAS_MINIMAP_HEIGHT,
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+      >
+        <svg
+          className="canvas-minimap-svg"
+          width={CANVAS_MINIMAP_WIDTH}
+          height={CANVAS_MINIMAP_HEIGHT}
+          viewBox={`0 0 ${CANVAS_MINIMAP_WIDTH} ${CANVAS_MINIMAP_HEIGHT}`}
+          aria-hidden="true"
+        >
+          {layout.nodes.map((node) => (
+            <rect
+              key={node.id}
+              className="canvas-minimap-node"
+              x={node.x}
+              y={node.y}
+              width={node.width}
+              height={node.height}
+              rx={node.radius}
+              ry={node.radius}
+            />
+          ))}
+          <rect
+            className="canvas-minimap-viewport"
+            x={layout.viewport.x}
+            y={layout.viewport.y}
+            width={layout.viewport.width}
+            height={layout.viewport.height}
+            rx={2}
+            ry={2}
+          />
+        </svg>
+      </div>
+    </Panel>
   );
 });
 
 function CanvasViewportControls({
   edgeStyle,
   onToggleEdgeStyle,
+  nodes,
 }: {
   edgeStyle: CanvasEdgeStyle;
   onToggleEdgeStyle: () => void;
+  nodes: CanvasNode[];
 }) {
   const { zoom } = useViewport();
   const { zoomTo, fitView } = useReactFlow();
@@ -1355,26 +1554,7 @@ function CanvasViewportControls({
 
   return (
     <>
-      {isMiniMapVisible ? (
-        <MiniMap
-          position="bottom-left"
-          className="canvas-minimap-panel"
-          style={{
-            width: 200,
-            height: 150,
-            background: '#19191b',
-          }}
-          maskColor="#19191b"
-          maskStrokeColor="transparent"
-          maskStrokeWidth={0}
-          nodeColor={() => 'rgba(118,126,145,0.46)'}
-          nodeStrokeColor={() => 'rgba(255,255,255,0.08)'}
-          nodeBorderRadius={3}
-          nodeComponent={CanvasMiniMapNode}
-          pannable
-          zoomable
-        />
-      ) : null}
+      {isMiniMapVisible ? <CanvasMiniMap nodes={nodes} /> : null}
 
       <Panel position="bottom-left" className="canvas-zoom-panel">
         <div className="group/tooltip relative">
@@ -1467,6 +1647,27 @@ function CanvasViewportControls({
 
       </Panel>
     </>
+  );
+}
+
+function CanvasCornerActionButton() {
+  const stopCanvasInteraction = (event: React.SyntheticEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+  };
+
+  return (
+    <Panel position="bottom-right" className="canvas-corner-action-panel">
+      <div className="group/tooltip relative">
+        <button
+          type="button"
+          aria-label="Canvas action"
+          className="canvas-corner-action-button"
+          onPointerDown={stopCanvasInteraction}
+          onClick={stopCanvasInteraction}
+        />
+        <Tooltip label="Canvas action" side="top" />
+      </div>
+    </Panel>
   );
 }
 
@@ -2724,18 +2925,24 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     connectionMenu,
   ]);
 
-  const handleSaveApiSettings = useCallback((values: StoredApiSettings) => {
+  const persistApiSettings = useCallback((values: StoredApiSettings) => {
     window.localStorage.setItem(CANVAS_TEXT_API_PROVIDER_STORAGE_KEY, values.textProvider);
     window.localStorage.setItem(CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY, values.imageProvider);
     window.localStorage.setItem(CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY, values.textApiKeys.vibe);
+    window.localStorage.setItem(CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY, values.textApiKeys.fucheers);
     window.localStorage.setItem(CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY, values.textApiKeys.comfly);
     window.localStorage.setItem(CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY, values.textApiKeys.zhenzhen);
     window.localStorage.setItem(CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY, values.imageApiKeys.vibe);
+    window.localStorage.setItem(CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY, values.imageApiKeys.fucheers);
     window.localStorage.setItem(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY, values.imageApiKeys.comfly);
     window.localStorage.setItem(CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen);
     setApiSettings(values);
-    setApiSettingsOpen(false);
   }, []);
+
+  const handleSaveApiSettings = useCallback((values: StoredApiSettings) => {
+    persistApiSettings(values);
+    setApiSettingsOpen(false);
+  }, [persistApiSettings]);
 
   const handleSaveProject = useCallback(async () => {
     await saveProject();
@@ -2919,7 +3126,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         <CanvasViewportControls
           edgeStyle={edgeStyle}
           onToggleEdgeStyle={handleToggleEdgeStyle}
+          nodes={storeNodes}
         />
+        <CanvasCornerActionButton />
       </ReactFlow>
 
       {activeSelectedEdgeId && edgeDeleteButtonPosition ? (
@@ -2998,6 +3207,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         open={apiSettingsOpen}
         initialSettings={apiSettings}
         onClose={() => setApiSettingsOpen(false)}
+        onApply={persistApiSettings}
         onSave={handleSaveApiSettings}
       />
       <CreateProjectDialog

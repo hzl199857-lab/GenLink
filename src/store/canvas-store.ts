@@ -95,7 +95,7 @@ function resolveParallelCount(value?: number): 1 | 2 | 4 {
   return value === 2 || value === 4 ? value : 1;
 }
 
-export type ApiProvider = "vibe" | "comfly" | "zhenzhen";
+export type ApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen";
 export type ApiModelKind = "text" | "image";
 
 export type StoredApiSettings = {
@@ -108,6 +108,7 @@ export type StoredApiSettings = {
 const DEFAULT_API_PROVIDER: ApiProvider = "vibe";
 const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   vibe: "VibeAPI",
+  fucheers: "Fucheers API",
   comfly: "Comfly",
   zhenzhen: "贞贞的AI工坊",
 };
@@ -115,9 +116,11 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
 export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
 export const CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY = "genlink.imageApiProvider";
 export const CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
+export const CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersTextApiKey";
 export const CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyTextApiKey";
 export const CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenTextApiKey";
 export const CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
+export const CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersImageApiKey";
 export const CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyImageApiKey";
 export const CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenImageApiKey";
 
@@ -133,6 +136,8 @@ export function normalizeApiProvider(value?: string): ApiProvider {
   switch (value?.trim().toLowerCase()) {
     case "comfly":
       return "comfly";
+    case "fucheers":
+      return "fucheers";
     case "zhenzhen":
       return "zhenzhen";
     default:
@@ -155,6 +160,8 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
     switch (provider) {
       case "comfly":
         return CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY;
+      case "fucheers":
+        return CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY;
       case "zhenzhen":
         return CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY;
       default:
@@ -165,6 +172,8 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
   switch (provider) {
     case "comfly":
       return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+    case "fucheers":
+      return CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY;
     case "zhenzhen":
       return CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY;
     default:
@@ -189,11 +198,13 @@ export function readStoredApiSettings(): StoredApiSettings {
     imageProvider: readStoredSelectedApiProvider("image"),
     textApiKeys: {
       vibe: readStoredApiKey("text", "vibe"),
+      fucheers: readStoredApiKey("text", "fucheers"),
       comfly: readStoredApiKey("text", "comfly"),
       zhenzhen: readStoredApiKey("text", "zhenzhen"),
     },
     imageApiKeys: {
       vibe: readStoredApiKey("image", "vibe"),
+      fucheers: readStoredApiKey("image", "fucheers"),
       comfly: readStoredApiKey("image", "comfly"),
       zhenzhen: readStoredApiKey("image", "zhenzhen"),
     },
