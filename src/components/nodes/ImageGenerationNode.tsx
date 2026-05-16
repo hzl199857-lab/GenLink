@@ -351,7 +351,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         }}
       >
         <div
-          className="absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
+          className="node-visible-title absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
           style={{
             left: `${cardLeftOffset}px`,
             top: `${Math.max(0, cardTopOffset - CARD_ACCESSORY_GAP - 26)}px`,

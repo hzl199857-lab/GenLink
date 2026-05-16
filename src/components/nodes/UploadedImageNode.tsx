@@ -11,6 +11,7 @@ import { EditableNodeTitle } from './EditableNodeTitle';
 export interface UploadedImageNodeProps {
   data: UploadedImageNodeData;
   selected?: boolean;
+  accessoriesVisible?: boolean;
   onReplace?: (file: File) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onSelectNode?: () => void;
@@ -24,6 +25,7 @@ const MIN_CARD_WIDTH = 300;
 export function UploadedImageNode({
   data,
   selected = false,
+  accessoriesVisible = selected,
   onReplace,
   onTitleChange,
   onSelectNode,
@@ -50,7 +52,7 @@ export function UploadedImageNode({
   const estimatedCardHeight = hasExplicitDisplaySize
     ? explicitDisplayHeight
     : cardWidth * (imageHeight / imageWidth);
-  const showAccessories = selected;
+  const showAccessories = accessoriesVisible;
   const useTightReplaceButton = cardWidth < 310 || estimatedCardHeight < 140;
   const useCompactReplaceButton = cardWidth < 340 || estimatedCardHeight < 180;
   const replaceButtonClassName = useTightReplaceButton
@@ -72,7 +74,7 @@ export function UploadedImageNode({
 
   return (
     <div className="relative group node-connectable-root" style={{ width: cardWidth }}>
-      <div className="-mt-2 mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
+      <div className="node-visible-title -mt-2 mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
         <ImageIcon size={24} />
         <EditableNodeTitle
           value={data.title}
@@ -121,6 +123,7 @@ export function UploadedImageNode({
           }}
           className={[
             'nodrag nopan absolute z-10 flex items-center justify-center bg-black/65 font-semibold text-white opacity-0 shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition-opacity group-hover:opacity-100',
+            showAccessories ? '' : 'pointer-events-none group-hover:opacity-0',
             replaceButtonClassName,
             replaceButtonGapClassName,
           ].join(' ')}

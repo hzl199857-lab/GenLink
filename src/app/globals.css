@@ -49,6 +49,23 @@ body {
   border-radius: 18px;
 }
 
+.react-flow__nodesselection,
+.react-flow__nodesselection-rect {
+  display: none;
+}
+
+.react-flow:not(.gl-pane-selection-dragging) .react-flow__selection {
+  opacity: 0 !important;
+}
+
+.react-flow .react-flow__selection,
+.gl-multi-node-selection-frame {
+  border: 1px dashed rgba(255, 255, 255, 0.92) !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  box-shadow: none !important;
+}
+
 .react-flow__edge-path {
   stroke: rgba(190, 205, 225, 0.3);
   stroke-width: 1.4;
