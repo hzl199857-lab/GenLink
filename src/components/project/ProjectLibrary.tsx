@@ -61,10 +61,10 @@ function ProjectMenu({
   }
 
   return (
-    <div className="absolute right-0 top-8 z-20 w-[132px] rounded-[12px] border border-white/10 bg-[#2a2b2e] p-2 text-[12px] text-white shadow-[0_14px_36px_rgba(0,0,0,0.42)]">
+    <div className="absolute right-0 top-8 z-20 w-[164px] overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] p-2 text-[13px] text-white shadow-[0_10px_40px_rgba(0,0,0,0.8)]">
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-white/84 transition hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none"
+        className="flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left text-[#aaaaaa] transition-colors hover:bg-[#ccff00] hover:text-[#101500] focus-visible:bg-[#ccff00] focus-visible:text-[#101500] focus-visible:outline-none"
         onClick={onOpen}
       >
         <FolderOpen size={13} />
@@ -72,7 +72,7 @@ function ProjectMenu({
       </button>
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-white/84 transition hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none"
+        className="flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left text-[#aaaaaa] transition-colors hover:bg-[#ccff00] hover:text-[#101500] focus-visible:bg-[#ccff00] focus-visible:text-[#101500] focus-visible:outline-none"
         onClick={onRename}
       >
         <Pencil size={13} />
@@ -80,7 +80,7 @@ function ProjectMenu({
       </button>
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-white/84 transition hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:text-white focus-visible:outline-none"
+        className="flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left text-[#aaaaaa] transition-colors hover:bg-[#ccff00] hover:text-[#101500] focus-visible:bg-[#ccff00] focus-visible:text-[#101500] focus-visible:outline-none"
         onClick={onDuplicate}
       >
         <Copy size={13} />
@@ -88,7 +88,7 @@ function ProjectMenu({
       </button>
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-[#ffb0b0] transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+        className="flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left text-[#ff8f8f] transition-colors hover:bg-[#ccff00] hover:text-[#101500] focus-visible:bg-[#ccff00] focus-visible:text-[#101500] focus-visible:outline-none"
         onClick={onDelete}
       >
         <Trash2 size={13} />

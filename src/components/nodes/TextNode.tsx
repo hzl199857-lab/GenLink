@@ -202,7 +202,7 @@ export const TextNode = memo(function TextNode({
           }
         }}
       >
-        <div className="-mt-2 mb-1.5 ml-1 flex select-none items-center gap-1.5 text-gl-text-tertiary nodrag nopan">
+        <div className="node-visible-title -mt-2 mb-1.5 ml-1 flex select-none items-center gap-1.5 text-gl-text-tertiary nodrag nopan">
           <AlignLeft size={24} />
           <EditableNodeTitle
             value={data.title}

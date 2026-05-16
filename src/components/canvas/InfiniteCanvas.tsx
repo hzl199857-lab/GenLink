@@ -2,7 +2,16 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import NextImage from 'next/image';
-import { Expand, Map as MapIcon, X } from 'lucide-react';
+import {
+  ChevronDown,
+  Copy,
+  Expand,
+  FolderPlus,
+  Group,
+  Map as MapIcon,
+  Plus,
+  X,
+} from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
@@ -17,6 +26,8 @@ import ReactFlow, {
   NodeProps,
   BackgroundVariant,
   Position,
+  PanOnScrollMode,
+  SelectionMode,
   type OnConnectStartParams,
   useStore,
 } from 'reactflow';
@@ -564,6 +575,104 @@ type CanvasMiniMapLayout = {
   viewport: CanvasMiniMapRect;
 };
 
+type MultiNodeSelectionBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSelectionBounds {
+  if (node.type === 'text') {
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: TEXT_NODE_CARD_WIDTH,
+      height: TEXT_NODE_CARD_HEIGHT + 36,
+    };
+  }
+
+  if (node.type === 'image_generation') {
+    const dimensions = resolveImageGenerationCardDimensions(node.data as ImageGenerationNodeData);
+    const stageHeight =
+      IMAGE_GENERATION_MAX_CARD_EDGE +
+      IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
+      IMAGE_GENERATION_CARD_ACCESSORY_GAP;
+
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: Math.max(IMAGE_GENERATION_MAX_CARD_EDGE, dimensions.width),
+      height: stageHeight,
+    };
+  }
+
+  if (node.type === 'uploaded_image') {
+    const dimensions = resolveUploadedImageCardDimensions(node.data as UploadedImageNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: dimensions.width,
+      height: dimensions.height + 36,
+    };
+  }
+
+  if (node.type === 'image') {
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: IMAGE_NODE_CARD_WIDTH,
+      height: IMAGE_NODE_CARD_HEIGHT + 116,
+    };
+  }
+
+  if (node.type === 'ai_text_result') {
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: 420,
+      height: 300,
+    };
+  }
+
+  return {
+    x: node.position.x,
+    y: node.position.y,
+    width: 'width' in node ? node.width ?? 360 : 360,
+    height: 'height' in node ? node.height ?? 260 : 260,
+  };
+}
+
+function getBoundsForRects(rects: MultiNodeSelectionBounds[]): MultiNodeSelectionBounds | null {
+  if (rects.length === 0) {
+    return null;
+  }
+
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const rect of rects) {
+    left = Math.min(left, rect.x);
+    top = Math.min(top, rect.y);
+    right = Math.max(right, rect.x + rect.width);
+    bottom = Math.max(bottom, rect.y + rect.height);
+  }
+
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
+    return null;
+  }
+
+  return {
+    x: left,
+    y: top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  };
+}
+
 function getCanvasMiniMapBounds(rects: CanvasMiniMapRect[]): CanvasMiniMapBounds | null {
   if (!rects.length) {
     return null;
@@ -814,9 +923,10 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateText = useCanvasStore((s) => s.generateTextFromTextNode);
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForTextNode(id));
+  const renderData = data as CanvasNodeRenderData;
   const [editing, setEditing] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
-  const isActive = (selected || promptFocused) && !dragging;
+  const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
 
   useEffect(() => {
@@ -865,8 +975,9 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForImageGenerationNode(id),
   );
+  const renderData = data as CanvasNodeRenderData;
   const [promptFocused, setPromptFocused] = useState(false);
-  const isActive = (selected || promptFocused) && !dragging;
+  const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
 
   useEffect(() => {
@@ -909,6 +1020,8 @@ const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const addNode = useCanvasStore((s) => s.addNode);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
 
   const handleCopy = () => {
     addNode({
@@ -922,21 +1035,21 @@ const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data
   return (
     <div className="relative group node-connectable-root">
       <NodeFloatingToolbar
-        visible={!!selected}
+        visible={isActive}
         onCopy={handleCopy}
         onDelete={() => deleteNode(id)}
         onLink={() => console.log('Link clicked')}
         onShare={() => console.log('Share clicked')}
         onMore={() => console.log('More clicked')}
       />
-      <CardSideHandle type="target" position={Position.Left} visible={!!selected} />
+      <CardSideHandle type="target" position={Position.Left} visible={isActive} />
       <AITextResultNode
         id={id}
         data={data as AITextResultNodeData}
         selected={selected}
         onTitleChange={(nextTitle) => updateNodeData<'ai_text_result'>(id, { title: nextTitle })}
       />
-      <CardSideHandle type="source" position={Position.Right} visible={!!selected} />
+      <CardSideHandle type="source" position={Position.Right} visible={isActive} />
     </div>
   );
 });
@@ -945,6 +1058,8 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected, xP
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const addNode = useCanvasStore((s) => s.addNode);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
 
   const handleCopy = () => {
     addNode({
@@ -958,14 +1073,14 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected, xP
   return (
     <div className="relative group node-connectable-root">
       <NodeFloatingToolbar
-        visible={!!selected}
+        visible={isActive}
         onCopy={handleCopy}
         onDelete={() => deleteNode(id)}
         onLink={() => console.log('Link clicked')}
         onShare={() => console.log('Share clicked')}
         onMore={() => console.log('More clicked')}
       />
-      <CardSideHandle type="target" position={Position.Left} visible={!!selected} />
+      <CardSideHandle type="target" position={Position.Left} visible={isActive} />
       <ImageNode
         id={id}
         data={data as ImageNodeData}
@@ -975,13 +1090,15 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected, xP
         onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
         onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
       />
-      <CardSideHandle type="source" position={Position.Right} visible={!!selected} />
+      <CardSideHandle type="source" position={Position.Right} visible={isActive} />
     </div>
   );
 });
 
 const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
 
   const handleReplace = async (file: File) => {
     const next = await readImageFile(file);
@@ -992,6 +1109,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
     <UploadedImageNode
       data={data as UploadedImageNodeData}
       selected={selected}
+      accessoriesVisible={isActive}
       onReplace={handleReplace}
       onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
       onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
@@ -1032,6 +1150,8 @@ const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
 const CANVAS_MINIMAP_WIDTH = 200;
 const CANVAS_MINIMAP_HEIGHT = 150;
 const CANVAS_MINIMAP_PADDING = 14;
+const MULTI_NODE_SELECTION_PADDING = 14;
+const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
 const HISTORY_NODE_WIDTH = 540;
 const HISTORY_NODE_HEIGHT = 740;
 const HISTORY_NODE_GAP = 72;
@@ -1143,6 +1263,10 @@ function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
 
   return true;
 }
+
+type CanvasNodeRenderData = CanvasNode['data'] & {
+  canvasNodeActive?: boolean;
+};
 
 function getImageImportPosition(
   basePosition: { x: number; y: number },
@@ -1432,6 +1556,224 @@ function openFileInput(input: HTMLInputElement) {
   }
 
   input.click();
+}
+
+type MultiNodeSelectionOverlayProps = {
+  nodes: CanvasNode[];
+  selectedNodeIds: Set<string>;
+  visible: boolean;
+};
+
+function getNodeElementBoundsInFlowPane(nodeId: string): MultiNodeSelectionBounds | null {
+  const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
+  const wrapper = document.querySelector<HTMLElement>('.react-flow');
+
+  if (!element || !wrapper) {
+    return null;
+  }
+
+  const visibleElements = Array.from(
+    element.querySelectorAll<HTMLElement>(
+      '.node-visible-title, .node-connectable-card',
+    ),
+  ).filter((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+  const visibleRects = visibleElements.length > 0
+    ? visibleElements.map((item) => item.getBoundingClientRect())
+    : [element.getBoundingClientRect()];
+  const wrapperRect = wrapper.getBoundingClientRect();
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const rect of visibleRects) {
+    left = Math.min(left, rect.left);
+    top = Math.min(top, rect.top);
+    right = Math.max(right, rect.right);
+    bottom = Math.max(bottom, rect.bottom);
+  }
+
+  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
+    return null;
+  }
+
+  return {
+    x: left - wrapperRect.left,
+    y: top - wrapperRect.top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  };
+}
+
+function MultiNodeSelectionToolbarButton({
+  children,
+  icon: Icon,
+  compact = false,
+}: {
+  children?: React.ReactNode;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
+  compact?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={[
+        'nodrag nopan flex h-10 items-center justify-center gap-2 rounded-gl-pill text-[14px] font-semibold text-gl-text-primary transition-colors hover:bg-gl-panel-hover',
+        compact ? 'w-10 px-0' : 'px-3',
+      ].join(' ')}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      <Icon size={16} strokeWidth={1.9} />
+      {children ? <span className="whitespace-nowrap">{children}</span> : null}
+    </button>
+  );
+}
+
+function MultiNodeSelectionOverlay({
+  nodes,
+  selectedNodeIds,
+  visible,
+}: MultiNodeSelectionOverlayProps) {
+  const viewport = useViewport();
+  const [bounds, setBounds] = useState<MultiNodeSelectionBounds | null>(null);
+  const selectedNodes = useMemo(
+    () => nodes.filter((node) => selectedNodeIds.has(node.id)),
+    [nodes, selectedNodeIds],
+  );
+  const selectedNodeIdsKey = useMemo(
+    () => selectedNodes.map((node) => node.id).sort().join('|'),
+    [selectedNodes],
+  );
+
+  useEffect(() => {
+    if (selectedNodes.length <= 1) {
+      return;
+    }
+
+    let animationFrame = 0;
+    const updateBounds = () => {
+      const rects = selectedNodes.map((node) => {
+        const elementBounds = getNodeElementBoundsInFlowPane(node.id);
+
+        if (elementBounds) {
+          return elementBounds;
+        }
+
+        const estimatedBounds = getEstimatedNodeBounds(node);
+
+        return {
+          x: viewport.x + estimatedBounds.x * viewport.zoom,
+          y: viewport.y + estimatedBounds.y * viewport.zoom,
+          width: estimatedBounds.width * viewport.zoom,
+          height: estimatedBounds.height * viewport.zoom,
+        };
+      });
+
+      const nextBounds = getBoundsForRects(rects);
+      setBounds((current) => {
+        if (
+          current &&
+          nextBounds &&
+          Math.abs(current.x - nextBounds.x) < 0.5 &&
+          Math.abs(current.y - nextBounds.y) < 0.5 &&
+          Math.abs(current.width - nextBounds.width) < 0.5 &&
+          Math.abs(current.height - nextBounds.height) < 0.5
+        ) {
+          return current;
+        }
+
+        return nextBounds;
+      });
+    };
+
+    updateBounds();
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(updateBounds);
+    };
+    const resizeObserver = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(scheduleUpdate)
+      : null;
+
+    for (const node of selectedNodes) {
+      const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(node.id)}"]`);
+      if (element) {
+        resizeObserver?.observe(element);
+      }
+    }
+
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleUpdate);
+    };
+  }, [selectedNodeIdsKey, selectedNodes, viewport.x, viewport.y, viewport.zoom]);
+
+  if (!visible || !bounds || selectedNodes.length <= 1) {
+    return null;
+  }
+
+  const padding = MULTI_NODE_SELECTION_PADDING;
+  const paddedBounds = {
+    x: bounds.x - padding,
+    y: bounds.y - padding,
+    width: bounds.width + padding * 2,
+    height: bounds.height + padding * 2,
+  };
+
+  return (
+    <div
+      className="pointer-events-none absolute z-[18]"
+      style={{
+        left: `${paddedBounds.x}px`,
+        top: `${paddedBounds.y}px`,
+        width: `${paddedBounds.width}px`,
+        height: `${paddedBounds.height}px`,
+      }}
+    >
+      <div className="gl-multi-node-selection-frame absolute inset-0" />
+      <div
+        data-canvas-menu-ignore="true"
+        className="pointer-events-auto absolute left-1/2 z-20 flex -translate-x-1/2 items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+        style={{
+          top: `${-MULTI_NODE_SELECTION_TOOLBAR_GAP}px`,
+          transform: 'translate(-50%, -100%)',
+          transformOrigin: 'bottom center',
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <MultiNodeSelectionToolbarButton icon={Group} compact />
+        <div className="mx-1 h-5 w-px bg-white/10" />
+        <MultiNodeSelectionToolbarButton icon={FolderPlus}>
+          保存到素材
+        </MultiNodeSelectionToolbarButton>
+        <div className="mx-1 h-5 w-px bg-white/10" />
+        <MultiNodeSelectionToolbarButton icon={Copy}>
+          创建副本
+        </MultiNodeSelectionToolbarButton>
+        <div className="mx-1 h-5 w-px bg-white/10" />
+        <MultiNodeSelectionToolbarButton icon={Plus} compact />
+        <div className="mx-1 h-5 w-px bg-white/10" />
+        <MultiNodeSelectionToolbarButton icon={Group}>
+          打组
+        </MultiNodeSelectionToolbarButton>
+        <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
+      </div>
+    </div>
+  );
 }
 
 const CanvasMiniMap = memo(function CanvasMiniMap({ nodes }: { nodes: CanvasNode[] }) {
@@ -1924,6 +2266,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [edgeDeleteButtonPosition, setEdgeDeleteButtonPosition] = useState<{
     x: number;
@@ -1969,7 +2312,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       id: n.id,
       type: n.type,
       position: n.position,
-      data: n.data,
+      data: {
+        ...n.data,
+        canvasNodeActive: activeNodeId === n.id,
+      },
       selected: selectedNodeIds.has(n.id),
       dragHandle:
         n.type === 'text'
@@ -1998,7 +2344,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     return nodes;
-  }, [connectionMenu, storeNodes, selectedNodeIds]);
+  }, [activeNodeId, connectionMenu, storeNodes, selectedNodeIds]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
     const edgeType = getReactFlowEdgeType(edgeStyle);
@@ -2070,8 +2416,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
   const suppressNextPaneClearRef = useRef(false);
+  const selectionDragActiveRef = useRef(false);
+  const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [paneSelectionDragging, setPaneSelectionDragging] = useState(false);
+  const [selectionInProgress, setSelectionInProgress] = useState(false);
 
-  const { project } = useReactFlow();
+  const { getViewport, project, setViewport } = useReactFlow();
 
   useEffect(() => {
     notifyPromptBarInteraction = () => {
@@ -2153,6 +2503,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setSelectedNodeIds((current) =>
       current.size === 1 && current.has(nodeId) ? current : new Set([nodeId]),
     );
+    setActiveNodeId(nodeId);
     clearEdgeSelection();
   }, [clearEdgeSelection]);
 
@@ -2219,6 +2570,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       }
 
       clearCanvasNodeUi();
+      setActiveNodeId(null);
       setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
       clearEdgeSelection();
       setAddMenu(null);
@@ -2258,6 +2610,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     deleteNodes(Array.from(selectedNodeIds));
     clearCanvasNodeUi();
+    setActiveNodeId(null);
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
   }, [deleteNodes, selectedNodeIds]);
 
@@ -2284,6 +2637,78 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     selectSingleNode(node.id);
   }, [clearEdgeSelection, selectSingleNode]);
+
+  const handleSelectionChange = useCallback(({ nodes }: { nodes: ReactFlowNode[] }) => {
+    setSelectedNodeIds((current) => {
+      const next = new Set(nodes.map((node) => node.id));
+
+      return areSetsEqual(current, next) ? current : next;
+    });
+
+    if (selectionDragActiveRef.current) {
+      setActiveNodeId(null);
+      clearCanvasNodeUi();
+    }
+
+    if (nodes.length > 0) {
+      clearEdgeSelection();
+    }
+  }, [clearEdgeSelection]);
+
+  const handleSelectionStart = useCallback(() => {
+    selectionDragActiveRef.current = true;
+    setSelectionInProgress(true);
+  }, []);
+
+  const handleSelectionEnd = useCallback(() => {
+    selectionDragActiveRef.current = false;
+    panePointerStartRef.current = null;
+    setPaneSelectionDragging(false);
+    setSelectionInProgress(false);
+  }, []);
+
+  const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
+    const target = event.target;
+    const internalTarget = target instanceof Element && Boolean(
+      target.closest(
+        '[data-canvas-menu-ignore="true"], .node-connectable-root, .node-connectable-card, .react-flow__node',
+      ),
+    );
+
+    if (event.button !== 0 || internalTarget) {
+      panePointerStartRef.current = null;
+      setPaneSelectionDragging(false);
+      setSelectionInProgress(false);
+      return;
+    }
+
+    panePointerStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    setPaneSelectionDragging(false);
+  }, []);
+
+  const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
+    const start = panePointerStartRef.current;
+
+    if (!start) {
+      return;
+    }
+
+    const dx = Math.abs(event.clientX - start.x);
+    const dy = Math.abs(event.clientY - start.y);
+
+    if (dx > 3 || dy > 3) {
+      setPaneSelectionDragging(true);
+    }
+  }, []);
+
+  const handlePaneMouseUp = useCallback(() => {
+    panePointerStartRef.current = null;
+    setPaneSelectionDragging(false);
+    setSelectionInProgress(false);
+  }, []);
 
   const handleCopySelectedNodes = useCallback(() => {
     if (selectedNodeIds.size === 0) {
@@ -2336,6 +2761,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     addNodes(pastedNodes);
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
+    setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
     return true;
   }, [addNodes, clearEdgeSelection]);
@@ -2369,6 +2795,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     addNodes(pastedNodes);
     pastedEdges.forEach(addEdgeStore);
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
+    setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
     return true;
   }, [addEdgeStore, addNodes, clearEdgeSelection, storeNodes]);
@@ -2395,6 +2822,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     addNodes(nextNodes);
 
     setSelectedNodeIds(nextNodeIds);
+    setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
     clearEdgeSelection();
   }, [addNodes, clearEdgeSelection]);
 
@@ -2494,7 +2922,24 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     changes.forEach((change) => {
       if (change.type === 'position' && change.position) {
         updateNodePosition(change.id, change.position);
+      } else if (change.type === 'select') {
+        setSelectedNodeIds((current) => {
+          const next = new Set(current);
+
+          if (change.selected) {
+            next.add(change.id);
+          } else {
+            next.delete(change.id);
+          }
+
+          return areSetsEqual(current, next) ? current : next;
+        });
+
+        if (change.selected) {
+          clearEdgeSelection();
+        }
       } else if (change.type === 'remove') {
+        setActiveNodeId((current) => (current === change.id ? null : current));
         setSelectedNodeIds((current) => {
           if (!current.has(change.id)) return current;
 
@@ -2505,7 +2950,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         deleteNode(change.id);
       }
     });
-  }, [updateNodePosition, deleteNode]);
+  }, [clearEdgeSelection, updateNodePosition, deleteNode]);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     changes.forEach((change) => {
@@ -2523,6 +2968,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     event.stopPropagation();
 
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
+    setActiveNodeId(null);
     setAddMenu(null);
     clearConnectionMenu();
     setSelectedEdgeId(edge.id);
@@ -2566,9 +3012,21 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setImageInfoPopover(null);
     setImageLightbox(null);
     clearCanvasNodeUi();
+    setActiveNodeId(null);
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
     clearEdgeSelection();
   }, [clearConnectionMenu, clearEdgeSelection, isInteractiveCanvasTarget]);
+
+  const handleViewportMove = useCallback((event?: { target?: EventTarget | null }) => {
+    if (isInteractiveCanvasTarget(event?.target ?? null)) {
+      return;
+    }
+
+    setAddMenu(null);
+    clearConnectionMenu();
+    setImageInfoPopover(null);
+    setImageLightbox(null);
+  }, [clearConnectionMenu, isInteractiveCanvasTarget]);
 
   const onConnect = useCallback((connection: Connection) => {
     clearConnectionMenu();
@@ -2610,6 +3068,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       }
 
       clearCanvasNodeUi();
+      setActiveNodeId(null);
       setSelectedNodeIds(new Set());
       clearEdgeSelection();
       setAddMenu(null);
@@ -2814,6 +3273,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [clearConnectionMenu]);
 
   const handleSelectHistoryImage = useCallback(async (item: ImageHistoryItem) => {
+    const viewportBeforeInsert = getViewport();
     const displayPrompt = getImageHistoryDisplayPrompt(item.nodeData);
     let resolvedImage: Awaited<ReturnType<typeof resolveHistoryImageUrls>>;
 
@@ -2871,9 +3331,13 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     addNodes([node]);
     setSelectedNodeIds(new Set([node.id]));
+    setActiveNodeId(node.id);
     clearEdgeSelection();
     setHistoryAnchor(null);
-  }, [addNodes, clearEdgeSelection, project, showProjectMessage, storeNodes]);
+    window.requestAnimationFrame(() => {
+      void setViewport(viewportBeforeInsert, { duration: 0 });
+    });
+  }, [addNodes, clearEdgeSelection, getViewport, project, setViewport, showProjectMessage, storeNodes]);
 
   const handleConnectionMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (!connectionMenu) {
@@ -2915,6 +3379,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setSelectedNodeIds((current) =>
       current.size === 1 && current.has(nextNode.id) ? current : new Set([nextNode.id]),
     );
+    setActiveNodeId(nextNode.id);
     clearEdgeSelection();
     clearConnectionMenu();
   }, [
@@ -3089,19 +3554,36 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onEdgesChange={onEdgesChange}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
+        onSelectionChange={handleSelectionChange}
+        onSelectionStart={handleSelectionStart}
+        onSelectionEnd={handleSelectionEnd}
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
         onPaneClick={handlePaneClick}
-        onPaneScroll={handlePaneClick}
-        onMoveStart={handlePaneClick}
+        onPaneScroll={handleViewportMove}
+        onMoveStart={handleViewportMove}
+        onPaneMouseMove={handlePaneMouseMove}
+        onPaneMouseLeave={handlePaneMouseUp}
+        onMouseDown={handlePaneMouseDown}
+        onMouseMove={handlePaneMouseMove}
+        onMouseUp={handlePaneMouseUp}
         onDoubleClick={handlePaneDoubleClick}
         connectOnClick={false}
         zoomOnDoubleClick={false}
         minZoom={CANVAS_MIN_ZOOM}
         maxZoom={CANVAS_MAX_ZOOM}
+        className={paneSelectionDragging ? 'gl-pane-selection-dragging' : undefined}
         nodeDragThreshold={1}
         deleteKeyCode={null}
+        panOnDrag={[1]}
+        panActivationKeyCode="Space"
+        panOnScroll
+        panOnScrollMode={PanOnScrollMode.Free}
+        zoomOnScroll={false}
+        zoomActivationKeyCode="Control"
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
         defaultEdgeOptions={{
           animated: false,
           style: { stroke: 'rgba(190,205,225,0.3)', strokeWidth: 2.8 },
@@ -3127,6 +3609,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           edgeStyle={edgeStyle}
           onToggleEdgeStyle={handleToggleEdgeStyle}
           nodes={storeNodes}
+        />
+        <MultiNodeSelectionOverlay
+          nodes={storeNodes}
+          selectedNodeIds={selectedNodeIds}
+          visible={!selectionInProgress && !paneSelectionDragging}
         />
         <CanvasCornerActionButton />
       </ReactFlow>
