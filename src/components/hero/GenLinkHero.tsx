@@ -15,6 +15,11 @@ interface GenLinkHeroProps {
   isLeaving?: boolean;
 }
 
+const HERO_PARTICLE_COLORS = [
+  [255, 255, 255],
+  [255, 255, 255],
+];
+
 export function GenLinkHero({ onEnter, isLeaving = false }: GenLinkHeroProps) {
   return (
     <div
@@ -25,11 +30,9 @@ export function GenLinkHero({ onEnter, isLeaving = false }: GenLinkHeroProps) {
         <div className="absolute inset-0">
           <CanvasRevealEffect
             animationSpeed={3}
+            startTimeOffsetMs={1300}
             containerClassName="bg-black"
-            colors={[
-              [255, 255, 255],
-              [255, 255, 255],
-            ]}
+            colors={HERO_PARTICLE_COLORS}
             dotSize={6}
             reverse={false}
           />

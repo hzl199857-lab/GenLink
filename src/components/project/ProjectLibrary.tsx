@@ -16,6 +16,7 @@ import {
   createProjectAtParentDirectory,
   importProjectsFromParentDirectory,
   pickProjectParentDirectory,
+  revokeObjectUrls,
   type ProjectHandleRecord,
 } from '@/lib/project-storage';
 import { useCanvasStore } from '@/store/canvas-store';
@@ -120,10 +121,23 @@ function ProjectCard({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
+  const thumbnailUrl = project.thumbnailUrl?.trim();
+
   return (
     <article className="relative grid h-[182px] w-[220px] grid-rows-[124px_1fr]">
       <button type="button" onClick={onCardClick} className="block w-full self-start text-left">
-        <div className="h-[124px] w-full overflow-hidden rounded-[12px] border border-white/10 bg-[linear-gradient(180deg,#35393f_0%,#2b3036_52%,#23282e_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition duration-150 hover:border-white/18 hover:bg-[linear-gradient(180deg,#3a3f46_0%,#30353c_52%,#272c33_100%)]" />
+        <div className="relative h-[124px] w-full overflow-hidden rounded-[12px] border border-white/10 bg-[linear-gradient(180deg,#35393f_0%,#2b3036_52%,#23282e_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition duration-150 hover:border-white/18 hover:bg-[linear-gradient(180deg,#3a3f46_0%,#30353c_52%,#272c33_100%)]">
+          {thumbnailUrl ? (
+            <Image
+              src={thumbnailUrl}
+              alt=""
+              fill
+              sizes="220px"
+              unoptimized
+              className="object-cover"
+            />
+          ) : null}
+        </div>
       </button>
 
       <div className="mt-2.5 flex items-start justify-between gap-2">
@@ -355,6 +369,7 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
   });
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeMenuTimeoutRef = useRef<number | null>(null);
+  const thumbnailUrlsRef = useRef<string[]>([]);
 
   const clearCloseMenuTimeout = useCallback(() => {
     if (closeMenuTimeoutRef.current) {
@@ -387,6 +402,10 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
 
     try {
       const nextProjects = await listProjects();
+      revokeObjectUrls(thumbnailUrlsRef.current);
+      thumbnailUrlsRef.current = nextProjects.flatMap((project) =>
+        project.thumbnailUrl ? [project.thumbnailUrl] : [],
+      );
       setProjects(nextProjects);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '项目列表加载失败');
@@ -404,7 +423,11 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
   }, [refreshProjects]);
 
   useEffect(() => {
-    return () => clearCloseMenuTimeout();
+    return () => {
+      clearCloseMenuTimeout();
+      revokeObjectUrls(thumbnailUrlsRef.current);
+      thumbnailUrlsRef.current = [];
+    };
   }, [clearCloseMenuTimeout]);
 
   useEffect(() => {

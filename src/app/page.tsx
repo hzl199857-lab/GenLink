@@ -15,27 +15,30 @@ export default function HomePage() {
   const [appVisible, setAppVisible] = useState(false);
 
   useEffect(() => {
-    if (mode === 'hero') {
-      setAppVisible(false);
-      return;
-    }
-    setAppVisible(false);
+    if (mode === 'hero') return;
+
     const id = requestAnimationFrame(() => {
       requestAnimationFrame(() => setAppVisible(true));
     });
     return () => cancelAnimationFrame(id);
   }, [mode]);
 
+  const showAppMode = (nextMode: Exclude<Mode, 'hero'>) => {
+    setAppVisible(false);
+    setMode(nextMode);
+  };
+
   const enterApp = () => {
     if (heroLeaving) return;
     setHeroLeaving(true);
     setTimeout(() => {
-      setMode('library');
+      showAppMode('library');
       setHeroLeaving(false);
     }, FADE_MS);
   };
 
   const backToHero = () => {
+    setAppVisible(false);
     setMode('hero');
   };
 
@@ -55,11 +58,11 @@ export default function HomePage() {
         >
           {mode === 'library' ? (
             <ProjectLibrary
-              onOpenProject={() => setMode('canvas')}
+              onOpenProject={() => showAppMode('canvas')}
               onBackToHero={backToHero}
             />
           ) : (
-            <InfiniteCanvas onBackToLibrary={() => setMode('library')} />
+            <InfiniteCanvas onBackToLibrary={() => showAppMode('library')} />
           )}
         </div>
       )}

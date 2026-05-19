@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
 const FRAG_SHADER = /* glsl */ `
@@ -76,6 +76,7 @@ const VERT_SHADER = /* glsl */ `
 
 interface CanvasRevealEffectProps {
   animationSpeed?: number;
+  startTimeOffsetMs?: number;
   opacities?: number[];
   colors?: number[][];
   containerClassName?: string;
@@ -84,27 +85,33 @@ interface CanvasRevealEffectProps {
   reverse?: boolean;
 }
 
+const DEFAULT_OPACITIES = [0.3, 0.3, 0.3, 0.5, 0.5, 0.5, 0.8, 0.8, 0.8, 1];
+const DEFAULT_COLORS = [[0, 255, 255]];
+
 export function CanvasRevealEffect({
   animationSpeed = 10,
-  opacities = [0.3, 0.3, 0.3, 0.5, 0.5, 0.5, 0.8, 0.8, 0.8, 1],
-  colors = [[0, 255, 255]],
+  startTimeOffsetMs = 0,
+  opacities = DEFAULT_OPACITIES,
+  colors = DEFAULT_COLORS,
   containerClassName = '',
   dotSize = 3,
   showGradient = true,
   reverse = false,
 }: CanvasRevealEffectProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const colorsArr = useMemo(() => {
+    if (colors.length === 2) {
+      return [colors[0], colors[0], colors[0], colors[1], colors[1], colors[1]];
+    }
+    if (colors.length === 3) {
+      return [colors[0], colors[0], colors[1], colors[1], colors[2], colors[2]];
+    }
+    return [colors[0], colors[0], colors[0], colors[0], colors[0], colors[0]];
+  }, [colors]);
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
-
-    let colorsArr: number[][] = [colors[0], colors[0], colors[0], colors[0], colors[0], colors[0]];
-    if (colors.length === 2) {
-      colorsArr = [colors[0], colors[0], colors[0], colors[1], colors[1], colors[1]];
-    } else if (colors.length === 3) {
-      colorsArr = [colors[0], colors[0], colors[1], colors[1], colors[2], colors[2]];
-    }
 
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -155,7 +162,8 @@ export function CanvasRevealEffect({
     const start = performance.now();
     let raf = 0;
     const tick = () => {
-      uniforms.u_time.value = ((performance.now() - start) / 1000) * (animationSpeed * 0.1);
+      uniforms.u_time.value =
+        ((performance.now() - start + startTimeOffsetMs) / 1000) * (animationSpeed * 0.1);
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
@@ -171,7 +179,7 @@ export function CanvasRevealEffect({
       material.dispose();
       renderer.dispose();
     };
-  }, [animationSpeed, dotSize, reverse, JSON.stringify(colors), JSON.stringify(opacities)]);
+  }, [animationSpeed, startTimeOffsetMs, dotSize, reverse, colorsArr, opacities]);
 
   return (
     <div ref={mountRef} className={`h-full relative w-full ${containerClassName}`}>

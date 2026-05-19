@@ -14,6 +14,7 @@ const PROJECT_STORE_NAME = "projects";
 const PROJECT_FILE_NAME = "project.json";
 const OUTPUT_DIRECTORY_NAME = "output";
 const OUTPUT_HISTORY_FILE_NAME = "history.json";
+const THUMBNAIL_IMAGE_EXTENSION_PATTERN = /\.(png|jpe?g|webp|gif|bmp|svg|avif)$/i;
 
 type PersistedProjectRecord = {
   id: string;
@@ -51,6 +52,7 @@ export interface ProjectLibraryItem {
   createdAt: string;
   updatedAt: string;
   directoryName: string;
+  thumbnailUrl?: string;
 }
 
 export interface ProjectHandleRecord extends ProjectLibraryItem {
@@ -186,6 +188,10 @@ function inferOutputKind(
   }
 
   return null;
+}
+
+function isThumbnailImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || THUMBNAIL_IMAGE_EXTENSION_PATTERN.test(file.name);
 }
 
 function isDataUrl(value?: string): boolean {
@@ -629,6 +635,45 @@ async function readProjectSnapshotInternal(
   return parsed;
 }
 
+async function findFirstImageFileRecursive(
+  directoryHandle: FileSystemDirectoryHandle,
+): Promise<File | null> {
+  for await (const [entryName, entryHandle] of directoryHandle.entries()) {
+    if (entryHandle.kind === "file") {
+      const file = await entryHandle.getFile();
+
+      if (isThumbnailImageFile(file)) {
+        return file;
+      }
+
+      continue;
+    }
+
+    if (entryName === "." || entryName === "..") {
+      continue;
+    }
+
+    const nestedFile = await findFirstImageFileRecursive(entryHandle);
+
+    if (nestedFile) {
+      return nestedFile;
+    }
+  }
+
+  return null;
+}
+
+async function readProjectThumbnailUrl(
+  projectHandle: FileSystemDirectoryHandle,
+): Promise<string | undefined> {
+  try {
+    const file = await findFirstImageFileRecursive(projectHandle);
+    return file ? URL.createObjectURL(file) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getUniqueCopyName(baseName: string, existingNames: Set<string>): string {
   const preferred = `${baseName} - \u526f\u672c`;
 
@@ -838,8 +883,10 @@ export async function listProjectLibrary(): Promise<ProjectHandleRecord[]> {
     try {
       await requestDirectoryPermission(record.projectHandle, false);
       await readProjectSnapshotInternal(record.projectHandle);
+      const thumbnailUrl = await readProjectThumbnailUrl(record.projectHandle);
       validProjects.push({
         ...toProjectLibraryItem(record),
+        thumbnailUrl,
         projectHandle: record.projectHandle,
         parentHandle: record.parentHandle,
       });
