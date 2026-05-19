@@ -214,7 +214,7 @@ export function ApiSettingsPanel({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[520px] origin-center scale-[0.75] overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] shadow-[0_10px_40px_rgba(0,0,0,0.8)]"
+        className="w-full max-w-[560px] origin-center scale-90 overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] shadow-[0_10px_40px_rgba(0,0,0,0.8)]"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4">
