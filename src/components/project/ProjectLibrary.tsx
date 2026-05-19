@@ -27,6 +27,7 @@ import { DeleteProjectDialog } from './DeleteProjectDialog';
 
 interface ProjectLibraryProps {
   onOpenProject: () => void;
+  onBackToHero?: () => void;
 }
 
 function formatDate(value: string): string {
@@ -328,7 +329,7 @@ function CreateProjectDialog({
   );
 }
 
-export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
+export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryProps) {
   const attachProject = useCanvasStore((state) => state.attachProject);
   const listProjects = useCanvasStore((state) => state.listProjects);
   const loadProject = useCanvasStore((state) => state.loadProject);
@@ -599,6 +600,7 @@ export function ProjectLibrary({ onOpenProject }: ProjectLibraryProps) {
         <div className="flex items-center gap-3 text-[12px] font-medium text-white/72">
           <button
             type="button"
+            onClick={onBackToHero}
             className="inline-flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 transition hover:bg-white/10 hover:text-white/92 focus-visible:bg-white/10 focus-visible:text-white/92 focus-visible:outline-none"
           >
             <ChevronLeft size={15} />

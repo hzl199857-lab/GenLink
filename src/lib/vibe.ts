@@ -39,7 +39,9 @@ const FUCHEERS_BASE_URL = normalizeBaseUrl(
 const FUCHEERS_GEMINI_BASE_URL = normalizeBaseUrl(
   process.env.FUCHEERS_GEMINI_BASE_URL ?? "https://www.fucheers.top",
 );
-const COMFLY_BASE_URL = normalizeBaseUrl(process.env.COMFLY_BASE_URL ?? "");
+const COMFLY_BASE_URL = normalizeBaseUrl(
+  process.env.COMFLY_BASE_URL ?? "https://ai.comfly.org",
+);
 const COMFLY_IMAGE_BASE_URL = normalizeBaseUrl(
   process.env.COMFLY_IMAGE_BASE_URL ?? COMFLY_BASE_URL,
 );

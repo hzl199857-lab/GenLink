@@ -38,7 +38,7 @@ const PROVIDERS: Array<{
   {
     key: 'comfly',
     label: 'Comfly',
-    url: 'https://ai.comfly.chat',
+    url: 'https://ai.comfly.org',
     apiKeyLabel: 'Comfly API Key',
   },
   {

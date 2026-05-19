@@ -71,7 +71,7 @@ export function CanvasHeader({
         <button
           type="button"
           aria-label="打开项目菜单"
-          className="flex h-9 items-center gap-2 rounded-[10px] px-2 pr-2.5 transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+          className="flex h-11 items-center gap-2.5 rounded-[10px] px-2.5 pr-3 transition hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
         >
           <Image
             src={HEADER_LOGO_SRC}
@@ -79,7 +79,7 @@ export function CanvasHeader({
             width={1090}
             height={980}
             priority
-            className="h-[16px] w-[18px] object-contain"
+            className="h-[20px] w-[23px] object-contain"
           />
           <Image
             src={HEADER_WORDMARK_SRC}
@@ -87,7 +87,7 @@ export function CanvasHeader({
             width={2266}
             height={336}
             priority
-            className="h-auto w-[59px] object-contain"
+            className="h-auto w-[74px] object-contain"
           />
         </button>
         <div className="pointer-events-none absolute left-0 top-full z-[80] pt-2 opacity-0 transition duration-150 group-hover/header-menu:pointer-events-auto group-hover/header-menu:opacity-100 group-focus-within/header-menu:pointer-events-auto group-focus-within/header-menu:opacity-100">
@@ -121,7 +121,7 @@ export function CanvasHeader({
         </div>
       </div>
 
-      <div className="ml-4 mr-2 h-4 w-px shrink-0 bg-white/30" aria-hidden="true" />
+      <div className="ml-5 mr-2.5 h-5 w-px shrink-0 bg-white/30" aria-hidden="true" />
 
       {editing ? (
         <input
@@ -142,14 +142,14 @@ export function CanvasHeader({
               cancelProjectNameEdit();
             }
           }}
-          className="h-7 min-w-0 max-w-[300px] rounded-[7px] border border-white/16 bg-[#18191c] px-2 text-[12px] font-medium leading-5 text-white outline-none transition focus:border-white/32"
+          className="h-8 min-w-0 max-w-[300px] rounded-[7px] border border-white/16 bg-[#18191c] px-2.5 text-[14px] font-medium leading-6 text-white outline-none transition focus:border-white/32"
           style={{ width: `${Math.max(draft.length + 2, 10)}ch` }}
         />
       ) : (
         <div className="group/tooltip relative min-w-0">
           <button
             type="button"
-            className="block max-w-[300px] truncate rounded-[7px] px-1.5 py-1 text-left text-[12px] font-medium leading-5 text-white transition hover:bg-white/8 focus-visible:bg-white/8 focus-visible:outline-none"
+            className="block max-w-[300px] truncate rounded-[7px] px-2 py-1 text-left text-[14px] font-medium leading-6 text-white transition hover:bg-white/8 focus-visible:bg-white/8 focus-visible:outline-none"
             title={displayProjectName}
             onClick={() => {
               setDraft(displayProjectName);
