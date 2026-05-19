@@ -9,7 +9,7 @@ import { useCanvasStore } from '@/store/canvas-store';
 type HistoryTab = 'images' | 'videos';
 
 const PANEL_WIDTH = 320;
-const PANEL_HEIGHT = 380;
+const PANEL_HEIGHT = 360;
 const PANEL_MARGIN = 12;
 
 export interface GenerationHistoryPopoverProps {
@@ -184,7 +184,7 @@ export function GenerationHistoryPopover({
   return (
     <div
       ref={panelRef}
-      className="fixed z-[70] h-[380px] w-[320px] overflow-hidden rounded-[9px] border border-white/10 bg-[#242529]/98 text-white shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-md"
+      className="fixed z-[70] h-[360px] w-[320px] overflow-hidden rounded-[9px] border border-white/10 bg-[#242529]/98 text-white shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-md"
       style={{ left, top }}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -224,7 +224,7 @@ export function GenerationHistoryPopover({
         </button>
       </div>
 
-      <div className="generation-history-scrollable h-[344px] overflow-y-auto px-3.5 py-3">
+      <div className="generation-history-scrollable h-[324px] overflow-y-auto px-3.5 py-3">
         {loading ? (
           <div className="flex h-full items-center justify-center text-[10px] text-white/38">
             加载中...

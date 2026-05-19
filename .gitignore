@@ -64,6 +64,9 @@ dev.log
 # local scaffold residue
 genlink-scaffold/
 
+# clone reference project
+clone/
+
 # local docs and reference assets
 docs/
 api文档/
