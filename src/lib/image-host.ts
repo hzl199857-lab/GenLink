@@ -13,6 +13,8 @@ import { VibeApiError } from '@/lib/vibe';
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_STEM_LENGTH = 80;
 
+const IS_SERVERLESS = Boolean(process.env.VERCEL);
+
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
 
@@ -71,6 +73,11 @@ async function saveImageBytes(
     throw new VibeApiError(400, 'Image is too large to save');
   }
 
+  if (IS_SERVERLESS) {
+    const base64 = bytes.toString('base64');
+    return `data:${mimeType};base64,${base64}`;
+  }
+
   const localImageDir = getLocalImageDirectory();
 
   await mkdir(localImageDir, { recursive: true });
@@ -89,6 +96,10 @@ export async function saveImageDataUrl(
   dataUrl: string,
   fileName?: string,
 ): Promise<string> {
+  if (IS_SERVERLESS) {
+    return dataUrl;
+  }
+
   const { mimeType, base64 } = parseDataUrl(dataUrl);
   const bytes = Buffer.from(base64, 'base64');
 
