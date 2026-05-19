@@ -81,6 +81,7 @@ import { CanvasHeader } from './CanvasHeader';
 import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { downloadImageGenerationResult } from '@/lib/image-download';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 import {
   CreateProjectDialog,
@@ -2446,6 +2447,25 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         return;
       }
 
+      if (action === 'download') {
+        void downloadImageGenerationResult(data)
+          .then((status) => {
+            if (status === 'saved') {
+              setSaveMessage('图片已下载');
+              window.setTimeout(() => {
+                setSaveMessage(null);
+              }, 2200);
+            }
+          })
+          .catch((error) => {
+            setSaveMessage(error instanceof Error ? error.message : '图片下载失败');
+            window.setTimeout(() => {
+              setSaveMessage(null);
+            }, 2200);
+          });
+        return;
+      }
+
       if (action === 'split-2x2-crop' || action === 'split-3x3-crop' || action === 'split-5x5-crop') {
         const dimension = action === 'split-2x2-crop' ? 2 : action === 'split-3x3-crop' ? 3 : 5;
         const targetNode = storeNodes.find(
@@ -2474,7 +2494,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         notifyImageToolbarAction = null;
       }
     };
-  }, [splitImageGenerationNodeToGrid, storeNodes]);
+  }, [setSaveMessage, splitImageGenerationNodeToGrid, storeNodes]);
 
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {

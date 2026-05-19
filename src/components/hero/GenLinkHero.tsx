@@ -49,6 +49,7 @@ export function GenLinkHero({ onEnter, isLeaving = false }: GenLinkHeroProps) {
                   alt="GenLink"
                   className="h-auto w-[280px] select-none sm:w-[440px] lg:w-[600px]"
                   draggable={false}
+                  suppressHydrationWarning
                 />
               </h1>
               <p className="mx-auto mt-6 max-w-[34rem] text-[1rem] font-light leading-relaxed text-white/55 sm:mt-8 sm:text-[1.05rem]">

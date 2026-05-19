@@ -116,7 +116,7 @@ function sanitizeDirectoryName(value: string): string {
   return trimmed.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ").trim();
 }
 
-function sanitizeFileStem(value?: string): string {
+export function sanitizeFileStem(value?: string): string {
   const trimmed = value?.trim();
 
   if (!trimmed) {
@@ -130,7 +130,7 @@ function sanitizeFileStem(value?: string): string {
     .toLowerCase() || "output";
 }
 
-function inferExtension(format?: string, mimeType?: string): string {
+export function inferExtension(format?: string, mimeType?: string): string {
   const normalizedFormat = format?.trim().toLowerCase();
 
   if (normalizedFormat) {
@@ -188,6 +188,74 @@ function inferOutputKind(
   return null;
 }
 
+function isDataUrl(value?: string): boolean {
+  return Boolean(value?.startsWith("data:"));
+}
+
+function compactOutputSourceKey(sourceKey: string | undefined, fileName: string): string | undefined {
+  const trimmed = sourceKey?.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (trimmed.length <= 2000 && !trimmed.includes("data:image/")) {
+    return trimmed;
+  }
+
+  return `file:${fileName}`;
+}
+
+export function stripEmbeddedImageDataFromNodeData(
+  nodeData: ImageGenerationNodeData,
+  generatedOutputFileName?: string,
+): ImageGenerationNodeData {
+  const next: ImageGenerationNodeData = {
+    ...nodeData,
+    effectivePromptOverride: undefined,
+    generatedOutputFileName:
+      generatedOutputFileName ?? nodeData.generatedOutputFileName,
+  };
+
+  if (isDataUrl(next.generatedImageUrl)) {
+    next.generatedImageUrl = undefined;
+  }
+
+  if (isObjectUrl(next.generatedHostedImageUrl)) {
+    next.generatedHostedImageUrl = undefined;
+  }
+
+  if (next.referenceImages?.length) {
+    next.referenceImages = next.referenceImages.map((image) => ({
+      ...image,
+      imageUrl:
+        isDataUrl(image.imageUrl) && image.hostedImageUrl?.trim()
+          ? image.hostedImageUrl
+          : isDataUrl(image.imageUrl)
+            ? ""
+            : image.imageUrl,
+    }));
+  }
+
+  if (next.generationResults?.length) {
+    next.generationResults = next.generationResults.map((result) => {
+      if (result.status !== "completed") {
+        return result;
+      }
+
+      return {
+        ...result,
+        imageUrl: isDataUrl(result.imageUrl) ? undefined : result.imageUrl,
+        hostedImageUrl: isObjectUrl(result.hostedImageUrl)
+          ? undefined
+          : result.hostedImageUrl,
+      };
+    });
+  }
+
+  return next;
+}
+
 async function hostImageUrlForBrowserRead(
   imageUrl: string,
   fileName?: string,
@@ -235,7 +303,7 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
-async function readImageOutputBlob(
+export async function readImageOutputBlob(
   imageUrl: string,
   fileName?: string,
 ): Promise<Blob> {
@@ -487,10 +555,20 @@ async function writeOutputHistoryManifest(
   const outputHandle = await projectHandle.getDirectoryHandle(OUTPUT_DIRECTORY_NAME, {
     create: true,
   });
+  const sanitizedManifest: OutputHistoryManifest = {
+    items: manifest.items.map((item) => ({
+      ...item,
+      sourceKey: compactOutputSourceKey(item.sourceKey, item.fileName),
+      nodeData: item.nodeData
+        ? stripEmbeddedImageDataFromNodeData(item.nodeData, item.fileName)
+        : undefined,
+    })),
+  };
+
   await writeTextFile(
     outputHandle,
     OUTPUT_HISTORY_FILE_NAME,
-    JSON.stringify(manifest, null, 2),
+    JSON.stringify(sanitizedManifest, null, 2),
   );
 }
 
@@ -939,7 +1017,7 @@ export async function persistGeneratedOutput(
 
   const nextItem: OutputHistoryManifestItem = {
     id: existingIndex >= 0 ? manifest.items[existingIndex].id : crypto.randomUUID(),
-    sourceKey: params.sourceKey,
+    sourceKey: compactOutputSourceKey(params.sourceKey, fileName),
     fileName,
     kind: "image",
     createdAt: params.generatedAt,
@@ -950,7 +1028,7 @@ export async function persistGeneratedOutput(
     width: params.width,
     height: params.height,
     format: params.format,
-    nodeData: params.nodeData,
+    nodeData: stripEmbeddedImageDataFromNodeData(params.nodeData, fileName),
   };
 
   if (existingIndex >= 0) {

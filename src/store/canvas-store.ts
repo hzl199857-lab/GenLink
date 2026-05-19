@@ -13,6 +13,7 @@ import {
   persistGeneratedOutput,
   readProjectHistory,
   revokeObjectUrls,
+  stripEmbeddedImageDataFromNodeData,
   type ProjectHandleRecord,
   renameProjectDirectory,
   saveProjectSnapshot,
@@ -625,23 +626,7 @@ function isObjectUrl(value?: string): boolean {
 function sanitizeImageGenerationNodeDataForPersistence(
   data: ImageGenerationNodeData,
 ): ImageGenerationNodeData {
-  const nextData: ImageGenerationNodeData = {
-    ...data,
-    generatedHostedImageUrl: isObjectUrl(data.generatedHostedImageUrl)
-      ? undefined
-      : data.generatedHostedImageUrl,
-  };
-
-  if (nextData.generationResults?.length) {
-    nextData.generationResults = nextData.generationResults.map((result) => ({
-      ...result,
-      hostedImageUrl: isObjectUrl(result.hostedImageUrl)
-        ? undefined
-        : result.hostedImageUrl,
-    }));
-  }
-
-  return nextData;
+  return stripEmbeddedImageDataFromNodeData(data);
 }
 
 function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
