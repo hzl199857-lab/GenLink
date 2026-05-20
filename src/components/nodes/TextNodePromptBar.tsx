@@ -18,6 +18,7 @@ const EXPANDED_PROMPT_HEIGHT = 225;
 
 const MODEL_OPTIONS = [
   'gemini-3-flash',
+  'gemini-3.5-flash',
   'gemini-3.1-pro',
   'claude-opus-4-7',
   'claude-opus-4-6',

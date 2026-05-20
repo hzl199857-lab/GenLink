@@ -75,6 +75,7 @@ const DEFAULT_COMFLY_RESPONSE_FORMAT = "b64_json";
 const COMFLY_ASYNC_RESPONSE_FORMAT = "url";
 const COMFLY_TEXT_MODEL_MAP = new Map<string, string>([
   ["gemini-3-flash", "gemini-3-flash-preview"],
+  ["gemini-3.5-flash", "gemini-3.5-flash-preview"],
   ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
   ["claude-opus-4-7", "claude-opus-4-7"],
   ["claude-opus-4-6", "claude-opus-4-6"],
