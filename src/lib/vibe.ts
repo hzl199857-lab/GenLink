@@ -400,6 +400,22 @@ function getImageMimeType(fileName: string): string {
   return IMAGE_MIME_TYPES[path.extname(fileName).toLowerCase()] || "image/png";
 }
 
+function getSafeMultipartFileName(fileName: string | undefined, fallback: string): string {
+  const trimmed = fileName?.trim();
+  const extension = trimmed ? path.extname(trimmed).toLowerCase() : "";
+  const safeExtension = IMAGE_MIME_TYPES[extension] ? extension : ".png";
+  const baseName = trimmed
+    ? path
+        .basename(trimmed, extension)
+        .replace(/[^\x20-\x7E]/g, "")
+        .replace(/[^A-Za-z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 80)
+    : "";
+
+  return `${baseName || fallback}${safeExtension}`;
+}
+
 function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
   return buffer.buffer.slice(
     buffer.byteOffset,
@@ -2005,7 +2021,10 @@ async function generateImageOpenAI(
       formData.append(
         "image[]",
         blob,
-        params.images?.[index]?.fileName?.trim() || `reference-${index + 1}.png`,
+        getSafeMultipartFileName(
+          params.images?.[index]?.fileName,
+          `reference-${index + 1}`,
+        ),
       );
     });
 
@@ -2119,7 +2138,10 @@ async function generateImageComflySync(
       formData.append(
         "image",
         blob,
-        params.images?.[index]?.fileName?.trim() || `reference-${index + 1}.png`,
+        getSafeMultipartFileName(
+          params.images?.[index]?.fileName,
+          `reference-${index + 1}`,
+        ),
       );
     });
 
@@ -2230,7 +2252,10 @@ export async function submitComflyImageTask(
       formData.append(
         "image",
         blob,
-        params.images?.[index]?.fileName?.trim() || `reference-${index + 1}.png`,
+        getSafeMultipartFileName(
+          params.images?.[index]?.fileName,
+          `reference-${index + 1}`,
+        ),
       );
     });
 
