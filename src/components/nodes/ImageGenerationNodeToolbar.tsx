@@ -3,7 +3,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useViewport } from 'reactflow';
 import {
-  Crop,
   ChevronRight,
   Grid3x3,
   Wand2,
@@ -17,7 +16,6 @@ import {
 import { Tooltip } from '@/components/ui/Tooltip';
 
 export type ImageGenerationToolbarAction =
-  | 'crop'
   | 'variations'
   | 'split-2x2-crop'
   | 'split-3x3-crop'
@@ -45,7 +43,6 @@ type ToolbarActionConfig = {
 };
 
 const GENERATED_IMAGE_ACTIONS: ToolbarActionConfig[] = [
-  { id: 'crop', title: '裁剪', icon: Crop },
   { id: 'variations', title: '分割', icon: Grid3x3 },
   { id: 'edit', title: '编辑', icon: Wand2 },
   { id: 'pan', title: '平移', icon: Hand },
@@ -135,7 +132,7 @@ export function ImageGenerationNodeToolbar({
           className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {GENERATED_IMAGE_ACTIONS.slice(0, 5).map((action) => (
+          {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
             action.id === 'variations' ? (
               <div
                 key={action.id}
@@ -230,7 +227,7 @@ export function ImageGenerationNodeToolbar({
             )
           ))}
           <div className="mx-1 h-5 w-px bg-white/10" />
-          {GENERATED_IMAGE_ACTIONS.slice(5).map((action) => (
+          {GENERATED_IMAGE_ACTIONS.slice(4).map((action) => (
             <ToolbarIconButton
               key={action.id}
               title={action.title}

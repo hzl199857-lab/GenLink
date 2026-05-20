@@ -2441,7 +2441,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
   useEffect(() => {
     notifyImageToolbarAction = (action, data) => {
-      if (action === 'crop' || action === 'expand') {
+      if (action === 'expand') {
         setImageInfoPopover(null);
         setImageLightbox(toImageGenerationLightboxData(data));
         return;
