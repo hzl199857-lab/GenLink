@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useViewport } from 'reactflow';
 import {
+  Crop,
   ChevronRight,
   Grid3x3,
   Wand2,
@@ -16,6 +17,7 @@ import {
 import { Tooltip } from '@/components/ui/Tooltip';
 
 export type ImageGenerationToolbarAction =
+  | 'crop'
   | 'variations'
   | 'split-2x2-crop'
   | 'split-3x3-crop'
@@ -132,6 +134,7 @@ export function ImageGenerationNodeToolbar({
           className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
           onPointerDown={(e) => e.stopPropagation()}
         >
+          <ToolbarIconButton title="裁剪" icon={Crop} onClick={() => onAction?.('crop')} />
           {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
             action.id === 'variations' ? (
               <div

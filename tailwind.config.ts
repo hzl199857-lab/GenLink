@@ -22,6 +22,7 @@ const config: Config = {
         "gl-stroke-soft": "rgba(255,255,255,0.10)",
         "gl-stroke-medium": "rgba(255,255,255,0.16)",
         "gl-stroke-strong": "rgba(255,255,255,0.24)",
+        "gl-selected": "#CCFF00",
         "gl-text-primary": "rgba(245,247,250,0.96)",
         "gl-text-secondary": "rgba(214,219,227,0.72)",
         "gl-text-tertiary": "rgba(184,192,204,0.52)",
@@ -49,6 +50,8 @@ const config: Config = {
         "gl-toolbar": "0 6px 18px rgba(0,0,0,0.24)",
         "gl-glow":
           "0 0 0 1px rgba(255,255,255,0.32), 0 0 0 6px rgba(255,255,255,0.08)",
+        "gl-glow-selected":
+          "0 0 0 1px rgba(204,255,0,0.8), 0 0 0 6px rgba(204,255,0,0.18)",
       },
     },
   },

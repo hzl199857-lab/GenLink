@@ -11,6 +11,8 @@ import {
   Map as MapIcon,
   Plus,
   X,
+  Check,
+  CropIcon,
 } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
@@ -2014,6 +2016,369 @@ function CanvasCornerActionButton() {
   );
 }
 
+type CropRect = { x: number; y: number; width: number; height: number };
+type CropAspectRatio = null | number;
+
+const CROP_ASPECT_RATIOS: Array<{ label: string; value: CropAspectRatio }> = [
+  { label: '原图比例', value: null },
+  { label: '1 : 1', value: 1 },
+  { label: '4 : 3', value: 4 / 3 },
+  { label: '3 : 4', value: 3 / 4 },
+  { label: '16 : 9', value: 16 / 9 },
+  { label: '9 : 16', value: 9 / 16 },
+  { label: '21 : 9', value: 21 / 9 },
+];
+
+type CropHandle = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'move';
+
+function clampCropRect(rect: CropRect): CropRect {
+  const x = Math.max(0, Math.min(1 - rect.width, rect.x));
+  const y = Math.max(0, Math.min(1 - rect.height, rect.y));
+  const width = Math.max(0.05, Math.min(1 - x, rect.width));
+  const height = Math.max(0.05, Math.min(1 - y, rect.height));
+  return { x, y, width, height };
+}
+
+type CropOverlayData = {
+  nodeId: string;
+  imageUrl: string;
+  nodeData: ImageGenerationNodeData;
+  nodePosition: { x: number; y: number };
+  cardLeft: number;
+  cardTop: number;
+  cardWidth: number;
+  cardHeight: number;
+  imageNaturalWidth: number;
+  imageNaturalHeight: number;
+};
+
+function CropOverlay({
+  data,
+  onClose,
+  onConfirm,
+}: {
+  data: CropOverlayData | null;
+  onClose: () => void;
+  onConfirm: (nodeId: string, cropRect: CropRect) => void;
+}) {
+  const viewport = useViewport();
+  const [cropRect, setCropRect] = useState<CropRect>(() => { const s = 0.75; const off = (1 - s) / 2; return { x: off, y: off, width: s, height: s }; });
+  const [aspectRatio, setAspectRatio] = useState<CropAspectRatio>(null);
+  const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
+  const [customMode, setCustomMode] = useState(false);
+  const [customW, setCustomW] = useState('');
+  const [customH, setCustomH] = useState('');
+  const prevImageUrlRef = useRef<string | null>(null);
+  const dragRef = useRef<{
+    handle: CropHandle;
+    startX: number;
+    startY: number;
+    startRect: CropRect;
+    imgScreenW: number;
+    imgScreenH: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    let cancelled = false;
+    const img = new window.Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const isNew = prevImageUrlRef.current !== data.imageUrl;
+      prevImageUrlRef.current = data.imageUrl;
+      if (isNew) {
+        const s = 0.75;
+        const off = (1 - s) / 2;
+        setCropRect({ x: off, y: off, width: s, height: s });
+        setAspectRatio(null);
+        setAspectMenuOpen(false);
+      }
+    };
+    img.src = data.imageUrl;
+    return () => { cancelled = true; };
+  }, [data?.imageUrl]);
+
+  useEffect(() => {
+    if (!data) return;
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [data, onClose]);
+
+  if (!data) return null;
+
+  const { x: vpX, y: vpY, zoom } = viewport;
+  const screenX = vpX + (data.nodePosition.x + data.cardLeft) * zoom;
+  const screenY = vpY + (data.nodePosition.y + data.cardTop) * zoom;
+  const screenW = data.cardWidth * zoom;
+  const screenH = data.cardHeight * zoom;
+
+  const handlePointerDown = (e: React.PointerEvent, handle: CropHandle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      startRect: { ...cropRect },
+      imgScreenW: screenW,
+      imgScreenH: screenH,
+    };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    e.preventDefault();
+    const dx = (e.clientX - drag.startX) / drag.imgScreenW;
+    const dy = (e.clientY - drag.startY) / drag.imgScreenH;
+    const r = drag.startRect;
+    let next: CropRect = { ...r };
+
+    if (drag.handle === 'move') {
+      next = { ...r, x: r.x + dx, y: r.y + dy };
+    } else {
+      if (drag.handle.includes('e')) next.width = Math.max(0.05, r.width + dx);
+      if (drag.handle.includes('w')) { next.x = r.x + dx; next.width = Math.max(0.05, r.width - dx); }
+      if (drag.handle.includes('s')) next.height = Math.max(0.05, r.height + dy);
+      if (drag.handle.includes('n')) { next.y = r.y + dy; next.height = Math.max(0.05, r.height - dy); }
+    }
+
+    if (aspectRatio !== null && drag.handle !== 'move') {
+      // normAspect = targetPixelRatio * (imgH / imgW)，使归一化坐标下宽高比正确
+      const normAspect = aspectRatio * (data.imageNaturalHeight / data.imageNaturalWidth);
+      if (drag.handle === 'n' || drag.handle === 's') {
+        next.width = next.height * normAspect;
+      } else {
+        next.height = next.width / normAspect;
+      }
+    }
+
+    setCropRect(clampCropRect(next));
+  };
+
+  const handlePointerUp = () => { dragRef.current = null; };
+
+  const handleSelectAspectRatio = (value: CropAspectRatio) => {
+    setAspectRatio(value);
+    setAspectMenuOpen(false);
+    if (value === null) {
+      setCropRect({ x: 0, y: 0, width: 1, height: 1 });
+      return;
+    }
+    // 始终以整张图为基准，取能放下该比例的最大尺寸，居中
+    // normAspect = targetPixelRatio * (imgH / imgW)，使归一化坐标下宽高比正确
+    const normAspect = value * (data.imageNaturalHeight / data.imageNaturalWidth);
+    let w = 1;
+    let h = w / normAspect;
+    if (h > 1) { h = 1; w = h * normAspect; }
+    setCropRect({ x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h });
+  };
+
+  const cropScreenX = screenX + cropRect.x * screenW;
+  const cropScreenY = screenY + cropRect.y * screenH;
+  const cropScreenW = cropRect.width * screenW;
+  const cropScreenH = cropRect.height * screenH;
+
+  const handlePositions: Array<{ handle: CropHandle; style: React.CSSProperties }> = [
+    { handle: 'nw', style: { top: -5, left: -5, cursor: 'nw-resize' } },
+    { handle: 'ne', style: { top: -5, right: -5, cursor: 'ne-resize' } },
+    { handle: 'sw', style: { bottom: -5, left: -5, cursor: 'sw-resize' } },
+    { handle: 'se', style: { bottom: -5, right: -5, cursor: 'se-resize' } },
+    { handle: 'n', style: { top: -4, left: '50%', transform: 'translateX(-50%)', cursor: 'n-resize' } },
+    { handle: 's', style: { bottom: -4, left: '50%', transform: 'translateX(-50%)', cursor: 's-resize' } },
+    { handle: 'e', style: { right: -4, top: '50%', transform: 'translateY(-50%)', cursor: 'e-resize' } },
+    { handle: 'w', style: { left: -4, top: '50%', transform: 'translateY(-50%)', cursor: 'w-resize' } },
+  ];
+
+  return (
+    <>
+      {/* 遮罩：用8块矩形精确覆盖裁剪框以外的区域，裁剪框内部完全不遮挡 */}
+      <div className="fixed inset-0 z-[80] pointer-events-none">
+        {/* 图片上方（屏幕顶部到图片顶部） */}
+        <div className="absolute bg-black/55" style={{ left: 0, top: 0, right: 0, height: screenY }} />
+        {/* 图片下方（图片底部到屏幕底部） */}
+        <div className="absolute bg-black/55" style={{ left: 0, top: screenY + screenH, right: 0, bottom: 0 }} />
+        {/* 图片左侧（屏幕左边到图片左边，仅图片高度范围） */}
+        <div className="absolute bg-black/55" style={{ left: 0, top: screenY, width: screenX, height: screenH }} />
+        {/* 图片右侧（图片右边到屏幕右边，仅图片高度范围） */}
+        <div className="absolute bg-black/55" style={{ left: screenX + screenW, top: screenY, right: 0, height: screenH }} />
+        {/* 图片内：裁剪框上方 */}
+        <div className="absolute bg-black/55" style={{ left: screenX, top: screenY, width: screenW, height: cropRect.y * screenH }} />
+        {/* 图片内：裁剪框下方 */}
+        <div className="absolute bg-black/55" style={{ left: screenX, top: screenY + (cropRect.y + cropRect.height) * screenH, width: screenW, height: (1 - cropRect.y - cropRect.height) * screenH }} />
+        {/* 图片内：裁剪框左侧 */}
+        <div className="absolute bg-black/55" style={{ left: screenX, top: cropScreenY, width: cropRect.x * screenW, height: cropScreenH }} />
+        {/* 图片内：裁剪框右侧 */}
+        <div className="absolute bg-black/55" style={{ left: cropScreenX + cropScreenW, top: cropScreenY, width: (1 - cropRect.x - cropRect.width) * screenW, height: cropScreenH }} />
+      </div>
+
+      {/* 裁剪框 */}
+      <div
+        className="fixed z-[81]"
+        style={{ left: screenX, top: screenY, width: screenW, height: screenH }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+        <div
+          className="absolute border border-white/80 cursor-move"
+          style={{
+            left: cropRect.x * screenW,
+            top: cropRect.y * screenH,
+            width: cropScreenW,
+            height: cropScreenH,
+          }}
+          onPointerDown={(e) => handlePointerDown(e, 'move')}
+        >
+          {/* 三等分网格线 */}
+          <div className="absolute inset-0 pointer-events-none" style={{ borderRight: '1px solid rgba(255,255,255,0.25)', borderLeft: '1px solid rgba(255,255,255,0.25)', backgroundImage: 'linear-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)', backgroundSize: `100% ${cropScreenH / 3}px`, backgroundPosition: `0 ${cropScreenH / 3}px` }} />
+
+          {/* 四角 L 形角标 */}
+          <div className="absolute -top-px -left-px h-5 w-5 border-t-2 border-l-2 border-white rounded-tl pointer-events-none" />
+          <div className="absolute -top-px -right-px h-5 w-5 border-t-2 border-r-2 border-white rounded-tr pointer-events-none" />
+          <div className="absolute -bottom-px -left-px h-5 w-5 border-b-2 border-l-2 border-white rounded-bl pointer-events-none" />
+          <div className="absolute -bottom-px -right-px h-5 w-5 border-b-2 border-r-2 border-white rounded-br pointer-events-none" />
+        </div>
+
+        {/* 拖拽手柄 */}
+        {handlePositions.map(({ handle, style }) => (
+          <div
+            key={handle}
+            className="absolute h-2.5 w-2.5 rounded-sm bg-white shadow-[0_0_4px_rgba(0,0,0,0.7)]"
+            style={{
+              left: handle.includes('w') ? cropRect.x * screenW - 5
+                : handle.includes('e') ? (cropRect.x + cropRect.width) * screenW - 5
+                : cropRect.x * screenW + cropScreenW / 2 - 5,
+              top: handle.includes('n') ? cropRect.y * screenH - 5
+                : handle.includes('s') ? (cropRect.y + cropRect.height) * screenH - 5
+                : cropRect.y * screenH + cropScreenH / 2 - 5,
+              cursor: style.cursor,
+            }}
+            onPointerDown={(e) => handlePointerDown(e, handle)}
+          />
+        ))}
+      </div>
+
+      {/* 底部工具栏 */}
+      <div className="fixed bottom-0 left-0 right-0 z-[82] flex items-center justify-center gap-3 py-5 pointer-events-none">
+        <div className="flex items-center gap-3 pointer-events-auto">
+          <button
+            type="button"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 backdrop-blur-md transition-colors hover:bg-white/16 hover:text-white"
+            aria-label="取消"
+            onClick={onClose}
+          >
+            <X size={18} strokeWidth={2.2} />
+          </button>
+
+          <div className="relative">
+            <button
+              type="button"
+              className="flex h-10 items-center gap-2 rounded-full bg-white/10 px-4 text-[13px] font-medium text-white/80 backdrop-blur-md transition-colors hover:bg-white/16 hover:text-white"
+              onClick={() => {
+                setAspectMenuOpen((open) => {
+                  if (open) {
+                    setCustomMode(false);
+                    setCustomW('');
+                    setCustomH('');
+                  }
+                  return !open;
+                });
+              }}
+            >
+              <CropIcon size={14} strokeWidth={2} />
+              <span>宽高比</span>
+            </button>
+            {aspectMenuOpen ? (
+              <div className="absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 z-10 w-[148px] rounded-[14px] border border-white/10 bg-[#17181B]/95 p-1.5 shadow-[0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl">
+                {CROP_ASPECT_RATIOS.map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    className={[
+                      'flex min-h-[36px] w-full items-center rounded-[10px] px-3 py-2 text-left text-[13px] font-medium transition-colors hover:bg-white/[0.07]',
+                      aspectRatio === option.value && !customMode ? 'text-white' : 'text-gl-text-primary',
+                    ].join(' ')}
+                    onClick={() => { setCustomMode(false); setCustomW(''); setCustomH(''); handleSelectAspectRatio(option.value); }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                {/* 自定义选项 */}
+                {!customMode ? (
+                  <button
+                    type="button"
+                    className={[
+                      'flex min-h-[36px] w-full items-center rounded-[10px] px-3 py-2 text-left text-[13px] font-medium transition-colors hover:bg-white/[0.07]',
+                      customMode ? 'text-white' : 'text-gl-text-primary',
+                    ].join(' ')}
+                    onClick={() => { setCustomMode(true); setAspectRatio(null); }}
+                  >
+                    自定义...
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5 px-2 py-2">
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="宽"
+                      value={customW}
+                      className="w-0 flex-1 rounded-[8px] bg-white/10 px-2 py-1.5 text-center text-[13px] text-white outline-none placeholder:text-white/30 focus:bg-white/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      onChange={(e) => {
+                        const w = e.target.value;
+                        setCustomW(w);
+                        const wn = parseFloat(w);
+                        const hn = parseFloat(customH);
+                        if (wn > 0 && hn > 0) {
+                          const normAspect = (wn / hn) * (data.imageNaturalHeight / data.imageNaturalWidth);
+                          let nw = 1; let nh = nw / normAspect;
+                          if (nh > 1) { nh = 1; nw = nh * normAspect; }
+                          setCropRect({ x: (1 - nw) / 2, y: (1 - nh) / 2, width: nw, height: nh });
+                        }
+                      }}
+                    />
+                    <span className="text-[13px] text-white/40">:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="高"
+                      value={customH}
+                      className="w-0 flex-1 rounded-[8px] bg-white/10 px-2 py-1.5 text-center text-[13px] text-white outline-none placeholder:text-white/30 focus:bg-white/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      onChange={(e) => {
+                        const h = e.target.value;
+                        setCustomH(h);
+                        const wn = parseFloat(customW);
+                        const hn = parseFloat(h);
+                        if (wn > 0 && hn > 0) {
+                          const normAspect = (wn / hn) * (data.imageNaturalHeight / data.imageNaturalWidth);
+                          let nw = 1; let nh = nw / normAspect;
+                          if (nh > 1) { nh = 1; nw = nh * normAspect; }
+                          setCropRect({ x: (1 - nw) / 2, y: (1 - nh) / 2, width: nw, height: nh });
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            className="flex h-10 items-center gap-2 rounded-full bg-white px-4 text-[13px] font-semibold text-black transition-colors hover:bg-white/90"
+            onClick={() => onConfirm(data.nodeId, cropRect)}
+          >
+            <Check size={14} strokeWidth={2.5} />
+            <span>确认裁剪</span>
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ImageLightbox({
   data,
   onClose,
@@ -2200,13 +2565,13 @@ function ImageLightbox({
         <button
           type="button"
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
-          aria-label="??????"
+          aria-label="关闭"
           onMouseDown={(event) => event.stopPropagation()}
           onClick={onClose}
         >
           <X size={18} strokeWidth={2.2} />
         </button>
-        <Tooltip label="??" side="left" />
+        <Tooltip label="关闭" side="left" />
       </div>
       <div
         className={[
@@ -2259,6 +2624,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
   const splitImageGenerationNodeToGrid = useCanvasStore((s) => s.splitImageGenerationNodeToGrid);
+  const cropImageGenerationNode = useCanvasStore((s) => s.cropImageGenerationNode);
   const updateNodePosition = useCanvasStore((s) => s.updateNodePosition);
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const deleteNodes = useCanvasStore((s) => s.deleteNodes);
@@ -2281,6 +2647,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
+  const [cropMode, setCropMode] = useState<CropOverlayData | null>(null);
   const [historyAnchor, setHistoryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
@@ -2417,6 +2784,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
   const suppressNextPaneClearRef = useRef(false);
+  const cropPrevViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
   const selectionDragActiveRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const [paneSelectionDragging, setPaneSelectionDragging] = useState(false);
@@ -2441,6 +2809,78 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
   useEffect(() => {
     notifyImageToolbarAction = (action, data) => {
+      if (action === 'crop') {
+        const targetNode = storeNodes.find(
+          (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
+            node.type === 'image_generation' &&
+            node.data.generatedImageUrl === data.generatedImageUrl &&
+            node.data.generatedHostedImageUrl === data.generatedHostedImageUrl &&
+            node.data.generatedAt === data.generatedAt,
+        );
+        const imageUrl =
+          data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim();
+
+        if (!targetNode || !imageUrl) {
+          return;
+        }
+
+        const aspectRatioValue = (() => {
+          const ar = data.aspectRatio;
+          if (!ar || ar === 'auto') return null;
+          const m = ar.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+          if (!m) return null;
+          const w = Number(m[1]); const h = Number(m[2]);
+          return (w > 0 && h > 0) ? w / h : null;
+        })();
+        const resolvedAspect = aspectRatioValue ??
+          (data.generatedImageWidth && data.generatedImageHeight
+            ? data.generatedImageWidth / data.generatedImageHeight
+            : 16 / 9);
+        let cardW: number, cardH: number;
+        if (resolvedAspect >= 1) {
+          cardW = IMAGE_GENERATION_MAX_CARD_EDGE;
+          cardH = Math.max(IMAGE_GENERATION_MIN_CARD_EDGE, Math.round(cardW / resolvedAspect));
+        } else {
+          cardH = IMAGE_GENERATION_MAX_CARD_EDGE;
+          cardW = Math.max(IMAGE_GENERATION_MIN_CARD_EDGE, Math.round(cardH * resolvedAspect));
+        }
+        const cardStageH = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
+        const cardTopOffset = cardStageH - cardH;
+        const cardLeftOffset = Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - cardW) / 2);
+
+        cropPrevViewportRef.current = getViewport();
+
+        const targetZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM,
+          Math.min(
+            (window.innerWidth * 0.72) / cardW,
+            (window.innerHeight * 0.72) / cardH,
+          ),
+        ));
+        const cardCenterX = targetNode.position.x + cardLeftOffset + cardW / 2;
+        const cardCenterY = targetNode.position.y + cardTopOffset + cardH / 2;
+        void setViewport({
+          x: window.innerWidth / 2 - cardCenterX * targetZoom,
+          y: window.innerHeight / 2 - cardCenterY * targetZoom,
+          zoom: targetZoom,
+        }, { duration: 520 });
+
+        setImageInfoPopover(null);
+        setImageLightbox(null);
+        setCropMode({
+          nodeId: targetNode.id,
+          imageUrl,
+          nodeData: data,
+          nodePosition: targetNode.position,
+          cardLeft: cardLeftOffset,
+          cardTop: cardTopOffset,
+          cardWidth: cardW,
+          cardHeight: cardH,
+          imageNaturalWidth: data.generatedImageWidth || cardW,
+          imageNaturalHeight: data.generatedImageHeight || cardH,
+        });
+        return;
+      }
+
       if (action === 'expand') {
         setImageInfoPopover(null);
         setImageLightbox(toImageGenerationLightboxData(data));
@@ -2494,7 +2934,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         notifyImageToolbarAction = null;
       }
     };
-  }, [setSaveMessage, splitImageGenerationNodeToGrid, storeNodes]);
+  }, [cropImageGenerationNode, getViewport, setCropMode, setSaveMessage, setViewport, splitImageGenerationNodeToGrid, storeNodes]);
 
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {
@@ -3429,6 +3869,26 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setApiSettingsOpen(false);
   }, [persistApiSettings]);
 
+  const handleCloseCrop = useCallback(() => {
+    setCropMode(null);
+    const prev = cropPrevViewportRef.current;
+    if (prev) {
+      cropPrevViewportRef.current = null;
+      void setViewport(prev, { duration: 320 });
+    }
+  }, [setViewport]);
+
+  const handleConfirmCrop = useCallback(async (nodeId: string, cropRect: CropRect) => {
+    setCropMode(null);
+    cropPrevViewportRef.current = null;
+    try {
+      await cropImageGenerationNode(nodeId, cropRect);
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : '裁剪失败');
+      window.setTimeout(() => setSaveMessage(null), 2200);
+    }
+  }, [cropImageGenerationNode, setSaveMessage]);
+
   const handleSaveProject = useCallback(async () => {
     await saveProject();
     setSaveMessage('保存成功');
@@ -3700,6 +4160,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         key={imageLightbox?.imageUrl ?? 'image-lightbox-closed'}
         data={imageLightbox}
         onClose={() => setImageLightbox(null)}
+      />
+      <CropOverlay
+        data={cropMode}
+        onClose={handleCloseCrop}
+        onConfirm={(nodeId, cropRect) => void handleConfirmCrop(nodeId, cropRect)}
       />
       <input
         ref={uploadInputRef}

@@ -89,7 +89,7 @@ export function UploadedImageNode({
         className={[
           'node-connectable-card relative overflow-hidden rounded-gl-xl border border-transparent bg-transparent shadow-gl-card cursor-grab transition-all duration-150',
           selected
-            ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_0_8px_rgba(255,255,255,0.08)]'
+            ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
             : 'shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
         ].join(' ')}
         style={{ aspectRatio: `${imageWidth} / ${imageHeight}` }}

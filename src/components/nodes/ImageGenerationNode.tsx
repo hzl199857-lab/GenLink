@@ -392,7 +392,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
               isGenerating
                 ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
                 : selected
-                  ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.95),0_0_0_8px_rgba(255,255,255,0.08)]'
+                  ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
                   : 'border-gl-stroke-subtle',
             ].join(' ')}
             onClick={(event) => {

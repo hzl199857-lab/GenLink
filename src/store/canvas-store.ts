@@ -1271,6 +1271,10 @@ export interface CanvasState {
     imageGenerationNodeId: string,
     dimension: SplitGridDimension,
   ) => Promise<void>;
+  cropImageGenerationNode: (
+    imageGenerationNodeId: string,
+    cropRect: { x: number; y: number; width: number; height: number },
+  ) => Promise<void>;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
@@ -2081,6 +2085,105 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       set((currentState) => ({
         nodes: [...currentState.nodes, ...nextNodes],
+        dirty: true,
+        error: null,
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+      set({ error: message });
+      throw error;
+    }
+  },
+
+  cropImageGenerationNode: async (imageGenerationNodeId, cropRect) => {
+    const state = get();
+    const sourceNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+        node.id === imageGenerationNodeId && node.type === "image_generation",
+    );
+
+    if (!sourceNode) {
+      throw new Error("Image generation node not found");
+    }
+
+    const sourceUrl =
+      sourceNode.data.generatedHostedImageUrl?.trim() ||
+      sourceNode.data.generatedImageUrl?.trim() ||
+      "";
+
+    if (!sourceUrl) {
+      throw new Error("Source image is missing");
+    }
+
+    try {
+      const sourceImage = await loadImageElement(sourceUrl);
+      const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
+      const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
+
+      if (!naturalWidth || !naturalHeight) {
+        throw new Error("Invalid source image dimensions");
+      }
+
+      const sx = Math.round(cropRect.x * naturalWidth);
+      const sy = Math.round(cropRect.y * naturalHeight);
+      const sw = Math.round(cropRect.width * naturalWidth);
+      const sh = Math.round(cropRect.height * naturalHeight);
+
+      const cropCanvas = document.createElement("canvas");
+      cropCanvas.width = sw;
+      cropCanvas.height = sh;
+      const context = cropCanvas.getContext("2d");
+
+      if (!context) {
+        throw new Error("Canvas 2D context is unavailable");
+      }
+
+      context.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sw, sh);
+      const imageUrl = cropCanvas.toDataURL("image/png");
+
+      const positionX =
+        sourceNode.position.x +
+        IMAGE_GENERATION_NODE_STAGE_WIDTH +
+        SPLIT_OUTPUT_GROUP_GAP;
+      const positionY = sourceNode.position.y;
+      const baseTitle = sanitizeSplitNodeTitle(sourceNode.data.title);
+      const aspectRatio = `${sw}:${sh}`;
+
+      const nextNode: CanvasNode = {
+        id: crypto.randomUUID(),
+        type: "image_generation",
+        position: { x: positionX, y: positionY },
+        data: {
+          ...sourceNode.data,
+          title: `${baseTitle}-crop`,
+          aspectRatio,
+          generatedImageUrl: imageUrl,
+          generatedHostedImageUrl: undefined,
+          generatedImageWidth: sw,
+          generatedImageHeight: sh,
+          generatedImageFormat: "PNG",
+          generatedImageSizeBytes: undefined,
+          generatedAt: new Date().toISOString(),
+          generationResults: [
+            {
+              status: "completed",
+              imageUrl,
+              hostedImageUrl: undefined,
+              model: sourceNode.data.generatedModel,
+              width: sw,
+              height: sh,
+              format: "PNG",
+              sizeBytes: undefined,
+              generatedAt: new Date().toISOString(),
+            },
+          ],
+          status: "idle",
+          errorMessage: undefined,
+        },
+      };
+
+      set((currentState) => ({
+        nodes: [...currentState.nodes, nextNode],
         dirty: true,
         error: null,
       }));
