@@ -20,7 +20,7 @@ export const maxDuration = 60;
 
 const IMAGE_JOB_RETENTION_MS = 60 * 60_000;
 const COMFLY_IMAGE_JOB_TIMEOUT_MS = 45 * 60_000;
-const COMFLY_IMAGE_JOB_POLL_INTERVAL_MS = 2_000;
+const COMFLY_IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 
 type ImageJobStatus = "pending" | "completed" | "error";
 
