@@ -1,12 +1,19 @@
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import NextImage from 'next/image';
 import { Position } from 'reactflow';
 import { Image as ImageIcon, Upload } from 'lucide-react';
 import type { UploadedImageNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
+
+export interface UploadedImageCardLayout {
+  width: number;
+  height: number;
+  top: number;
+  left: number;
+}
 
 export interface UploadedImageNodeProps {
   data: UploadedImageNodeData;
@@ -16,6 +23,7 @@ export interface UploadedImageNodeProps {
   onTitleChange?: (nextTitle: string | undefined) => void;
   onSelectNode?: () => void;
   onShowInfo?: () => void;
+  onCardLayout?: (layout: UploadedImageCardLayout) => void;
 }
 
 const MAX_CARD_WIDTH = 420;
@@ -30,6 +38,7 @@ export function UploadedImageNode({
   onTitleChange,
   onSelectNode,
   onShowInfo,
+  onCardLayout,
 }: UploadedImageNodeProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const imageWidth = Math.max(data.width || 320, 1);
@@ -52,6 +61,17 @@ export function UploadedImageNode({
   const estimatedCardHeight = hasExplicitDisplaySize
     ? explicitDisplayHeight
     : cardWidth * (imageHeight / imageWidth);
+  // title row: icon 24px, -mt-2(-8px), mb-1.5(6px) = 22px
+  const TITLE_ROW_HEIGHT = 22;
+
+  useEffect(() => {
+    onCardLayout?.({
+      width: cardWidth,
+      height: estimatedCardHeight,
+      top: TITLE_ROW_HEIGHT,
+      left: 0,
+    });
+  }, [cardWidth, estimatedCardHeight, onCardLayout]);
   const showAccessories = accessoriesVisible;
   const useTightReplaceButton = cardWidth < 310 || estimatedCardHeight < 140;
   const useCompactReplaceButton = cardWidth < 340 || estimatedCardHeight < 180;

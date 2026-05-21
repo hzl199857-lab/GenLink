@@ -70,13 +70,17 @@ import { TextNode } from '../nodes/TextNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { ImageNode } from '../nodes/ImageNode';
-import { UploadedImageNode } from '../nodes/UploadedImageNode';
+import { UploadedImageNode, type UploadedImageCardLayout } from '../nodes/UploadedImageNode';
 import { CardSideHandle } from '../nodes/CardSideHandle';
 import {
   ImageGenerationInfoPopover,
   type ImageGenerationInfoPopoverData,
 } from '../nodes/ImageGenerationInfoPopover';
 import { NodeFloatingToolbar } from '../nodes/NodeFloatingToolbar';
+import {
+  ImageGenerationNodeToolbar,
+  type ImageGenerationToolbarAction,
+} from '../nodes/ImageGenerationNodeToolbar';
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasHeader } from './CanvasHeader';
@@ -95,6 +99,9 @@ import { DeleteProjectDialog } from '@/components/project/DeleteProjectDialog';
 let notifyPromptBarInteraction: (() => void) | null = null;
 let notifyImageToolbarAction:
   | ((action: string, data: ImageGenerationNodeData) => void)
+  | null = null;
+let notifyUploadedImageToolbarAction:
+  | ((action: ImageGenerationToolbarAction, nodeId: string, data: UploadedImageNodeData, cardLayout: { left: number; top: number; width: number; height: number } | null) => void)
   | null = null;
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
@@ -1057,31 +1064,41 @@ const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data
   );
 });
 
-const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
-  const deleteNode = useCanvasStore((s) => s.deleteNode);
-  const addNode = useCanvasStore((s) => s.addNode);
+const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
+  const imageData = data as ImageNodeData;
+  const hasImage = Boolean(imageData.imageUrl?.trim() || imageData.hostedImageUrl?.trim());
 
-  const handleCopy = () => {
-    addNode({
-      id: crypto.randomUUID(),
-      type: 'image',
-      position: { x: xPos + 40, y: yPos + 40 },
-      data: { ...data },
-    });
+  const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
+    switch (action) {
+      case 'download': {
+        const url = imageData.hostedImageUrl || imageData.imageUrl;
+        if (url) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = imageData.title || 'image';
+          a.click();
+        }
+        break;
+      }
+      case 'expand':
+        notifyCanvasImageInfoRequest?.(id);
+        break;
+      default:
+        break;
+    }
   };
 
   return (
-    <div className="relative group node-connectable-root">
-      <NodeFloatingToolbar
+    <div className="relative group node-connectable-root" style={{ paddingTop: '74px' }}>
+      <ImageGenerationNodeToolbar
         visible={isActive}
-        onCopy={handleCopy}
-        onDelete={() => deleteNode(id)}
-        onLink={() => console.log('Link clicked')}
-        onShare={() => console.log('Share clicked')}
-        onMore={() => console.log('More clicked')}
+        top={0}
+        hasGeneratedImage={hasImage}
+        onAction={handleToolbarAction}
+        onOpenLightbox={() => notifyCanvasImageInfoRequest?.(id)}
       />
       <CardSideHandle type="target" position={Position.Left} visible={isActive} />
       <ImageNode
@@ -1102,22 +1119,39 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
+  const uploadedData = data as UploadedImageNodeData;
+  const hasImage = Boolean(uploadedData.imageUrl?.trim());
+  const cardLayoutRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
 
   const handleReplace = async (file: File) => {
     const next = await readImageFile(file);
     updateNodeData<'uploaded_image'>(id, next);
   };
 
+  const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
+    notifyUploadedImageToolbarAction?.(action, id, uploadedData, cardLayoutRef.current);
+  };
+
   return (
-    <UploadedImageNode
-      data={data as UploadedImageNodeData}
-      selected={selected}
-      accessoriesVisible={isActive}
-      onReplace={handleReplace}
-      onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
-      onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
-      onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
-    />
+    <div className="relative" style={{ paddingTop: '74px' }}>
+      <ImageGenerationNodeToolbar
+        visible={isActive}
+        top={0}
+        hasGeneratedImage={hasImage}
+        onAction={handleToolbarAction}
+        onOpenLightbox={() => handleToolbarAction('expand')}
+      />
+      <UploadedImageNode
+        data={data as UploadedImageNodeData}
+        selected={selected}
+        accessoriesVisible={isActive}
+        onReplace={handleReplace}
+        onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
+        onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
+        onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
+        onCardLayout={(layout) => { cardLayoutRef.current = layout; }}
+      />
+    </div>
   );
 });
 
@@ -2041,6 +2075,7 @@ function clampCropRect(rect: CropRect): CropRect {
 
 type CropOverlayData = {
   nodeId: string;
+  nodeType: 'image_generation' | 'uploaded_image';
   imageUrl: string;
   nodeData: ImageGenerationNodeData;
   nodePosition: { x: number; y: number };
@@ -2625,6 +2660,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const addNodes = useCanvasStore((s) => s.addNodes);
   const splitImageGenerationNodeToGrid = useCanvasStore((s) => s.splitImageGenerationNodeToGrid);
   const cropImageGenerationNode = useCanvasStore((s) => s.cropImageGenerationNode);
+  const splitUploadedImageNodeToGrid = useCanvasStore((s) => s.splitUploadedImageNodeToGrid);
+  const cropUploadedImageNode = useCanvasStore((s) => s.cropUploadedImageNode);
   const updateNodePosition = useCanvasStore((s) => s.updateNodePosition);
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const deleteNodes = useCanvasStore((s) => s.deleteNodes);
@@ -2868,6 +2905,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         setImageLightbox(null);
         setCropMode({
           nodeId: targetNode.id,
+          nodeType: 'image_generation',
           imageUrl,
           nodeData: data,
           nodePosition: targetNode.position,
@@ -2935,6 +2973,97 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       }
     };
   }, [cropImageGenerationNode, getViewport, setCropMode, setSaveMessage, setViewport, splitImageGenerationNodeToGrid, storeNodes]);
+
+  useEffect(() => {
+    notifyUploadedImageToolbarAction = (action, nodeId, data, cardLayout) => {
+      if (action === 'crop') {
+        const targetNode = storeNodes.find(
+          (node): node is Extract<CanvasNode, { type: 'uploaded_image' }> =>
+            node.id === nodeId && node.type === 'uploaded_image',
+        );
+        const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
+
+        if (!targetNode || !imageUrl) return;
+
+        // cardLayout.top is relative to UploadedImageNode root, add paddingTop(74) for adapter wrapper
+        const ADAPTER_PADDING_TOP = 74;
+        const cardW = cardLayout?.width ?? data.displayWidth ?? Math.min(420, data.width || 320);
+        const cardH = cardLayout?.height ?? data.displayHeight ?? Math.round(cardW * (data.height || 320) / (data.width || 320));
+        const cardLeft = cardLayout?.left ?? 0;
+        const cardTop = ADAPTER_PADDING_TOP + (cardLayout?.top ?? 22);
+
+        cropPrevViewportRef.current = getViewport();
+
+        const targetZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM,
+          Math.min(
+            (window.innerWidth * 0.72) / cardW,
+            (window.innerHeight * 0.72) / cardH,
+          ),
+        ));
+        const cardCenterX = targetNode.position.x + cardLeft + cardW / 2;
+        const cardCenterY = targetNode.position.y + cardTop + cardH / 2;
+        void setViewport({
+          x: window.innerWidth / 2 - cardCenterX * targetZoom,
+          y: window.innerHeight / 2 - cardCenterY * targetZoom,
+          zoom: targetZoom,
+        }, { duration: 520 });
+
+        setImageInfoPopover(null);
+        setImageLightbox(null);
+        setCropMode({
+          nodeId: targetNode.id,
+          nodeType: 'uploaded_image',
+          imageUrl,
+          nodeData: {} as ImageGenerationNodeData,
+          nodePosition: targetNode.position,
+          cardLeft,
+          cardTop,
+          cardWidth: cardW,
+          cardHeight: cardH,
+          imageNaturalWidth: data.width || cardW,
+          imageNaturalHeight: data.height || cardH,
+        });
+        return;
+      }
+
+      if (action === 'expand') {
+        const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
+        if (imageUrl) {
+          setImageInfoPopover(null);
+          setImageLightbox({
+            imageUrl,
+            alt: data.title || data.fileName || 'image',
+            width: data.width,
+            height: data.height,
+          });
+        }
+        return;
+      }
+
+      if (action === 'download') {
+        const url = data.hostedImageUrl || data.imageUrl;
+        if (url) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = data.title || data.fileName || 'image';
+          a.click();
+        }
+        return;
+      }
+
+      if (action === 'split-2x2-crop' || action === 'split-3x3-crop' || action === 'split-5x5-crop') {
+        const dimension = action === 'split-2x2-crop' ? 2 : action === 'split-3x3-crop' ? 3 : 5;
+        void splitUploadedImageNodeToGrid(nodeId, dimension).catch((error) => {
+          console.error('split uploaded image node failed', error);
+        });
+        return;
+      }
+    };
+
+    return () => {
+      notifyUploadedImageToolbarAction = null;
+    };
+  }, [getViewport, setCropMode, setSaveMessage, setViewport, splitUploadedImageNodeToGrid, storeNodes]);
 
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {
@@ -3879,15 +4008,20 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [setViewport]);
 
   const handleConfirmCrop = useCallback(async (nodeId: string, cropRect: CropRect) => {
+    const nodeType = cropMode?.nodeType;
     setCropMode(null);
     cropPrevViewportRef.current = null;
     try {
-      await cropImageGenerationNode(nodeId, cropRect);
+      if (nodeType === 'uploaded_image') {
+        await cropUploadedImageNode(nodeId, cropRect);
+      } else {
+        await cropImageGenerationNode(nodeId, cropRect);
+      }
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : '裁剪失败');
       window.setTimeout(() => setSaveMessage(null), 2200);
     }
-  }, [cropImageGenerationNode, setSaveMessage]);
+  }, [cropImageGenerationNode, cropUploadedImageNode, cropMode?.nodeType, setSaveMessage]);
 
   const handleSaveProject = useCallback(async () => {
     await saveProject();

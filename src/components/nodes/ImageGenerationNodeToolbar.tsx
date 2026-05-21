@@ -33,6 +33,7 @@ export interface ImageGenerationNodeToolbarProps {
   visible: boolean;
   top: number;
   hasGeneratedImage: boolean;
+  transformOrigin?: string;
   onUpload?: () => void;
   onOpenLightbox?: () => void;
   onAction?: (action: ImageGenerationToolbarAction) => void;
@@ -92,6 +93,7 @@ export function ImageGenerationNodeToolbar({
   visible,
   top,
   hasGeneratedImage,
+  transformOrigin = 'bottom center',
   onUpload,
   onOpenLightbox,
   onAction,
@@ -126,7 +128,7 @@ export function ImageGenerationNodeToolbar({
       style={{
         top: `${top}px`,
         transform: `translateX(-50%) scale(${1 / Math.max(zoom, 0.0001)})`,
-        transformOrigin: 'bottom center',
+        transformOrigin,
       }}
     >
       {hasGeneratedImage ? (

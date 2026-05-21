@@ -54,6 +54,8 @@ dev.log
 .claude/
 .vscode/
 .idea/
+agents/
+CLAUDE.md
 
 # local caches
 .eslintcache
