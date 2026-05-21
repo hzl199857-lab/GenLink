@@ -13,6 +13,11 @@ import {
   X,
   Check,
   CropIcon,
+  Play,
+  Wrench,
+  Scissors,
+  Download,
+  Ungroup,
 } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
@@ -58,6 +63,7 @@ import type {
   CanvasEdge,
   CanvasNode,
   ImageHistoryItem,
+  NodeGroup,
   NodeType,
   TextNodeData,
   ImageGenerationNodeData,
@@ -1301,6 +1307,142 @@ function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+function findExactGroupForNodeSelection(
+  groups: NodeGroup[],
+  selectedNodeIds: Set<string>,
+): NodeGroup | null {
+  if (selectedNodeIds.size < 2) {
+    return null;
+  }
+
+  for (const group of groups) {
+    if (group.nodeIds.length !== selectedNodeIds.size) {
+      continue;
+    }
+
+    if (group.nodeIds.every((nodeId) => selectedNodeIds.has(nodeId))) {
+      return group;
+    }
+  }
+
+  return null;
+}
+
+function findGroupAtCanvasPoint(
+  groups: NodeGroup[],
+  point: { x: number; y: number },
+): NodeGroup | null {
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    const group = groups[index];
+
+    if (
+      point.x >= group.x &&
+      point.x <= group.x + group.width &&
+      point.y >= group.y &&
+      point.y <= group.y + group.height
+    ) {
+      return group;
+    }
+  }
+
+  return null;
+}
+
+function getRectCenter(rect: MultiNodeSelectionBounds): { x: number; y: number } {
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2,
+  };
+}
+
+function syncNodeGroupMembership(
+  nodeId: string,
+  nextPosition?: { x: number; y: number },
+) {
+  const state = useCanvasStore.getState();
+  const currentNode = state.nodes.find((node) => node.id === nodeId);
+
+  if (!currentNode) {
+    return;
+  }
+
+  const node = nextPosition
+    ? ({ ...currentNode, position: nextPosition } as CanvasNode)
+    : currentNode;
+  const nodeCenter = getRectCenter(getEstimatedNodeBounds(node));
+  const targetGroupId = findGroupAtCanvasPoint(state.groups, nodeCenter)?.id ?? null;
+  let changed = false;
+
+  const groups = state.groups
+    .map((group) => {
+      const hasNode = group.nodeIds.includes(nodeId);
+      const shouldHaveNode = group.id === targetGroupId;
+
+      if (hasNode === shouldHaveNode) {
+        return group;
+      }
+
+      changed = true;
+
+      if (shouldHaveNode) {
+        return { ...group, nodeIds: [...group.nodeIds, nodeId] };
+      }
+
+      return {
+        ...group,
+        nodeIds: group.nodeIds.filter((id) => id !== nodeId),
+      };
+    })
+    .filter((group) => group.nodeIds.length > 0);
+
+  if (!changed) {
+    return;
+  }
+
+  useCanvasStore.setState({
+    groups,
+    dirty: true,
+  });
+}
+
+function updateGroupBoundsAndMembership(
+  groupId: string,
+  bounds: { x: number; y: number; width: number; height: number },
+) {
+  const state = useCanvasStore.getState();
+  const groupExists = state.groups.some((group) => group.id === groupId);
+
+  if (!groupExists) {
+    return;
+  }
+
+  const groupsWithNextBounds = state.groups.map((group) =>
+    group.id === groupId ? { ...group, ...bounds } : group,
+  );
+  const nextNodeIdsByGroupId = new Map<string, string[]>(
+    groupsWithNextBounds.map((group) => [group.id, []]),
+  );
+
+  for (const node of state.nodes) {
+    const nodeCenter = getRectCenter(getEstimatedNodeBounds(node));
+    const targetGroup = findGroupAtCanvasPoint(groupsWithNextBounds, nodeCenter);
+
+    if (targetGroup) {
+      nextNodeIdsByGroupId.get(targetGroup.id)?.push(node.id);
+    }
+  }
+
+  const groups = groupsWithNextBounds.map((group) => ({
+    ...group,
+    nodeIds: nextNodeIdsByGroupId.get(group.id) ?? [],
+  }));
+
+  useCanvasStore.setState({
+    groups,
+    dirty: true,
+  });
+}
+
 type CanvasNodeRenderData = CanvasNode['data'] & {
   canvasNodeActive?: boolean;
 };
@@ -1598,8 +1740,448 @@ function openFileInput(input: HTMLInputElement) {
 type MultiNodeSelectionOverlayProps = {
   nodes: CanvasNode[];
   selectedNodeIds: Set<string>;
+  groups: NodeGroup[];
   visible: boolean;
+  onGroup: (nodeIds: string[]) => void;
 };
+
+type GroupOverlayProps = {
+  groups: NodeGroup[];
+  selectedGroupId: string | null;
+  onSelectGroup: (groupId: string) => void;
+  onDeleteGroup: (groupId: string) => void;
+  onRenameGroup: (groupId: string, name: string | undefined) => void;
+  onMoveGroup: (groupId: string, dx: number, dy: number) => void;
+  onResizeGroup: (groupId: string, bounds: { x: number; y: number; width: number; height: number }) => void;
+};
+
+function GroupOverlay({
+  groups,
+  selectedGroupId,
+  onSelectGroup,
+  onDeleteGroup,
+  onRenameGroup,
+  onMoveGroup,
+  onResizeGroup,
+}: GroupOverlayProps) {
+  const viewport = useViewport();
+
+  if (groups.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {groups.map((group) => (
+        <GroupFrame
+          key={group.id}
+          group={group}
+          viewport={viewport}
+          selected={selectedGroupId === group.id}
+          onSelect={() => onSelectGroup(group.id)}
+          onDelete={() => onDeleteGroup(group.id)}
+          onRename={(name) => onRenameGroup(group.id, name)}
+          onMove={(dx, dy) => onMoveGroup(group.id, dx, dy)}
+          onResize={(bounds) => onResizeGroup(group.id, bounds)}
+        />
+      ))}
+    </>
+  );
+}
+
+type GroupFrameProps = {
+  group: NodeGroup;
+  viewport: { x: number; y: number; zoom: number };
+  selected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onRename: (name: string | undefined) => void;
+  onMove: (dx: number, dy: number) => void;
+  onResize: (bounds: { x: number; y: number; width: number; height: number }) => void;
+};
+
+// Convert canvas coords to screen coords
+function canvasToScreen(
+  cx: number,
+  cy: number,
+  viewport: { x: number; y: number; zoom: number },
+) {
+  return {
+    x: cx * viewport.zoom + viewport.x,
+    y: cy * viewport.zoom + viewport.y,
+  };
+}
+
+function GroupFrame({
+  group,
+  viewport,
+  selected,
+  onSelect,
+  onDelete,
+  onRename,
+  onMove,
+  onResize,
+}: GroupFrameProps) {
+  const dragRef = useRef<{ startX: number; startY: number } | null>(null);
+  const resizeRef = useRef<{
+    handle: string;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    origW: number;
+    origH: number;
+  } | null>(null);
+
+  const topLeft = canvasToScreen(group.x, group.y, viewport);
+  const screenW = group.width * viewport.zoom;
+  const screenH = group.height * viewport.zoom;
+
+  const nodeCount = group.nodeIds.length;
+  const defaultName = `分组 ${nodeCount} 个节点`;
+
+  const handlePointerDown = (event: React.PointerEvent) => {
+    if ((event.target as HTMLElement).closest('.group-frame-no-drag')) return;
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    onSelect();
+    dragRef.current = { startX: event.clientX, startY: event.clientY };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const dx = (event.clientX - dragRef.current.startX) / viewport.zoom;
+    const dy = (event.clientY - dragRef.current.startY) / viewport.zoom;
+    dragRef.current = { startX: event.clientX, startY: event.clientY };
+    onMove(dx, dy);
+  };
+
+  const handlePointerUp = (event: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    event.stopPropagation();
+    event.preventDefault();
+    dragRef.current = null;
+    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+  };
+
+  const startResize = useCallback((handle: string, clientX: number, clientY: number) => {
+    onSelect();
+    resizeRef.current = {
+      handle,
+      startX: clientX,
+      startY: clientY,
+      origX: group.x,
+      origY: group.y,
+      origW: group.width,
+      origH: group.height,
+    };
+  }, [group.height, group.width, group.x, group.y, onSelect]);
+
+  const handleResizePointerDown = (event: React.PointerEvent) => {
+    const handle = (event.currentTarget as HTMLElement).dataset.handle;
+    if (!handle) return;
+    event.stopPropagation();
+    event.preventDefault();
+    startResize(handle, event.clientX, event.clientY);
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      // Window-level pointer listeners below keep resize active if capture is unavailable.
+    }
+  };
+
+  const handleResizeMouseDown = (event: React.MouseEvent) => {
+    const handle = (event.currentTarget as HTMLElement).dataset.handle;
+    if (!handle) return;
+    event.stopPropagation();
+    event.preventDefault();
+
+    if (!resizeRef.current) {
+      startResize(handle, event.clientX, event.clientY);
+    }
+  };
+
+  const updateResizeFromClientPoint = useCallback((clientX: number, clientY: number) => {
+    if (!resizeRef.current) {
+      return;
+    }
+
+    const { handle, startX, startY, origX, origY, origW, origH } = resizeRef.current;
+    const dx = (clientX - startX) / viewport.zoom;
+    const dy = (clientY - startY) / viewport.zoom;
+    const MIN = 80;
+
+    let x = origX, y = origY, w = origW, h = origH;
+
+    if (handle.includes('e')) w = Math.max(MIN, origW + dx);
+    if (handle.includes('s')) h = Math.max(MIN, origH + dy);
+    if (handle.includes('w')) { const nw = Math.max(MIN, origW - dx); x = origX + origW - nw; w = nw; }
+    if (handle.includes('n')) { const nh = Math.max(MIN, origH - dy); y = origY + origH - nh; h = nh; }
+
+    onResize({ x, y, width: w, height: h });
+  }, [onResize, viewport.zoom]);
+
+  const handleResizePointerMove = (event: React.PointerEvent) => {
+    if (!resizeRef.current) return;
+    event.stopPropagation();
+    event.preventDefault();
+    updateResizeFromClientPoint(event.clientX, event.clientY);
+  };
+
+  const handleResizePointerUp = (event: React.PointerEvent) => {
+    if (!resizeRef.current) return;
+    event.stopPropagation();
+    event.preventDefault();
+    resizeRef.current = null;
+    try {
+      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    } catch {
+      // Ignore browsers that already released capture.
+    }
+  };
+
+  useEffect(() => {
+    const handleWindowPointerMove = (event: PointerEvent) => {
+      if (!resizeRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      updateResizeFromClientPoint(event.clientX, event.clientY);
+    };
+
+    const handleWindowPointerUp = (event: PointerEvent) => {
+      if (!resizeRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      resizeRef.current = null;
+    };
+
+    const handleWindowMouseMove = (event: MouseEvent) => {
+      if (!resizeRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      updateResizeFromClientPoint(event.clientX, event.clientY);
+    };
+
+    const handleWindowMouseUp = (event: MouseEvent) => {
+      if (!resizeRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      resizeRef.current = null;
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove, true);
+    window.addEventListener('pointerup', handleWindowPointerUp, true);
+    window.addEventListener('pointercancel', handleWindowPointerUp, true);
+    window.addEventListener('mousemove', handleWindowMouseMove, true);
+    window.addEventListener('mouseup', handleWindowMouseUp, true);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove, true);
+      window.removeEventListener('pointerup', handleWindowPointerUp, true);
+      window.removeEventListener('pointercancel', handleWindowPointerUp, true);
+      window.removeEventListener('mousemove', handleWindowMouseMove, true);
+      window.removeEventListener('mouseup', handleWindowMouseUp, true);
+    };
+  }, [updateResizeFromClientPoint]);
+
+  const handles = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+  const handleCursor: Record<string, string> = {
+    n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+    ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
+  };
+  const HANDLE_SIZE = 14;
+
+  function getHandleStyle(h: string): React.CSSProperties {
+    const half = HANDLE_SIZE / 2;
+    const pos: React.CSSProperties = {
+      position: 'absolute',
+      width: HANDLE_SIZE,
+      height: HANDLE_SIZE,
+      touchAction: 'none',
+      userSelect: 'none',
+    };
+
+    if (h === 'n') return { ...pos, left: topLeft.x + screenW / 2 - half, top: topLeft.y - half };
+    if (h === 's') return { ...pos, left: topLeft.x + screenW / 2 - half, top: topLeft.y + screenH - half };
+    if (h === 'e') return { ...pos, left: topLeft.x + screenW - half, top: topLeft.y + screenH / 2 - half };
+    if (h === 'w') return { ...pos, left: topLeft.x - half, top: topLeft.y + screenH / 2 - half };
+    if (h === 'ne') return { ...pos, left: topLeft.x + screenW - half, top: topLeft.y - half };
+    if (h === 'nw') return { ...pos, left: topLeft.x - half, top: topLeft.y - half };
+    if (h === 'se') return { ...pos, left: topLeft.x + screenW - half, top: topLeft.y + screenH - half };
+    if (h === 'sw') return { ...pos, left: topLeft.x - half, top: topLeft.y + screenH - half };
+    return pos;
+  }
+
+  return (
+    <>
+      {/* Frame body — sits below nodes in stacking order (no z-index boost).
+          Nodes in the viewport (z-2+) are above this, so node clicks/drags
+          go directly to React Flow. Only clicks on empty space hit this div. */}
+      <div
+        className="group-frame-body nodrag nopan pointer-events-auto absolute z-[3] cursor-grab active:cursor-grabbing"
+        style={{ left: topLeft.x, top: topLeft.y, width: screenW, height: screenH }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {/* Border */}
+        <div
+          className={[
+            'absolute inset-0 rounded-[10px] pointer-events-none',
+            selected
+              ? 'border-2 border-white/80 bg-white/[0.03]'
+              : 'border border-white/40 bg-white/[0.02]',
+          ].join(' ')}
+        />
+
+        {/* Resize handles — only when selected */}
+      </div>
+
+      {/* Label — z-[19] above nodes */}
+      {selected && handles.map((h) => (
+        <div
+          key={h}
+          data-canvas-menu-ignore="true"
+          data-handle={h}
+          className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[20] rounded-full border border-[#1b1f27] bg-white shadow"
+          style={{ ...getHandleStyle(h), cursor: handleCursor[h] }}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={handleResizePointerUp}
+          onMouseDown={handleResizeMouseDown}
+          onDragStart={(event) => event.preventDefault()}
+        />
+      ))}
+
+      <div
+        className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19]"
+        style={{ left: topLeft.x + 12, top: topLeft.y - 28 }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <GroupFrameLabel value={group.name} fallback={defaultName} onCommit={onRename} />
+      </div>
+
+      {/* Toolbar — z-[19], only when selected */}
+      {selected && (
+        <div
+          data-canvas-menu-ignore="true"
+          className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19] flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+          style={{
+            left: topLeft.x + screenW / 2,
+            top: topLeft.y - 52,
+            transform: 'translateX(-50%)',
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="mr-1 h-4 w-4 rounded-full border-2 border-white/60" />
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Group} compact />
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Play}>整组执行</MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Wrench}>添加到工具箱</MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Scissors}>转分镜组</MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>解组</MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Download}>批量下载</MultiNodeSelectionToolbarButton>
+        </div>
+      )}
+    </>
+  );
+}
+
+function GroupFrameLabel({
+  value,
+  fallback,
+  onCommit,
+}: {
+  value?: string;
+  fallback: string;
+  onCommit: (name: string | undefined) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? fallback);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    onCommit(trimmed && trimmed !== fallback ? trimmed : undefined);
+    setEditing(false);
+  };
+
+  const cancel = () => {
+    setDraft(value ?? fallback);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        }}
+        className="rounded bg-white/10 px-2 py-0.5 text-[12px] font-medium text-white/80 outline-none ring-1 ring-white/20"
+        style={{ width: `${Math.max((draft || fallback).length + 1, 8)}ch` }}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="cursor-text select-none rounded px-2 py-0.5 text-[12px] font-medium text-white/60 hover:text-white/80"
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDraft(value ?? fallback);
+        setEditing(true);
+      }}
+    >
+      {value ?? fallback}
+    </span>
+  );
+}
 
 function getNodeElementBoundsInFlowPane(nodeId: string): MultiNodeSelectionBounds | null {
   const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
@@ -1649,10 +2231,12 @@ function MultiNodeSelectionToolbarButton({
   children,
   icon: Icon,
   compact = false,
+  onClick,
 }: {
   children?: React.ReactNode;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
   compact?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
@@ -1668,6 +2252,7 @@ function MultiNodeSelectionToolbarButton({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        onClick?.();
       }}
     >
       <Icon size={16} strokeWidth={1.9} />
@@ -1679,7 +2264,9 @@ function MultiNodeSelectionToolbarButton({
 function MultiNodeSelectionOverlay({
   nodes,
   selectedNodeIds,
+  groups,
   visible,
+  onGroup,
 }: MultiNodeSelectionOverlayProps) {
   const viewport = useViewport();
   const [bounds, setBounds] = useState<MultiNodeSelectionBounds | null>(null);
@@ -1691,9 +2278,13 @@ function MultiNodeSelectionOverlay({
     () => selectedNodes.map((node) => node.id).sort().join('|'),
     [selectedNodes],
   );
+  const selectedGroup = useMemo(
+    () => findExactGroupForNodeSelection(groups, selectedNodeIds),
+    [groups, selectedNodeIds],
+  );
 
   useEffect(() => {
-    if (selectedNodes.length <= 1) {
+    if (selectedNodes.length <= 1 || selectedGroup) {
       return;
     }
 
@@ -1757,9 +2348,9 @@ function MultiNodeSelectionOverlay({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', scheduleUpdate);
     };
-  }, [selectedNodeIdsKey, selectedNodes, viewport.x, viewport.y, viewport.zoom]);
+  }, [selectedGroup, selectedNodeIdsKey, selectedNodes, viewport.x, viewport.y, viewport.zoom]);
 
-  if (!visible || !bounds || selectedNodes.length <= 1) {
+  if (!visible || !bounds || selectedNodes.length <= 1 || selectedGroup) {
     return null;
   }
 
@@ -1804,7 +2395,10 @@ function MultiNodeSelectionOverlay({
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Plus} compact />
         <div className="mx-1 h-5 w-px bg-white/10" />
-        <MultiNodeSelectionToolbarButton icon={Group}>
+        <MultiNodeSelectionToolbarButton
+          icon={Group}
+          onClick={() => onGroup(selectedNodes.map((n) => n.id))}
+        >
           打组
         </MultiNodeSelectionToolbarButton>
         <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
@@ -2668,10 +3262,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const addEdgeStore = useCanvasStore((s) => s.addEdge);
   const deleteEdge = useCanvasStore((s) => s.deleteEdge);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const storeGroups = useCanvasStore((s) => s.groups);
+  const createGroup = useCanvasStore((s) => s.createGroup);
+  const deleteGroup = useCanvasStore((s) => s.deleteGroup);
+  const renameGroup = useCanvasStore((s) => s.renameGroup);
+  const moveGroup = useCanvasStore((s) => s.moveGroup);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
+  const selectedNodeIdsRef = useRef<Set<string>>(selectedNodeIds);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const draggingNodeIdRef = useRef<string | null>(null);
   const [edgeDeleteButtonPosition, setEdgeDeleteButtonPosition] = useState<{
     x: number;
     y: number;
@@ -2707,6 +3309,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    selectedNodeIdsRef.current = selectedNodeIds;
+  }, [selectedNodeIds]);
 
   const handleToggleEdgeStyle = useCallback(() => {
     setStoredCanvasEdgeStyle(edgeStyle === 'straight' ? 'curve' : 'straight');
@@ -2821,9 +3427,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
   const suppressNextPaneClearRef = useRef(false);
+  const skipNextPaneClickClearRef = useRef(false);
   const cropPrevViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
   const selectionDragActiveRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const paneGroupDragRef = useRef<{ groupId: string; lastX: number; lastY: number; moved: boolean } | null>(null);
   const [paneSelectionDragging, setPaneSelectionDragging] = useState(false);
   const [selectionInProgress, setSelectionInProgress] = useState(false);
 
@@ -3088,11 +3696,21 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setEdgeDeleteButtonPosition(null);
   }, []);
 
+  const selectGroup = useCallback((groupId: string) => {
+    clearCanvasNodeUi();
+    setActiveNodeId(null);
+    selectedNodeIdsRef.current = new Set();
+    setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
+    setSelectedGroupId(groupId);
+    clearEdgeSelection();
+  }, [clearEdgeSelection]);
+
   const selectSingleNode = useCallback((nodeId: string) => {
     setSelectedNodeIds((current) =>
       current.size === 1 && current.has(nodeId) ? current : new Set([nodeId]),
     );
     setActiveNodeId(nodeId);
+    setSelectedGroupId(null);
     clearEdgeSelection();
   }, [clearEdgeSelection]);
 
@@ -3208,6 +3826,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     node: ReactFlowNode,
   ) => {
     clearEdgeSelection();
+    setSelectedGroupId(null);
 
     if (event.shiftKey) {
       setSelectedNodeIds((current) => {
@@ -3228,10 +3847,15 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [clearEdgeSelection, selectSingleNode]);
 
   const handleSelectionChange = useCallback(({ nodes }: { nodes: ReactFlowNode[] }) => {
-    setSelectedNodeIds((current) => {
-      const next = new Set(nodes.map((node) => node.id));
+    if (paneGroupDragRef.current) {
+      return;
+    }
 
-      return areSetsEqual(current, next) ? current : next;
+    const nextSelectedNodeIds = new Set(nodes.map((node) => node.id));
+    selectedNodeIdsRef.current = nextSelectedNodeIds;
+
+    setSelectedNodeIds((current) => {
+      return areSetsEqual(current, nextSelectedNodeIds) ? current : nextSelectedNodeIds;
     });
 
     if (selectionDragActiveRef.current) {
@@ -3245,8 +3869,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [clearEdgeSelection]);
 
   const handleSelectionStart = useCallback(() => {
+    if (paneGroupDragRef.current) {
+      selectionDragActiveRef.current = false;
+      setSelectionInProgress(false);
+      setPaneSelectionDragging(false);
+      return;
+    }
+
     selectionDragActiveRef.current = true;
+    selectedNodeIdsRef.current = new Set();
     setSelectionInProgress(true);
+    setSelectedGroupId(null);
   }, []);
 
   const handleSelectionEnd = useCallback(() => {
@@ -3254,13 +3887,28 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     panePointerStartRef.current = null;
     setPaneSelectionDragging(false);
     setSelectionInProgress(false);
-  }, []);
+
+    if (paneGroupDragRef.current) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const group = findExactGroupForNodeSelection(
+        useCanvasStore.getState().groups,
+        selectedNodeIdsRef.current,
+      );
+
+      if (group) {
+        selectGroup(group.id);
+      }
+    });
+  }, [selectGroup]);
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
     const target = event.target;
     const internalTarget = target instanceof Element && Boolean(
       target.closest(
-        '[data-canvas-menu-ignore="true"], .node-connectable-root, .node-connectable-card, .react-flow__node',
+        '[data-canvas-menu-ignore="true"], .node-connectable-root, .node-connectable-card, .react-flow__node, .group-frame-body, .group-frame-no-drag',
       ),
     );
 
@@ -3271,14 +3919,59 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
+    const group = findGroupAtCanvasPoint(storeGroups, project({ x: event.clientX, y: event.clientY }));
+
+    if (group) {
+      event.preventDefault();
+      event.stopPropagation();
+      paneGroupDragRef.current = {
+        groupId: group.id,
+        lastX: event.clientX,
+        lastY: event.clientY,
+        moved: false,
+      };
+      skipNextPaneClickClearRef.current = true;
+      panePointerStartRef.current = null;
+      selectionDragActiveRef.current = false;
+      setPaneSelectionDragging(false);
+      setSelectionInProgress(false);
+      selectGroup(group.id);
+      return;
+    }
+
     panePointerStartRef.current = {
       x: event.clientX,
       y: event.clientY,
     };
     setPaneSelectionDragging(false);
-  }, []);
+  }, [project, selectGroup, storeGroups]);
 
   const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
+    const groupDrag = paneGroupDragRef.current;
+
+    if (groupDrag) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const dx = event.clientX - groupDrag.lastX;
+      const dy = event.clientY - groupDrag.lastY;
+
+      if (dx !== 0 || dy !== 0) {
+        const { zoom } = getViewport();
+        paneGroupDragRef.current = {
+          groupId: groupDrag.groupId,
+          lastX: event.clientX,
+          lastY: event.clientY,
+          moved: true,
+        };
+        moveGroup(groupDrag.groupId, dx / zoom, dy / zoom);
+      }
+
+      setPaneSelectionDragging(false);
+      setSelectionInProgress(false);
+      return;
+    }
+
     const start = panePointerStartRef.current;
 
     if (!start) {
@@ -3291,9 +3984,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     if (dx > 3 || dy > 3) {
       setPaneSelectionDragging(true);
     }
-  }, []);
+  }, [getViewport, moveGroup]);
 
-  const handlePaneMouseUp = useCallback(() => {
+  const handlePaneMouseUp = useCallback((event?: React.MouseEvent) => {
+    if (paneGroupDragRef.current) {
+      event?.preventDefault();
+      event?.stopPropagation();
+      paneGroupDragRef.current = null;
+      window.setTimeout(() => {
+        skipNextPaneClickClearRef.current = false;
+      }, 0);
+    }
+
     panePointerStartRef.current = null;
     setPaneSelectionDragging(false);
     setSelectionInProgress(false);
@@ -3509,8 +4211,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     changes.forEach((change) => {
-      if (change.type === 'position' && change.position) {
-        updateNodePosition(change.id, change.position);
+      if (change.type === 'position') {
+        if (change.position) {
+          updateNodePosition(change.id, change.position);
+        }
+
+        if (change.dragging === true) {
+          draggingNodeIdRef.current = change.id;
+        } else if (change.dragging === false) {
+          draggingNodeIdRef.current = null;
+          syncNodeGroupMembership(change.id, change.position);
+        }
       } else if (change.type === 'select') {
         setSelectedNodeIds((current) => {
           const next = new Set(current);
@@ -3549,6 +4260,21 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     });
   }, [deleteEdge]);
 
+  const handleNodeDragStop = useCallback((
+    _event: React.MouseEvent,
+    node: ReactFlowNode,
+    draggedNodes: ReactFlowNode[],
+  ) => {
+    const nodesToSync = draggedNodes.length > 0 ? draggedNodes : [node];
+
+    for (const draggedNode of nodesToSync) {
+      updateNodePosition(draggedNode.id, draggedNode.position);
+      syncNodeGroupMembership(draggedNode.id, draggedNode.position);
+    }
+
+    draggingNodeIdRef.current = null;
+  }, [updateNodePosition]);
+
   const handleEdgeClick = useCallback((
     event: React.MouseEvent,
     edge: ReactFlowEdge,
@@ -3572,7 +4298,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return false;
     }
 
-    return Boolean(target.closest('[data-canvas-menu-ignore="true"]'));
+    return Boolean(target.closest('[data-canvas-menu-ignore="true"], .group-frame-body, .group-frame-no-drag'));
   }, []);
 
   const isNodeInternalTarget = useCallback((target: EventTarget | null) => {
@@ -3587,9 +4313,33 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     );
   }, []);
 
-  const handlePaneClick = useCallback((event?: { target?: EventTarget | null }) => {
+  const handlePaneClick = useCallback((event?: {
+    target?: EventTarget | null;
+    clientX?: number;
+    clientY?: number;
+  }) => {
+    if (skipNextPaneClickClearRef.current) {
+      skipNextPaneClickClearRef.current = false;
+      return;
+    }
+
     if (suppressNextPaneClearRef.current || isInteractiveCanvasTarget(event?.target ?? null)) {
       return;
+    }
+
+    if (
+      typeof event?.clientX === 'number' &&
+      typeof event.clientY === 'number'
+    ) {
+      const group = findGroupAtCanvasPoint(
+        storeGroups,
+        project({ x: event.clientX, y: event.clientY }),
+      );
+
+      if (group) {
+        selectGroup(group.id);
+        return;
+      }
     }
 
     if (document.activeElement instanceof HTMLElement) {
@@ -3603,8 +4353,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clearCanvasNodeUi();
     setActiveNodeId(null);
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
+    setSelectedGroupId(null);
     clearEdgeSelection();
-  }, [clearConnectionMenu, clearEdgeSelection, isInteractiveCanvasTarget]);
+  }, [clearConnectionMenu, clearEdgeSelection, isInteractiveCanvasTarget, project, selectGroup, storeGroups]);
 
   const handleViewportMove = useCallback((event?: { target?: EventTarget | null }) => {
     if (isInteractiveCanvasTarget(event?.target ?? null)) {
@@ -4023,6 +4774,38 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
   }, [cropImageGenerationNode, cropUploadedImageNode, cropMode?.nodeType, setSaveMessage]);
 
+  const handleGroup = useCallback((nodeIds: string[]) => {
+    if (nodeIds.length < 2) return;
+    // Compute bounding box from node elements, with padding
+    const padding = MULTI_NODE_SELECTION_PADDING;
+    const rects = nodeIds.map((id) => {
+      const node = useCanvasStore.getState().nodes.find((n) => n.id === id);
+      if (!node) return null;
+      return getEstimatedNodeBounds(node);
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (rects.length === 0) return;
+
+    const minX = Math.min(...rects.map((r) => r.x)) - padding;
+    const minY = Math.min(...rects.map((r) => r.y)) - padding;
+    const maxX = Math.max(...rects.map((r) => r.x + r.width)) + padding;
+    const maxY = Math.max(...rects.map((r) => r.y + r.height)) + padding;
+
+    const group = createGroup(nodeIds, { x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+    clearCanvasNodeUi();
+    setActiveNodeId(null);
+    setSelectedNodeIds(new Set());
+    clearEdgeSelection();
+    setSelectedGroupId(group.id);
+  }, [createGroup, clearEdgeSelection]);
+
+  const handleResizeGroup = useCallback((
+    groupId: string,
+    bounds: { x: number; y: number; width: number; height: number },
+  ) => {
+    updateGroupBoundsAndMembership(groupId, bounds);
+  }, []);
+
   const handleSaveProject = useCallback(async () => {
     await saveProject();
     setSaveMessage('保存成功');
@@ -4168,6 +4951,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onEdgesChange={onEdgesChange}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
         onSelectionChange={handleSelectionChange}
         onSelectionStart={handleSelectionStart}
         onSelectionEnd={handleSelectionEnd}
@@ -4227,7 +5011,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         <MultiNodeSelectionOverlay
           nodes={storeNodes}
           selectedNodeIds={selectedNodeIds}
+          groups={storeGroups}
           visible={!selectionInProgress && !paneSelectionDragging}
+          onGroup={handleGroup}
+        />
+        <GroupOverlay
+          groups={storeGroups}
+          selectedGroupId={selectedGroupId}
+          onSelectGroup={selectGroup}
+          onDeleteGroup={deleteGroup}
+          onRenameGroup={renameGroup}
+          onMoveGroup={moveGroup}
+          onResizeGroup={handleResizeGroup}
         />
         <CanvasCornerActionButton />
       </ReactFlow>

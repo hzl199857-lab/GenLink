@@ -133,11 +133,22 @@ export interface CanvasEdge {
   targetHandle?: string;
 }
 
+export interface NodeGroup {
+  id: string;
+  name?: string;
+  nodeIds: string[];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface ProjectSnapshot {
   id: string;
   name: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  groups?: NodeGroup[];
   createdAt: string;
   updatedAt: string;
 }

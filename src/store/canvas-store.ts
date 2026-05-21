@@ -25,6 +25,7 @@ import type {
   ImageGenerationResultItem,
   ImageGenerationNodeData,
   ImageNodeData,
+  NodeGroup,
   NodeType,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
@@ -567,12 +568,14 @@ function createSnapshot(state: {
   projectCreatedAt?: string | null;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  groups: NodeGroup[];
 }): ProjectSnapshot {
   return buildProjectSnapshot({
     id: state.projectId ?? crypto.randomUUID(),
     name: state.projectName,
     nodes: sanitizeNodesForPersistence(state.nodes),
     edges: state.edges,
+    groups: state.groups,
     createdAt: state.projectCreatedAt ?? undefined,
     updatedAt: nowIso(),
   });
@@ -668,12 +671,14 @@ function computeDirtyState(state: {
   projectName: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  groups: NodeGroup[];
   lastSavedSignature: string;
 }): boolean {
   const currentSignature = getProjectSnapshotSignature({
     name: state.projectName,
     nodes: state.nodes,
     edges: state.edges,
+    groups: state.groups,
   });
 
   return currentSignature !== state.lastSavedSignature;
@@ -1240,6 +1245,7 @@ export interface CanvasState {
   currentProjectPreviewUrls: string[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  groups: NodeGroup[];
   loading: boolean;
   error: string | null;
   dirty: boolean;
@@ -1262,6 +1268,12 @@ export interface CanvasState {
   deleteNodes: (ids: string[]) => void;
   addEdge: (edge: CanvasEdge) => void;
   deleteEdge: (id: string) => void;
+  createGroup: (nodeIds: string[], bounds: { x: number; y: number; width: number; height: number }) => NodeGroup;
+  deleteGroup: (groupId: string) => void;
+  renameGroup: (groupId: string, name: string | undefined) => void;
+  removeNodeFromGroup: (groupId: string, nodeId: string) => void;
+  updateGroupBounds: (groupId: string, bounds: Partial<{ x: number; y: number; width: number; height: number }>) => void;
+  moveGroup: (groupId: string, dx: number, dy: number) => void;
 
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
   generateImageFromImageGenerationNode: (
@@ -1328,6 +1340,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   currentProjectPreviewUrls: [],
   nodes: [],
   edges: [],
+  groups: [],
   loading: false,
   error: null,
   dirty: false,
@@ -1336,6 +1349,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     name: "Untitled",
     nodes: [],
     edges: [],
+    groups: [],
   }),
   saveMessage: null,
 
@@ -1441,6 +1455,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter(
         (edge) => edge.source !== id && edge.target !== id,
       ),
+      groups: state.groups
+        .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((nid) => nid !== id) }))
+        .filter((g) => g.nodeIds.length > 0),
       dirty: true,
     }));
   },
@@ -1457,6 +1474,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter(
         (edge) => !idSet.has(edge.source) && !idSet.has(edge.target),
       ),
+      groups: state.groups
+        .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((nid) => !idSet.has(nid)) }))
+        .filter((g) => g.nodeIds.length > 0),
       dirty: true,
     }));
   },
@@ -1474,6 +1494,73 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter((edge) => edge.id !== id),
       dirty: true,
     }));
+  },
+
+  createGroup: (nodeIds, bounds) => {
+    const group: NodeGroup = {
+      id: crypto.randomUUID(),
+      nodeIds: [...nodeIds],
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    };
+    set((state) => ({ groups: [...state.groups, group], dirty: true }));
+    return group;
+  },
+
+  deleteGroup: (groupId) => {
+    set((state) => ({
+      groups: state.groups.filter((g) => g.id !== groupId),
+      dirty: true,
+    }));
+  },
+
+  renameGroup: (groupId, name) => {
+    set((state) => ({
+      groups: state.groups.map((g) =>
+        g.id === groupId ? { ...g, name } : g,
+      ),
+      dirty: true,
+    }));
+  },
+
+  removeNodeFromGroup: (groupId, nodeId) => {
+    set((state) => ({
+      groups: state.groups
+        .map((g) =>
+          g.id === groupId
+            ? { ...g, nodeIds: g.nodeIds.filter((id) => id !== nodeId) }
+            : g,
+        )
+        .filter((g) => g.nodeIds.length >= 1),
+      dirty: true,
+    }));
+  },
+
+  updateGroupBounds: (groupId, bounds) => {
+    set((state) => ({
+      groups: state.groups.map((g) =>
+        g.id === groupId ? { ...g, ...bounds } : g,
+      ),
+      dirty: true,
+    }));
+  },
+
+  moveGroup: (groupId, dx, dy) => {
+    set((state) => {
+      const group = state.groups.find((g) => g.id === groupId);
+      if (!group) return {};
+      const updatedGroups = state.groups.map((g) =>
+        g.id === groupId ? { ...g, x: g.x + dx, y: g.y + dy } : g,
+      );
+      const updatedNodes = state.nodes.map((n) =>
+        group.nodeIds.includes(n.id)
+          ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
+          : n,
+      );
+      return { groups: updatedGroups, nodes: updatedNodes, dirty: true };
+    });
   },
 
   generateTextFromTextNode: async (textNodeId) => {
@@ -1611,6 +1698,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         projectName: name,
         nodes: state.nodes,
         edges: state.edges,
+        groups: state.groups,
         lastSavedSignature: state.lastSavedSignature,
       }),
       error: null,
@@ -2402,6 +2490,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       currentProjectPreviewUrls: [],
       nodes: [],
       edges: [],
+      groups: [],
       loading: false,
       error: null,
       dirty: false,
@@ -2410,6 +2499,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         name: nextName,
         nodes: [],
         edges: [],
+        groups: [],
       }),
       saveMessage: null,
     });
@@ -2472,6 +2562,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         currentProjectPreviewUrls: hydrated.previewUrls,
         nodes: hydrated.snapshot.nodes,
         edges: hydrated.snapshot.edges,
+        groups: hydrated.snapshot.groups ?? [],
         loading: false,
         error: null,
         dirty: false,
@@ -2531,6 +2622,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             projectName: renamedProject.name,
             nodes: state.nodes,
             edges: state.edges,
+            groups: state.groups,
             lastSavedSignature: state.lastSavedSignature,
           }),
         }));
@@ -2573,6 +2665,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       currentProjectPreviewUrls: nextPreviewUrls,
       nodes: snapshot.nodes,
       edges: snapshot.edges,
+      groups: snapshot.groups ?? [],
       loading: false,
       error: null,
       dirty: false,
