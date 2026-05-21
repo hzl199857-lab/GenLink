@@ -736,31 +736,41 @@ async function completeImageJob(
   return baseResult;
 }
 
-async function runComflyImageJob(jobId: string, params: ImageJobParams) {
-  try {
-    const provider = params.provider === "zhenzhen" ? "zhenzhen" : "comfly";
-    const providerLabel = provider === "zhenzhen" ? "贞贞的AI工坊" : "Comfly";
-    const submission = await submitComflyImageTask({
-      ...params,
+async function submitComflyJob(jobId: string, params: ImageJobParams) {
+  const provider: "comfly" | "zhenzhen" = params.provider === "zhenzhen" ? "zhenzhen" : "comfly";
+  const submission = await submitComflyImageTask({
+    ...params,
+    provider,
+  });
+
+  await prisma.imageJob.update({
+    where: { id: jobId },
+    data: {
       provider,
-    });
+      upstreamTaskId: submission.taskId,
+    },
+  });
 
-    await prisma.imageJob.update({
-      where: { id: jobId },
-      data: {
-        provider,
-        upstreamTaskId: submission.taskId,
-      },
-    });
+  return { provider, taskId: submission.taskId, model: submission.model };
+}
 
+async function pollComflyImageJob(
+  jobId: string,
+  params: ImageJobParams,
+  taskId: string,
+  model: string,
+  provider: "comfly" | "zhenzhen",
+) {
+  try {
+    const providerLabel = provider === "zhenzhen" ? "贞贞的AI工坊" : "Comfly";
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < COMFLY_IMAGE_JOB_TIMEOUT_MS) {
       try {
         const task = await getComflyImageTaskResult({
-          taskId: submission.taskId,
+          taskId,
           apiKey: params.apiKey,
-          model: params.model ?? submission.model,
+          model: params.model ?? model,
           size: params.size,
           provider,
         });
@@ -937,7 +947,16 @@ export async function POST(request: Request) {
     }
 
     if (provider === "comfly" || provider === "zhenzhen") {
-      after(async () => { await runComflyImageJob(jobId, jobParams); });
+      const submission = await submitComflyJob(jobId, jobParams);
+      after(async () => {
+        await pollComflyImageJob(
+          jobId,
+          jobParams,
+          submission.taskId,
+          submission.model,
+          submission.provider,
+        );
+      });
     } else {
       after(async () => { await runImageJob(jobId, jobParams); });
     }
