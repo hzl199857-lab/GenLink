@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { after } from "next/server";
 import { NextResponse } from "next/server";
 
 import { saveImageDataUrl } from "@/lib/image-host";
@@ -15,6 +16,7 @@ import {
 import type { ImageGenerationNodeData } from "@/types/canvas";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const IMAGE_JOB_RETENTION_MS = 60 * 60_000;
 const COMFLY_IMAGE_JOB_TIMEOUT_MS = 45 * 60_000;
@@ -935,9 +937,9 @@ export async function POST(request: Request) {
     }
 
     if (provider === "comfly" || provider === "zhenzhen") {
-      void runComflyImageJob(jobId, jobParams);
+      after(async () => { await runComflyImageJob(jobId, jobParams); });
     } else {
-      void runImageJob(jobId, jobParams);
+      after(async () => { await runImageJob(jobId, jobParams); });
     }
 
     return NextResponse.json({
@@ -1027,6 +1029,27 @@ export async function GET(request: Request) {
       });
     }
 
+    const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+    const STALE_JOB_TIMEOUT_MS = 5 * 60_000;
+
+    if (
+      jobAgeMs > STALE_JOB_TIMEOUT_MS &&
+      job.provider !== "comfly" &&
+      job.provider !== "zhenzhen"
+    ) {
+      const errorMsg = "Image generation timed out (server may have restarted)";
+      await prisma.imageJob.updateMany({
+        where: { id: jobId, result: null },
+        data: { status: "error", error: errorMsg },
+      });
+      return NextResponse.json({
+        ok: true,
+        jobId,
+        status: "error" satisfies ImageJobStatus,
+        error: errorMsg,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       jobId,
@@ -1035,6 +1058,23 @@ export async function GET(request: Request) {
   }
 
   if (job.status === "finalizing") {
+    const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+    const FINALIZE_TIMEOUT_MS = 3 * 60_000;
+
+    if (jobAgeMs > FINALIZE_TIMEOUT_MS) {
+      const errorMsg = "Image finalization timed out";
+      await prisma.imageJob.updateMany({
+        where: { id: jobId, result: null },
+        data: { status: "error", error: errorMsg },
+      });
+      return NextResponse.json({
+        ok: true,
+        jobId,
+        status: "error" satisfies ImageJobStatus,
+        error: errorMsg,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       jobId,
