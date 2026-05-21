@@ -925,10 +925,12 @@ async function requestJsonWithBaseUrl<T>(
     }
 
     if (error instanceof SyntaxError) {
-      throw new VibeApiError(502, `${providerLabel} returned invalid JSON`, {
-        status: responseStatus,
-        bodyPreview: responseText.slice(0, 500),
-      });
+      const preview = responseText.slice(0, 200);
+      throw new VibeApiError(
+        502,
+        `${providerLabel} returned invalid JSON (status=${responseStatus ?? "?"}): ${preview || "(empty)"}`,
+        { status: responseStatus, bodyPreview: responseText.slice(0, 500) },
+      );
     }
 
     if (error instanceof Error && error.name === "AbortError") {
@@ -1054,10 +1056,12 @@ async function requestFormWithBaseUrl<T>(
     }
 
     if (error instanceof SyntaxError) {
-      throw new VibeApiError(502, `${providerLabel} returned invalid JSON`, {
-        status: responseStatus,
-        bodyPreview: responseText.slice(0, 500),
-      });
+      const preview = responseText.slice(0, 200);
+      throw new VibeApiError(
+        502,
+        `${providerLabel} returned invalid JSON (status=${responseStatus ?? "?"}): ${preview || "(empty)"}`,
+        { status: responseStatus, bodyPreview: responseText.slice(0, 500) },
+      );
     }
 
     if (error instanceof Error && error.name === "AbortError") {
@@ -1113,10 +1117,12 @@ async function requestGetWithBaseUrl<T>(
     }
 
     if (error instanceof SyntaxError) {
-      throw new VibeApiError(502, `${providerLabel} returned invalid JSON`, {
-        status: responseStatus,
-        bodyPreview: responseText.slice(0, 500),
-      });
+      const preview = responseText.slice(0, 200);
+      throw new VibeApiError(
+        502,
+        `${providerLabel} returned invalid JSON (status=${responseStatus ?? "?"}): ${preview || "(empty)"}`,
+        { status: responseStatus, bodyPreview: responseText.slice(0, 500) },
+      );
     }
 
     if (error instanceof Error && error.name === "AbortError") {
