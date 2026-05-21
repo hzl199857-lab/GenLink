@@ -2496,16 +2496,16 @@ export async function generateImage(
 ): Promise<GenerateImageResult> {
   const imageProvider = resolveApiProvider(params.provider ?? IMAGE_API_PROVIDER);
 
-  if (params.model && /^gemini-/i.test(params.model)) {
-    return generateImageGemini(params);
-  }
-
   if (imageProvider === "comfly") {
     return generateImageComflySync(params);
   }
 
   if (imageProvider === "zhenzhen") {
     return generateImageT8(params);
+  }
+
+  if (params.model && /^gemini-/i.test(params.model)) {
+    return generateImageGemini(params);
   }
 
   return generateImageOpenAI(params);
