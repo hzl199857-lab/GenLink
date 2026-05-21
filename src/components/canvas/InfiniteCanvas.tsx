@@ -17,6 +17,7 @@ import {
   Wrench,
   Scissors,
   Download,
+  ListOrdered,
   Ungroup,
 } from 'lucide-react';
 import ReactFlow, {
@@ -1753,7 +1754,13 @@ type GroupOverlayProps = {
   onRenameGroup: (groupId: string, name: string | undefined) => void;
   onMoveGroup: (groupId: string, dx: number, dy: number) => void;
   onResizeGroup: (groupId: string, bounds: { x: number; y: number; width: number; height: number }) => void;
+  onExecuteGroup: (groupId: string, mode: GroupExecutionMode) => void;
 };
+
+type GroupExecutionMode = 'parallel' | 'sequence';
+
+const GroupExecutionMenuContext =
+  React.createContext<((mode: GroupExecutionMode) => void) | null>(null);
 
 function GroupOverlay({
   groups,
@@ -1763,6 +1770,7 @@ function GroupOverlay({
   onRenameGroup,
   onMoveGroup,
   onResizeGroup,
+  onExecuteGroup,
 }: GroupOverlayProps) {
   const viewport = useViewport();
 
@@ -1783,6 +1791,7 @@ function GroupOverlay({
           onRename={(name) => onRenameGroup(group.id, name)}
           onMove={(dx, dy) => onMoveGroup(group.id, dx, dy)}
           onResize={(bounds) => onResizeGroup(group.id, bounds)}
+          onExecute={(mode) => onExecuteGroup(group.id, mode)}
         />
       ))}
     </>
@@ -1798,6 +1807,7 @@ type GroupFrameProps = {
   onRename: (name: string | undefined) => void;
   onMove: (dx: number, dy: number) => void;
   onResize: (bounds: { x: number; y: number; width: number; height: number }) => void;
+  onExecute: (mode: GroupExecutionMode) => void;
 };
 
 // Convert canvas coords to screen coords
@@ -1821,6 +1831,7 @@ function GroupFrame({
   onRename,
   onMove,
   onResize,
+  onExecute,
 }: GroupFrameProps) {
   const dragRef = useRef<{ startX: number; startY: number } | null>(null);
   const resizeRef = useRef<{
@@ -2087,31 +2098,33 @@ function GroupFrame({
 
       {/* Toolbar — z-[19], only when selected */}
       {selected && (
-        <div
-          data-canvas-menu-ignore="true"
-          className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19] flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
-          style={{
-            left: topLeft.x + screenW / 2,
-            top: topLeft.y - 52,
-            transform: 'translateX(-50%)',
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div className="mr-1 h-4 w-4 rounded-full border-2 border-white/60" />
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Group} compact />
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Play}>整组执行</MultiNodeSelectionToolbarButton>
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Wrench}>添加到工具箱</MultiNodeSelectionToolbarButton>
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Scissors}>转分镜组</MultiNodeSelectionToolbarButton>
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>解组</MultiNodeSelectionToolbarButton>
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Download}>批量下载</MultiNodeSelectionToolbarButton>
-        </div>
+        <GroupExecutionMenuContext.Provider value={onExecute}>
+          <div
+            data-canvas-menu-ignore="true"
+            className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19] flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+            style={{
+              left: topLeft.x + screenW / 2,
+              top: topLeft.y - 52,
+              transform: 'translateX(-50%)',
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="mr-1 h-4 w-4 rounded-full border-2 border-white/60" />
+            <div className="mx-1 h-5 w-px bg-white/10" />
+            <MultiNodeSelectionToolbarButton icon={Group} compact />
+            <div className="mx-1 h-5 w-px bg-white/10" />
+            <MultiNodeSelectionToolbarButton icon={Play}>整组执行</MultiNodeSelectionToolbarButton>
+            <div className="mx-1 h-5 w-px bg-white/10" />
+            <MultiNodeSelectionToolbarButton icon={Wrench}>添加到工具箱</MultiNodeSelectionToolbarButton>
+            <div className="mx-1 h-5 w-px bg-white/10" />
+            <MultiNodeSelectionToolbarButton icon={Scissors}>转分镜组</MultiNodeSelectionToolbarButton>
+            <div className="mx-1 h-5 w-px bg-white/10" />
+            <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>解组</MultiNodeSelectionToolbarButton>
+            <div className="mx-1 h-5 w-px bg-white/10" />
+            <MultiNodeSelectionToolbarButton icon={Download}>批量下载</MultiNodeSelectionToolbarButton>
+          </div>
+        </GroupExecutionMenuContext.Provider>
       )}
     </>
   );
@@ -2238,7 +2251,10 @@ function MultiNodeSelectionToolbarButton({
   compact?: boolean;
   onClick?: () => void;
 }) {
-  return (
+  const [executeMenuOpen, setExecuteMenuOpen] = useState(false);
+  const groupExecute = React.useContext(GroupExecutionMenuContext);
+  const isGroupExecuteButton = Boolean(groupExecute && Icon === Play && !compact && !onClick);
+  const button = (
     <button
       type="button"
       className={[
@@ -2252,11 +2268,83 @@ function MultiNodeSelectionToolbarButton({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (isGroupExecuteButton) {
+          setExecuteMenuOpen((open) => !open);
+          return;
+        }
         onClick?.();
       }}
     >
       <Icon size={16} strokeWidth={1.9} />
       {children ? <span className="whitespace-nowrap">{children}</span> : null}
+    </button>
+  );
+
+  if (isGroupExecuteButton) {
+    return (
+      <div className="relative">
+        {button}
+        {executeMenuOpen ? (
+          <div
+            role="menu"
+            className="absolute left-1/2 top-[calc(100%+8px)] z-30 min-w-[132px] -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-gl-panel/95 p-1 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <GroupExecuteMenuItem
+              icon={Play}
+              label="并行执行"
+              onClick={() => {
+                setExecuteMenuOpen(false);
+                groupExecute?.('parallel');
+              }}
+            />
+            <GroupExecuteMenuItem
+              icon={ListOrdered}
+              label="顺序执行"
+              onClick={() => {
+                setExecuteMenuOpen(false);
+                groupExecute?.('sequence');
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return button;
+}
+
+function GroupExecuteMenuItem({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px] font-semibold text-gl-text-primary transition-colors hover:bg-gl-panel-hover"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <Icon size={15} strokeWidth={1.9} className="text-gl-text-secondary" />
+      <span className="whitespace-nowrap">{label}</span>
     </button>
   );
 }
@@ -3249,6 +3337,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const attachProject = useCanvasStore((s) => s.attachProject);
   const renameProject = useCanvasStore((s) => s.renameProject);
   const deleteProject = useCanvasStore((s) => s.deleteProject);
+  const generateTextFromTextNode = useCanvasStore((s) => s.generateTextFromTextNode);
+  const generateImageFromImageGenerationNode = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
@@ -4596,6 +4686,68 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }, 2200);
   }, [setSaveMessage]);
 
+  const handleExecuteGroup = useCallback((groupId: string, mode: GroupExecutionMode) => {
+    const state = useCanvasStore.getState();
+    const group = state.groups.find((candidate) => candidate.id === groupId);
+
+    if (!group) {
+      return;
+    }
+
+    const groupNodeIds = new Set(group.nodeIds);
+    const runnableNodes = state.nodes
+      .filter((
+        node,
+      ): node is Extract<CanvasNode, { type: 'text' | 'image_generation' }> =>
+        groupNodeIds.has(node.id) &&
+        (node.type === 'text' || node.type === 'image_generation'),
+      )
+      .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
+
+    if (runnableNodes.length === 0) {
+      showProjectMessage('组内没有可执行节点');
+      return;
+    }
+
+    const runNode = (node: (typeof runnableNodes)[number]) => {
+      if (node.type === 'text') {
+        return generateTextFromTextNode(node.id);
+      }
+
+      return generateImageFromImageGenerationNode(node.id);
+    };
+
+    void (async () => {
+      if (mode === 'parallel') {
+        const results = await Promise.allSettled(runnableNodes.map(runNode));
+        const failedCount = results.filter((result) => result.status === 'rejected').length;
+
+        if (failedCount > 0) {
+          showProjectMessage(`${failedCount} 个节点执行失败`);
+        }
+        return;
+      }
+
+      let failedCount = 0;
+
+      for (const node of runnableNodes) {
+        try {
+          await runNode(node);
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      if (failedCount > 0) {
+        showProjectMessage(`${failedCount} 个节点执行失败`);
+      }
+    })();
+  }, [
+    generateImageFromImageGenerationNode,
+    generateTextFromTextNode,
+    showProjectMessage,
+  ]);
+
   const toggleHistoryPopover = useCallback((anchor: DOMRect) => {
     setHistoryAnchor((current) => {
       if (current) {
@@ -5023,6 +5175,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           onRenameGroup={renameGroup}
           onMoveGroup={moveGroup}
           onResizeGroup={handleResizeGroup}
+          onExecuteGroup={handleExecuteGroup}
         />
         <CanvasCornerActionButton />
       </ReactFlow>
