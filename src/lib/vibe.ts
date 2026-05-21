@@ -40,7 +40,7 @@ const FUCHEERS_GEMINI_BASE_URL = normalizeBaseUrl(
   process.env.FUCHEERS_GEMINI_BASE_URL ?? "https://www.fucheers.top",
 );
 const COMFLY_BASE_URL = normalizeBaseUrl(
-  process.env.COMFLY_BASE_URL ?? "https://ai.comfly.org",
+  process.env.COMFLY_BASE_URL ?? "https://ai.comfly.org/v1",
 );
 const COMFLY_IMAGE_BASE_URL = normalizeBaseUrl(
   process.env.COMFLY_IMAGE_BASE_URL ?? COMFLY_BASE_URL,
@@ -1032,6 +1032,7 @@ async function requestFormWithBaseUrl<T>(
       method: "POST",
       headers: {
         Authorization: `Bearer ${assertConfigured(apiKey)}`,
+        Accept: "application/json",
       },
       body: formData,
       signal: controller.signal,
