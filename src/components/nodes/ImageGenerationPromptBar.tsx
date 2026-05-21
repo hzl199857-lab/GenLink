@@ -11,7 +11,7 @@ const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
 const IMAGE_MODELS = [
   { id: 'gpt-image-2', label: 'gpt-image-2' },
-  { id: 'gemini-3-pro-image-preview', label: 'Nano banana pro' },
+  { id: 'nano-banana-2', label: 'Nano banana pro' },
 ] as const;
 const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
@@ -338,10 +338,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   if (!visible) return null;
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
-  const isGeminiImageModel = model === 'gemini-3-pro-image-preview';
+  const isNanoBananaModel = model?.startsWith('nano-banana') ?? false;
   const modelLabel = getImageModelLabel(model);
-  const modelAspectRatio = isGeminiImageModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
-  const aspectRatioLayout = isGeminiImageModel
+  const modelAspectRatio = isNanoBananaModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
+  const aspectRatioLayout = isNanoBananaModel
     ? GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
     : IMAGE_ASPECT_RATIO_LAYOUT;
   const settingsLabel = `${modelAspectRatio} / ${quality}`;
@@ -610,7 +610,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         </div>
                       </div>
 
-                      {isGeminiImageModel ? null : (
+                      {isNanoBananaModel ? null : (
                         <div>
                           <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
                             细节
@@ -644,7 +644,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 ) : null}
               </div>
 
-              {isGeminiImageModel ? null : (
+              {isNanoBananaModel ? null : (
                 <div className="relative" ref={formatMenuRef}>
                   <BottomMenuButton
                     icon={<Sparkles size={14} />}

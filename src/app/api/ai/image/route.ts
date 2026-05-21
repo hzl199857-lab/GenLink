@@ -946,7 +946,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (provider === "comfly" || provider === "zhenzhen") {
+    const isGeminiModel = jobParams.model && /^gemini-/i.test(jobParams.model);
+
+    if ((provider === "comfly" || provider === "zhenzhen") && !isGeminiModel) {
       const submission = await submitComflyJob(jobId, jobParams);
       after(async () => {
         await pollComflyImageJob(

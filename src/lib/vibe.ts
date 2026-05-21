@@ -2155,7 +2155,7 @@ async function generateImageComflySync(
 
     json = await requestFormWithBaseUrl<VibeImageResponse>(
       baseUrl,
-      "/images/edits",
+      provider === "zhenzhen" ? "/images/generations" : "/images/edits",
       formData,
       params.apiKey,
       IMAGE_REQUEST_TIMEOUT_MS,
@@ -2238,42 +2238,77 @@ export async function submitComflyImageTask(
   let json: ComflyAsyncTaskCreateResponse;
 
   if (params.images?.length) {
-    const formData = new FormData();
-    formData.append("model", model);
-    formData.append("prompt", params.prompt);
+    if (provider === "zhenzhen") {
+      const requestBody: {
+        model: string;
+        prompt: string;
+        image: string | string[];
+        size?: string;
+        quality?: string;
+        response_format: string;
+        aspect_ratio?: string;
+        image_size?: "1K" | "2K" | "4K";
+      } = {
+        model,
+        prompt: params.prompt,
+        image:
+          params.images.length === 1
+            ? params.images[0].url
+            : params.images.map((img) => img.url),
+        response_format: COMFLY_ASYNC_RESPONSE_FORMAT,
+        ...toT8ImageSizeParams(size),
+      };
 
-    if (size) {
-      formData.append("size", size);
-    }
+      if (quality) {
+        requestBody.quality = quality;
+      }
 
-    if (quality) {
-      formData.append("quality", quality);
-    }
-
-    formData.append("response_format", COMFLY_ASYNC_RESPONSE_FORMAT);
-
-    const imageBlobs = await Promise.all(
-      params.images.map((image, index) => createImageFilePart(image, index)),
-    );
-
-    imageBlobs.forEach((blob, index) => {
-      formData.append(
-        "image",
-        blob,
-        getSafeMultipartFileName(
-          params.images?.[index]?.fileName,
-          `reference-${index + 1}`,
-        ),
+      json = await requestJsonWithBaseUrl<ComflyAsyncTaskCreateResponse>(
+        baseUrl,
+        "/images/generations?async=true",
+        requestBody,
+        params.apiKey,
+        createHeaders,
+        IMAGE_REQUEST_TIMEOUT_MS,
       );
-    });
+    } else {
+      const formData = new FormData();
+      formData.append("model", model);
+      formData.append("prompt", params.prompt);
 
-    json = await requestFormWithBaseUrl<ComflyAsyncTaskCreateResponse>(
-      baseUrl,
-      "/images/edits?async=true",
-      formData,
-      params.apiKey,
-      IMAGE_REQUEST_TIMEOUT_MS,
-    );
+      if (size) {
+        formData.append("size", size);
+      }
+
+      if (quality) {
+        formData.append("quality", quality);
+      }
+
+      formData.append("response_format", COMFLY_ASYNC_RESPONSE_FORMAT);
+
+      const imageBlobs = await Promise.all(
+        params.images.map((image, index) => createImageFilePart(image, index)),
+      );
+
+      imageBlobs.forEach((blob, index) => {
+        formData.append(
+          "image",
+          blob,
+          getSafeMultipartFileName(
+            params.images?.[index]?.fileName,
+            `reference-${index + 1}`,
+          ),
+        );
+      });
+
+      json = await requestFormWithBaseUrl<ComflyAsyncTaskCreateResponse>(
+        baseUrl,
+        "/images/edits?async=true",
+        formData,
+        params.apiKey,
+        IMAGE_REQUEST_TIMEOUT_MS,
+      );
+    }
   } else {
     const requestBody: {
       model: string;

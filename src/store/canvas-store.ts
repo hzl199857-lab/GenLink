@@ -396,7 +396,7 @@ function isClaudeModel(model?: string): boolean {
 }
 
 function isGeminiImageModel(model?: string): boolean {
-  return model === "gemini-3-pro-image-preview";
+  return typeof model === "string" && /^nano-banana/i.test(model);
 }
 
 function createTextNodeData(): TextNodeData {

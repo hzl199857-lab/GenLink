@@ -22,7 +22,7 @@ const MIN_CARD_EDGE = 220;
 const CARD_ACCESSORY_TOP_SPACE = 64;
 const CARD_ACCESSORY_GAP = 12;
 const CARD_TOOLBAR_LIFT = 30;
-const GEMINI_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+const NANO_BANANA_MODEL_PREFIX = 'nano-banana';
 
 export interface ImageGenerationNodeProps {
   id?: string;
@@ -188,7 +188,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
 
   const handleModelChange = (next: string) => {
     const nextAspectRatio =
-      next === GEMINI_IMAGE_MODEL && (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
+      next.startsWith(NANO_BANANA_MODEL_PREFIX) && (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
         ? '1:1'
         : data.aspectRatio;
 
