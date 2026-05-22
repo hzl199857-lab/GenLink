@@ -1312,7 +1312,7 @@ function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-function findExactGroupForNodeSelection(
+function findContainingGroupForNodeSelection(
   groups: NodeGroup[],
   selectedNodeIds: Set<string>,
 ): NodeGroup | null {
@@ -1320,12 +1320,19 @@ function findExactGroupForNodeSelection(
     return null;
   }
 
-  for (const group of groups) {
-    if (group.nodeIds.length !== selectedNodeIds.size) {
-      continue;
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    const group = groups[index];
+    const groupNodeIds = new Set(group.nodeIds);
+    let containsSelection = true;
+
+    for (const nodeId of selectedNodeIds) {
+      if (!groupNodeIds.has(nodeId)) {
+        containsSelection = false;
+        break;
+      }
     }
 
-    if (group.nodeIds.every((nodeId) => selectedNodeIds.has(nodeId))) {
+    if (containsSelection) {
       return group;
     }
   }
@@ -2294,10 +2301,10 @@ function GroupFrame({
   return (
     <>
       {/* Frame body — sits below nodes in stacking order (no z-index boost).
-          Nodes in the viewport (z-2+) are above this, so node clicks/drags
-          go directly to React Flow. Only clicks on empty space hit this div. */}
+          Group hit testing runs in pane mouse handlers so this layer does not
+          steal clicks from node toolbars or prompt inputs. */}
       <div
-        className="group-frame-body nodrag nopan pointer-events-auto absolute z-[3] cursor-grab active:cursor-grabbing"
+        className="group-frame-body nodrag nopan pointer-events-none absolute z-[3]"
         style={{ left: topLeft.x, top: topLeft.y, width: screenW, height: screenH }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -2786,7 +2793,7 @@ function MultiNodeSelectionOverlay({
     [selectedNodes],
   );
   const selectedGroup = useMemo(
-    () => findExactGroupForNodeSelection(groups, selectedNodeIds),
+    () => findContainingGroupForNodeSelection(groups, selectedNodeIds),
     [groups, selectedNodeIds],
   );
 
@@ -4403,7 +4410,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     window.requestAnimationFrame(() => {
-      const group = findExactGroupForNodeSelection(
+      const group = findContainingGroupForNodeSelection(
         useCanvasStore.getState().groups,
         selectedNodeIdsRef.current,
       );
