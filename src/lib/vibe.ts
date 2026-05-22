@@ -70,7 +70,6 @@ const DEFAULT_IMAGE_SIZE = "1024x1024";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const IMAGE_REQUEST_TIMEOUT_MS = 6 * 60_000;
 const COMFLY_TASK_STATUS_TIMEOUT_MS = 15_000;
-const OUTPUT_IMAGE_FETCH_TIMEOUT_MS = 60_000;
 const DEFAULT_COMFLY_RESPONSE_FORMAT = "b64_json";
 const COMFLY_ASYNC_RESPONSE_FORMAT = "url";
 const COMFLY_TEXT_MODEL_MAP = new Map<string, string>([
@@ -1520,56 +1519,6 @@ function toDataImageUrl(
   return `data:${fallbackMimeType};base64,${normalized}`;
 }
 
-async function fetchRemoteImageAsDataUrl(imageUrl: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OUTPUT_IMAGE_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(imageUrl, {
-      signal: controller.signal,
-      headers: {
-        Accept: "image/*",
-      },
-    });
-
-    if (!response.ok) {
-      throw new VibeApiError(
-        response.status,
-        `Failed to fetch generated image (${response.status})`,
-      );
-    }
-
-    const mediaType = response.headers.get("content-type")?.split(";")[0] || "image/png";
-
-    if (!mediaType.startsWith("image/")) {
-      throw new VibeApiError(502, "Generated image URL did not return an image");
-    }
-
-    const bytes = Buffer.from(await response.arrayBuffer());
-
-    if (bytes.byteLength === 0) {
-      throw new VibeApiError(502, "Generated image URL returned empty data");
-    }
-
-    return `data:${mediaType};base64,${bytes.toString("base64")}`;
-  } catch (error) {
-    if (error instanceof VibeApiError) {
-      throw error;
-    }
-
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new VibeApiError(504, "Generated image download timed out");
-    }
-
-    throw new VibeApiError(
-      502,
-      error instanceof Error ? error.message : "Failed to fetch generated image",
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function normalizeGeneratedImageUrl(imageUrl: string): Promise<string> {
   const trimmed = imageUrl.trim();
 
@@ -1581,7 +1530,7 @@ async function normalizeGeneratedImageUrl(imageUrl: string): Promise<string> {
     return trimmed;
   }
 
-  return fetchRemoteImageAsDataUrl(trimmed);
+  return trimmed;
 }
 
 function extractComflyTaskStatus(json: ComflyAsyncTaskStatusResponse): string {

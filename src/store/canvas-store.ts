@@ -89,6 +89,7 @@ const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
 const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
+const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -698,15 +699,23 @@ async function pollImageGenerationJob(
     }
 
     let response: Response;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS,
+    );
 
     try {
       response = await fetch(`/api/ai/image?${query.toString()}`, {
         method: "GET",
         cache: "no-store",
+        signal: controller.signal,
       });
     } catch {
       await sleep(IMAGE_JOB_POLL_INTERVAL_MS);
       continue;
+    } finally {
+      window.clearTimeout(timeout);
     }
 
     const responseText = await response.text();
@@ -1129,6 +1138,38 @@ function getInlineReferenceImagesForImageGenerationNode(
   );
 }
 
+function getGeneratedImageReferenceForImageGenerationNode(
+  node: Extract<CanvasNode, { type: "image_generation" }>,
+): ConnectedImagePayload[] {
+  const requestUrl =
+    node.data.generatedImageUrl?.trim() ||
+    node.data.generatedHostedImageUrl?.trim() ||
+    "";
+  const previewUrl =
+    node.data.generatedHostedImageUrl?.trim() ||
+    node.data.generatedImageUrl?.trim() ||
+    "";
+
+  if (!requestUrl || !previewUrl) {
+    return [];
+  }
+
+  return [
+    {
+      id: `${node.id}-generated-reference`,
+      imageUrl: requestUrl,
+      previewUrl,
+      originalImageUrl: requestUrl,
+      hostedImageUrl: node.data.generatedHostedImageUrl?.trim() || undefined,
+      fileName: node.data.generatedOutputFileName,
+      alt: node.data.prompt?.trim() || "Generated image",
+      sourceType: "image",
+      width: node.data.generatedImageWidth,
+      height: node.data.generatedImageHeight,
+    },
+  ];
+}
+
 function appendImageGenerationNodeResults(
   nodes: CanvasNode[],
   imageGenerationNodeId: string,
@@ -1279,6 +1320,7 @@ export interface CanvasState {
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
   generateImageFromImageGenerationNode: (
     imageGenerationNodeId: string,
+    promptOverride?: string,
   ) => Promise<void>;
   splitImageGenerationNodeToGrid: (
     imageGenerationNodeId: string,
@@ -1739,7 +1781,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     );
   },
 
-  generateImageFromImageGenerationNode: async (imageGenerationNodeId) => {
+  generateImageFromImageGenerationNode: async (imageGenerationNodeId, promptOverride) => {
     const state = get();
     const imageGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -1776,7 +1818,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         latestState.edges,
         imageGenerationNodeId,
       );
-      const directPrompt = latestImageGenerationNode.data.prompt?.trim() || "";
+      const normalizedPromptOverride = promptOverride?.trim();
+      const directPrompt =
+        normalizedPromptOverride || latestImageGenerationNode.data.prompt?.trim() || "";
       const effectivePrompt = [
         connectedTextPrompt
           ? `Upstream text node content:\n${connectedTextPrompt}`
@@ -1797,10 +1841,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         latestState.edges,
         imageGenerationNodeId,
       );
+      const selfGeneratedReferences = normalizedPromptOverride
+        ? getGeneratedImageReferenceForImageGenerationNode(latestImageGenerationNode)
+        : [];
+      const referenceImages = [
+        ...connectedImages,
+        ...selfGeneratedReferences,
+      ];
       const size = resolveImageSize(
         latestImageGenerationNode.data.quality,
         latestImageGenerationNode.data.aspectRatio,
-        connectedImages,
+        referenceImages,
         latestImageGenerationNode.data.model,
       );
       const quality = resolveImageApiQuality(
@@ -1827,8 +1878,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         provider: imageProvider,
         apiKey,
         images:
-          connectedImages.length > 0
-            ? connectedImages.map((image) => ({
+          referenceImages.length > 0
+            ? referenceImages.map((image) => ({
                 url: image.imageUrl,
                 fileName: image.fileName,
               }))
@@ -1841,7 +1892,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...latestImageGenerationNode.data,
         prompt: historyDisplayPrompt,
         effectivePromptOverride: undefined,
-        referenceImages: connectedImages.map((image) => ({
+        referenceImages: referenceImages.map((image) => ({
           id: image.id,
           imageUrl: image.originalImageUrl,
           hostedImageUrl: image.hostedImageUrl,

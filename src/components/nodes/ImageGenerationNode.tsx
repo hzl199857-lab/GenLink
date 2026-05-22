@@ -1,7 +1,6 @@
 'use client';
 
 import React, { memo, useEffect, useState } from 'react';
-import NextImage from 'next/image';
 import { Position, useUpdateNodeInternals } from 'reactflow';
 import { ChevronDown, Image as ImageIcon } from 'lucide-react';
 import type {
@@ -37,7 +36,7 @@ export interface ImageGenerationNodeProps {
     height?: number;
   }>;
   onChange?: (next: ImageGenerationNodeData) => void;
-  onRun?: () => void;
+  onRun?: (promptOverride?: string) => void;
   onUpload?: () => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onToolbarAction?: (action: ImageGenerationToolbarAction) => void;
@@ -112,6 +111,56 @@ function resolveCardDimensions(
 
 function getResultImageUrl(result: ImageGenerationResultItem): string {
   return result.hostedImageUrl?.trim() || result.imageUrl?.trim() || '';
+}
+
+function GeneratedPreviewImage({
+  src,
+  alt,
+}: {
+  src: string;
+  alt: string;
+}) {
+  return <GeneratedPreviewImageContent key={src} src={src} alt={alt} />;
+}
+
+function GeneratedPreviewImageContent({
+  src,
+  alt,
+}: {
+  src: string;
+  alt: string;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <div className="relative h-full w-full bg-gl-panel">
+      {!loaded ? (
+        <div className="absolute inset-0 flex items-center justify-center">
+          {failed ? (
+            <div className="max-w-[78%] text-center text-[13px] leading-5 text-gl-error">
+              Image failed to load
+            </div>
+          ) : (
+            <ImageIcon size={44} className="text-gl-text-muted" />
+          )}
+        </div>
+      ) : null}
+      {/* Generated URLs can be remote provider URLs, so use a plain img here. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        className={[
+          'h-full w-full object-cover transition-opacity duration-200',
+          loaded ? 'opacity-100' : 'opacity-0',
+        ].join(' ')}
+        draggable={false}
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
 }
 
 function getDisplayResults(data: ImageGenerationNodeData): ImageGenerationResultItem[] {
@@ -297,6 +346,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   const hasGeneratedImage = Boolean(
     data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim(),
   );
+  const canUsePromptPresets = connectedImages.length > 0 || hasGeneratedImage;
 
   useEffect(() => {
     if (!id) {
@@ -404,13 +454,9 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
             }}
           >
             {previewImageUrl ? (
-              <NextImage
+              <GeneratedPreviewImage
                 src={previewImageUrl}
                 alt={data.prompt?.trim() || 'Generated image'}
-                fill
-                unoptimized
-                sizes={`${cardDimensions.width}px`}
-                className="object-cover"
               />
             ) : (
               data.status === 'error' && data.errorMessage ? (
@@ -485,13 +531,9 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                     }}
                   >
                     {imageUrl ? (
-                      <NextImage
+                      <GeneratedPreviewImage
                         src={imageUrl}
                         alt={`${data.prompt?.trim() || 'Generated image'} ${index + 1}`}
-                        fill
-                        unoptimized
-                        sizes={`${cardDimensions.width}px`}
-                        className="object-cover"
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center px-8 text-center text-[13px] leading-5 text-gl-error">
@@ -556,6 +598,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         moderation={data.moderation}
         parallelCount={data.parallelCount}
         generating={isGenerating}
+        canUsePromptPresets={canUsePromptPresets}
         connectedImages={connectedImages}
         onPromptChange={handlePromptChange}
         onModelChange={handleModelChange}

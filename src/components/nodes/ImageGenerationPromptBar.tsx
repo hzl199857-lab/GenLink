@@ -3,7 +3,7 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
-import { Sparkles, Maximize2, Minimize2, ChevronDown, Check } from 'lucide-react';
+import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { Tooltip } from '@/components/ui/Tooltip';
 
@@ -59,6 +59,74 @@ const GEMINI_IMAGE_ASPECT_RATIO_LAYOUT = [
   { value: '16:9', className: 'col-start-3 row-start-3 h-[54px]' },
   { value: '21:9', className: 'col-start-4 row-start-3 h-[54px]' },
 ] as const;
+const IMAGE_PROMPT_PRESETS = [
+  {
+    id: 'multi-camera-grid',
+    title: '多机位九宫格',
+    prompt: '占位提示词：多机位九宫格',
+  },
+  {
+    id: 'multi-camera-grid-4k',
+    title: '多机位九宫格4K',
+    prompt: '占位提示词：多机位九宫格4K',
+  },
+  {
+    id: 'storyboard-four-grid',
+    title: '剧情推演四宫格',
+    prompt: '占位提示词：剧情推演四宫格',
+  },
+  {
+    id: 'character-face-three-view',
+    title: '角色脸部三视图',
+    prompt: '生成全身三视图以及一张脸部特写（最左边占满三分之一的位置是上半身特写），右边三分之二放正视图，45度的侧视图，后视图，{用户输入 || 白色背景}',
+  },
+  {
+    id: 'product-three-view',
+    title: '产品三视图',
+    prompt: '占位提示词：产品三视图',
+  },
+  {
+    id: 'twenty-five-panel-sequence',
+    title: '25宫格连贯分镜',
+    prompt: '占位提示词：25宫格连贯分镜',
+  },
+  {
+    id: 'cinematic-lighting-correction',
+    title: '电影级光影校正',
+    prompt: '占位提示词：电影级光影校正',
+  },
+  {
+    id: 'character-three-view-generation',
+    title: '角色三视图生成',
+    prompt: '占位提示词：角色三视图生成',
+  },
+  {
+    id: 'frame-forward-three-seconds',
+    title: '画面推演 - 3秒后',
+    prompt: '占位提示词：画面推演 - 3秒后',
+  },
+  {
+    id: 'frame-backward-five-seconds',
+    title: '画面推演 - 5秒前',
+    prompt: '占位提示词：画面推演 - 5秒前',
+  },
+] as const;
+
+function getPromptPresetUserInput(value: string): string {
+  const trimmedEnd = value.trimEnd();
+
+  return trimmedEnd.endsWith('/')
+    ? trimmedEnd.slice(0, -1).trim()
+    : value.trim();
+}
+
+function resolvePromptPresetTemplate(template: string, userInput: string): string {
+  return template.replace(/\{用户输入\s*\|\|\s*([^{}]+?)\}/g, (_match, fallback: string) => {
+    const resolvedFallback = fallback.trim();
+
+    return userInput || resolvedFallback;
+  });
+}
 
 export interface ImageGenerationPromptBarProps {
   nodeId?: string;
@@ -72,6 +140,7 @@ export interface ImageGenerationPromptBarProps {
   moderation?: string;
   parallelCount?: 1 | 2 | 4;
   generating?: boolean;
+  canUsePromptPresets?: boolean;
   connectedImages?: Array<{
     id: string;
     imageUrl: string;
@@ -88,7 +157,7 @@ export interface ImageGenerationPromptBarProps {
   onOutputFormatChange?: (next: string) => void;
   onModerationChange?: (next: string) => void;
   onParallelCountChange?: (next: 1 | 2 | 4) => void;
-  onRun?: () => void;
+  onRun?: (promptOverride?: string) => void;
   onAddReference?: () => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
@@ -281,6 +350,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   moderation = IMAGE_MODERATION_OPTIONS[0].value,
   parallelCount = 1,
   generating = false,
+  canUsePromptPresets = false,
   connectedImages = [],
   onPromptChange,
   onModelChange,
@@ -347,6 +417,22 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const settingsLabel = `${modelAspectRatio} / ${quality}`;
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
+  const promptPresetMenuOpen = isPromptFocused && !isComposing && resolvedValue.trimEnd().endsWith('/');
+
+  const handlePromptPresetClick = (presetPrompt: string) => {
+    if (!canUsePromptPresets || generating) {
+      return;
+    }
+
+    const resolvedPrompt = resolvePromptPresetTemplate(
+      presetPrompt,
+      getPromptPresetUserInput(resolvedValue),
+    );
+
+    setDraftPrompt('');
+    onPromptChange?.('');
+    onRun?.(resolvedPrompt);
+  };
 
   return (
     <NodeToolbar
@@ -355,10 +441,20 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
       position={Position.Bottom}
       offset={16}
       align="center"
+      style={{ zIndex: 30 }}
     >
       <div
         data-canvas-menu-ignore="true"
         onPointerDownCapture={(e) => {
+          const target = e.target;
+
+          if (
+            target instanceof HTMLElement &&
+            target.closest('[data-prompt-preset-menu="true"]')
+          ) {
+            return;
+          }
+
           onPointerDownWithin?.();
           e.stopPropagation();
         }}
@@ -428,12 +524,68 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
           </div>
 
           <div
-            className="overflow-hidden"
+            className="relative overflow-visible"
             style={{
               height: promptHeight,
               transition: 'height 500ms ease-in-out',
             }}
           >
+            {promptPresetMenuOpen ? (
+              <div
+                data-prompt-preset-menu="true"
+                className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)] nodrag nopan"
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <div className="text-node-prompt-input max-h-[470px] overflow-y-auto">
+                  {IMAGE_PROMPT_PRESETS.map((preset) => {
+                    const disabled = !canUsePromptPresets || generating;
+
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        disabled={disabled}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          handlePromptPresetClick(preset.prompt);
+                        }}
+                        className={[
+                          'flex min-h-[52px] w-full items-center gap-3 rounded-[12px] px-3 py-1.5 text-left transition-colors duration-150',
+                          disabled
+                            ? 'cursor-not-allowed text-gl-text-muted'
+                            : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/[0.05]',
+                            disabled ? 'text-gl-text-muted' : 'text-gl-text-tertiary',
+                          ].join(' ')}
+                          aria-hidden="true"
+                        >
+                          <Layers size={18} />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[14px] font-medium leading-5">
+                            {preset.title}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!canUsePromptPresets ? (
+                  <div className="mt-2 flex items-center gap-2 border-t border-white/[0.06] px-3 pb-1 pt-3 text-[12px] leading-5 text-gl-error">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-gl-error/45 text-[12px]">
+                      i
+                    </span>
+                    <span>使用此功能需要至少注入一张图片，可连入文本节点加强控制</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <textarea
               value={resolvedValue}
               onChange={(e) => {
@@ -463,7 +615,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 setDraftPrompt(nextValue);
                 onPromptChange?.(nextValue);
               }}
-              placeholder="描述你想生成的图像内容"
+              placeholder="描述你想生成的图像内容，按“/”呼出指令"
               className="text-node-prompt-input nodrag nopan w-full resize-none overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
               rows={expanded ? 6 : 2}
               style={{

@@ -58,7 +58,7 @@ export function PromptBarRunControls({
         <button
           type="button"
           onPointerDown={(event) => event.stopPropagation()}
-          onClick={onRun}
+          onClick={() => onRun?.()}
           disabled={runDisabled}
           aria-label={runTitle}
           className="ml-1 flex h-6 w-6 items-center justify-center rounded-full bg-white text-black shadow-sm transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-white"

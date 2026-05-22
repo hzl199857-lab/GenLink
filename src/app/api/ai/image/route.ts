@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { NextResponse } from "next/server";
 
-import { saveImageDataUrl } from "@/lib/image-host";
+import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
 import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
 import { prisma } from "@/lib/prisma";
 import {
@@ -518,6 +518,53 @@ async function persistImageHistoryItems(
   );
 }
 
+async function cacheRemoteImageJobResult(
+  jobId: string,
+  result: ImageJobResult,
+) {
+  const remoteImages = result.images.filter(
+    (image) =>
+      /^https?:\/\//i.test(image.hostedImageUrl || image.imageUrl) &&
+      !image.hostedImageUrl?.startsWith("/api/"),
+  );
+
+  if (remoteImages.length === 0) {
+    return;
+  }
+
+  const cachedImages = await Promise.all(
+    result.images.map(async (image, index) => {
+      const remoteUrl = image.hostedImageUrl || image.imageUrl;
+
+      if (!/^https?:\/\//i.test(remoteUrl) || image.hostedImageUrl?.startsWith("/api/")) {
+        return image;
+      }
+
+      try {
+        const hostedImageUrl = await saveRemoteImageUrl(
+          remoteUrl,
+          `generated-image-${jobId}-${index + 1}.png`,
+        );
+
+        return {
+          ...image,
+          hostedImageUrl,
+        };
+      } catch {
+        return image;
+      }
+    }),
+  );
+
+  const cachedResult: ImageJobResult = {
+    ...result,
+    images: cachedImages,
+  };
+
+  await persistCompletedImageJob(jobId, cachedResult);
+  await persistImageHistoryItems(jobId, cachedResult);
+}
+
 async function readPersistedImageJobResult(
   jobId: string,
 ): Promise<ImageJobResult | undefined> {
@@ -543,6 +590,77 @@ function parseImageJobResult(result: string | null): ImageJobResult | undefined 
   } catch {
     return undefined;
   }
+}
+
+function parseImageJobHistoryNodeData(
+  historyNodeData: string | null,
+): ImageGenerationNodeData | undefined {
+  if (!historyNodeData) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(historyNodeData) as ImageGenerationNodeData;
+  } catch {
+    return undefined;
+  }
+}
+
+function isGeminiImageModel(model?: string): boolean {
+  return typeof model === "string" && /^nano-banana/i.test(model);
+}
+
+function resolveImageJobSizeFromHistory(
+  historyNodeData: ImageGenerationNodeData | undefined,
+): string | undefined {
+  const quality = historyNodeData?.quality;
+  const aspectRatio = historyNodeData?.aspectRatio;
+  const model = historyNodeData?.model;
+  const normalizedQuality = quality === "2K" || quality === "4K" ? quality : "1K";
+
+  if (isGeminiImageModel(model)) {
+    if (normalizedQuality === "4K") {
+      if (aspectRatio === "16:9") return "5504x3072";
+      if (aspectRatio === "9:16") return "3072x5504";
+      if (aspectRatio === "4:3") return "4800x3584";
+      if (aspectRatio === "3:4") return "3584x4800";
+      return "4096x4096";
+    }
+
+    if (normalizedQuality === "2K") {
+      if (aspectRatio === "16:9") return "2752x1536";
+      if (aspectRatio === "9:16") return "1536x2752";
+      if (aspectRatio === "4:3") return "2400x1792";
+      if (aspectRatio === "3:4") return "1792x2400";
+      return "2048x2048";
+    }
+
+    return "1024x1024";
+  }
+
+  if (normalizedQuality === "4K") {
+    if (aspectRatio === "16:9") return "3840x2160";
+    if (aspectRatio === "9:16") return "2160x3840";
+    if (aspectRatio === "4:3") return "3264x2448";
+    if (aspectRatio === "3:4") return "2448x3264";
+    if (aspectRatio === "3:2") return "3504x2336";
+    if (aspectRatio === "2:3") return "2336x3504";
+    if (aspectRatio === "5:4") return "3200x2560";
+    if (aspectRatio === "4:5") return "2560x3200";
+    if (aspectRatio === "21:9") return "3696x1584";
+    if (aspectRatio === "9:21") return "1584x3696";
+    return "2880x2880";
+  }
+
+  if (normalizedQuality === "2K") {
+    if (aspectRatio === "16:9") return "2560x1440";
+    if (aspectRatio === "9:16") return "1440x2560";
+    if (aspectRatio === "4:3") return "2304x1728";
+    if (aspectRatio === "3:4") return "1728x2304";
+    return "2048x2048";
+  }
+
+  return undefined;
 }
 
 function buildImageJobResult(
@@ -721,6 +839,7 @@ async function completeImageJob(
     if (!persistedResult) {
       await persistCompletedImageJob(jobId, baseResult);
       await persistImageHistoryItems(jobId, baseResult);
+      after(async () => { await cacheRemoteImageJobResult(jobId, baseResult); });
       return baseResult;
     }
 
@@ -733,6 +852,7 @@ async function completeImageJob(
   }
 
   await persistImageHistoryItems(jobId, baseResult);
+  after(async () => { await cacheRemoteImageJobResult(jobId, baseResult); });
   return baseResult;
 }
 
@@ -817,6 +937,7 @@ async function tryResumePendingComflyJob(job: {
   id: string;
   provider: string | null;
   upstreamTaskId: string | null;
+  historyNodeData: string | null;
   result: string | null;
 }, apiKey?: string): Promise<
   | { status: "pending" }
@@ -850,9 +971,12 @@ async function tryResumePendingComflyJob(job: {
 
   try {
     const provider = job.provider;
+    const historyNodeData = parseImageJobHistoryNodeData(job.historyNodeData);
     const task = await getComflyImageTaskResult({
       taskId: job.upstreamTaskId,
       apiKey,
+      model: historyNodeData?.model,
+      size: resolveImageJobSizeFromHistory(historyNodeData),
       provider,
     });
 

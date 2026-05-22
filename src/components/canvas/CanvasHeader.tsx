@@ -6,7 +6,7 @@ import { FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const HEADER_LOGO_SRC = '/project-library-logo.png';
-const HEADER_WORDMARK_SRC = '/genlink-wordmark.png';
+const HEADER_WORDMARK_SRC = '/genlink-canvas-wordmark.png';
 
 export interface CanvasHeaderProps {
   projectName: string;
@@ -84,10 +84,10 @@ export function CanvasHeader({
           <Image
             src={HEADER_WORDMARK_SRC}
             alt="GenLink"
-            width={2266}
-            height={336}
+            width={2391}
+            height={372}
             priority
-            className="h-auto w-[74px] object-contain"
+            className="h-auto w-[84px] object-contain"
           />
         </button>
         <div className="pointer-events-none absolute left-0 top-full z-[80] pt-2 opacity-0 transition duration-150 group-hover/header-menu:pointer-events-auto group-hover/header-menu:opacity-100 group-focus-within/header-menu:pointer-events-auto group-focus-within/header-menu:opacity-100">

@@ -100,6 +100,7 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
       position={Position.Bottom}
       offset={16}
       align="center"
+      style={{ zIndex: 30 }}
     >
       <div
         data-canvas-menu-ignore="true"

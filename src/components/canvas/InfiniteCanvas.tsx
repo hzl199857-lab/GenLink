@@ -1015,7 +1015,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
       connectedImages={connectedImages}
       onChange={(next) => updateNodeData<'image_generation'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
-      onRun={() => generateImage(id)}
+      onRun={(promptOverride) => generateImage(id, promptOverride)}
       onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
       onToolbarAction={(action) => notifyImageToolbarAction?.(action, data as ImageGenerationNodeData)}
       onOpenLightbox={(next) => notifyImageToolbarAction?.('expand', next)}
@@ -2566,7 +2566,10 @@ function GroupFrame({
           data-canvas-menu-ignore="true"
           data-group-id={group.id}
           data-handle={h}
-          className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[20] flex items-center justify-center"
+          className={[
+            'group-frame-no-drag nodrag nopan pointer-events-auto absolute flex items-center justify-center',
+            resizing ? 'z-[20]' : 'z-[3]',
+          ].join(' ')}
           style={{ ...getHandleStyle(h), cursor: handleCursor[h] }}
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
@@ -6084,7 +6087,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   return (
     <>
       {saveMessage ? (
-        <div className="fixed right-6 top-16 z-[95] rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
+        <div className="fixed bottom-8 left-1/2 z-[95] -translate-x-1/2 rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
           {saveMessage}
         </div>
       ) : null}
