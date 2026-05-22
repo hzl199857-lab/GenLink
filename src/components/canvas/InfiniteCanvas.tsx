@@ -1198,6 +1198,16 @@ const CANVAS_MINIMAP_HEIGHT = 150;
 const CANVAS_MINIMAP_PADDING = 14;
 const MULTI_NODE_SELECTION_PADDING = 14;
 const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
+const GROUP_SOURCE_HANDLE_SIZE = 10;
+const GROUP_SOURCE_HANDLE_BADGE_SIZE = 22;
+const GROUP_SOURCE_HANDLE_BADGE_GAP = GROUP_SOURCE_HANDLE_BADGE_SIZE;
+const GROUP_SOURCE_HANDLE_ZONE_WIDTH = 56;
+const GROUP_SOURCE_HANDLE_HITBOX_BASE =
+  'z-30 pointer-events-auto rounded-full border-0 bg-transparent transition-[opacity] duration-150 ease-out cursor-crosshair nodrag nopan';
+const GROUP_SOURCE_HANDLE_BADGE_BASE =
+  'pointer-events-none absolute z-40 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-full border border-gl-stroke-medium bg-gl-panel text-gl-text-tertiary transition-[opacity,color,box-shadow,border-color] duration-150 ease-out nodrag nopan';
+const GROUP_SOURCE_HANDLE_ZONE_BASE =
+  'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
 const GROUP_LAYOUT_GAP_X = 48;
 const GROUP_LAYOUT_GAP_Y = 48;
 const HISTORY_NODE_WIDTH = 540;
@@ -1228,7 +1238,8 @@ type LightboxViewState = {
 type PendingConnectionMenu = {
   screen: { x: number; y: number };
   canvas: { x: number; y: number };
-  connection: OnConnectStartParams;
+  connection?: OnConnectStartParams;
+  sourceRefs?: GroupConnectionSource[];
 };
 
 type BlankConnectionDropEventDetail = {
@@ -1236,6 +1247,17 @@ type BlankConnectionDropEventDetail = {
   handleId: string | null;
   handleType: 'source' | 'target';
   screen: { x: number; y: number };
+};
+
+type GroupConnectionSource = {
+  nodeId: string;
+  sourceHandle?: string;
+  screen: { x: number; y: number };
+};
+
+type GroupConnectionPreview = {
+  sources: GroupConnectionSource[];
+  target: { x: number; y: number };
 };
 
 type ConnectedCopyBuffer = {
@@ -1703,6 +1725,195 @@ function getConnectEndScreenPosition(event: MouseEvent | TouchEvent): { x: numbe
   };
 }
 
+function getElementScreenCenter(element: HTMLElement): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+  };
+}
+
+function getGroupConnectionSourcesFromDom(group: NodeGroup): GroupConnectionSource[] {
+  const sources: GroupConnectionSource[] = [];
+  const seen = new Set<string>();
+
+  for (const nodeId of group.nodeIds) {
+    const nodeElement = document.querySelector<HTMLElement>(
+      `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`,
+    );
+
+    if (!nodeElement) {
+      continue;
+    }
+
+    const sourceHandles = Array.from(
+      nodeElement.querySelectorAll<HTMLElement>('.react-flow__handle.source'),
+    );
+
+    for (const sourceHandle of sourceHandles) {
+      const sourceNodeId = sourceHandle.getAttribute('data-nodeid') || nodeId;
+      const sourceHandleId = sourceHandle.getAttribute('data-handleid') || undefined;
+      const key = `${sourceNodeId}:${sourceHandleId ?? ''}`;
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      sources.push({
+        nodeId: sourceNodeId,
+        sourceHandle: sourceHandleId,
+        screen: getElementScreenCenter(sourceHandle),
+      });
+    }
+  }
+
+  return sources;
+}
+
+function findClosestConnectionHandle(
+  mouseEvent: MouseEvent,
+  handles: HTMLElement[],
+  maxDistance = Number.POSITIVE_INFINITY,
+): HTMLElement | null {
+  let closestHandle: HTMLElement | null = null;
+  let closestDistance = maxDistance;
+
+  for (const candidate of handles) {
+    const candidateNodeId = candidate.getAttribute('data-nodeid');
+
+    if (!candidateNodeId) {
+      continue;
+    }
+
+    const rect = candidate.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const distance = Math.hypot(mouseEvent.clientX - centerX, mouseEvent.clientY - centerY);
+
+    if (distance <= closestDistance) {
+      closestDistance = distance;
+      closestHandle = candidate;
+    }
+  }
+
+  return closestHandle;
+}
+
+function findTargetHandleFromNodeBody(mouseEvent: MouseEvent, doc: Document): HTMLElement | null {
+  const candidateNodes = Array.from(doc.querySelectorAll<HTMLElement>('.react-flow__node'));
+  let matchedHandle: HTMLElement | null = null;
+  let matchedDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidateNode of candidateNodes) {
+    const cardElement = candidateNode.querySelector<HTMLElement>('.node-connectable-card');
+    const bounds = (cardElement ?? candidateNode).getBoundingClientRect();
+    const isInsideCard = (
+      mouseEvent.clientX >= bounds.left &&
+      mouseEvent.clientX <= bounds.right &&
+      mouseEvent.clientY >= bounds.top &&
+      mouseEvent.clientY <= bounds.bottom
+    );
+
+    if (!isInsideCard) {
+      continue;
+    }
+
+    const nodeHandles = Array.from(
+      candidateNode.querySelectorAll<HTMLElement>('.react-flow__handle.target'),
+    );
+    const nodeHandle = findClosestConnectionHandle(mouseEvent, nodeHandles);
+
+    if (!nodeHandle) {
+      continue;
+    }
+
+    const center = getElementScreenCenter(nodeHandle);
+    const distance = Math.hypot(mouseEvent.clientX - center.x, mouseEvent.clientY - center.y);
+
+    if (distance < matchedDistance) {
+      matchedDistance = distance;
+      matchedHandle = nodeHandle;
+    }
+  }
+
+  return matchedHandle;
+}
+
+function resolveGroupConnectionTargetHandle(mouseEvent: MouseEvent): HTMLElement | null {
+  const doc = document;
+  const directTarget = doc.elementFromPoint(mouseEvent.clientX, mouseEvent.clientY);
+  const directHandle = directTarget?.closest('.react-flow__handle') as HTMLElement | null;
+
+  if (directHandle?.classList.contains('target')) {
+    return directHandle;
+  }
+
+  const directNode = directTarget?.closest('.react-flow__node') as HTMLElement | null;
+
+  if (directNode) {
+    const nodeHandles = Array.from(
+      directNode.querySelectorAll<HTMLElement>('.react-flow__handle.target'),
+    );
+    const directNodeHandle = findClosestConnectionHandle(mouseEvent, nodeHandles);
+
+    if (directNodeHandle) {
+      return directNodeHandle;
+    }
+  }
+
+  const nodeBodyHandle = findTargetHandleFromNodeBody(mouseEvent, doc);
+
+  if (nodeBodyHandle) {
+    return nodeBodyHandle;
+  }
+
+  const candidateHandles = Array.from(
+    doc.querySelectorAll<HTMLElement>('.react-flow__handle.target'),
+  );
+
+  return findClosestConnectionHandle(mouseEvent, candidateHandles, 32);
+}
+
+function resolveGroupConnectionTarget(mouseEvent: MouseEvent): {
+  nodeId: string;
+  targetHandle?: string;
+  screen: { x: number; y: number };
+} | null {
+  const targetHandle = resolveGroupConnectionTargetHandle(mouseEvent);
+
+  if (targetHandle) {
+    const nodeId = targetHandle.getAttribute('data-nodeid');
+
+    if (!nodeId) {
+      return null;
+    }
+
+    return {
+      nodeId,
+      targetHandle: targetHandle.getAttribute('data-handleid') || undefined,
+      screen: getElementScreenCenter(targetHandle),
+    };
+  }
+
+  const dropTarget = document.elementFromPoint(mouseEvent.clientX, mouseEvent.clientY);
+  const targetNodeElement = dropTarget?.closest('.react-flow__node');
+  const targetNodeId = targetNodeElement?.getAttribute('data-id');
+
+  if (!targetNodeId) {
+    return null;
+  }
+
+  return {
+    nodeId: targetNodeId,
+    screen: {
+      x: mouseEvent.clientX,
+      y: mouseEvent.clientY,
+    },
+  };
+}
+
 function clampZoomLevel(zoom: number): number {
   return Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, zoom));
 }
@@ -1914,6 +2125,8 @@ type MultiNodeSelectionOverlayProps = {
 type GroupOverlayProps = {
   groups: NodeGroup[];
   selectedGroupId: string | null;
+  hoveredGroupId: string | null;
+  onStartGroupConnection: (group: NodeGroup, event: React.MouseEvent<HTMLElement>) => void;
   onSelectGroup: (groupId: string) => void;
   onDeleteGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string, name: string | undefined) => void;
@@ -1980,6 +2193,8 @@ function getGroupFrameColorStyle(
 function GroupOverlay({
   groups,
   selectedGroupId,
+  hoveredGroupId,
+  onStartGroupConnection,
   onSelectGroup,
   onDeleteGroup,
   onRenameGroup,
@@ -2004,6 +2219,8 @@ function GroupOverlay({
           group={group}
           viewport={viewport}
           selected={selectedGroupId === group.id}
+          hovered={hoveredGroupId === group.id}
+          onStartConnection={(event) => onStartGroupConnection(group, event)}
           onSelect={() => onSelectGroup(group.id)}
           onDelete={() => onDeleteGroup(group.id)}
           onRename={(name) => onRenameGroup(group.id, name)}
@@ -2025,6 +2242,8 @@ type GroupFrameProps = {
   group: NodeGroup;
   viewport: { x: number; y: number; zoom: number };
   selected: boolean;
+  hovered: boolean;
+  onStartConnection: (event: React.MouseEvent<HTMLElement>) => void;
   onSelect: () => void;
   onDelete: () => void;
   onRename: (name: string | undefined) => void;
@@ -2052,6 +2271,8 @@ function GroupFrame({
   group,
   viewport,
   selected,
+  hovered,
+  onStartConnection,
   onSelect,
   onDelete,
   onRename,
@@ -2063,6 +2284,7 @@ function GroupFrame({
   onDownload,
 }: GroupFrameProps) {
   const dragRef = useRef<{ startX: number; startY: number } | null>(null);
+  const [resizing, setResizing] = useState(false);
   const resizeRef = useRef<{
     handle: string;
     startX: number;
@@ -2080,6 +2302,12 @@ function GroupFrame({
   const nodeCount = group.nodeIds.length;
   const defaultName = `分组 ${nodeCount} 个节点`;
   const frameColorStyle = getGroupFrameColorStyle(group.backgroundColor, selected);
+  const showResizeHandles = selected || hovered || resizing;
+  const showSourceHandle = selected || hovered;
+  const sourceHandleCenter = {
+    x: topLeft.x + screenW,
+    y: topLeft.y + screenH / 2,
+  };
 
   const handlePointerDown = (event: React.PointerEvent) => {
     if ((event.target as HTMLElement).closest('.group-frame-no-drag')) return;
@@ -2110,7 +2338,6 @@ function GroupFrame({
   };
 
   const startResize = useCallback((handle: string, clientX: number, clientY: number) => {
-    onSelect();
     resizeRef.current = {
       handle,
       startX: clientX,
@@ -2120,7 +2347,8 @@ function GroupFrame({
       origW: group.width,
       origH: group.height,
     };
-  }, [group.height, group.width, group.x, group.y, onSelect]);
+    setResizing(true);
+  }, [group.height, group.width, group.x, group.y]);
 
   const handleResizePointerDown = (event: React.PointerEvent) => {
     const handle = (event.currentTarget as HTMLElement).dataset.handle;
@@ -2178,6 +2406,7 @@ function GroupFrame({
     event.stopPropagation();
     event.preventDefault();
     resizeRef.current = null;
+    setResizing(false);
     try {
       (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
     } catch {
@@ -2204,6 +2433,7 @@ function GroupFrame({
       event.preventDefault();
       event.stopPropagation();
       resizeRef.current = null;
+      setResizing(false);
     };
 
     const handleWindowMouseMove = (event: MouseEvent) => {
@@ -2224,6 +2454,7 @@ function GroupFrame({
       event.preventDefault();
       event.stopPropagation();
       resizeRef.current = null;
+      setResizing(false);
     };
 
     window.addEventListener('pointermove', handleWindowPointerMove, true);
@@ -2329,10 +2560,11 @@ function GroupFrame({
       </div>
 
       {/* Label — z-[19] above nodes */}
-      {selected && handles.map((h) => (
+      {showResizeHandles && handles.map((h) => (
         <div
           key={h}
           data-canvas-menu-ignore="true"
+          data-group-id={group.id}
           data-handle={h}
           className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[20] flex items-center justify-center"
           style={{ ...getHandleStyle(h), cursor: handleCursor[h] }}
@@ -2348,6 +2580,7 @@ function GroupFrame({
       ))}
 
       <div
+        data-group-id={group.id}
         className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19]"
         style={{ left: topLeft.x + 12, top: topLeft.y - 28 }}
         onPointerDown={(e) => e.stopPropagation()}
@@ -2355,6 +2588,53 @@ function GroupFrame({
       >
         <GroupFrameLabel value={group.name} fallback={defaultName} onCommit={onRename} />
       </div>
+
+      {showSourceHandle ? (
+        <div
+          data-canvas-menu-ignore="true"
+          data-group-id={group.id}
+          className="group-frame-no-drag nodrag nopan pointer-events-none absolute z-[20] overflow-visible"
+          style={{
+            left: topLeft.x,
+            top: topLeft.y,
+            width: screenW,
+            height: screenH,
+          }}
+        >
+          <div
+            className={GROUP_SOURCE_HANDLE_HITBOX_BASE}
+            style={{
+              position: 'absolute',
+              left: sourceHandleCenter.x - topLeft.x - GROUP_SOURCE_HANDLE_SIZE / 2,
+              top: sourceHandleCenter.y - topLeft.y - GROUP_SOURCE_HANDLE_SIZE / 2,
+              width: GROUP_SOURCE_HANDLE_SIZE,
+              height: GROUP_SOURCE_HANDLE_SIZE,
+            }}
+          />
+          <div
+            data-canvas-menu-ignore="true"
+            data-group-id={group.id}
+            className={GROUP_SOURCE_HANDLE_ZONE_BASE}
+            style={{
+              left: screenW + GROUP_SOURCE_HANDLE_SIZE / 2,
+              top: 0,
+              width: GROUP_SOURCE_HANDLE_ZONE_WIDTH,
+              height: screenH,
+            }}
+            onMouseDown={onStartConnection}
+          />
+          <span
+            aria-hidden="true"
+            className={GROUP_SOURCE_HANDLE_BADGE_BASE}
+            style={{
+              top: screenH / 2,
+              left: screenW + GROUP_SOURCE_HANDLE_BADGE_GAP,
+            }}
+          >
+            <Plus size={12} className="pointer-events-none" />
+          </span>
+        </div>
+      ) : null}
 
       {/* Toolbar — z-[19], only when selected */}
       {selected && (
@@ -2388,6 +2668,41 @@ function GroupFrame({
         </GroupLayoutMenuContext.Provider>
       )}
     </>
+  );
+}
+
+function getGroupConnectionPreviewPath(
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+): string {
+  const bend = Math.max(48, Math.abs(target.x - source.x) * 0.45);
+
+  return [
+    `M ${source.x} ${source.y}`,
+    `C ${source.x + bend} ${source.y}`,
+    `${target.x - bend} ${target.y}`,
+    `${target.x} ${target.y}`,
+  ].join(' ');
+}
+
+function GroupConnectionPreviewOverlay({ preview }: { preview: GroupConnectionPreview | null }) {
+  if (!preview || preview.sources.length === 0) {
+    return null;
+  }
+
+  return (
+    <svg className="pointer-events-none fixed inset-0 z-[18] h-screen w-screen overflow-visible">
+      {preview.sources.map((source) => (
+        <path
+          key={`${source.nodeId}:${source.sourceHandle ?? ''}`}
+          d={getGroupConnectionPreviewPath(source.screen, preview.target)}
+          fill="none"
+          stroke="rgba(190, 205, 225, 0.34)"
+          strokeWidth={2.4}
+          strokeLinecap="round"
+        />
+      ))}
+    </svg>
   );
 }
 
@@ -3790,6 +4105,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
+  const [groupConnectionPreview, setGroupConnectionPreview] = useState<GroupConnectionPreview | null>(null);
   const draggingNodeIdRef = useRef<string | null>(null);
   const [edgeDeleteButtonPosition, setEdgeDeleteButtonPosition] = useState<{
     x: number;
@@ -3896,7 +4213,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           },
     }));
 
-    if (connectionMenu?.connection.nodeId && connectionMenu.connection.handleType) {
+    if (connectionMenu?.connection?.nodeId && connectionMenu.connection.handleType) {
       const connection = connectionMenu.connection;
       const connectionNodeId = connection.nodeId;
 
@@ -3953,6 +4270,33 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [selectionInProgress, setSelectionInProgress] = useState(false);
 
   const { getViewport, project, setViewport } = useReactFlow();
+
+  const updateHoveredGroupFromPointer = useCallback((event: {
+    target?: EventTarget | null;
+    clientX: number;
+    clientY: number;
+  }) => {
+    const target = event.target;
+
+    if (target instanceof Element) {
+      const groupElement = target.closest('.group-frame-no-drag[data-group-id]');
+      const groupId = groupElement instanceof HTMLElement
+        ? groupElement.dataset.groupId ?? null
+        : null;
+
+      if (groupId && storeGroups.some((group) => group.id === groupId)) {
+        setHoveredGroupId((current) => (current === groupId ? current : groupId));
+        return;
+      }
+    }
+
+    const group = findGroupAtCanvasPoint(
+      storeGroups,
+      project({ x: event.clientX, y: event.clientY }),
+    );
+    const nextGroupId = group?.id ?? null;
+    setHoveredGroupId((current) => (current === nextGroupId ? current : nextGroupId));
+  }, [project, storeGroups]);
 
   useEffect(() => {
     notifyPromptBarInteraction = () => {
@@ -4464,6 +4808,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [project, selectGroup, storeGroups]);
 
   const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
+    updateHoveredGroupFromPointer(event);
+
     const groupDrag = paneGroupDragRef.current;
 
     if (groupDrag) {
@@ -4501,7 +4847,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     if (dx > 3 || dy > 3) {
       setPaneSelectionDragging(true);
     }
-  }, [getViewport, moveGroup]);
+  }, [getViewport, moveGroup, updateHoveredGroupFromPointer]);
 
   const handlePaneMouseUp = useCallback((event?: React.MouseEvent) => {
     if (paneGroupDragRef.current) {
@@ -4517,6 +4863,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setPaneSelectionDragging(false);
     setSelectionInProgress(false);
   }, []);
+
+  const handlePaneMouseLeave = useCallback((event: React.MouseEvent) => {
+    setHoveredGroupId(null);
+    handlePaneMouseUp(event);
+  }, [handlePaneMouseUp]);
 
   const handleCopySelectedNodes = useCallback(() => {
     if (selectedNodeIds.size === 0) {
@@ -5113,6 +5464,52 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }, 2200);
   }, [setSaveMessage]);
 
+  const addGroupConnectionEdges = useCallback((
+    sourceRefs: GroupConnectionSource[],
+    targetNodeId: string,
+    targetHandle?: string,
+  ) => {
+    const state = useCanvasStore.getState();
+    const existing = new Set(
+      state.edges.map((edge) => [
+        edge.source,
+        edge.target,
+        edge.sourceHandle ?? '',
+        edge.targetHandle ?? '',
+      ].join('|')),
+    );
+    let addedCount = 0;
+
+    for (const sourceRef of sourceRefs) {
+      if (sourceRef.nodeId === targetNodeId) {
+        continue;
+      }
+
+      const key = [
+        sourceRef.nodeId,
+        targetNodeId,
+        sourceRef.sourceHandle ?? '',
+        targetHandle ?? '',
+      ].join('|');
+
+      if (existing.has(key)) {
+        continue;
+      }
+
+      existing.add(key);
+      addedCount += 1;
+      addEdgeStore({
+        id: crypto.randomUUID(),
+        source: sourceRef.nodeId,
+        target: targetNodeId,
+        sourceHandle: sourceRef.sourceHandle,
+        targetHandle,
+      });
+    }
+
+    return addedCount;
+  }, [addEdgeStore]);
+
   const handleExecuteGroup = useCallback((groupId: string, mode: GroupExecutionMode) => {
     const state = useCanvasStore.getState();
     const group = state.groups.find((candidate) => candidate.id === groupId);
@@ -5202,6 +5599,144 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         showProjectMessage(error instanceof Error ? error.message : '批量下载失败');
       });
   }, [showProjectMessage]);
+
+  const handleStartGroupConnection = useCallback((
+    group: NodeGroup,
+    event: React.MouseEvent<HTMLElement>,
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const sources = getGroupConnectionSourcesFromDom(group);
+
+    if (sources.length === 0) {
+      showProjectMessage('组内没有可连接的节点');
+      return;
+    }
+
+    clearConnectionMenu();
+    clearEdgeSelection();
+    setAddMenu(null);
+    setImageInfoPopover(null);
+    setImageLightbox(null);
+    setGroupConnectionPreview({
+      sources,
+      target: { x: event.clientX, y: event.clientY },
+    });
+
+    let activeTargetHandleElement: HTMLElement | null = null;
+
+    const resetTargetHandleHighlight = () => {
+      if (!activeTargetHandleElement) {
+        return;
+      }
+
+      activeTargetHandleElement.classList.remove(
+        'connecting',
+        'valid',
+        'react-flow__handle-connecting',
+        'react-flow__handle-valid',
+      );
+      activeTargetHandleElement = null;
+    };
+
+    const setTargetHandleHighlight = (element: HTMLElement) => {
+      if (activeTargetHandleElement === element) {
+        return;
+      }
+
+      resetTargetHandleHighlight();
+      activeTargetHandleElement = element;
+      activeTargetHandleElement.classList.add(
+        'connecting',
+        'valid',
+        'react-flow__handle-connecting',
+        'react-flow__handle-valid',
+      );
+    };
+
+    const cleanup = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleWindowBlur);
+      resetTargetHandleHighlight();
+      setGroupConnectionPreview(null);
+    };
+
+    const updatePreviewFromMouse = (mouseEvent: MouseEvent) => {
+      const targetHandle = resolveGroupConnectionTargetHandle(mouseEvent);
+
+      if (targetHandle) {
+        setTargetHandleHighlight(targetHandle);
+        setGroupConnectionPreview({
+          sources,
+          target: getElementScreenCenter(targetHandle),
+        });
+        return;
+      }
+
+      resetTargetHandleHighlight();
+      setGroupConnectionPreview({
+        sources,
+        target: { x: mouseEvent.clientX, y: mouseEvent.clientY },
+      });
+    };
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      moveEvent.preventDefault();
+      moveEvent.stopPropagation();
+      updatePreviewFromMouse(moveEvent);
+    }
+
+    function handleMouseUp(upEvent: MouseEvent) {
+      upEvent.preventDefault();
+      upEvent.stopPropagation();
+
+      const target = resolveGroupConnectionTarget(upEvent);
+
+      if (target) {
+        const addedCount = addGroupConnectionEdges(
+          sources,
+          target.nodeId,
+          target.targetHandle,
+        );
+
+        if (addedCount === 0) {
+          showProjectMessage('没有新增连接');
+        }
+      } else {
+        suppressNextPaneClearRef.current = true;
+        window.setTimeout(() => {
+          suppressNextPaneClearRef.current = false;
+        }, 250);
+        setConnectionMenu({
+          screen: { x: upEvent.clientX, y: upEvent.clientY },
+          canvas: project({ x: upEvent.clientX, y: upEvent.clientY }),
+          sourceRefs: sources,
+        });
+      }
+
+      cleanup();
+    }
+
+    function handleWindowBlur() {
+      cleanup();
+    }
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleWindowBlur);
+  }, [
+    addGroupConnectionEdges,
+    clearConnectionMenu,
+    clearEdgeSelection,
+    project,
+    showProjectMessage,
+  ]);
 
   const toggleHistoryPopover = useCallback((anchor: DOMRect) => {
     setHistoryAnchor((current) => {
@@ -5305,7 +5840,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const nextNode = addNodeAtCenter(nodeType, connectionMenu.canvas);
     const connection = connectionMenu.connection;
 
-    if (connection.nodeId && connection.handleType) {
+    if (connectionMenu.sourceRefs?.length) {
+      addGroupConnectionEdges(connectionMenu.sourceRefs, nextNode.id);
+    } else if (connection?.nodeId && connection.handleType) {
       addEdgeStore({
         id: crypto.randomUUID(),
         source: connection.handleType === 'source'
@@ -5331,6 +5868,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clearConnectionMenu();
   }, [
     addEdgeStore,
+    addGroupConnectionEdges,
     addNodeAtCenter,
     clearConnectionMenu,
     clearEdgeSelection,
@@ -5577,7 +6115,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onPaneScroll={handleViewportMove}
         onMoveStart={handleViewportMove}
         onPaneMouseMove={handlePaneMouseMove}
-        onPaneMouseLeave={handlePaneMouseUp}
+        onPaneMouseLeave={handlePaneMouseLeave}
         onMouseDown={handlePaneMouseDown}
         onMouseMove={handlePaneMouseMove}
         onMouseUp={handlePaneMouseUp}
@@ -5633,6 +6171,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         <GroupOverlay
           groups={storeGroups}
           selectedGroupId={selectedGroupId}
+          hoveredGroupId={hoveredGroupId}
+          onStartGroupConnection={handleStartGroupConnection}
           onSelectGroup={selectGroup}
           onDeleteGroup={deleteGroup}
           onRenameGroup={renameGroup}
@@ -5645,6 +6185,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         />
         <CanvasCornerActionButton />
       </ReactFlow>
+
+      <GroupConnectionPreviewOverlay preview={groupConnectionPreview} />
 
       {activeSelectedEdgeId && edgeDeleteButtonPosition ? (
         <button
