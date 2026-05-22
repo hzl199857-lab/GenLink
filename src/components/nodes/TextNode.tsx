@@ -114,9 +114,19 @@ export const TextNode = memo(function TextNode({
     console.log('heading level requested', level);
   };
 
+  const handleBackgroundColorChange = (backgroundColor: string | undefined) => {
+    onChange?.({
+      ...data,
+      backgroundColor,
+    });
+  };
+
   const uiVisible = selected && !dragging && !suppressTransientUi;
   const showAccessories = uiVisible;
   const isGenerating = data.status === 'generating';
+  const cardStyle = data.backgroundColor
+    ? { backgroundColor: data.backgroundColor }
+    : undefined;
 
   useEffect(() => {
     if (!isComposingRef.current) {
@@ -216,15 +226,17 @@ export const TextNode = memo(function TextNode({
         <div
           ref={cardRef}
           className={[
-            'node-connectable-card text-node-drag-handle relative rounded-gl-lg border bg-gl-panel shadow-gl-card',
+            'node-connectable-card text-node-drag-handle relative rounded-gl-lg border shadow-gl-card',
+            data.backgroundColor ? '' : 'bg-gl-panel',
             'h-[289px] w-[511px] px-5 py-4',
-            'flex cursor-grab flex-col transition-colors duration-150',
+            'flex cursor-grab flex-col transition-[background-color,border-color,box-shadow] duration-150',
             isGenerating
               ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
               : selected
                 ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
                 : 'border-gl-stroke-subtle',
           ].join(' ')}
+          style={cardStyle}
           onDoubleClick={onStartEdit}
         >
           {editing ? (
@@ -292,7 +304,8 @@ export const TextNode = memo(function TextNode({
       <TextNodeFloatingToolbar
         nodeId={id}
         visible={uiVisible}
-        onPickBgColor={() => console.log('bg color picker')}
+        backgroundColor={data.backgroundColor}
+        onBackgroundColorChange={handleBackgroundColorChange}
         onSetHeading={handleSetHeading}
         onCopyContent={handleCopyContent}
       />

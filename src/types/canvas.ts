@@ -23,6 +23,7 @@ export interface BaseCanvasNode<
 export interface TextNodeData {
   text: string;
   title?: string;
+  backgroundColor?: string;
   aiPrompt?: string;
   model?: string;
   status?: "idle" | "generating" | "error";
@@ -136,6 +137,7 @@ export interface CanvasEdge {
 export interface NodeGroup {
   id: string;
   name?: string;
+  backgroundColor?: string;
   nodeIds: string[];
   x: number;
   y: number;

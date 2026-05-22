@@ -4,18 +4,19 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSync
 import NextImage from 'next/image';
 import {
   ChevronDown,
+  Columns3,
   Copy,
   Expand,
   FolderPlus,
   Group,
+  Grid2x2,
   Map as MapIcon,
   Plus,
+  Rows3,
   X,
   Check,
   CropIcon,
   Play,
-  Wrench,
-  Scissors,
   Download,
   ListOrdered,
   Ungroup,
@@ -72,6 +73,7 @@ import type {
   ImageNodeData,
   UploadedImageNodeData,
 } from '@/types/canvas';
+import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
 import { TextNode } from '../nodes/TextNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
@@ -1196,6 +1198,8 @@ const CANVAS_MINIMAP_HEIGHT = 150;
 const CANVAS_MINIMAP_PADDING = 14;
 const MULTI_NODE_SELECTION_PADDING = 14;
 const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
+const GROUP_LAYOUT_GAP_X = 48;
+const GROUP_LAYOUT_GAP_Y = 48;
 const HISTORY_NODE_WIDTH = 540;
 const HISTORY_NODE_HEIGHT = 740;
 const HISTORY_NODE_GAP = 72;
@@ -1442,6 +1446,84 @@ function updateGroupBoundsAndMembership(
     groups,
     dirty: true,
   });
+}
+
+function layoutGroupNodes(groupId: string, mode: GroupLayoutMode) {
+  const state = useCanvasStore.getState();
+  const group = state.groups.find((candidate) => candidate.id === groupId);
+
+  if (!group || group.nodeIds.length <= 1) {
+    return false;
+  }
+
+  const groupNodeIds = new Set(group.nodeIds);
+  const layoutItems = state.nodes
+    .filter((node) => groupNodeIds.has(node.id))
+    .map((node) => ({
+      node,
+      bounds: getEstimatedNodeBounds(node),
+    }))
+    .sort((a, b) => a.bounds.y - b.bounds.y || a.bounds.x - b.bounds.x);
+
+  if (layoutItems.length <= 1) {
+    return false;
+  }
+
+  const maxWidth = Math.max(...layoutItems.map((item) => item.bounds.width));
+  const maxHeight = Math.max(...layoutItems.map((item) => item.bounds.height));
+  const columns = mode === 'grid'
+    ? Math.max(1, Math.ceil(Math.sqrt(layoutItems.length)))
+    : mode === 'horizontal'
+      ? layoutItems.length
+      : 1;
+  const padding = MULTI_NODE_SELECTION_PADDING;
+  const startX = group.x + padding;
+  const startY = group.y + padding;
+  const nextPositionsByNodeId = new Map<string, { x: number; y: number }>();
+  const nextRects: MultiNodeSelectionBounds[] = [];
+
+  layoutItems.forEach((item, index) => {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    const nextBounds = {
+      x: startX + column * (maxWidth + GROUP_LAYOUT_GAP_X),
+      y: startY + row * (maxHeight + GROUP_LAYOUT_GAP_Y),
+      width: item.bounds.width,
+      height: item.bounds.height,
+    };
+
+    nextPositionsByNodeId.set(item.node.id, {
+      x: item.node.position.x + nextBounds.x - item.bounds.x,
+      y: item.node.position.y + nextBounds.y - item.bounds.y,
+    });
+    nextRects.push(nextBounds);
+  });
+
+  const nextContentBounds = getBoundsForRects(nextRects);
+
+  if (!nextContentBounds) {
+    return false;
+  }
+
+  const nextGroupBounds = {
+    x: nextContentBounds.x - padding,
+    y: nextContentBounds.y - padding,
+    width: nextContentBounds.width + padding * 2,
+    height: nextContentBounds.height + padding * 2,
+  };
+
+  useCanvasStore.setState((currentState) => ({
+    nodes: currentState.nodes.map((node) => {
+      const nextPosition = nextPositionsByNodeId.get(node.id);
+      return nextPosition ? { ...node, position: nextPosition } : node;
+    }),
+    groups: currentState.groups.map((candidate) =>
+      candidate.id === groupId ? { ...candidate, ...nextGroupBounds } : candidate,
+    ),
+    dirty: true,
+  }));
+
+  return true;
 }
 
 type CanvasNodeRenderData = CanvasNode['data'] & {
@@ -1738,6 +1820,82 @@ function openFileInput(input: HTMLInputElement) {
   input.click();
 }
 
+function getImageGenerationZipItems(data: ImageGenerationNodeData): ZipImageDownloadItem[] {
+  const items: ZipImageDownloadItem[] = [];
+  const completedResults = data.generationResults?.filter((result) =>
+    result.status === 'completed' && Boolean(result.imageUrl?.trim() || result.hostedImageUrl?.trim()),
+  ) ?? [];
+
+  if (completedResults.length > 0) {
+    for (const [index, result] of completedResults.entries()) {
+      items.push({
+        url: result.hostedImageUrl?.trim() || result.imageUrl?.trim() || '',
+        fileName: data.generatedOutputFileName,
+        title: data.title ? `${data.title}-${index + 1}` : `image-${index + 1}`,
+        format: result.format,
+      });
+    }
+
+    return items;
+  }
+
+  const url = data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim();
+
+  if (url) {
+    items.push({
+      url,
+      fileName: data.generatedOutputFileName,
+      title: data.title,
+      format: data.generatedImageFormat,
+    });
+  }
+
+  return items;
+}
+
+function getGroupZipItems(group: NodeGroup, nodes: CanvasNode[]): ZipImageDownloadItem[] {
+  const groupNodeIds = new Set(group.nodeIds);
+  const items: ZipImageDownloadItem[] = [];
+
+  for (const node of nodes) {
+    if (!groupNodeIds.has(node.id)) {
+      continue;
+    }
+
+    if (node.type === 'image_generation') {
+      items.push(...getImageGenerationZipItems(node.data));
+      continue;
+    }
+
+    if (node.type === 'image') {
+      const url = node.data.hostedImageUrl?.trim() || node.data.imageUrl?.trim();
+
+      if (url) {
+        items.push({
+          url,
+          title: node.data.title,
+        });
+      }
+
+      continue;
+    }
+
+    if (node.type === 'uploaded_image') {
+      const url = node.data.hostedImageUrl?.trim() || node.data.imageUrl?.trim();
+
+      if (url) {
+        items.push({
+          url,
+          fileName: node.data.fileName,
+          title: node.data.title,
+        });
+      }
+    }
+  }
+
+  return items;
+}
+
 type MultiNodeSelectionOverlayProps = {
   nodes: CanvasNode[];
   selectedNodeIds: Set<string>;
@@ -1752,15 +1910,65 @@ type GroupOverlayProps = {
   onSelectGroup: (groupId: string) => void;
   onDeleteGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string, name: string | undefined) => void;
+  onUpdateGroupBackgroundColor: (groupId: string, backgroundColor: string | undefined) => void;
   onMoveGroup: (groupId: string, dx: number, dy: number) => void;
   onResizeGroup: (groupId: string, bounds: { x: number; y: number; width: number; height: number }) => void;
   onExecuteGroup: (groupId: string, mode: GroupExecutionMode) => void;
+  onLayoutGroup: (groupId: string, mode: GroupLayoutMode) => void;
+  onDownloadGroup: (groupId: string) => void;
 };
 
 type GroupExecutionMode = 'parallel' | 'sequence';
+type GroupLayoutMode = 'grid' | 'horizontal' | 'vertical';
 
 const GroupExecutionMenuContext =
   React.createContext<((mode: GroupExecutionMode) => void) | null>(null);
+const GroupLayoutMenuContext =
+  React.createContext<((mode: GroupLayoutMode) => void) | null>(null);
+
+const GROUP_BACKGROUND_COLORS = [
+  { label: '红色', value: '#a85b5b' },
+  { label: '橙色', value: '#a3682a' },
+  { label: '黄色', value: '#9b8f36' },
+  { label: '绿色', value: '#4d9156' },
+  { label: '青色', value: '#43909d' },
+  { label: '蓝色', value: '#3473ad' },
+  { label: '紫色', value: '#8a4aa3' },
+] as const;
+
+function hexToRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) {
+    return `rgba(255, 255, 255, ${alpha})`;
+  }
+
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function getGroupFrameColorStyle(
+  backgroundColor: string | undefined,
+  selected: boolean,
+): React.CSSProperties {
+  if (!backgroundColor) {
+    return {
+      backgroundColor: selected ? 'rgba(255, 255, 255, 0.03)' : 'rgba(255, 255, 255, 0.02)',
+      borderColor: selected ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.4)',
+    };
+  }
+
+  return {
+    backgroundColor: hexToRgba(backgroundColor, selected ? 0.22 : 0.16),
+    borderColor: hexToRgba(backgroundColor, selected ? 0.9 : 0.58),
+    boxShadow: selected
+      ? `0 0 0 1px ${hexToRgba(backgroundColor, 0.28)}, 0 0 24px ${hexToRgba(backgroundColor, 0.18)}`
+      : undefined,
+  };
+}
 
 function GroupOverlay({
   groups,
@@ -1768,9 +1976,12 @@ function GroupOverlay({
   onSelectGroup,
   onDeleteGroup,
   onRenameGroup,
+  onUpdateGroupBackgroundColor,
   onMoveGroup,
   onResizeGroup,
   onExecuteGroup,
+  onLayoutGroup,
+  onDownloadGroup,
 }: GroupOverlayProps) {
   const viewport = useViewport();
 
@@ -1789,9 +2000,14 @@ function GroupOverlay({
           onSelect={() => onSelectGroup(group.id)}
           onDelete={() => onDeleteGroup(group.id)}
           onRename={(name) => onRenameGroup(group.id, name)}
+          onUpdateBackgroundColor={(backgroundColor) =>
+            onUpdateGroupBackgroundColor(group.id, backgroundColor)
+          }
           onMove={(dx, dy) => onMoveGroup(group.id, dx, dy)}
           onResize={(bounds) => onResizeGroup(group.id, bounds)}
           onExecute={(mode) => onExecuteGroup(group.id, mode)}
+          onLayout={(mode) => onLayoutGroup(group.id, mode)}
+          onDownload={() => onDownloadGroup(group.id)}
         />
       ))}
     </>
@@ -1805,9 +2021,12 @@ type GroupFrameProps = {
   onSelect: () => void;
   onDelete: () => void;
   onRename: (name: string | undefined) => void;
+  onUpdateBackgroundColor: (backgroundColor: string | undefined) => void;
   onMove: (dx: number, dy: number) => void;
   onResize: (bounds: { x: number; y: number; width: number; height: number }) => void;
   onExecute: (mode: GroupExecutionMode) => void;
+  onLayout: (mode: GroupLayoutMode) => void;
+  onDownload: () => void;
 };
 
 // Convert canvas coords to screen coords
@@ -1829,9 +2048,12 @@ function GroupFrame({
   onSelect,
   onDelete,
   onRename,
+  onUpdateBackgroundColor,
   onMove,
   onResize,
   onExecute,
+  onLayout,
+  onDownload,
 }: GroupFrameProps) {
   const dragRef = useRef<{ startX: number; startY: number } | null>(null);
   const resizeRef = useRef<{
@@ -1850,6 +2072,7 @@ function GroupFrame({
 
   const nodeCount = group.nodeIds.length;
   const defaultName = `分组 ${nodeCount} 个节点`;
+  const frameColorStyle = getGroupFrameColorStyle(group.backgroundColor, selected);
 
   const handlePointerDown = (event: React.PointerEvent) => {
     if ((event.target as HTMLElement).closest('.group-frame-no-drag')) return;
@@ -2016,27 +2239,56 @@ function GroupFrame({
     n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
     ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
   };
-  const HANDLE_SIZE = 14;
+  const HANDLE_CORNER_HIT_SIZE = 16;
+  const HANDLE_EDGE_HIT_LONG = 38;
+  const HANDLE_EDGE_HIT_SHORT = 18;
+  const HANDLE_CORNER_SIZE = 5;
+  const HANDLE_EDGE_LONG = 34;
+  const HANDLE_EDGE_SHORT = 6;
 
   function getHandleStyle(h: string): React.CSSProperties {
-    const half = HANDLE_SIZE / 2;
+    const isHorizontalEdge = h === 'n' || h === 's';
+    const isVerticalEdge = h === 'e' || h === 'w';
+    const width = isHorizontalEdge
+      ? HANDLE_EDGE_HIT_LONG
+      : isVerticalEdge
+        ? HANDLE_EDGE_HIT_SHORT
+        : HANDLE_CORNER_HIT_SIZE;
+    const height = isVerticalEdge
+      ? HANDLE_EDGE_HIT_LONG
+      : isHorizontalEdge
+        ? HANDLE_EDGE_HIT_SHORT
+        : HANDLE_CORNER_HIT_SIZE;
     const pos: React.CSSProperties = {
       position: 'absolute',
-      width: HANDLE_SIZE,
-      height: HANDLE_SIZE,
+      width,
+      height,
       touchAction: 'none',
       userSelect: 'none',
     };
 
-    if (h === 'n') return { ...pos, left: topLeft.x + screenW / 2 - half, top: topLeft.y - half };
-    if (h === 's') return { ...pos, left: topLeft.x + screenW / 2 - half, top: topLeft.y + screenH - half };
-    if (h === 'e') return { ...pos, left: topLeft.x + screenW - half, top: topLeft.y + screenH / 2 - half };
-    if (h === 'w') return { ...pos, left: topLeft.x - half, top: topLeft.y + screenH / 2 - half };
-    if (h === 'ne') return { ...pos, left: topLeft.x + screenW - half, top: topLeft.y - half };
-    if (h === 'nw') return { ...pos, left: topLeft.x - half, top: topLeft.y - half };
-    if (h === 'se') return { ...pos, left: topLeft.x + screenW - half, top: topLeft.y + screenH - half };
-    if (h === 'sw') return { ...pos, left: topLeft.x - half, top: topLeft.y + screenH - half };
+    if (h === 'n') return { ...pos, left: topLeft.x + screenW / 2 - width / 2, top: topLeft.y - height / 2 };
+    if (h === 's') return { ...pos, left: topLeft.x + screenW / 2 - width / 2, top: topLeft.y + screenH - height / 2 };
+    if (h === 'e') return { ...pos, left: topLeft.x + screenW - width / 2, top: topLeft.y + screenH / 2 - height / 2 };
+    if (h === 'w') return { ...pos, left: topLeft.x - width / 2, top: topLeft.y + screenH / 2 - height / 2 };
+    if (h === 'ne') return { ...pos, left: topLeft.x + screenW - width / 2, top: topLeft.y - height / 2 };
+    if (h === 'nw') return { ...pos, left: topLeft.x - width / 2, top: topLeft.y - height / 2 };
+    if (h === 'se') return { ...pos, left: topLeft.x + screenW - width / 2, top: topLeft.y + screenH - height / 2 };
+    if (h === 'sw') return { ...pos, left: topLeft.x - width / 2, top: topLeft.y + screenH - height / 2 };
     return pos;
+  }
+
+  function getHandleVisualStyle(h: string): React.CSSProperties {
+    const isHorizontalEdge = h === 'n' || h === 's';
+    const isVerticalEdge = h === 'e' || h === 'w';
+
+    return {
+      width: isHorizontalEdge ? HANDLE_EDGE_LONG : isVerticalEdge ? HANDLE_EDGE_SHORT : HANDLE_CORNER_SIZE,
+      height: isVerticalEdge ? HANDLE_EDGE_LONG : isHorizontalEdge ? HANDLE_EDGE_SHORT : HANDLE_CORNER_SIZE,
+      borderRadius: isHorizontalEdge || isVerticalEdge ? 2 : 1,
+      background: '#2f80d8',
+      boxShadow: '0 0 0 1px rgba(47, 128, 216, 0.18)',
+    };
   }
 
   return (
@@ -2061,10 +2313,9 @@ function GroupFrame({
         <div
           className={[
             'absolute inset-0 rounded-[10px] pointer-events-none',
-            selected
-              ? 'border-2 border-white/80 bg-white/[0.03]'
-              : 'border border-white/40 bg-white/[0.02]',
+            selected ? 'border-2' : 'border',
           ].join(' ')}
+          style={frameColorStyle}
         />
 
         {/* Resize handles — only when selected */}
@@ -2076,7 +2327,7 @@ function GroupFrame({
           key={h}
           data-canvas-menu-ignore="true"
           data-handle={h}
-          className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[20] rounded-full border border-[#1b1f27] bg-white shadow"
+          className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[20] flex items-center justify-center"
           style={{ ...getHandleStyle(h), cursor: handleCursor[h] }}
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
@@ -2084,7 +2335,9 @@ function GroupFrame({
           onPointerCancel={handleResizePointerUp}
           onMouseDown={handleResizeMouseDown}
           onDragStart={(event) => event.preventDefault()}
-        />
+        >
+          <div style={getHandleVisualStyle(h)} />
+        </div>
       ))}
 
       <div
@@ -2098,33 +2351,34 @@ function GroupFrame({
 
       {/* Toolbar — z-[19], only when selected */}
       {selected && (
-        <GroupExecutionMenuContext.Provider value={onExecute}>
-          <div
-            data-canvas-menu-ignore="true"
-            className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19] flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
-            style={{
-              left: topLeft.x + screenW / 2,
-              top: topLeft.y - 52,
-              transform: 'translateX(-50%)',
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="mr-1 h-4 w-4 rounded-full border-2 border-white/60" />
-            <div className="mx-1 h-5 w-px bg-white/10" />
-            <MultiNodeSelectionToolbarButton icon={Group} compact />
-            <div className="mx-1 h-5 w-px bg-white/10" />
-            <MultiNodeSelectionToolbarButton icon={Play}>整组执行</MultiNodeSelectionToolbarButton>
-            <div className="mx-1 h-5 w-px bg-white/10" />
-            <MultiNodeSelectionToolbarButton icon={Wrench}>添加到工具箱</MultiNodeSelectionToolbarButton>
-            <div className="mx-1 h-5 w-px bg-white/10" />
-            <MultiNodeSelectionToolbarButton icon={Scissors}>转分镜组</MultiNodeSelectionToolbarButton>
-            <div className="mx-1 h-5 w-px bg-white/10" />
-            <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>解组</MultiNodeSelectionToolbarButton>
-            <div className="mx-1 h-5 w-px bg-white/10" />
-            <MultiNodeSelectionToolbarButton icon={Download}>批量下载</MultiNodeSelectionToolbarButton>
-          </div>
-        </GroupExecutionMenuContext.Provider>
+        <GroupLayoutMenuContext.Provider value={onLayout}>
+          <GroupExecutionMenuContext.Provider value={onExecute}>
+            <div
+              data-canvas-menu-ignore="true"
+              className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19] flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+              style={{
+                left: topLeft.x + screenW / 2,
+                top: topLeft.y - 52,
+                transform: 'translateX(-50%)',
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <GroupBackgroundColorButton
+                value={group.backgroundColor}
+                onChange={onUpdateBackgroundColor}
+              />
+              <div className="mx-1 h-5 w-px bg-white/10" />
+              <MultiNodeSelectionToolbarButton icon={Group}>布局</MultiNodeSelectionToolbarButton>
+              <div className="mx-1 h-5 w-px bg-white/10" />
+              <MultiNodeSelectionToolbarButton icon={Play}>整组执行</MultiNodeSelectionToolbarButton>
+              <div className="mx-1 h-5 w-px bg-white/10" />
+              <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>解组</MultiNodeSelectionToolbarButton>
+              <div className="mx-1 h-5 w-px bg-white/10" />
+              <MultiNodeSelectionToolbarButton icon={Download} onClick={onDownload}>批量下载</MultiNodeSelectionToolbarButton>
+            </div>
+          </GroupExecutionMenuContext.Provider>
+        </GroupLayoutMenuContext.Provider>
       )}
     </>
   );
@@ -2196,6 +2450,118 @@ function GroupFrameLabel({
   );
 }
 
+function GroupBackgroundColorButton({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange: (backgroundColor: string | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const activeColor = GROUP_BACKGROUND_COLORS.find((color) => color.value === value);
+  const swatchColor = activeColor?.value ?? '#ffffff';
+
+  return (
+    <div className="relative mr-1">
+      <button
+        type="button"
+        aria-label="选择分组背景色"
+        aria-expanded={open}
+        className="nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill transition-colors hover:bg-gl-panel-hover"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+      >
+        <span
+          className="block h-5 w-5 rounded-full border border-white/70 shadow-[0_2px_8px_rgba(0,0,0,0.28)]"
+          style={{ backgroundColor: swatchColor }}
+        />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          aria-label="分组背景色"
+          className="absolute bottom-[calc(100%+8px)] left-1/2 z-30 grid -translate-x-1/2 place-items-center gap-3 rounded-[18px] border border-white/10 bg-gl-panel/95 px-3 py-3 shadow-gl-toolbar backdrop-blur-md"
+          style={{
+            width: 156,
+            gridTemplateColumns: 'repeat(4, 24px)',
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <GroupBackgroundColorMenuItem
+            label="默认"
+            color="#ffffff"
+            selected={!activeColor}
+            onClick={() => {
+              onChange(undefined);
+              setOpen(false);
+            }}
+          />
+          {GROUP_BACKGROUND_COLORS.map((color) => (
+            <GroupBackgroundColorMenuItem
+              key={color.value}
+              label={color.label}
+              color={color.value}
+              selected={color.value === value}
+              onClick={() => {
+                onChange(color.value);
+                setOpen(false);
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function GroupBackgroundColorMenuItem({
+  label,
+  color,
+  selected,
+  onClick,
+}: {
+  label: string;
+  color: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-label={label}
+      aria-checked={selected}
+      className="relative flex h-6 w-6 items-center justify-center rounded-full transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+      style={{ backgroundColor: color }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      {selected ? (
+        <span className="h-2 w-2 rounded-full bg-[#1c1c1e] shadow-[0_0_0_1px_rgba(255,255,255,0.32)]" />
+      ) : null}
+    </button>
+  );
+}
+
 function getNodeElementBoundsInFlowPane(nodeId: string): MultiNodeSelectionBounds | null {
   const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
   const wrapper = document.querySelector<HTMLElement>('.react-flow');
@@ -2252,8 +2618,11 @@ function MultiNodeSelectionToolbarButton({
   onClick?: () => void;
 }) {
   const [executeMenuOpen, setExecuteMenuOpen] = useState(false);
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const groupExecute = React.useContext(GroupExecutionMenuContext);
+  const groupLayout = React.useContext(GroupLayoutMenuContext);
   const isGroupExecuteButton = Boolean(groupExecute && Icon === Play && !compact && !onClick);
+  const isGroupLayoutButton = Boolean(groupLayout && Icon === Group && !compact && !onClick);
   const button = (
     <button
       type="button"
@@ -2268,8 +2637,14 @@ function MultiNodeSelectionToolbarButton({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (isGroupLayoutButton) {
+          setLayoutMenuOpen((open) => !open);
+          setExecuteMenuOpen(false);
+          return;
+        }
         if (isGroupExecuteButton) {
           setExecuteMenuOpen((open) => !open);
+          setLayoutMenuOpen(false);
           return;
         }
         onClick?.();
@@ -2280,6 +2655,50 @@ function MultiNodeSelectionToolbarButton({
     </button>
   );
 
+  if (isGroupLayoutButton) {
+    return (
+      <div className="relative">
+        {button}
+        {layoutMenuOpen ? (
+          <div
+            role="menu"
+            className="absolute bottom-[calc(100%+8px)] left-1/2 z-30 min-w-[116px] -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-gl-panel/95 p-1 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <GroupExecuteMenuItem
+              icon={Grid2x2}
+              label="宫格"
+              onClick={() => {
+                setLayoutMenuOpen(false);
+                groupLayout?.('grid');
+              }}
+            />
+            <GroupExecuteMenuItem
+              icon={Columns3}
+              label="水平"
+              onClick={() => {
+                setLayoutMenuOpen(false);
+                groupLayout?.('horizontal');
+              }}
+            />
+            <GroupExecuteMenuItem
+              icon={Rows3}
+              label="垂直"
+              onClick={() => {
+                setLayoutMenuOpen(false);
+                groupLayout?.('vertical');
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   if (isGroupExecuteButton) {
     return (
       <div className="relative">
@@ -2287,7 +2706,7 @@ function MultiNodeSelectionToolbarButton({
         {executeMenuOpen ? (
           <div
             role="menu"
-            className="absolute left-1/2 top-[calc(100%+8px)] z-30 min-w-[132px] -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-gl-panel/95 p-1 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+            className="absolute bottom-[calc(100%+8px)] left-1/2 z-30 min-w-[132px] -translate-x-1/2 overflow-hidden rounded-lg border border-white/10 bg-gl-panel/95 p-1 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
             onPointerDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -3356,6 +3775,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const createGroup = useCanvasStore((s) => s.createGroup);
   const deleteGroup = useCanvasStore((s) => s.deleteGroup);
   const renameGroup = useCanvasStore((s) => s.renameGroup);
+  const updateGroupBackgroundColor = useCanvasStore((s) => s.updateGroupBackgroundColor);
   const moveGroup = useCanvasStore((s) => s.moveGroup);
 
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
@@ -4748,6 +5168,34 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     showProjectMessage,
   ]);
 
+  const handleDownloadGroup = useCallback((groupId: string) => {
+    const state = useCanvasStore.getState();
+    const group = state.groups.find((candidate) => candidate.id === groupId);
+
+    if (!group) {
+      return;
+    }
+
+    const zipItems = getGroupZipItems(group, state.nodes);
+
+    if (zipItems.length === 0) {
+      showProjectMessage('组内没有可下载的图片');
+      return;
+    }
+
+    const zipFileName = group.name?.trim() || `group-${group.id.slice(0, 8)}`;
+    showProjectMessage('正在打包图片...');
+
+    void import('@/lib/image-zip-download')
+      .then(({ downloadImagesAsZip }) => downloadImagesAsZip(zipItems, zipFileName))
+      .then((count) => {
+        showProjectMessage(`已打包下载 ${count} 张图片`);
+      })
+      .catch((error) => {
+        showProjectMessage(error instanceof Error ? error.message : '批量下载失败');
+      });
+  }, [showProjectMessage]);
+
   const toggleHistoryPopover = useCallback((anchor: DOMRect) => {
     setHistoryAnchor((current) => {
       if (current) {
@@ -4957,6 +5405,14 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   ) => {
     updateGroupBoundsAndMembership(groupId, bounds);
   }, []);
+
+  const handleLayoutGroup = useCallback((groupId: string, mode: GroupLayoutMode) => {
+    const changed = layoutGroupNodes(groupId, mode);
+
+    if (!changed) {
+      showProjectMessage('组内节点不足，无法整理布局');
+    }
+  }, [showProjectMessage]);
 
   const handleSaveProject = useCallback(async () => {
     await saveProject();
@@ -5173,9 +5629,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           onSelectGroup={selectGroup}
           onDeleteGroup={deleteGroup}
           onRenameGroup={renameGroup}
+          onUpdateGroupBackgroundColor={updateGroupBackgroundColor}
           onMoveGroup={moveGroup}
           onResizeGroup={handleResizeGroup}
           onExecuteGroup={handleExecuteGroup}
+          onLayoutGroup={handleLayoutGroup}
+          onDownloadGroup={handleDownloadGroup}
         />
         <CanvasCornerActionButton />
       </ReactFlow>

@@ -1271,6 +1271,7 @@ export interface CanvasState {
   createGroup: (nodeIds: string[], bounds: { x: number; y: number; width: number; height: number }) => NodeGroup;
   deleteGroup: (groupId: string) => void;
   renameGroup: (groupId: string, name: string | undefined) => void;
+  updateGroupBackgroundColor: (groupId: string, backgroundColor: string | undefined) => void;
   removeNodeFromGroup: (groupId: string, nodeId: string) => void;
   updateGroupBounds: (groupId: string, bounds: Partial<{ x: number; y: number; width: number; height: number }>) => void;
   moveGroup: (groupId: string, dx: number, dy: number) => void;
@@ -1520,6 +1521,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       groups: state.groups.map((g) =>
         g.id === groupId ? { ...g, name } : g,
+      ),
+      dirty: true,
+    }));
+  },
+
+  updateGroupBackgroundColor: (groupId, backgroundColor) => {
+    set((state) => ({
+      groups: state.groups.map((g) =>
+        g.id === groupId ? { ...g, backgroundColor } : g,
       ),
       dirty: true,
     }));
