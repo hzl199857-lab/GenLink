@@ -90,17 +90,6 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
-const IMAGE_REFERENCE_REQUEST_MAX_BYTES = 300 * 1024;
-const IMAGE_REFERENCE_REQUEST_MAX_EDGE = 1536;
-const IMAGE_REFERENCE_COMPRESSION_MODE =
-  process.env.NEXT_PUBLIC_IMAGE_REFERENCE_COMPRESSION?.trim().toLowerCase();
-const SHOULD_COMPRESS_REFERENCE_IMAGES =
-  IMAGE_REFERENCE_COMPRESSION_MODE === "off"
-    ? false
-    : IMAGE_REFERENCE_COMPRESSION_MODE === "vercel" ||
-      IMAGE_REFERENCE_COMPRESSION_MODE === "on" ||
-      IMAGE_REFERENCE_COMPRESSION_MODE === "true" ||
-      process.env.NODE_ENV === "production";
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -478,154 +467,6 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
     image.crossOrigin = "anonymous";
     image.src = src;
   });
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === "string" && reader.result.trim()) {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error("Invalid image data"));
-    };
-    reader.onerror = () => reject(new Error("Failed to read image data"));
-    reader.readAsDataURL(blob);
-  });
-}
-
-function getDataUrlByteLength(dataUrl: string): number {
-  const match = dataUrl.match(/^data:[^;]+;base64,(.+)$/i);
-
-  if (!match) {
-    return new Blob([dataUrl]).size;
-  }
-
-  const payload = match[1];
-  const paddingLength = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
-
-  return Math.max(0, Math.floor((payload.length * 3) / 4) - paddingLength);
-}
-
-function canvasToBlob(
-  canvas: HTMLCanvasElement,
-  type: string,
-  quality: number,
-): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-          return;
-        }
-
-        reject(new Error("Failed to encode reference image"));
-      },
-      type,
-      quality,
-    );
-  });
-}
-
-async function compressReferenceImageDataUrl(dataUrl: string): Promise<string> {
-  if (getDataUrlByteLength(dataUrl) <= IMAGE_REFERENCE_REQUEST_MAX_BYTES) {
-    return dataUrl;
-  }
-
-  const image = await loadImageElement(dataUrl);
-  const naturalWidth = image.naturalWidth || image.width;
-  const naturalHeight = image.naturalHeight || image.height;
-
-  if (!naturalWidth || !naturalHeight) {
-    return dataUrl;
-  }
-
-  let scale = Math.min(
-    1,
-    IMAGE_REFERENCE_REQUEST_MAX_EDGE / Math.max(naturalWidth, naturalHeight),
-  );
-  let quality = 0.86;
-
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const width = Math.max(1, Math.round(naturalWidth * scale));
-    const height = Math.max(1, Math.round(naturalHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-
-    if (!context) {
-      return dataUrl;
-    }
-
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
-
-    const compressed = await blobToDataUrl(
-      await canvasToBlob(canvas, "image/jpeg", quality),
-    );
-
-    if (
-      getDataUrlByteLength(compressed) <= IMAGE_REFERENCE_REQUEST_MAX_BYTES ||
-      attempt === 7
-    ) {
-      return compressed;
-    }
-
-    if (quality > 0.62) {
-      quality -= 0.08;
-    } else {
-      scale *= 0.78;
-    }
-  }
-
-  return dataUrl;
-}
-
-async function normalizeReferenceImageForRequest(image: {
-  imageUrl: string;
-  fileName?: string;
-  forceCompress?: boolean;
-}): Promise<{
-  url: string;
-  fileName?: string;
-}> {
-  const url = image.imageUrl.trim();
-  const shouldCompress = image.forceCompress || SHOULD_COMPRESS_REFERENCE_IMAGES;
-
-  if (url.startsWith("data:")) {
-    return {
-      url: shouldCompress
-        ? await compressReferenceImageDataUrl(url)
-        : url,
-      fileName: image.fileName,
-    };
-  }
-
-  if (isObjectUrl(url)) {
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error("Failed to read reference image");
-    }
-
-    return {
-      url: shouldCompress
-        ? await compressReferenceImageDataUrl(await blobToDataUrl(await response.blob()))
-        : await blobToDataUrl(await response.blob()),
-      fileName: image.fileName,
-    };
-  }
-
-  return {
-    url,
-    fileName: image.fileName,
-  };
 }
 
 async function createOssUploadTarget(params: {
@@ -2168,13 +2009,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 normalizeReferenceImageViaOss({
                   imageUrl: image.imageUrl,
                   fileName: image.fileName,
-                }).catch(() =>
-                  normalizeReferenceImageForRequest({
-                    imageUrl: image.imageUrl,
-                    fileName: image.fileName,
-                    forceCompress: true,
-                  }),
-                ),
+                }),
               ),
             )
           : undefined;
