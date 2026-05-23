@@ -90,6 +90,8 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
+const IMAGE_REFERENCE_REQUEST_MAX_BYTES = 600 * 1024;
+const IMAGE_REFERENCE_REQUEST_MAX_EDGE = 1536;
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -469,6 +471,148 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
   });
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string" && reader.result.trim()) {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Invalid image data"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read image data"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function getDataUrlByteLength(dataUrl: string): number {
+  const match = dataUrl.match(/^data:[^;]+;base64,(.+)$/i);
+
+  if (!match) {
+    return new Blob([dataUrl]).size;
+  }
+
+  const payload = match[1];
+  const paddingLength = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+
+  return Math.max(0, Math.floor((payload.length * 3) / 4) - paddingLength);
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality: number,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+
+        reject(new Error("Failed to encode reference image"));
+      },
+      type,
+      quality,
+    );
+  });
+}
+
+async function compressReferenceImageDataUrl(dataUrl: string): Promise<string> {
+  if (getDataUrlByteLength(dataUrl) <= IMAGE_REFERENCE_REQUEST_MAX_BYTES) {
+    return dataUrl;
+  }
+
+  const image = await loadImageElement(dataUrl);
+  const naturalWidth = image.naturalWidth || image.width;
+  const naturalHeight = image.naturalHeight || image.height;
+
+  if (!naturalWidth || !naturalHeight) {
+    return dataUrl;
+  }
+
+  let scale = Math.min(
+    1,
+    IMAGE_REFERENCE_REQUEST_MAX_EDGE / Math.max(naturalWidth, naturalHeight),
+  );
+  let quality = 0.86;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const width = Math.max(1, Math.round(naturalWidth * scale));
+    const height = Math.max(1, Math.round(naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return dataUrl;
+    }
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    const compressed = await blobToDataUrl(
+      await canvasToBlob(canvas, "image/jpeg", quality),
+    );
+
+    if (
+      getDataUrlByteLength(compressed) <= IMAGE_REFERENCE_REQUEST_MAX_BYTES ||
+      attempt === 7
+    ) {
+      return compressed;
+    }
+
+    if (quality > 0.62) {
+      quality -= 0.08;
+    } else {
+      scale *= 0.78;
+    }
+  }
+
+  return dataUrl;
+}
+
+async function normalizeReferenceImageForRequest(image: {
+  imageUrl: string;
+  fileName?: string;
+}): Promise<{
+  url: string;
+  fileName?: string;
+}> {
+  const url = image.imageUrl.trim();
+
+  if (url.startsWith("data:")) {
+    return {
+      url: await compressReferenceImageDataUrl(url),
+      fileName: image.fileName,
+    };
+  }
+
+  if (isObjectUrl(url)) {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error("Failed to read reference image");
+    }
+
+    return {
+      url: await compressReferenceImageDataUrl(await blobToDataUrl(await response.blob())),
+      fileName: image.fileName,
+    };
+  }
+
+  return {
+    url,
+    fileName: image.fileName,
+  };
+}
+
 function getImageGenerationPreviewDimensions(
   sourceWidth: number,
   sourceHeight: number,
@@ -619,6 +763,33 @@ function toProjectOutputSaveErrorMessage(error: unknown): string {
   return `\u56fe\u7247\u5df2\u751f\u6210\uff0c\u4f46\u4fdd\u5b58\u5230\u9879\u76ee\u5386\u53f2\u5931\u8d25\uff1a${message}`;
 }
 
+function toResponseTextErrorMessage(text: string, fallback: string): string {
+  const normalized = text.trim();
+
+  if (/request entity too large/i.test(normalized)) {
+    return "参考图过大，云端拒绝了请求。请减少参考图数量或压缩后重试。";
+  }
+
+  return normalized || fallback;
+}
+
+async function readJsonResponse<T>(
+  response: Response,
+  fallbackError: string,
+): Promise<T> {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(toResponseTextErrorMessage(text, fallbackError));
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -718,10 +889,10 @@ async function pollImageGenerationJob(
       window.clearTimeout(timeout);
     }
 
-    const responseText = await response.text();
-    const json = responseText
-      ? (JSON.parse(responseText) as ImageJobPollResponse)
-      : ({ ok: false, error: "Image polling returned an empty response" } as const);
+    const json = await readJsonResponse<ImageJobPollResponse>(
+      response,
+      "Image polling failed",
+    );
 
     if (!response.ok || ("ok" in json && json.ok === false)) {
       throw new Error("error" in json ? json.error : "Image polling failed");
@@ -764,13 +935,14 @@ async function submitImageGenerationJob(params: {
     body: JSON.stringify(params),
   });
 
-  const json = (await response.json()) as
+  const json = await readJsonResponse<
     | {
         ok: true;
         jobId: string;
         status: "pending";
       }
-    | ApiErrorResponse;
+    | ApiErrorResponse
+  >(response, "Image generation request failed");
 
   if (!response.ok || !("ok" in json) || json.ok === false) {
     throw new Error("error" in json ? json.error : "Request failed");
@@ -1848,6 +2020,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...connectedImages,
         ...selfGeneratedReferences,
       ];
+      const requestImages =
+        referenceImages.length > 0
+          ? await Promise.all(
+              referenceImages.map((image) =>
+                normalizeReferenceImageForRequest({
+                  imageUrl: image.imageUrl,
+                  fileName: image.fileName,
+                }),
+              ),
+            )
+          : undefined;
       const size = resolveImageSize(
         latestImageGenerationNode.data.quality,
         latestImageGenerationNode.data.aspectRatio,
@@ -1877,13 +2060,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         moderation,
         provider: imageProvider,
         apiKey,
-        images:
-          referenceImages.length > 0
-            ? referenceImages.map((image) => ({
-                url: image.imageUrl,
-                fileName: image.fileName,
-              }))
-            : undefined,
+        images: requestImages,
       };
       const historyDisplayPrompt = directPrompt
         ? stripImagePromptSectionLabels(directPrompt)
