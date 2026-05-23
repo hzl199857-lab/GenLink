@@ -21,6 +21,7 @@ export const maxDuration = 300;
 const IMAGE_JOB_RETENTION_MS = 60 * 60_000;
 const COMFLY_IMAGE_JOB_TIMEOUT_MS = 45 * 60_000;
 const COMFLY_IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
+const IMAGE_TIMING_LOG_PREFIX = "[GenLink image timing]";
 
 type ImageJobStatus = "pending" | "completed" | "error";
 
@@ -38,6 +39,25 @@ type ImageJobResult = {
 };
 
 type GenerateImageOutput = Awaited<ReturnType<typeof generateImage>>;
+
+function logImageTiming(
+  jobId: string,
+  provider: ImageApiProvider | undefined,
+  stage: string,
+  startedAt: number,
+  extra?: Record<string, unknown>,
+) {
+  console.info(
+    IMAGE_TIMING_LOG_PREFIX,
+    JSON.stringify({
+      jobId,
+      provider: provider ?? "default",
+      stage,
+      durationMs: Date.now() - startedAt,
+      ...(extra ?? {}),
+    }),
+  );
+}
 
 interface ImageRequestBody {
   prompt?: unknown;
@@ -405,11 +425,26 @@ function inferImageMetadata(imageUrl: string): {
 async function runImageJob(
   jobId: string,
   params: ImageJobParams,
-  options: { cacheRemoteBeforeComplete?: boolean } = {},
+  options: {
+    cacheRemoteBeforeComplete?: boolean;
+    deferHistoryPersistence?: boolean;
+  } = {},
 ) {
   try {
+    const generateStartedAt = Date.now();
     const result = await generateImage(params);
+    logImageTiming(jobId, params.provider, "generateImage", generateStartedAt, {
+      images: result.images.length,
+      hasDataUrl: result.images.some(
+        (image) =>
+          image.imageUrl.startsWith("data:") ||
+          image.hostedImageUrl?.startsWith("data:"),
+      ),
+    });
+
+    const completeStartedAt = Date.now();
     await completeImageJob(jobId, result, options);
+    logImageTiming(jobId, params.provider, "completeImageJob", completeStartedAt);
   } catch (error) {
     const message =
       error instanceof VibeApiError
@@ -436,6 +471,7 @@ async function persistCompletedImageJob(
   jobId: string,
   result: ImageJobResult,
 ) {
+  const startedAt = Date.now();
   await prisma.imageJob.update({
     where: { id: jobId },
     data: {
@@ -444,12 +480,16 @@ async function persistCompletedImageJob(
       error: null,
     },
   });
+  logImageTiming(jobId, undefined, "persistCompletedImageJob", startedAt, {
+    images: result.images.length,
+  });
 }
 
 async function persistImageHistoryItems(
   jobId: string,
   result: ImageJobResult,
 ) {
+  const startedAt = Date.now();
   const [job, existingCount] = await Promise.all([
     prisma.imageJob.findUnique({
       where: { id: jobId },
@@ -517,6 +557,32 @@ async function persistImageHistoryItems(
       });
     }),
   );
+
+  logImageTiming(jobId, undefined, "persistImageHistoryItems", startedAt, {
+    images: result.images.length,
+  });
+}
+
+function persistImageHistoryItemsAfterResponse(
+  jobId: string,
+  result: ImageJobResult,
+) {
+  after(async () => {
+    await persistImageHistoryItems(jobId, result);
+  });
+}
+
+async function persistImageHistoryItemsForCompletion(
+  jobId: string,
+  result: ImageJobResult,
+  defer: boolean,
+) {
+  if (defer) {
+    persistImageHistoryItemsAfterResponse(jobId, result);
+    return;
+  }
+
+  await persistImageHistoryItems(jobId, result);
 }
 
 async function cacheRemoteImageJobResult(
@@ -537,6 +603,7 @@ async function cacheRemoteImages(
   jobId: string,
   result: ImageJobResult,
 ): Promise<ImageJobResult> {
+  const startedAt = Date.now();
   const remoteImages = result.images.filter(
     (image) =>
       /^https?:\/\//i.test(image.hostedImageUrl || image.imageUrl) &&
@@ -545,6 +612,9 @@ async function cacheRemoteImages(
   );
 
   if (remoteImages.length === 0) {
+    logImageTiming(jobId, undefined, "cacheRemoteImages", startedAt, {
+      remoteImages: 0,
+    });
     return result;
   }
 
@@ -576,6 +646,10 @@ async function cacheRemoteImages(
     ...result,
     images: cachedImages,
   };
+  logImageTiming(jobId, undefined, "cacheRemoteImages", startedAt, {
+    remoteImages: remoteImages.length,
+    cachedImages: cachedImages.filter((image) => image.hostedImageUrl).length,
+  });
   return cachedResult;
 }
 
@@ -787,7 +861,10 @@ async function waitForPersistedHostedImageJobResult(
 async function completeImageJob(
   jobId: string,
   result: GenerateImageOutput,
-  options: { cacheRemoteBeforeComplete?: boolean } = {},
+  options: {
+    cacheRemoteBeforeComplete?: boolean;
+    deferHistoryPersistence?: boolean;
+  } = {},
 ): Promise<ImageJobResult> {
   const initialResult = buildImageJobResult(result);
   const baseResult = options.cacheRemoteBeforeComplete
@@ -818,14 +895,23 @@ async function completeImageJob(
           ? waitForHostedImageUrls(jobId, persistedResult)
           : persistedResult;
 
-        await persistImageHistoryItems(jobId, await finalResult);
-        return finalResult;
+        const resolvedFinalResult = await finalResult;
+        await persistImageHistoryItemsForCompletion(
+          jobId,
+          resolvedFinalResult,
+          Boolean(options.deferHistoryPersistence),
+        );
+        return resolvedFinalResult;
       }
 
       const finalizingResult = await waitForPersistedHostedImageJobResult(jobId);
 
       if (finalizingResult) {
-        await persistImageHistoryItems(jobId, finalizingResult);
+        await persistImageHistoryItemsForCompletion(
+          jobId,
+          finalizingResult,
+          Boolean(options.deferHistoryPersistence),
+        );
         return finalizingResult;
       }
 
@@ -834,7 +920,11 @@ async function completeImageJob(
 
     const enrichedResult = await attachHostedImageUrlsToJob(jobId, baseResult);
     await persistCompletedImageJob(jobId, enrichedResult);
-    await persistImageHistoryItems(jobId, enrichedResult);
+    await persistImageHistoryItemsForCompletion(
+      jobId,
+      enrichedResult,
+      Boolean(options.deferHistoryPersistence),
+    );
 
     return enrichedResult;
   }
@@ -856,7 +946,11 @@ async function completeImageJob(
 
     if (!persistedResult) {
       await persistCompletedImageJob(jobId, baseResult);
-      await persistImageHistoryItems(jobId, baseResult);
+      await persistImageHistoryItemsForCompletion(
+        jobId,
+        baseResult,
+        Boolean(options.deferHistoryPersistence),
+      );
       after(async () => { await cacheRemoteImageJobResult(jobId, baseResult); });
       return baseResult;
     }
@@ -865,11 +959,20 @@ async function completeImageJob(
       ? waitForHostedImageUrls(jobId, persistedResult)
       : persistedResult;
 
-    await persistImageHistoryItems(jobId, await finalResult);
-    return finalResult;
+    const resolvedFinalResult = await finalResult;
+    await persistImageHistoryItemsForCompletion(
+      jobId,
+      resolvedFinalResult,
+      Boolean(options.deferHistoryPersistence),
+    );
+    return resolvedFinalResult;
   }
 
-  await persistImageHistoryItems(jobId, baseResult);
+  await persistImageHistoryItemsForCompletion(
+    jobId,
+    baseResult,
+    Boolean(options.deferHistoryPersistence),
+  );
   after(async () => { await cacheRemoteImageJobResult(jobId, baseResult); });
   return baseResult;
 }
@@ -1104,6 +1207,7 @@ export async function POST(request: Request) {
     } else {
       await runImageJob(jobId, jobParams, {
         cacheRemoteBeforeComplete: provider === "fucheers",
+        deferHistoryPersistence: provider === "fucheers",
       });
       const completedJob = await prisma.imageJob.findUnique({
         where: { id: jobId },

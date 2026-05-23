@@ -22,6 +22,22 @@ const ALIYUN_OSS_REGION = process.env.ALIYUN_OSS_REGION?.trim() ?? '';
 const ALIYUN_OSS_ACCESS_KEY_ID = process.env.ALIYUN_OSS_ACCESS_KEY_ID?.trim() ?? '';
 const ALIYUN_OSS_ACCESS_KEY_SECRET = process.env.ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? '';
 const ALIYUN_OSS_PUBLIC_BASE_URL = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') ?? '';
+const IMAGE_HOST_TIMING_LOG_PREFIX = '[GenLink image host timing]';
+
+function logImageHostTiming(
+  stage: string,
+  startedAt: number,
+  extra?: Record<string, unknown>,
+) {
+  console.info(
+    IMAGE_HOST_TIMING_LOG_PREFIX,
+    JSON.stringify({
+      stage,
+      durationMs: Date.now() - startedAt,
+      ...(extra ?? {}),
+    }),
+  );
+}
 
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
@@ -219,25 +235,37 @@ export async function saveImageDataUrl(
   dataUrl: string,
   fileName?: string,
 ): Promise<string> {
+  const startedAt = Date.now();
   const { mimeType, base64 } = parseDataUrl(dataUrl);
   const bytes = Buffer.from(base64, 'base64');
 
-  return saveImageBytes(bytes, mimeType, fileName);
+  const imageUrl = await saveImageBytes(bytes, mimeType, fileName);
+  logImageHostTiming('saveImageDataUrl', startedAt, {
+    bytes: bytes.byteLength,
+    mimeType,
+    target: imageUrl.includes('.aliyuncs.com/') ? 'oss' : 'local-or-data',
+  });
+  return imageUrl;
 }
 
 export async function saveRemoteImageUrl(
   imageUrl: string,
   fileName?: string,
 ): Promise<string> {
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REMOTE_IMAGE_FETCH_TIMEOUT_MS);
 
   try {
+    const fetchStartedAt = Date.now();
     const response = await fetch(imageUrl, {
       headers: {
         Accept: 'image/*',
       },
       signal: controller.signal,
+    });
+    logImageHostTiming('saveRemoteImageUrl.fetch', fetchStartedAt, {
+      status: response.status,
     });
 
     if (!response.ok) {
@@ -252,7 +280,18 @@ export async function saveRemoteImageUrl(
 
     const bytes = Buffer.from(await response.arrayBuffer());
 
-    return saveImageBytes(bytes, mimeType, fileName);
+    const saveStartedAt = Date.now();
+    const hostedImageUrl = await saveImageBytes(bytes, mimeType, fileName);
+    logImageHostTiming('saveRemoteImageUrl.save', saveStartedAt, {
+      bytes: bytes.byteLength,
+      mimeType,
+      target: hostedImageUrl.includes('.aliyuncs.com/') ? 'oss' : 'local-or-data',
+    });
+    logImageHostTiming('saveRemoteImageUrl', startedAt, {
+      bytes: bytes.byteLength,
+      mimeType,
+    });
+    return hostedImageUrl;
   } finally {
     clearTimeout(timeout);
   }
