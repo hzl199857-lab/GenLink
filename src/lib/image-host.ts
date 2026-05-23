@@ -219,10 +219,6 @@ export async function saveImageDataUrl(
   dataUrl: string,
   fileName?: string,
 ): Promise<string> {
-  if (IS_SERVERLESS) {
-    return dataUrl;
-  }
-
   const { mimeType, base64 } = parseDataUrl(dataUrl);
   const bytes = Buffer.from(base64, 'base64');
 
