@@ -2117,6 +2117,32 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Prompt is required");
       }
 
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === imageGenerationNodeId && node.type === "image_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  generatedImageUrl: undefined,
+                  generatedHostedImageUrl: undefined,
+                  generatedImageWidth: undefined,
+                  generatedImageHeight: undefined,
+                  generatedImageFormat: undefined,
+                  generatedImageSizeBytes: undefined,
+                  generatedModel: undefined,
+                  generatedAt: undefined,
+                  generationResults: undefined,
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
       const connectedImages = getImageGenerationReferenceImages(
         latestState.nodes,
         latestState.edges,
@@ -2209,32 +2235,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         status: "idle",
         errorMessage: undefined,
       };
-
-      set((currentState) => ({
-        error: null,
-        dirty: true,
-        nodes: currentState.nodes.map((node) =>
-          node.id === imageGenerationNodeId && node.type === "image_generation"
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  generatedImageUrl: undefined,
-                  generatedHostedImageUrl: undefined,
-                  generatedImageWidth: undefined,
-                  generatedImageHeight: undefined,
-                  generatedImageFormat: undefined,
-                  generatedImageSizeBytes: undefined,
-                  generatedModel: undefined,
-                  generatedAt: undefined,
-                  generationResults: undefined,
-                  status: "generating",
-                  errorMessage: undefined,
-                },
-              }
-            : node,
-        ),
-      }));
 
       const jobRuns = Array.from({ length: parallelCount }, async () => {
         try {
