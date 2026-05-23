@@ -836,6 +836,19 @@ function isAliyunOssUrl(value: string): boolean {
   }
 }
 
+function getReferenceImageDebugLabel(url: string): string {
+  if (url.startsWith("data:")) return "data";
+  if (isObjectUrl(url)) return "blob";
+  if (isAliyunOssUrl(url)) return "oss";
+  if (isSameOriginUrl(url)) return "same-origin";
+
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "invalid";
+  }
+}
+
 function sanitizeImageGenerationNodeDataForPersistence(
   data: ImageGenerationNodeData,
 ): ImageGenerationNodeData {
@@ -2084,6 +2097,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ? await normalizeReferenceImagesViaOss(referenceImages)
             : normalizeReferenceImagesForRequest(referenceImages)
           : undefined;
+
+      if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS && requestImages?.length) {
+        console.info(
+          "[GenLink] reference images for API",
+          requestImages.map((image, index) => ({
+            index: index + 1,
+            type: getReferenceImageDebugLabel(image.url),
+            url: image.url,
+          })),
+        );
+      }
+
       const size = resolveImageSize(
         latestImageGenerationNode.data.quality,
         latestImageGenerationNode.data.aspectRatio,

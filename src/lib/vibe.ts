@@ -395,6 +395,8 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".gif": "image/gif",
 };
 const REFERENCE_IMAGE_FETCH_TIMEOUT_MS = 30_000;
+const REFERENCE_IMAGE_FETCH_ATTEMPTS = 3;
+const REFERENCE_IMAGE_FETCH_RETRY_DELAY_MS = 700;
 
 function getImageMimeType(fileName: string): string {
   return IMAGE_MIME_TYPES[path.extname(fileName).toLowerCase()] || "image/png";
@@ -421,6 +423,21 @@ function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength,
   ) as ArrayBuffer;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeReferenceImageUrl(url: string): string {
+  if (url.startsWith("data:")) return "data URL";
+  if (url.startsWith("/")) return "same-origin path";
+
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "invalid URL";
+  }
 }
 
 async function readReferenceImage(
@@ -468,33 +485,51 @@ async function readReferenceImage(
     );
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REFERENCE_IMAGE_FETCH_TIMEOUT_MS);
-  let response: Response;
+  let lastStatus = 502;
+  let lastError = "fetch failed";
 
-  try {
-    response = await fetch(trimmedUrl, { signal: controller.signal });
-  } catch (error) {
-    const message = error instanceof Error && error.name === "AbortError"
-      ? `Reference image ${index + 1} download timed out`
-      : `Failed to fetch reference image ${index + 1}`;
+  for (let attempt = 1; attempt <= REFERENCE_IMAGE_FETCH_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REFERENCE_IMAGE_FETCH_TIMEOUT_MS);
 
-    throw new VibeApiError(502, message);
-  } finally {
-    clearTimeout(timeout);
+    try {
+      const response = await fetch(trimmedUrl, {
+        headers: {
+          Accept: "image/*",
+          "Cache-Control": "no-cache",
+        },
+        signal: controller.signal,
+      });
+
+      if (response.ok) {
+        return {
+          bytes: Buffer.from(await response.arrayBuffer()),
+          mediaType: response.headers.get("content-type") || "image/png",
+        };
+      }
+
+      lastStatus = response.status;
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastStatus = 502;
+      lastError = error instanceof Error && error.name === "AbortError"
+        ? "download timed out"
+        : error instanceof Error && error.message
+          ? error.message
+          : "fetch failed";
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (attempt < REFERENCE_IMAGE_FETCH_ATTEMPTS) {
+      await sleep(REFERENCE_IMAGE_FETCH_RETRY_DELAY_MS * attempt);
+    }
   }
 
-  if (!response.ok) {
-    throw new VibeApiError(
-      response.status,
-      `Failed to fetch reference image ${index + 1}`,
-    );
-  }
-
-  return {
-    bytes: Buffer.from(await response.arrayBuffer()),
-    mediaType: response.headers.get("content-type") || "image/png",
-  };
+  throw new VibeApiError(
+    lastStatus,
+    `Failed to fetch reference image ${index + 1} (${describeReferenceImageUrl(trimmedUrl)}: ${lastError})`,
+  );
 }
 
 async function createImageFilePart(
