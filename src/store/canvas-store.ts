@@ -550,11 +550,13 @@ async function normalizeReferenceImageViaOss(image: {
     };
   }
 
-  if (url.startsWith("data:") || isObjectUrl(url) || isSameOriginUrl(url)) {
+  if (url.startsWith("data:") || isObjectUrl(url) || isSameOriginUrl(url) || /^https?:\/\//i.test(url)) {
     const response = await fetch(url);
 
     if (!response.ok) {
-      throw new Error("Failed to read reference image");
+      throw new Error(
+        `Failed to read reference image before OSS upload (${response.status})`,
+      );
     }
 
     return {
@@ -1324,8 +1326,8 @@ function getConnectedImagesForTargetNode(
 
     if (sourceNode.type === "image_generation") {
       const requestUrl =
-        sourceNode.data.generatedImageUrl?.trim() ||
         sourceNode.data.generatedHostedImageUrl?.trim() ||
+        sourceNode.data.generatedImageUrl?.trim() ||
         "";
       const previewUrl =
         sourceNode.data.generatedHostedImageUrl?.trim() ||
@@ -1385,8 +1387,8 @@ function getGeneratedImageReferenceForImageGenerationNode(
   node: Extract<CanvasNode, { type: "image_generation" }>,
 ): ConnectedImagePayload[] {
   const requestUrl =
-    node.data.generatedImageUrl?.trim() ||
     node.data.generatedHostedImageUrl?.trim() ||
+    node.data.generatedImageUrl?.trim() ||
     "";
   const previewUrl =
     node.data.generatedHostedImageUrl?.trim() ||
