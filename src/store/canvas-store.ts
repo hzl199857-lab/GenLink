@@ -90,8 +90,6 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
-const IMAGE_PROXY_BASE_URL =
-  process.env.NEXT_PUBLIC_IMAGE_PROXY_BASE_URL?.trim().replace(/\/+$/, "") || "";
 const IMAGE_REFERENCE_REQUEST_MAX_BYTES = 300 * 1024;
 const IMAGE_REFERENCE_REQUEST_MAX_EDGE = 1536;
 const IMAGE_REFERENCE_COMPRESSION_MODE =
@@ -102,7 +100,7 @@ const SHOULD_COMPRESS_REFERENCE_IMAGES =
     : IMAGE_REFERENCE_COMPRESSION_MODE === "vercel" ||
       IMAGE_REFERENCE_COMPRESSION_MODE === "on" ||
       IMAGE_REFERENCE_COMPRESSION_MODE === "true" ||
-      (!IMAGE_PROXY_BASE_URL && process.env.NODE_ENV === "production");
+      process.env.NODE_ENV === "production";
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -592,15 +590,17 @@ async function compressReferenceImageDataUrl(dataUrl: string): Promise<string> {
 async function normalizeReferenceImageForRequest(image: {
   imageUrl: string;
   fileName?: string;
+  forceCompress?: boolean;
 }): Promise<{
   url: string;
   fileName?: string;
 }> {
   const url = image.imageUrl.trim();
+  const shouldCompress = image.forceCompress || SHOULD_COMPRESS_REFERENCE_IMAGES;
 
   if (url.startsWith("data:")) {
     return {
-      url: SHOULD_COMPRESS_REFERENCE_IMAGES
+      url: shouldCompress
         ? await compressReferenceImageDataUrl(url)
         : url,
       fileName: image.fileName,
@@ -615,9 +615,111 @@ async function normalizeReferenceImageForRequest(image: {
     }
 
     return {
-      url: SHOULD_COMPRESS_REFERENCE_IMAGES
+      url: shouldCompress
         ? await compressReferenceImageDataUrl(await blobToDataUrl(await response.blob()))
         : await blobToDataUrl(await response.blob()),
+      fileName: image.fileName,
+    };
+  }
+
+  return {
+    url,
+    fileName: image.fileName,
+  };
+}
+
+async function createOssUploadTarget(params: {
+  fileName?: string;
+  contentType: string;
+  folder?: string;
+}): Promise<{
+  uploadUrl: string;
+  imageUrl: string;
+  headers?: Record<string, string>;
+}> {
+  const response = await fetch("/api/image-hosting/upload-url", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(params),
+  });
+
+  const json = await readJsonResponse<
+    | {
+        ok: true;
+        result: {
+          uploadUrl: string;
+          imageUrl: string;
+          headers?: Record<string, string>;
+        };
+      }
+    | ApiErrorResponse
+  >(response, "Failed to create image upload URL");
+
+  if (!response.ok || !json.ok) {
+    throw new Error("error" in json ? json.error : "Failed to create image upload URL");
+  }
+
+  return json.result;
+}
+
+async function uploadReferenceBlobToOss(
+  blob: Blob,
+  fileName?: string,
+): Promise<string> {
+  const target = await createOssUploadTarget({
+    fileName,
+    contentType: blob.type || "image/png",
+    folder: "references",
+  });
+  const response = await fetch(target.uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": blob.type || "image/png",
+      ...(target.headers ?? {}),
+    },
+    body: blob,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload reference image (${response.status})`);
+  }
+
+  return target.imageUrl;
+}
+
+async function normalizeReferenceImageViaOss(image: {
+  imageUrl: string;
+  fileName?: string;
+}): Promise<{
+  url: string;
+  fileName?: string;
+}> {
+  const url = image.imageUrl.trim();
+
+  if (url.startsWith("data:")) {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error("Failed to read reference image");
+    }
+
+    return {
+      url: await uploadReferenceBlobToOss(await response.blob(), image.fileName),
+      fileName: image.fileName,
+    };
+  }
+
+  if (isObjectUrl(url)) {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error("Failed to read reference image");
+    }
+
+    return {
+      url: await uploadReferenceBlobToOss(await response.blob(), image.fileName),
       fileName: image.fileName,
     };
   }
@@ -946,31 +1048,13 @@ async function submitImageGenerationJob(params: {
     fileName?: string;
   }>;
 }): Promise<ImageGenerationRunResult> {
-  const proxyEnabled = Boolean(IMAGE_PROXY_BASE_URL);
-  const response = await fetch(
-    proxyEnabled ? `${IMAGE_PROXY_BASE_URL}/api/ai/image` : "/api/ai/image",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(
-        proxyEnabled
-          ? {
-              prompt: params.prompt,
-              model: params.model,
-              size: params.size,
-              quality: params.quality,
-              outputFormat: params.outputFormat,
-              moderation: params.moderation,
-              apiKey: params.apiKey,
-              provider: params.provider,
-              images: params.images,
-            }
-          : params,
-      ),
+  const response = await fetch("/api/ai/image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(params),
+  });
 
   const json = await readJsonResponse<
     | {
@@ -1003,10 +1087,6 @@ async function submitImageGenerationJob(params: {
 
   if (json.status === "error") {
     throw new Error(json.error || "Image generation failed");
-  }
-
-  if (proxyEnabled) {
-    throw new Error("Image proxy returned an unexpected pending response");
   }
 
   return pollImageGenerationJob(json.jobId, params.apiKey);
@@ -2085,10 +2165,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         referenceImages.length > 0
           ? await Promise.all(
               referenceImages.map((image) =>
-                normalizeReferenceImageForRequest({
+                normalizeReferenceImageViaOss({
                   imageUrl: image.imageUrl,
                   fileName: image.fileName,
-                }),
+                }).catch(() =>
+                  normalizeReferenceImageForRequest({
+                    imageUrl: image.imageUrl,
+                    fileName: image.fileName,
+                    forceCompress: true,
+                  }),
+                ),
               ),
             )
           : undefined;

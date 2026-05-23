@@ -1,8 +1,0 @@
-name = "genlink-image-proxy"
-main = "image-proxy-worker.js"
-compatibility_date = "2026-05-23"
-
-[vars]
-# Optional. Set this to your Vercel site origin, for example:
-# CORS_ORIGIN = "https://your-site.vercel.app"
-CORS_ORIGIN = ""

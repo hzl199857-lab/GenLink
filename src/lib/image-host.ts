@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { createHmac } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -13,8 +14,14 @@ import { VibeApiError } from '@/lib/vibe';
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_STEM_LENGTH = 80;
 const REMOTE_IMAGE_FETCH_TIMEOUT_MS = 5 * 60_000;
+const OSS_UPLOAD_URL_EXPIRES_SECONDS = 10 * 60;
 
 const IS_SERVERLESS = Boolean(process.env.VERCEL);
+const ALIYUN_OSS_BUCKET = process.env.ALIYUN_OSS_BUCKET?.trim() ?? '';
+const ALIYUN_OSS_REGION = process.env.ALIYUN_OSS_REGION?.trim() ?? '';
+const ALIYUN_OSS_ACCESS_KEY_ID = process.env.ALIYUN_OSS_ACCESS_KEY_ID?.trim() ?? '';
+const ALIYUN_OSS_ACCESS_KEY_SECRET = process.env.ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? '';
+const ALIYUN_OSS_PUBLIC_BASE_URL = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') ?? '';
 
 function parseDataUrl(dataUrl: string): { mimeType: string; base64: string } {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
@@ -60,6 +67,99 @@ function normalizeFileStem(fileName?: string): string {
 }
 
 export { getLocalImageDirectory };
+
+function isAliyunOssConfigured(): boolean {
+  return Boolean(
+    ALIYUN_OSS_BUCKET &&
+      ALIYUN_OSS_REGION &&
+      ALIYUN_OSS_ACCESS_KEY_ID &&
+      ALIYUN_OSS_ACCESS_KEY_SECRET,
+  );
+}
+
+function normalizeObjectFolder(folder?: string): string {
+  const normalized = folder
+    ?.trim()
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/[^A-Za-z0-9/_-]+/g, '-')
+    .replace(/\/{2,}/g, '/');
+
+  return normalized || 'images';
+}
+
+function getOssEndpoint(): string {
+  return `https://${ALIYUN_OSS_BUCKET}.${ALIYUN_OSS_REGION}.aliyuncs.com`;
+}
+
+function getOssPublicBaseUrl(): string {
+  return ALIYUN_OSS_PUBLIC_BASE_URL || getOssEndpoint();
+}
+
+function createOssSignature(params: {
+  method: string;
+  contentType: string;
+  expires: number;
+  objectKey: string;
+}): string {
+  const canonicalizedResource = `/${ALIYUN_OSS_BUCKET}/${params.objectKey}`;
+  const stringToSign = [
+    params.method,
+    '',
+    params.contentType,
+    String(params.expires),
+    canonicalizedResource,
+  ].join('\n');
+
+  return createHmac('sha1', ALIYUN_OSS_ACCESS_KEY_SECRET)
+    .update(stringToSign)
+    .digest('base64');
+}
+
+export function createAliyunOssUploadTarget(params: {
+  contentType: string;
+  fileName?: string;
+  folder?: string;
+}): {
+  uploadUrl: string;
+  imageUrl: string;
+  headers: Record<string, string>;
+  objectKey: string;
+} {
+  if (!isAliyunOssConfigured()) {
+    throw new VibeApiError(500, 'Aliyun OSS is not configured');
+  }
+
+  const contentType = params.contentType.trim() || 'application/octet-stream';
+  const extension = extensionFromMimeType(contentType);
+  const stem = normalizeFileStem(params.fileName);
+  const folder = normalizeObjectFolder(params.folder);
+  const objectKey = `${folder}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}-${stem}.${extension}`;
+  const expires = Math.floor(Date.now() / 1000) + OSS_UPLOAD_URL_EXPIRES_SECONDS;
+  const signature = createOssSignature({
+    method: 'PUT',
+    contentType,
+    expires,
+    objectKey,
+  });
+  const query = new URLSearchParams({
+    OSSAccessKeyId: ALIYUN_OSS_ACCESS_KEY_ID,
+    Expires: String(expires),
+    Signature: signature,
+  });
+  const encodedObjectKey = objectKey
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
+  return {
+    uploadUrl: `${getOssEndpoint()}/${encodedObjectKey}?${query.toString()}`,
+    imageUrl: `${getOssPublicBaseUrl()}/${encodedObjectKey}`,
+    headers: {
+      'Content-Type': contentType,
+    },
+    objectKey,
+  };
+}
 
 async function saveImageBytes(
   bytes: Buffer,
