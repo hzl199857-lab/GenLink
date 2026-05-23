@@ -90,8 +90,14 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
-const IMAGE_REFERENCE_REQUEST_MAX_BYTES = 600 * 1024;
+const IMAGE_REFERENCE_REQUEST_MAX_BYTES = 300 * 1024;
 const IMAGE_REFERENCE_REQUEST_MAX_EDGE = 1536;
+const IMAGE_REFERENCE_COMPRESSION_MODE =
+  process.env.NEXT_PUBLIC_IMAGE_REFERENCE_COMPRESSION?.trim().toLowerCase();
+const SHOULD_COMPRESS_REFERENCE_IMAGES =
+  IMAGE_REFERENCE_COMPRESSION_MODE === "vercel" ||
+  IMAGE_REFERENCE_COMPRESSION_MODE === "on" ||
+  IMAGE_REFERENCE_COMPRESSION_MODE === "true";
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -589,7 +595,9 @@ async function normalizeReferenceImageForRequest(image: {
 
   if (url.startsWith("data:")) {
     return {
-      url: await compressReferenceImageDataUrl(url),
+      url: SHOULD_COMPRESS_REFERENCE_IMAGES
+        ? await compressReferenceImageDataUrl(url)
+        : url,
       fileName: image.fileName,
     };
   }
@@ -602,7 +610,9 @@ async function normalizeReferenceImageForRequest(image: {
     }
 
     return {
-      url: await compressReferenceImageDataUrl(await blobToDataUrl(await response.blob())),
+      url: SHOULD_COMPRESS_REFERENCE_IMAGES
+        ? await compressReferenceImageDataUrl(await blobToDataUrl(await response.blob()))
+        : await blobToDataUrl(await response.blob()),
       fileName: image.fileName,
     };
   }
