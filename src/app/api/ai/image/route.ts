@@ -1250,10 +1250,10 @@ export async function GET(request: Request) {
   }
 
   if (job.status === "finalizing") {
-    const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
-    const FINALIZE_TIMEOUT_MS = 3 * 60_000;
+    const finalizingAgeMs = Date.now() - new Date(job.updatedAt).getTime();
+    const FINALIZE_TIMEOUT_MS = 8 * 60_000;
 
-    if (jobAgeMs > FINALIZE_TIMEOUT_MS) {
+    if (finalizingAgeMs > FINALIZE_TIMEOUT_MS) {
       const errorMsg = "Image finalization timed out";
       await prisma.imageJob.updateMany({
         where: { id: jobId, result: null },
