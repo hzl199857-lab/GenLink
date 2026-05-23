@@ -543,20 +543,14 @@ async function normalizeReferenceImageViaOss(image: {
 }> {
   const url = image.imageUrl.trim();
 
-  if (url.startsWith("data:")) {
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error("Failed to read reference image");
-    }
-
+  if (isAliyunOssUrl(url)) {
     return {
-      url: await uploadReferenceBlobToOss(await response.blob(), image.fileName),
+      url,
       fileName: image.fileName,
     };
   }
 
-  if (isObjectUrl(url)) {
+  if (url.startsWith("data:") || isObjectUrl(url) || isSameOriginUrl(url)) {
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -820,6 +814,26 @@ function sleep(ms: number): Promise<void> {
 
 function isObjectUrl(value?: string): boolean {
   return typeof value === "string" && value.startsWith("blob:");
+}
+
+function isSameOriginUrl(value: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return new URL(value, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function isAliyunOssUrl(value: string): boolean {
+  try {
+    return /\.aliyuncs\.com$/i.test(new URL(value).hostname);
+  } catch {
+    return false;
+  }
 }
 
 function sanitizeImageGenerationNodeDataForPersistence(
