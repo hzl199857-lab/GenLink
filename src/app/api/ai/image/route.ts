@@ -16,7 +16,7 @@ import {
 import type { ImageGenerationNodeData } from "@/types/canvas";
 
 export const runtime = "nodejs";
-export const maxDuration = 420;
+export const maxDuration = 300;
 
 const IMAGE_JOB_RETENTION_MS = 60 * 60_000;
 const COMFLY_IMAGE_JOB_TIMEOUT_MS = 45 * 60_000;
