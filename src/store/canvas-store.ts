@@ -571,6 +571,41 @@ async function normalizeReferenceImageViaOss(image: {
   };
 }
 
+async function normalizeReferenceImagesViaOss(
+  images: ConnectedImagePayload[],
+): Promise<Array<{ url: string; fileName?: string }>> {
+  const uploadCache = new Map<string, Promise<{ url: string; fileName?: string }>>();
+  const requestImages: Array<{ url: string; fileName?: string }> = [];
+  const seenRequestUrls = new Set<string>();
+
+  for (const image of images) {
+    const cacheKey =
+      image.hostedImageUrl?.trim() ||
+      image.originalImageUrl?.trim() ||
+      image.imageUrl.trim();
+    const normalizedPromise =
+      uploadCache.get(cacheKey) ??
+      normalizeReferenceImageViaOss({
+        imageUrl: image.imageUrl,
+        fileName: image.fileName,
+      });
+
+    uploadCache.set(cacheKey, normalizedPromise);
+
+    const normalized = await normalizedPromise;
+    const requestUrl = normalized.url.trim();
+
+    if (!requestUrl || seenRequestUrls.has(requestUrl)) {
+      continue;
+    }
+
+    seenRequestUrls.add(requestUrl);
+    requestImages.push(normalized);
+  }
+
+  return requestImages;
+}
+
 function getImageGenerationPreviewDimensions(
   sourceWidth: number,
   sourceHeight: number,
@@ -2004,14 +2039,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ];
       const requestImages =
         referenceImages.length > 0
-          ? await Promise.all(
-              referenceImages.map((image) =>
-                normalizeReferenceImageViaOss({
-                  imageUrl: image.imageUrl,
-                  fileName: image.fileName,
-                }),
-              ),
-            )
+          ? await normalizeReferenceImagesViaOss(referenceImages)
           : undefined;
       const size = resolveImageSize(
         latestImageGenerationNode.data.quality,
@@ -2051,14 +2079,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...latestImageGenerationNode.data,
         prompt: historyDisplayPrompt,
         effectivePromptOverride: undefined,
-        referenceImages: referenceImages.map((image) => ({
-          id: image.id,
-          imageUrl: image.originalImageUrl,
-          hostedImageUrl: image.hostedImageUrl,
-          fileName: image.fileName,
-          width: image.width,
-          height: image.height,
-        })),
+        referenceImages: referenceImages.map((image, index) => {
+          const requestImageUrl = requestImages?.[index]?.url || image.hostedImageUrl || image.imageUrl;
+
+          return {
+            id: image.id,
+            imageUrl: requestImageUrl,
+            hostedImageUrl: requestImageUrl,
+            fileName: image.fileName,
+            width: image.width,
+            height: image.height,
+          };
+        }),
         generatedImageUrl: undefined,
         generatedHostedImageUrl: undefined,
         generatedImageWidth: undefined,
