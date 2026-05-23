@@ -612,12 +612,12 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
             className="h-[24px] w-[27px] object-contain"
           />
           <Image
-            src="/genlink-wordmark.png"
+            src="/genlink-canvas-wordmark.png"
             alt="GenLink"
-            width={2266}
-            height={336}
+            width={2391}
+            height={372}
             priority
-            className="h-auto w-[88px] object-contain"
+            className="h-auto w-[92px] object-contain"
           />
         </div>
       </div>

@@ -2355,6 +2355,7 @@ function GroupFrame({
     if (!handle) return;
     event.stopPropagation();
     event.preventDefault();
+    onSelect();
     startResize(handle, event.clientX, event.clientY);
     try {
       (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -2368,6 +2369,7 @@ function GroupFrame({
     if (!handle) return;
     event.stopPropagation();
     event.preventDefault();
+    onSelect();
 
     if (!resizeRef.current) {
       startResize(handle, event.clientX, event.clientY);
@@ -2568,7 +2570,7 @@ function GroupFrame({
           data-handle={h}
           className={[
             'group-frame-no-drag nodrag nopan pointer-events-auto absolute flex items-center justify-center',
-            resizing ? 'z-[20]' : 'z-[3]',
+            'z-[21]',
           ].join(' ')}
           style={{ ...getHandleStyle(h), cursor: handleCursor[h] }}
           onPointerDown={handleResizePointerDown}
