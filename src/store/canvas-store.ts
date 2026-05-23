@@ -90,6 +90,8 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
+const IMAGE_PROXY_BASE_URL =
+  process.env.NEXT_PUBLIC_IMAGE_PROXY_BASE_URL?.trim().replace(/\/+$/, "") || "";
 const IMAGE_REFERENCE_REQUEST_MAX_BYTES = 300 * 1024;
 const IMAGE_REFERENCE_REQUEST_MAX_EDGE = 1536;
 const IMAGE_REFERENCE_COMPRESSION_MODE =
@@ -100,7 +102,7 @@ const SHOULD_COMPRESS_REFERENCE_IMAGES =
     : IMAGE_REFERENCE_COMPRESSION_MODE === "vercel" ||
       IMAGE_REFERENCE_COMPRESSION_MODE === "on" ||
       IMAGE_REFERENCE_COMPRESSION_MODE === "true" ||
-      process.env.NODE_ENV === "production";
+      (!IMAGE_PROXY_BASE_URL && process.env.NODE_ENV === "production");
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -783,7 +785,11 @@ function toResponseTextErrorMessage(text: string, fallback: string): string {
     return "参考图过大，云端拒绝了请求。请减少参考图数量或压缩后重试。";
   }
 
-  return normalized || fallback;
+  if (/<(?:!doctype|html|script|body|head)\b/i.test(normalized)) {
+    return `${fallback}: upstream returned an HTML error page`;
+  }
+
+  return normalized.slice(0, 500) || fallback;
 }
 
 async function readJsonResponse<T>(
@@ -940,13 +946,31 @@ async function submitImageGenerationJob(params: {
     fileName?: string;
   }>;
 }): Promise<ImageGenerationRunResult> {
-  const response = await fetch("/api/ai/image", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const proxyEnabled = Boolean(IMAGE_PROXY_BASE_URL);
+  const response = await fetch(
+    proxyEnabled ? `${IMAGE_PROXY_BASE_URL}/api/ai/image` : "/api/ai/image",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        proxyEnabled
+          ? {
+              prompt: params.prompt,
+              model: params.model,
+              size: params.size,
+              quality: params.quality,
+              outputFormat: params.outputFormat,
+              moderation: params.moderation,
+              apiKey: params.apiKey,
+              provider: params.provider,
+              images: params.images,
+            }
+          : params,
+      ),
     },
-    body: JSON.stringify(params),
-  });
+  );
 
   const json = await readJsonResponse<
     | {
@@ -979,6 +1003,10 @@ async function submitImageGenerationJob(params: {
 
   if (json.status === "error") {
     throw new Error(json.error || "Image generation failed");
+  }
+
+  if (proxyEnabled) {
+    throw new Error("Image proxy returned an unexpected pending response");
   }
 
   return pollImageGenerationJob(json.jobId, params.apiKey);
