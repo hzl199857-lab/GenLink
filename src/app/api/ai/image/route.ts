@@ -1101,14 +1101,10 @@ export async function POST(request: Request) {
           submission.provider,
         );
       });
-    } else if (provider === "fucheers") {
-      after(async () => {
-        await runImageJob(jobId, jobParams, {
-          cacheRemoteBeforeComplete: true,
-        });
-      });
     } else {
-      await runImageJob(jobId, jobParams);
+      await runImageJob(jobId, jobParams, {
+        cacheRemoteBeforeComplete: provider === "fucheers",
+      });
       const completedJob = await prisma.imageJob.findUnique({
         where: { id: jobId },
         select: { status: true, result: true, error: true },
