@@ -1083,6 +1083,10 @@ export async function POST(request: Request) {
           submission.provider,
         );
       });
+    } else if (provider === "fucheers") {
+      after(async () => {
+        await runImageJob(jobId, jobParams);
+      });
     } else {
       await runImageJob(jobId, jobParams);
       const completedJob = await prisma.imageJob.findUnique({
