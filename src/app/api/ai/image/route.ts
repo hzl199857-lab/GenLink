@@ -428,6 +428,7 @@ async function runImageJob(
   options: {
     cacheRemoteBeforeComplete?: boolean;
     deferHistoryPersistence?: boolean;
+    finalizeDataUrlImages?: boolean;
   } = {},
 ) {
   try {
@@ -864,6 +865,7 @@ async function completeImageJob(
   options: {
     cacheRemoteBeforeComplete?: boolean;
     deferHistoryPersistence?: boolean;
+    finalizeDataUrlImages?: boolean;
   } = {},
 ): Promise<ImageJobResult> {
   const initialResult = buildImageJobResult(result);
@@ -872,7 +874,7 @@ async function completeImageJob(
     : initialResult;
   const needsHostedImageUrl = hasUnhostedDataUrlImages(baseResult);
 
-  if (needsHostedImageUrl) {
+  if (needsHostedImageUrl && options.finalizeDataUrlImages !== false) {
     const claimedJob = await prisma.imageJob.updateMany({
       where: {
         id: jobId,
@@ -1208,6 +1210,7 @@ export async function POST(request: Request) {
       await runImageJob(jobId, jobParams, {
         cacheRemoteBeforeComplete: provider === "fucheers",
         deferHistoryPersistence: provider === "fucheers",
+        finalizeDataUrlImages: provider !== "fucheers",
       });
       const completedJob = await prisma.imageJob.findUnique({
         where: { id: jobId },

@@ -509,14 +509,15 @@ async function createOssUploadTarget(params: {
   return json.result;
 }
 
-async function uploadReferenceBlobToOss(
+async function uploadImageBlobToOss(
   blob: Blob,
   fileName?: string,
+  folder = "references",
 ): Promise<string> {
   const target = await createOssUploadTarget({
     fileName,
     contentType: blob.type || "image/png",
-    folder: "references",
+    folder,
   });
   const response = await fetch(target.uploadUrl, {
     method: "PUT",
@@ -532,6 +533,13 @@ async function uploadReferenceBlobToOss(
   }
 
   return target.imageUrl;
+}
+
+async function uploadReferenceBlobToOss(
+  blob: Blob,
+  fileName?: string,
+): Promise<string> {
+  return uploadImageBlobToOss(blob, fileName, "references");
 }
 
 async function normalizeReferenceImageViaOss(image: {
@@ -849,6 +857,34 @@ function getReferenceImageDebugLabel(url: string): string {
   } catch {
     return "invalid";
   }
+}
+
+async function uploadGeneratedResultToOss(
+  result: ImageGenerationResultItem & { status: "completed"; imageUrl: string },
+  fileName?: string,
+): Promise<string | undefined> {
+  const sourceUrl = result.hostedImageUrl?.trim() || result.imageUrl.trim();
+
+  if (!sourceUrl || isAliyunOssUrl(sourceUrl)) {
+    return sourceUrl || undefined;
+  }
+
+  if (
+    !sourceUrl.startsWith("data:") &&
+    !isObjectUrl(sourceUrl) &&
+    !isSameOriginUrl(sourceUrl) &&
+    !/^https?:\/\//i.test(sourceUrl)
+  ) {
+    return undefined;
+  }
+
+  const response = await fetch(sourceUrl);
+
+  if (!response.ok) {
+    throw new Error(`Failed to read generated image before OSS upload (${response.status})`);
+  }
+
+  return uploadImageBlobToOss(await response.blob(), fileName, "generated");
 }
 
 function sanitizeImageGenerationNodeDataForPersistence(
@@ -2309,6 +2345,57 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           }
         }
       })();
+
+      if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS) {
+        void (async () => {
+          for (const result of completedResults) {
+            try {
+              const ossImageUrl = await uploadGeneratedResultToOss(
+                result,
+                latestImageGenerationNode.data.title,
+              );
+
+              if (!ossImageUrl) {
+                continue;
+              }
+
+              set((currentState) => ({
+                dirty: true,
+                nodes: currentState.nodes.map((node) => {
+                  if (node.id !== imageGenerationNodeId || node.type !== "image_generation") {
+                    return node;
+                  }
+
+                  const matchesPrimaryImage =
+                    node.data.generatedImageUrl === result.imageUrl &&
+                    node.data.generatedAt === result.generatedAt;
+
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      ...(matchesPrimaryImage
+                        ? { generatedHostedImageUrl: ossImageUrl }
+                        : {}),
+                      generationResults: node.data.generationResults?.map((item) =>
+                        item.status === "completed" &&
+                        item.generatedAt === result.generatedAt &&
+                        item.imageUrl === result.imageUrl
+                          ? { ...item, hostedImageUrl: ossImageUrl }
+                          : item,
+                      ),
+                    },
+                  };
+                }),
+              }));
+            } catch (error) {
+              set({
+                saveMessage: toProjectOutputSaveErrorMessage(error),
+              });
+            }
+          }
+        })();
+      }
 
       set((currentState) => ({
         error: primaryResult
