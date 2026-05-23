@@ -16,7 +16,7 @@ import {
 import type { ImageGenerationNodeData } from "@/types/canvas";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 420;
 
 const IMAGE_JOB_RETENTION_MS = 60 * 60_000;
 const COMFLY_IMAGE_JOB_TIMEOUT_MS = 45 * 60_000;
@@ -1084,7 +1084,30 @@ export async function POST(request: Request) {
         );
       });
     } else {
-      after(async () => { await runImageJob(jobId, jobParams); });
+      await runImageJob(jobId, jobParams);
+      const completedJob = await prisma.imageJob.findUnique({
+        where: { id: jobId },
+        select: { status: true, result: true, error: true },
+      });
+      const result = parseImageJobResult(completedJob?.result ?? null);
+
+      if (result) {
+        return NextResponse.json({
+          ok: true,
+          jobId,
+          status: "completed" satisfies ImageJobStatus,
+          result,
+        });
+      }
+
+      return NextResponse.json({
+        ok: true,
+        jobId,
+        status: "error" satisfies ImageJobStatus,
+        error:
+          completedJob?.error ||
+          "Image generation failed before a result was returned",
+      });
     }
 
     return NextResponse.json({

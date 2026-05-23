@@ -951,11 +951,31 @@ async function submitImageGenerationJob(params: {
         jobId: string;
         status: "pending";
       }
+    | {
+        ok: true;
+        jobId: string;
+        status: "completed";
+        result: ImageGenerationRunResult;
+      }
+    | {
+        ok: true;
+        jobId: string;
+        status: "error";
+        error?: string;
+      }
     | ApiErrorResponse
   >(response, "Image generation request failed");
 
   if (!response.ok || !("ok" in json) || json.ok === false) {
     throw new Error("error" in json ? json.error : "Request failed");
+  }
+
+  if (json.status === "completed") {
+    return json.result;
+  }
+
+  if (json.status === "error") {
+    throw new Error(json.error || "Image generation failed");
   }
 
   return pollImageGenerationJob(json.jobId, params.apiKey);
