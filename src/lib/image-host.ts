@@ -175,6 +175,28 @@ async function saveImageBytes(
   }
 
   if (IS_SERVERLESS) {
+    if (isAliyunOssConfigured()) {
+      const target = createAliyunOssUploadTarget({
+        contentType: mimeType,
+        fileName,
+        folder: 'generated',
+      });
+      const response = await fetch(target.uploadUrl, {
+        method: 'PUT',
+        headers: target.headers,
+        body: new Uint8Array(bytes),
+      });
+
+      if (!response.ok) {
+        throw new VibeApiError(
+          response.status,
+          `Failed to upload image to OSS (${response.status})`,
+        );
+      }
+
+      return target.imageUrl;
+    }
+
     const base64 = bytes.toString('base64');
     return `data:${mimeType};base64,${base64}`;
   }

@@ -405,10 +405,11 @@ function inferImageMetadata(imageUrl: string): {
 async function runImageJob(
   jobId: string,
   params: ImageJobParams,
+  options: { cacheRemoteBeforeComplete?: boolean } = {},
 ) {
   try {
     const result = await generateImage(params);
-    await completeImageJob(jobId, result);
+    await completeImageJob(jobId, result, options);
   } catch (error) {
     const message =
       error instanceof VibeApiError
@@ -522,14 +523,29 @@ async function cacheRemoteImageJobResult(
   jobId: string,
   result: ImageJobResult,
 ) {
+  const cachedResult = await cacheRemoteImages(jobId, result);
+
+  if (cachedResult === result) {
+    return;
+  }
+
+  await persistCompletedImageJob(jobId, cachedResult);
+  await persistImageHistoryItems(jobId, cachedResult);
+}
+
+async function cacheRemoteImages(
+  jobId: string,
+  result: ImageJobResult,
+): Promise<ImageJobResult> {
   const remoteImages = result.images.filter(
     (image) =>
       /^https?:\/\//i.test(image.hostedImageUrl || image.imageUrl) &&
-      !image.hostedImageUrl?.startsWith("/api/"),
+      !image.hostedImageUrl?.startsWith("/api/") &&
+      !/\.aliyuncs\.com$/i.test(new URL(image.hostedImageUrl || image.imageUrl).hostname),
   );
 
   if (remoteImages.length === 0) {
-    return;
+    return result;
   }
 
   const cachedImages = await Promise.all(
@@ -560,9 +576,7 @@ async function cacheRemoteImageJobResult(
     ...result,
     images: cachedImages,
   };
-
-  await persistCompletedImageJob(jobId, cachedResult);
-  await persistImageHistoryItems(jobId, cachedResult);
+  return cachedResult;
 }
 
 async function readPersistedImageJobResult(
@@ -773,8 +787,12 @@ async function waitForPersistedHostedImageJobResult(
 async function completeImageJob(
   jobId: string,
   result: GenerateImageOutput,
+  options: { cacheRemoteBeforeComplete?: boolean } = {},
 ): Promise<ImageJobResult> {
-  const baseResult = buildImageJobResult(result);
+  const initialResult = buildImageJobResult(result);
+  const baseResult = options.cacheRemoteBeforeComplete
+    ? await cacheRemoteImages(jobId, initialResult)
+    : initialResult;
   const needsHostedImageUrl = hasUnhostedDataUrlImages(baseResult);
 
   if (needsHostedImageUrl) {
@@ -1085,7 +1103,9 @@ export async function POST(request: Request) {
       });
     } else if (provider === "fucheers") {
       after(async () => {
-        await runImageJob(jobId, jobParams);
+        await runImageJob(jobId, jobParams, {
+          cacheRemoteBeforeComplete: true,
+        });
       });
     } else {
       await runImageJob(jobId, jobParams);
