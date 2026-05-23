@@ -2587,7 +2587,12 @@ function GroupFrame({
       <div
         data-group-id={group.id}
         className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19]"
-        style={{ left: topLeft.x + 12, top: topLeft.y - 28 }}
+        style={{
+          left: topLeft.x + 12 * viewport.zoom,
+          top: topLeft.y - 52 * viewport.zoom,
+          transform: `scale(${viewport.zoom * 1.5})`,
+          transformOrigin: 'left top',
+        }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -2744,35 +2749,41 @@ function GroupFrameLabel({
 
   if (editing) {
     return (
-      <input
-        ref={inputRef}
-        type="text"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-        }}
-        className="rounded bg-white/10 px-2 py-0.5 text-[12px] font-medium text-white/80 outline-none ring-1 ring-white/20"
-        style={{ width: `${Math.max((draft || fallback).length + 1, 8)}ch` }}
-      />
+      <span className="flex select-none items-center gap-1.5 text-gl-text-tertiary">
+        <Group size={24} />
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+          }}
+          className="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
+          style={{ width: `${Math.max((draft || fallback).length + 1, 8)}ch` }}
+        />
+      </span>
     );
   }
 
   return (
-    <span
-      className="cursor-text select-none rounded px-2 py-0.5 text-[12px] font-medium text-white/60 hover:text-white/80"
-      onDoubleClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDraft(value ?? fallback);
-        setEditing(true);
-      }}
-    >
-      {value ?? fallback}
+    <span className="flex cursor-text select-none items-center gap-1.5 text-gl-text-tertiary hover:text-gl-text-secondary">
+      <Group size={24} />
+      <span
+        className="text-[22px] font-medium leading-none"
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDraft(value ?? fallback);
+          setEditing(true);
+        }}
+      >
+        {value ?? fallback}
+      </span>
     </span>
   );
 }
