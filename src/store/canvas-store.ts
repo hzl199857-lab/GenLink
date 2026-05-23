@@ -90,6 +90,10 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
+const REFERENCE_IMAGE_UPLOAD_MODE =
+  process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase();
+const SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS =
+  REFERENCE_IMAGE_UPLOAD_MODE === "oss";
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
@@ -601,6 +605,29 @@ async function normalizeReferenceImagesViaOss(
 
     seenRequestUrls.add(requestUrl);
     requestImages.push(normalized);
+  }
+
+  return requestImages;
+}
+
+function normalizeReferenceImagesForRequest(
+  images: ConnectedImagePayload[],
+): Array<{ url: string; fileName?: string }> {
+  const requestImages: Array<{ url: string; fileName?: string }> = [];
+  const seenRequestUrls = new Set<string>();
+
+  for (const image of images) {
+    const requestUrl = image.imageUrl.trim();
+
+    if (!requestUrl || seenRequestUrls.has(requestUrl)) {
+      continue;
+    }
+
+    seenRequestUrls.add(requestUrl);
+    requestImages.push({
+      url: requestUrl,
+      fileName: image.fileName,
+    });
   }
 
   return requestImages;
@@ -2039,7 +2066,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ];
       const requestImages =
         referenceImages.length > 0
-          ? await normalizeReferenceImagesViaOss(referenceImages)
+          ? SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS
+            ? await normalizeReferenceImagesViaOss(referenceImages)
+            : normalizeReferenceImagesForRequest(referenceImages)
           : undefined;
       const size = resolveImageSize(
         latestImageGenerationNode.data.quality,
