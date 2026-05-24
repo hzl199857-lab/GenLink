@@ -5,6 +5,7 @@ import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
 import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
+import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
@@ -450,7 +451,8 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
 
           if (
             target instanceof HTMLElement &&
-            target.closest('[data-prompt-preset-menu="true"]')
+            (target.closest('[data-prompt-preset-menu="true"]') ||
+              target.closest('[data-ref-mention-menu="true"]'))
           ) {
             return;
           }
@@ -586,10 +588,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
               </div>
             ) : null}
 
-            <textarea
+            <PromptMentionInput
               value={resolvedValue}
-              onChange={(e) => {
-                const next = e.target.value;
+              connectedImages={connectedImages}
+              onChange={(next) => {
                 setDraftPrompt(next);
 
                 if (!isComposing) {
@@ -603,21 +605,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
               }}
               onBlur={() => {
                 setIsPromptFocused(false);
-
-                if (!isComposing) {
-                  onPromptChange?.(draftPrompt);
-                }
               }}
-              onCompositionStart={() => setIsComposing(true)}
-              onCompositionEnd={(e) => {
-                const nextValue = e.currentTarget.value;
-                setIsComposing(false);
-                setDraftPrompt(nextValue);
-                onPromptChange?.(nextValue);
-              }}
-              placeholder="描述你想生成的图像内容，按“/”呼出指令"
-              className="text-node-prompt-input nodrag nopan w-full resize-none overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
-              rows={expanded ? 6 : 2}
+              onCompositionStateChange={(composing) => setIsComposing(composing)}
+              placeholder="描述你想生成的图像内容，输入 @ 插入参考图，按 / 呼出指令"
+              className="text-node-prompt-input prompt-mention-input nodrag nopan w-full overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none"
               style={{
                 minHeight: promptHeight,
                 height: expanded ? promptHeight : undefined,

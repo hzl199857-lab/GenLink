@@ -11,6 +11,7 @@ import {
   Check,
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
+import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
@@ -34,6 +35,7 @@ export interface TextNodePromptBarProps {
   connectedImages?: Array<{
     id: string;
     imageUrl: string;
+    previewUrl?: string;
     alt: string;
   }>;
   onPromptChange?: (next: string) => void;
@@ -75,11 +77,6 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [modelMenuOpen]);
 
-  const handleWheel = (event: React.WheelEvent<HTMLTextAreaElement>) => {
-    event.stopPropagation();
-    event.currentTarget.scrollTop += event.deltaY;
-  };
-
   const handlePromptChange = (next: string) => {
     setDraftPrompt(next);
 
@@ -105,6 +102,15 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
       <div
         data-canvas-menu-ignore="true"
         onPointerDownCapture={(e) => {
+          const target = e.target;
+
+          if (
+            target instanceof HTMLElement &&
+            target.closest('[data-ref-mention-menu="true"]')
+          ) {
+            return;
+          }
+
           onPointerDownWithin?.();
           e.stopPropagation();
         }}
@@ -146,7 +152,7 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
                 className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
               >
                 <NextImage
-                  src={image.imageUrl}
+                  src={image.previewUrl || image.imageUrl}
                   alt={image.alt || `Connected image ${index + 1}`}
                   fill
                   unoptimized
@@ -169,9 +175,10 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
               transition: 'height 500ms ease-in-out',
             }}
           >
-            <textarea
+            <PromptMentionInput
               value={resolvedPromptValue}
-              onChange={(e) => handlePromptChange(e.target.value)}
+              connectedImages={connectedImages}
+              onChange={handlePromptChange}
               onFocus={() => {
                 setDraftPrompt(prompt);
                 setIsPromptFocused(true);
@@ -179,25 +186,10 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
               }}
               onBlur={() => {
                 setIsPromptFocused(false);
-
-                if (!isComposing) {
-                  onPromptChange?.(draftPrompt);
-                }
               }}
-              onCompositionStart={() => {
-                setIsComposing(true);
-              }}
-              onCompositionEnd={(e) => {
-                const nextValue = e.currentTarget.value;
-                setIsComposing(false);
-                setDraftPrompt(nextValue);
-                onPromptChange?.(nextValue);
-              }}
-              onWheel={handleWheel}
-              onWheelCapture={(e) => e.stopPropagation()}
-              placeholder="告诉 AI 你想生成的文本内容..."
-              rows={expanded ? 6 : 2}
-              className="text-node-prompt-input nodrag nopan w-full resize-none overflow-y-auto border-0 bg-transparent pr-9 text-[15px] font-medium leading-6 text-gl-text-primary outline-none placeholder:text-gl-text-muted"
+              onCompositionStateChange={(composing) => setIsComposing(composing)}
+              placeholder="告诉 AI 你想生成的文本内容，输入 @ 插入参考图"
+              className="text-node-prompt-input prompt-mention-input nodrag nopan w-full overflow-y-auto border-0 bg-transparent pr-9 text-[15px] font-medium leading-6 text-gl-text-primary outline-none"
               style={{
                 minHeight: expanded
                   ? EXPANDED_PROMPT_HEIGHT

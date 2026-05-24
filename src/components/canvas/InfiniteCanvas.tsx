@@ -3352,14 +3352,16 @@ const CanvasMiniMap = memo(function CanvasMiniMap({ nodes }: { nodes: CanvasNode
 function CanvasViewportControls({
   edgeStyle,
   onToggleEdgeStyle,
+  onSmartReset,
   nodes,
 }: {
   edgeStyle: CanvasEdgeStyle;
   onToggleEdgeStyle: () => void;
+  onSmartReset: () => void;
   nodes: CanvasNode[];
 }) {
   const { zoom } = useViewport();
-  const { zoomTo, fitView } = useReactFlow();
+  const { zoomTo } = useReactFlow();
   const [isMiniMapVisible, setIsMiniMapVisible] = useState(true);
   const clampedZoom = clampZoomLevel(zoom);
   const edgeStyleLabel = edgeStyle === 'straight'
@@ -3368,6 +3370,7 @@ function CanvasViewportControls({
   const nextEdgeStyleLabel = edgeStyle === 'straight'
     ? '\u5207\u6362\u4e3a\u66f2\u7ebf'
     : '\u5207\u6362\u4e3a\u76f4\u7ebf';
+  const resetLabel = '\u91cd\u7f6e (G)';
   const minimapLabel = isMiniMapVisible ? '关闭小地图' : '开启小地图';
 
   return (
@@ -3441,12 +3444,13 @@ function CanvasViewportControls({
             <button
               type="button"
               className="canvas-zoom-icon-button"
-              onClick={() => void fitView({ duration: 220, padding: 0.18 })}
+              onClick={onSmartReset}
+              title={resetLabel}
               aria-label="重置"
             >
               <Expand size={15} />
             </button>
-            <Tooltip label="重置" side="top" />
+            <Tooltip label={resetLabel} side="top" />
           </div>
 
           <input
@@ -3465,27 +3469,6 @@ function CanvasViewportControls({
 
       </Panel>
     </>
-  );
-}
-
-function CanvasCornerActionButton() {
-  const stopCanvasInteraction = (event: React.SyntheticEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-  };
-
-  return (
-    <Panel position="bottom-right" className="canvas-corner-action-panel">
-      <div className="group/tooltip relative">
-        <button
-          type="button"
-          aria-label="Canvas action"
-          className="canvas-corner-action-button"
-          onPointerDown={stopCanvasInteraction}
-          onClick={stopCanvasInteraction}
-        />
-        <Tooltip label="Canvas action" side="top" />
-      </div>
-    </Panel>
   );
 }
 
@@ -4091,6 +4074,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const saveMessage = useCanvasStore((s) => s.saveMessage);
   const saveProject = useCanvasStore((s) => s.saveProject);
   const setSaveMessage = useCanvasStore((s) => s.setSaveMessage);
+  const undo = useCanvasStore((s) => s.undo);
+  const redo = useCanvasStore((s) => s.redo);
   const attachProject = useCanvasStore((s) => s.attachProject);
   const renameProject = useCanvasStore((s) => s.renameProject);
   const deleteProject = useCanvasStore((s) => s.deleteProject);
@@ -4282,10 +4267,47 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const selectionDragActiveRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const paneGroupDragRef = useRef<{ groupId: string; lastX: number; lastY: number; moved: boolean } | null>(null);
+  const smartResetFocusedSelectionRef = useRef(false);
   const [paneSelectionDragging, setPaneSelectionDragging] = useState(false);
   const [selectionInProgress, setSelectionInProgress] = useState(false);
 
-  const { getViewport, project, setViewport } = useReactFlow();
+  const { fitBounds, fitView, getViewport, project, setViewport } = useReactFlow();
+
+  const handleSmartResetViewport = useCallback(() => {
+    const selectedGroup = selectedGroupId
+      ? storeGroups.find((group) => group.id === selectedGroupId) ?? null
+      : null;
+
+    if (smartResetFocusedSelectionRef.current || (!selectedGroup && selectedNodeIdsRef.current.size === 0)) {
+      smartResetFocusedSelectionRef.current = false;
+      void fitView({ duration: 220, padding: 0.18 });
+      return;
+    }
+
+    if (selectedGroup) {
+      smartResetFocusedSelectionRef.current = true;
+      void fitBounds(
+        {
+          x: selectedGroup.x,
+          y: selectedGroup.y,
+          width: selectedGroup.width,
+          height: selectedGroup.height,
+        },
+        { duration: 220, padding: 0.28 },
+      );
+      return;
+    }
+
+    const selectedNodes = Array.from(selectedNodeIdsRef.current, (id) => ({ id }));
+
+    smartResetFocusedSelectionRef.current = true;
+    void fitView({
+      duration: 220,
+      maxZoom: CANVAS_MAX_ZOOM,
+      nodes: selectedNodes,
+      padding: 0.32,
+    });
+  }, [fitBounds, fitView, selectedGroupId, storeGroups]);
 
   const updateHoveredGroupFromPointer = useCallback((event: {
     target?: EventTarget | null;
@@ -5010,6 +5032,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       const key = event.key.toLowerCase();
       const isModifierPressed = event.ctrlKey || event.metaKey;
 
+      if (isModifierPressed && !event.altKey && key === 'z') {
+        event.preventDefault();
+
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+
+        return;
+      }
+
       if (isModifierPressed && event.shiftKey && key === 'c') {
         event.preventDefault();
         if (handleCopySelectedNodesWithUpstream()) {
@@ -5028,6 +5062,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       if (isModifierPressed && event.shiftKey && key === 'v') {
         event.preventDefault();
         handlePasteNodesWithUpstream();
+        return;
+      }
+
+      if (!isModifierPressed && !event.altKey && !event.shiftKey && key === 'g') {
+        event.preventDefault();
+        handleSmartResetViewport();
         return;
       }
 
@@ -5058,8 +5098,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
     handlePasteNodesWithUpstream,
+    handleSmartResetViewport,
+    redo,
     selectedEdgeId,
     selectedNodeIds,
+    undo,
   ]);
 
   useEffect(() => {
@@ -5983,6 +6026,25 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }, 2200);
   }, [saveProject, setSaveMessage]);
 
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || key !== 's') {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (!event.repeat) {
+        void handleSaveProject();
+      }
+    };
+
+    window.addEventListener('keydown', handleSaveShortcut);
+    return () => window.removeEventListener('keydown', handleSaveShortcut);
+  }, [handleSaveProject]);
+
   const handleRenameCurrentProject = useCallback(async (nextName: string) => {
     const project = useCanvasStore.getState().currentProject;
 
@@ -6175,6 +6237,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         <CanvasViewportControls
           edgeStyle={edgeStyle}
           onToggleEdgeStyle={handleToggleEdgeStyle}
+          onSmartReset={handleSmartResetViewport}
           nodes={storeNodes}
         />
         <MultiNodeSelectionOverlay
@@ -6199,7 +6262,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           onLayoutGroup={handleLayoutGroup}
           onDownloadGroup={handleDownloadGroup}
         />
-        <CanvasCornerActionButton />
       </ReactFlow>
 
       <GroupConnectionPreviewOverlay preview={groupConnectionPreview} />

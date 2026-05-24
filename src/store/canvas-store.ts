@@ -3,6 +3,10 @@
 import { create } from "zustand";
 
 import { stripImagePromptSectionLabels } from "@/lib/image-prompt";
+import {
+  selectMentionedReferences,
+  stripReferenceMentionTokens,
+} from "@/lib/prompt-mentions";
 import { buildProjectSnapshot, getProjectSnapshotSignature } from "@/lib/project-snapshot";
 import {
   deleteProjectDirectory,
@@ -97,6 +101,17 @@ const SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS =
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
+const CANVAS_HISTORY_LIMIT = 100;
+const CANVAS_HISTORY_COALESCE_MS = 700;
+
+type CanvasHistorySnapshot = {
+  projectName: string;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  groups: NodeGroup[];
+};
+
+let lastCanvasHistoryPushAt = 0;
 
 function resolveParallelCount(value?: number): 1 | 2 | 4 {
   return value === 2 || value === 4 ? value : 1;
@@ -542,6 +557,26 @@ async function uploadReferenceBlobToOss(
   return uploadImageBlobToOss(blob, fileName, "references");
 }
 
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+
+  if (!match) {
+    throw new Error("Invalid image data URL");
+  }
+
+  const mimeType = match[1] || "image/png";
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] || "";
+  const binary = isBase64 ? atob(payload) : decodeURIComponent(payload);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mimeType });
+}
+
 async function normalizeReferenceImageViaOss(image: {
   imageUrl: string;
   fileName?: string;
@@ -558,7 +593,14 @@ async function normalizeReferenceImageViaOss(image: {
     };
   }
 
-  if (url.startsWith("data:") || isObjectUrl(url) || isSameOriginUrl(url) || /^https?:\/\//i.test(url)) {
+  if (url.startsWith("data:")) {
+    return {
+      url: await uploadReferenceBlobToOss(dataUrlToBlob(url), image.fileName),
+      fileName: image.fileName,
+    };
+  }
+
+  if (isObjectUrl(url) || isSameOriginUrl(url) || /^https?:\/\//i.test(url)) {
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -869,8 +911,15 @@ async function uploadGeneratedResultToOss(
     return sourceUrl || undefined;
   }
 
+  if (sourceUrl.startsWith("data:")) {
+    return uploadImageBlobToOss(
+      dataUrlToBlob(sourceUrl),
+      fileName,
+      "generated",
+    );
+  }
+
   if (
-    !sourceUrl.startsWith("data:") &&
     !isObjectUrl(sourceUrl) &&
     !isSameOriginUrl(sourceUrl) &&
     !/^https?:\/\//i.test(sourceUrl)
@@ -943,6 +992,58 @@ function computeDirtyState(state: {
   });
 
   return currentSignature !== state.lastSavedSignature;
+}
+
+function createCanvasHistorySnapshot(state: {
+  projectName: string;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  groups: NodeGroup[];
+}): CanvasHistorySnapshot {
+  return {
+    projectName: state.projectName,
+    nodes: state.nodes,
+    edges: state.edges,
+    groups: state.groups,
+  };
+}
+
+function getCanvasHistorySignature(snapshot: CanvasHistorySnapshot): string {
+  return getProjectSnapshotSignature({
+    name: snapshot.projectName,
+    nodes: snapshot.nodes,
+    edges: snapshot.edges,
+    groups: snapshot.groups,
+  });
+}
+
+function createUndoHistoryUpdate(
+  state: CanvasState,
+  options: { coalesce?: boolean } = {},
+): Pick<CanvasState, "undoStack" | "redoStack"> {
+  const now = Date.now();
+  const snapshot = createCanvasHistorySnapshot(state);
+  const signature = getCanvasHistorySignature(snapshot);
+  const lastSnapshot = state.undoStack[state.undoStack.length - 1];
+  const lastSignature = lastSnapshot ? getCanvasHistorySignature(lastSnapshot) : null;
+  const shouldCoalesce =
+    Boolean(options.coalesce) &&
+    now - lastCanvasHistoryPushAt < CANVAS_HISTORY_COALESCE_MS &&
+    state.undoStack.length > 0;
+
+  if (signature === lastSignature || shouldCoalesce) {
+    return {
+      undoStack: state.undoStack,
+      redoStack: [],
+    };
+  }
+
+  lastCanvasHistoryPushAt = now;
+
+  return {
+    undoStack: [...state.undoStack, snapshot].slice(-CANVAS_HISTORY_LIMIT),
+    redoStack: [],
+  };
 }
 
 async function pollImageGenerationJob(
@@ -1574,6 +1675,8 @@ export interface CanvasState {
   lastSavedAt: string | null;
   lastSavedSignature: string;
   saveMessage: string | null;
+  undoStack: CanvasHistorySnapshot[];
+  redoStack: CanvasHistorySnapshot[];
 
   addNode: (node: CanvasNode) => void;
   addNodes: (nodes: CanvasNode[]) => void;
@@ -1626,6 +1729,8 @@ export interface CanvasState {
 
   setProjectName: (name: string) => void;
   setSaveMessage: (message: string | null) => void;
+  undo: () => void;
+  redo: () => void;
   markCleanFromSnapshot: (snapshot: ProjectSnapshot) => void;
   newProject: (name?: string) => void;
   saveProject: () => Promise<ProjectSnapshot>;
@@ -1676,9 +1781,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     groups: [],
   }),
   saveMessage: null,
+  undoStack: [],
+  redoStack: [],
 
   addNode: (node) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       nodes: [...state.nodes, node],
       dirty: true,
       error: null,
@@ -1691,6 +1799,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       nodes: [...state.nodes, ...nodes],
       dirty: true,
       error: null,
@@ -1700,6 +1809,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   addNodeAtCenter: (type, viewportCenter) => {
     const node = createNode(type, viewportCenter);
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       nodes: [...state.nodes, node],
       dirty: true,
       error: null,
@@ -1740,6 +1850,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes[index] = nextNode;
 
       return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
         nodes,
         dirty: true,
       };
@@ -1767,6 +1878,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes[index] = { ...currentNode, position };
 
       return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
         nodes,
         dirty: true,
       };
@@ -1775,6 +1887,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   deleteNode: (id) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       nodes: state.nodes.filter((node) => node.id !== id),
       edges: state.edges.filter(
         (edge) => edge.source !== id && edge.target !== id,
@@ -1794,6 +1907,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const idSet = new Set(ids);
 
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       nodes: state.nodes.filter((node) => !idSet.has(node.id)),
       edges: state.edges.filter(
         (edge) => !idSet.has(edge.source) && !idSet.has(edge.target),
@@ -1807,6 +1921,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addEdge: (edge) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       edges: [...state.edges, edge],
       dirty: true,
       error: null,
@@ -1815,6 +1930,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   deleteEdge: (id) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       edges: state.edges.filter((edge) => edge.id !== id),
       dirty: true,
     }));
@@ -1829,12 +1945,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       width: bounds.width,
       height: bounds.height,
     };
-    set((state) => ({ groups: [...state.groups, group], dirty: true }));
+    set((state) => ({
+      ...createUndoHistoryUpdate(state),
+      groups: [...state.groups, group],
+      dirty: true,
+    }));
     return group;
   },
 
   deleteGroup: (groupId) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       groups: state.groups.filter((g) => g.id !== groupId),
       dirty: true,
     }));
@@ -1842,6 +1963,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   renameGroup: (groupId, name) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state, { coalesce: true }),
       groups: state.groups.map((g) =>
         g.id === groupId ? { ...g, name } : g,
       ),
@@ -1851,6 +1973,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   updateGroupBackgroundColor: (groupId, backgroundColor) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       groups: state.groups.map((g) =>
         g.id === groupId ? { ...g, backgroundColor } : g,
       ),
@@ -1860,6 +1983,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   removeNodeFromGroup: (groupId, nodeId) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state),
       groups: state.groups
         .map((g) =>
           g.id === groupId
@@ -1873,6 +1997,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   updateGroupBounds: (groupId, bounds) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state, { coalesce: true }),
       groups: state.groups.map((g) =>
         g.id === groupId ? { ...g, ...bounds } : g,
       ),
@@ -1892,7 +2017,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
           : n,
       );
-      return { groups: updatedGroups, nodes: updatedNodes, dirty: true };
+      return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
+        groups: updatedGroups,
+        nodes: updatedNodes,
+        dirty: true,
+      };
     });
   },
 
@@ -1911,18 +2041,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt is required");
     }
 
-    const connectedImages = getConnectedImagesForTargetNode(
-      state.nodes,
-      state.edges,
-      textNodeId,
+    const connectedImages = selectMentionedReferences(
+      getConnectedImagesForTargetNode(
+        state.nodes,
+        state.edges,
+        textNodeId,
+      ),
+      textNode.data.aiPrompt,
+    );
+    const textTaskPrompt = stripReferenceMentionTokens(
+      textNode.data.aiPrompt,
+      connectedImages,
     );
 
     const promptSections = [
       textNode.data.text?.trim()
         ? `Current text content:\n${textNode.data.text.trim()}`
         : "",
-      textNode.data.aiPrompt?.trim()
-        ? `Task instructions:\n${textNode.data.aiPrompt.trim()}`
+      textTaskPrompt
+        ? `Task instructions:\n${textTaskPrompt}`
         : "",
       `Please produce a fresh variation that differs from previous results. Change the angle, wording, details, or composition. Random seed: ${crypto.randomUUID()}`,
     ].filter(Boolean);
@@ -2026,6 +2163,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setProjectName: (name) => {
     set((state) => ({
+      ...createUndoHistoryUpdate(state, { coalesce: true }),
       projectName: name,
       dirty: computeDirtyState({
         projectName: name,
@@ -2040,6 +2178,56 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setSaveMessage: (message) => {
     set({ saveMessage: message });
+  },
+
+  undo: () => {
+    set((state) => {
+      const previous = state.undoStack[state.undoStack.length - 1];
+
+      if (!previous) {
+        return state;
+      }
+
+      const current = createCanvasHistorySnapshot(state);
+
+      lastCanvasHistoryPushAt = 0;
+
+      return {
+        projectName: previous.projectName,
+        nodes: previous.nodes,
+        edges: previous.edges,
+        groups: previous.groups,
+        undoStack: state.undoStack.slice(0, -1),
+        redoStack: [...state.redoStack, current].slice(-CANVAS_HISTORY_LIMIT),
+        dirty: getCanvasHistorySignature(previous) !== state.lastSavedSignature,
+        error: null,
+      };
+    });
+  },
+
+  redo: () => {
+    set((state) => {
+      const next = state.redoStack[state.redoStack.length - 1];
+
+      if (!next) {
+        return state;
+      }
+
+      const current = createCanvasHistorySnapshot(state);
+
+      lastCanvasHistoryPushAt = 0;
+
+      return {
+        projectName: next.projectName,
+        nodes: next.nodes,
+        edges: next.edges,
+        groups: next.groups,
+        undoStack: [...state.undoStack, current].slice(-CANVAS_HISTORY_LIMIT),
+        redoStack: state.redoStack.slice(0, -1),
+        dirty: getCanvasHistorySignature(next) !== state.lastSavedSignature,
+        error: null,
+      };
+    });
   },
 
   markCleanFromSnapshot: (snapshot) => {
@@ -2102,12 +2290,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const normalizedPromptOverride = promptOverride?.trim();
       const directPrompt =
         normalizedPromptOverride || latestImageGenerationNode.data.prompt?.trim() || "";
+      const connectedImages = selectMentionedReferences(
+        getImageGenerationReferenceImages(
+          latestState.nodes,
+          latestState.edges,
+          imageGenerationNodeId,
+        ),
+        directPrompt,
+      );
+      const cleanDirectPrompt = stripReferenceMentionTokens(
+        directPrompt,
+        connectedImages,
+      );
       const effectivePrompt = [
         connectedTextPrompt
           ? `Upstream text node content:\n${connectedTextPrompt}`
           : "",
-        directPrompt
-          ? `Additional image instructions:\n${directPrompt}`
+        cleanDirectPrompt
+          ? `Additional image instructions:\n${cleanDirectPrompt}`
           : "",
       ]
         .filter(Boolean)
@@ -2143,11 +2343,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const connectedImages = getImageGenerationReferenceImages(
-        latestState.nodes,
-        latestState.edges,
-        imageGenerationNodeId,
-      );
       const selfGeneratedReferences = normalizedPromptOverride
         ? getGeneratedImageReferenceForImageGenerationNode(latestImageGenerationNode)
         : [];
@@ -2589,6 +2784,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       set((currentState) => ({
+        ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, ...nextNodes],
         dirty: true,
         error: null,
@@ -2688,6 +2884,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       };
 
       set((currentState) => ({
+        ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, nextNode],
         dirty: true,
         error: null,
@@ -2793,6 +2990,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       set((currentState) => ({
+        ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, ...nextNodes],
         dirty: true,
         error: null,
@@ -2866,6 +3064,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       };
 
       set((currentState) => ({
+        ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, nextNode],
         dirty: true,
         error: null,
@@ -2911,6 +3110,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         groups: [],
       }),
       saveMessage: null,
+      undoStack: [],
+      redoStack: [],
     });
   },
 
@@ -2977,6 +3178,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         dirty: false,
         lastSavedAt: hydrated.snapshot.updatedAt,
         lastSavedSignature: getProjectSnapshotSignature(hydrated.snapshot),
+        undoStack: [],
+        redoStack: [],
       });
     } catch (error) {
       const message = toErrorMessage(error);
@@ -3081,6 +3284,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       lastSavedAt: snapshot.updatedAt,
       lastSavedSignature: getProjectSnapshotSignature(snapshot),
       saveMessage: null,
+      undoStack: [],
+      redoStack: [],
     });
   },
 
