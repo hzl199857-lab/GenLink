@@ -779,13 +779,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
 
                 {modelMenuOpen ? (
                   <div
-                    className={[
-                      'absolute bottom-full left-0 mb-2 flex overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate',
-                      showRunningHubChannelMenu ? 'w-[650px]' : 'w-[470px]',
-                    ].join(' ')}
+                    className="absolute bottom-full left-0 mb-2 flex w-fit overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate"
                     translate="no"
                   >
-                    <div className="w-[190px] border-r border-white/[0.06] pr-1.5">
+                    <div className="w-[170px] border-r border-white/[0.06] pr-1.5">
                       <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
                         Provider
                       </div>
@@ -822,7 +819,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         })}
                       </div>
                     </div>
-                    <div className="min-w-0 flex-1 pl-1.5">
+                    <div className="w-[180px] min-w-0 pl-1.5">
                       <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
                         Model
                       </div>
