@@ -75,6 +75,34 @@ export function stripReferenceMentionTokens(
     .trim();
 }
 
+export function reconcileReferenceMentionTokens(
+  value: string | undefined,
+  referenceOrder: Array<{ id: string; label?: string }> = [],
+): string {
+  if (!value?.includes(REFERENCE_MENTION_TOKEN_PREFIX)) {
+    return value ?? "";
+  }
+
+  const referenceById = new Map(
+    referenceOrder.map((reference, index) => [
+      reference.id,
+      reference.label?.trim() || `\u56fe\u7247${index + 1}`,
+    ]),
+  );
+
+  return value
+    .replace(REFERENCE_MENTION_TOKEN_PATTERN, (_match, nodeId: string) => {
+      const decodedNodeId = decodeReferenceMentionPart(nodeId).trim();
+      const nextLabel = referenceById.get(decodedNodeId);
+
+      return nextLabel ? createReferenceMentionToken(decodedNodeId, nextLabel) : "";
+    })
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function selectMentionedReferences<T extends { id: string }>(
   references: T[],
   prompt: string | undefined,

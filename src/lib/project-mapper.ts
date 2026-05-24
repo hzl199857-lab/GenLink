@@ -389,6 +389,7 @@ export function dbToSnapshot(
     name: project.name,
     nodes: filteredNodes.map(nodeFromDbRecord),
     edges: filteredEdges.map(edgeFromDbRecord),
+    materials: undefined,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   };

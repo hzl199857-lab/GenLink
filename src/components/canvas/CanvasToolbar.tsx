@@ -17,8 +17,10 @@ export interface CanvasToolbarProps {
   onOpenAddMenu?: (position: { x: number; y: number }) => void;
   onScheduleCloseAddMenu?: () => void;
   onOpenApiSettings?: () => void;
+  onToggleMaterialLibrary?: (anchor: DOMRect) => void;
   onToggleHistory?: (anchor: DOMRect) => void;
   onSaveProject?: () => void;
+  materialLibraryOpen?: boolean;
   historyOpen?: boolean;
 }
 
@@ -28,12 +30,14 @@ function ToolbarButton({
   active = false,
   onClick,
   historyToggle = false,
+  materialLibraryToggle = false,
 }: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
   title: string;
   active?: boolean;
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   historyToggle?: boolean;
+  materialLibraryToggle?: boolean;
 }) {
   return (
     <div className="group/tooltip relative">
@@ -41,6 +45,7 @@ function ToolbarButton({
         type="button"
         aria-label={title}
         data-history-toggle={historyToggle ? 'true' : undefined}
+        data-material-library-toggle={materialLibraryToggle ? 'true' : undefined}
         onClick={onClick}
         className={[
           'flex h-[31px] w-[31px] items-center justify-center rounded-full border border-white/0 transition duration-150 hover:bg-white/8 hover:text-white focus-visible:bg-white/8 focus-visible:text-white focus-visible:outline-none',
@@ -58,8 +63,10 @@ export function CanvasToolbar({
   onOpenAddMenu,
   onScheduleCloseAddMenu,
   onOpenApiSettings,
+  onToggleMaterialLibrary,
   onToggleHistory,
   onSaveProject,
+  materialLibraryOpen = false,
   historyOpen = false,
 }: CanvasToolbarProps) {
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -106,7 +113,13 @@ export function CanvasToolbar({
         </div>
 
         <div className="flex flex-col items-center gap-0.5">
-          <ToolbarButton icon={Folder} title="文件" />
+          <ToolbarButton
+            icon={Folder}
+            title="素材库"
+            active={materialLibraryOpen}
+            materialLibraryToggle
+            onClick={(event) => onToggleMaterialLibrary?.(event.currentTarget.getBoundingClientRect())}
+          />
           <ToolbarButton icon={LayoutList} title="列表" />
           <ToolbarButton icon={MessageCircle} title="消息" />
           <ToolbarButton

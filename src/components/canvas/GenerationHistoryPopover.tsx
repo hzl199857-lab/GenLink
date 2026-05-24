@@ -184,7 +184,7 @@ export function GenerationHistoryPopover({
   return (
     <div
       ref={panelRef}
-      className="fixed z-[70] h-[360px] w-[320px] overflow-hidden rounded-[9px] border border-white/10 bg-[#242529]/98 text-white shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-md"
+      className="fixed z-[70] h-[360px] w-[320px] overflow-hidden rounded-[9px] border border-white/10 bg-[#17181B] text-white shadow-[0_18px_48px_rgba(0,0,0,0.42)]"
       style={{ left, top }}
       onPointerDown={(event) => event.stopPropagation()}
     >

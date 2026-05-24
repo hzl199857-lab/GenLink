@@ -310,10 +310,10 @@ export const TextNode = memo(function TextNode({
         onCopyContent={handleCopyContent}
       />
 
-        <TextNodePromptBar
-          key={uiVisible ? 'visible' : 'hidden'}
-          nodeId={id}
-          visible={uiVisible}
+      <TextNodePromptBar
+        key={uiVisible ? 'visible' : 'hidden'}
+        nodeId={id}
+        visible={uiVisible}
         prompt={data.aiPrompt || ''}
         model={data.model || 'gpt-5.4'}
         connectedImages={connectedImages}

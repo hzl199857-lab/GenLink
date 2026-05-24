@@ -50,7 +50,7 @@ const GENERATED_IMAGE_ACTIONS: ToolbarActionConfig[] = [
   { id: 'edit', title: '编辑', icon: Wand2 },
   { id: 'pan', title: '平移', icon: Hand },
   { id: 'more', title: '更多', icon: MoreHorizontal },
-  { id: 'organize', title: '整理', icon: FolderPlus },
+  { id: 'organize', title: '加入素材库', icon: FolderPlus },
   { id: 'download', title: '下载', icon: Download },
   { id: 'expand', title: '放大查看', icon: Expand },
 ];

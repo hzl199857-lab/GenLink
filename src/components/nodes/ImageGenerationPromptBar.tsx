@@ -1,15 +1,19 @@
 'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
-import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers } from 'lucide-react';
+import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, X } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
+const REFERENCE_PREVIEW_WIDTH = 132;
+const REFERENCE_PREVIEW_HEIGHT = 176;
+const REFERENCE_PREVIEW_GAP = 10;
 const IMAGE_MODELS = [
   { id: 'gpt-image-2', label: 'gpt-image-2' },
   { id: 'nano-banana-2', label: 'Nano banana pro' },
@@ -160,8 +164,10 @@ export interface ImageGenerationPromptBarProps {
   onParallelCountChange?: (next: 1 | 2 | 4) => void;
   onRun?: (promptOverride?: string) => void;
   onAddReference?: () => void;
+  onRemoveReference?: (referenceImageId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
+  focusRequestId?: number;
 }
 
 function ToolSquareButton({
@@ -363,8 +369,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   onParallelCountChange,
   onRun,
   onAddReference,
+  onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
+  focusRequestId,
 }: ImageGenerationPromptBarProps) {
   const [draftPrompt, setDraftPrompt] = useState(prompt);
   const [isPromptFocused, setIsPromptFocused] = useState(false);
@@ -374,6 +382,13 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
   const [parallelMenuOpen, setParallelMenuOpen] = useState(false);
+  const [hoveredReferencePreview, setHoveredReferencePreview] = useState<{
+    id: string;
+    imageUrl: string;
+    alt: string;
+    left: number;
+    top: number;
+  } | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const formatMenuRef = useRef<HTMLDivElement | null>(null);
@@ -419,6 +434,34 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
   const promptPresetMenuOpen = isPromptFocused && !isComposing && resolvedValue.trimEnd().endsWith('/');
+
+  const showReferencePreview = (
+    image: NonNullable<ImageGenerationPromptBarProps['connectedImages']>[number],
+    target: HTMLElement,
+  ) => {
+    const rect = target.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || REFERENCE_PREVIEW_WIDTH;
+    const left = Math.min(
+      Math.max(8, rect.left + rect.width / 2 - REFERENCE_PREVIEW_WIDTH / 2),
+      Math.max(8, viewportWidth - REFERENCE_PREVIEW_WIDTH - 8),
+    );
+    const top = Math.max(
+      8,
+      rect.top - REFERENCE_PREVIEW_HEIGHT - REFERENCE_PREVIEW_GAP,
+    );
+
+    setHoveredReferencePreview({
+      id: image.id,
+      imageUrl: image.previewUrl || image.imageUrl,
+      alt: image.alt,
+      left,
+      top,
+    });
+  };
+
+  const hideReferencePreview = () => {
+    setHoveredReferencePreview(null);
+  };
 
   const handlePromptPresetClick = (presetPrompt: string) => {
     if (!canUsePromptPresets || generating) {
@@ -498,23 +541,51 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
             </ToolSquareButton>
 
             {connectedImages.length > 0 ? (
-              <div className="flex items-center gap-2 overflow-x-auto nodrag nopan">
+              <div className="flex items-center gap-2 overflow-x-auto py-1 pr-1 nodrag nopan">
                 {connectedImages.map((image, index) => (
                   <div
                     key={image.id}
-                    className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                    className="group/reference-thumb relative h-[50px] w-[50px] shrink-0"
                   >
-                    <NextImage
-                      src={image.previewUrl || image.imageUrl}
-                      alt={image.alt || `Connected image ${index + 1}`}
-                      fill
-                      unoptimized
-                      sizes="50px"
-                      className="object-cover"
-                    />
-                    <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                      {index + 1}
-                    </span>
+                    <div
+                      className="relative h-full w-full overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                      onPointerEnter={(event) =>
+                        showReferencePreview(image, event.currentTarget)
+                      }
+                      onPointerLeave={hideReferencePreview}
+                    >
+                      <NextImage
+                        src={image.previewUrl || image.imageUrl}
+                        alt={image.alt || `Connected image ${index + 1}`}
+                        fill
+                        unoptimized
+                        sizes="50px"
+                        className="object-cover"
+                      />
+                      <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                        {index + 1}
+                      </span>
+                    </div>
+                    {onRemoveReference ? (
+                      <button
+                        type="button"
+                        aria-label="Remove reference image"
+                        className="absolute right-0 top-0 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/35 bg-[#1b1d21] text-white opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.35)] transition hover:bg-white hover:text-[#1b1d21] focus-visible:opacity-100 group-hover/reference-thumb:opacity-100"
+                        onPointerEnter={hideReferencePreview}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          hideReferencePreview();
+                          onRemoveReference(image.id);
+                        }}
+                      >
+                        <X size={11} strokeWidth={2.4} />
+                      </button>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -591,6 +662,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
             <PromptMentionInput
               value={resolvedValue}
               connectedImages={connectedImages}
+              focusRequestId={focusRequestId}
               onChange={(next) => {
                 setDraftPrompt(next);
 
@@ -919,6 +991,32 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
             </div>
           </div>
         </div>
+
+        {hoveredReferencePreview
+          ? createPortal(
+              <div
+                className="fixed z-[100] overflow-hidden rounded-[14px] shadow-[0_18px_42px_rgba(0,0,0,0.48)] pointer-events-none"
+                style={{
+                  left: hoveredReferencePreview.left,
+                  top: hoveredReferencePreview.top,
+                  width: REFERENCE_PREVIEW_WIDTH,
+                  height: REFERENCE_PREVIEW_HEIGHT,
+                }}
+              >
+                <div className="relative h-full w-full overflow-hidden rounded-[14px]">
+                  <NextImage
+                    src={hoveredReferencePreview.imageUrl}
+                    alt={hoveredReferencePreview.alt || 'Reference preview'}
+                    fill
+                    unoptimized
+                    sizes={`${REFERENCE_PREVIEW_WIDTH}px`}
+                    className="object-contain"
+                  />
+                </div>
+              </div>,
+              document.body,
+            )
+          : null}
       </div>
     </NodeToolbar>
   );

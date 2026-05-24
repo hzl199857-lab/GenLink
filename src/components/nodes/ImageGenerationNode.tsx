@@ -38,6 +38,7 @@ export interface ImageGenerationNodeProps {
   onChange?: (next: ImageGenerationNodeData) => void;
   onRun?: (promptOverride?: string) => void;
   onUpload?: () => void;
+  onRemoveReference?: (referenceImageId: string) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onToolbarAction?: (action: ImageGenerationToolbarAction) => void;
   onOpenLightbox?: (data: ImageGenerationNodeData) => void;
@@ -45,6 +46,7 @@ export interface ImageGenerationNodeProps {
   onSelectNode?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
+  promptFocusRequestId?: number;
 }
 
 function parseAspectRatioValue(value?: string): number | null {
@@ -214,6 +216,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   onChange,
   onRun,
   onUpload,
+  onRemoveReference,
   onTitleChange,
   onToolbarAction,
   onOpenLightbox,
@@ -221,6 +224,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   onSelectNode,
   onPromptPointerDown,
   onPromptFocusWithinChange,
+  promptFocusRequestId,
 }: ImageGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   const [suppressTransientUi, setSuppressTransientUi] = useState(false);
@@ -600,6 +604,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         generating={isGenerating}
         canUsePromptPresets={canUsePromptPresets}
         connectedImages={connectedImages}
+        focusRequestId={promptFocusRequestId}
         onPromptChange={handlePromptChange}
         onModelChange={handleModelChange}
         onAspectRatioChange={handleAspectRatioChange}
@@ -610,6 +615,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         onParallelCountChange={handleParallelCountChange}
         onRun={onRun}
         onAddReference={onUpload}
+        onRemoveReference={onRemoveReference}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={onPromptFocusWithinChange}
       />

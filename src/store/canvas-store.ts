@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 import { stripImagePromptSectionLabels } from "@/lib/image-prompt";
 import {
+  reconcileReferenceMentionTokens,
   selectMentionedReferences,
   stripReferenceMentionTokens,
 } from "@/lib/prompt-mentions";
@@ -29,6 +30,7 @@ import type {
   ImageGenerationResultItem,
   ImageGenerationNodeData,
   ImageNodeData,
+  MaterialLibraryItem,
   NodeGroup,
   NodeType,
   ProjectOutputHistoryItem,
@@ -109,6 +111,7 @@ type CanvasHistorySnapshot = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materials: MaterialLibraryItem[];
 };
 
 let lastCanvasHistoryPushAt = 0;
@@ -656,14 +659,118 @@ async function normalizeReferenceImagesViaOss(
   return requestImages;
 }
 
-function normalizeReferenceImagesForRequest(
+function isLocalImageHostingUrl(value: string): boolean {
+  const trimmed = value.trim();
+
+  if (trimmed.startsWith("/api/image-hosting/file/")) {
+    return true;
+  }
+
+  if (!/^https?:\/\//i.test(trimmed) || typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return (
+      url.origin === window.location.origin &&
+      url.pathname.startsWith("/api/image-hosting/file/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldHostReferenceImageBeforeRequest(value: string): boolean {
+  const trimmed = value.trim();
+
+  if (!trimmed || trimmed.startsWith("data:") || isLocalImageHostingUrl(trimmed)) {
+    return false;
+  }
+
+  return isObjectUrl(trimmed) || isSameOriginUrl(trimmed);
+}
+
+async function hostReferenceImageForRequest(image: {
+  imageUrl: string;
+  fileName?: string;
+}): Promise<string> {
+  const url = image.imageUrl.trim();
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to read reference image before local upload (${response.status})`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "";
+
+  if (contentType && !contentType.startsWith("image/")) {
+    throw new Error("Reference image URL did not return an image");
+  }
+
+  const blob = await response.blob();
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string" && reader.result.trim()) {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Failed to read reference image data"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read reference image data"));
+    reader.readAsDataURL(blob);
+  });
+  const uploadResponse = await fetch("/api/image-hosting/upload", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      dataUrl,
+      fileName: image.fileName,
+    }),
+  });
+  const json = await readJsonResponse<
+    | { ok: true; result: { imageUrl: string } }
+    | ApiErrorResponse
+  >(uploadResponse, "Failed to host reference image");
+
+  if (!uploadResponse.ok || !json.ok) {
+    throw new Error("error" in json ? json.error : "Failed to host reference image");
+  }
+
+  return json.result.imageUrl;
+}
+
+async function normalizeReferenceImagesForRequest(
   images: ConnectedImagePayload[],
-): Array<{ url: string; fileName?: string }> {
+): Promise<Array<{ url: string; fileName?: string }>> {
+  const uploadCache = new Map<string, Promise<string>>();
   const requestImages: Array<{ url: string; fileName?: string }> = [];
   const seenRequestUrls = new Set<string>();
 
   for (const image of images) {
-    const requestUrl = image.imageUrl.trim();
+    const cacheKey =
+      image.hostedImageUrl?.trim() ||
+      image.originalImageUrl?.trim() ||
+      image.imageUrl.trim();
+    const normalizedPromise =
+      uploadCache.get(cacheKey) ??
+      (shouldHostReferenceImageBeforeRequest(image.imageUrl)
+        ? hostReferenceImageForRequest({
+            imageUrl: image.imageUrl,
+            fileName: image.fileName,
+          })
+        : Promise.resolve(image.imageUrl.trim()));
+
+    uploadCache.set(cacheKey, normalizedPromise);
+
+    const requestUrl = (await normalizedPromise).trim();
 
     if (!requestUrl || seenRequestUrls.has(requestUrl)) {
       continue;
@@ -780,6 +887,7 @@ function createSnapshot(state: {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materials: MaterialLibraryItem[];
 }): ProjectSnapshot {
   return buildProjectSnapshot({
     id: state.projectId ?? crypto.randomUUID(),
@@ -787,6 +895,7 @@ function createSnapshot(state: {
     nodes: sanitizeNodesForPersistence(state.nodes),
     edges: state.edges,
     groups: state.groups,
+    materials: sanitizeMaterialsForPersistence(state.materials),
     createdAt: state.projectCreatedAt ?? undefined,
     updatedAt: nowIso(),
   });
@@ -955,6 +1064,29 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
   });
 }
 
+function sanitizeMaterialsForPersistence(materials: MaterialLibraryItem[]): MaterialLibraryItem[] {
+  return materials.map((item) => {
+    if (!item.outputFileName?.trim()) {
+      return item;
+    }
+
+    return {
+      ...item,
+      imageUrl: `output:${item.outputFileName}`,
+      hostedImageUrl: undefined,
+    };
+  });
+}
+
+function getPersistentProjectSnapshotSignature(
+  value: Pick<ProjectSnapshot, "name" | "nodes" | "edges" | "groups" | "materials">,
+): string {
+  return getProjectSnapshotSignature({
+    ...value,
+    materials: sanitizeMaterialsForPersistence(value.materials ?? []),
+  });
+}
+
 function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
   const urls = new Set<string>();
 
@@ -982,13 +1114,15 @@ function computeDirtyState(state: {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materials: MaterialLibraryItem[];
   lastSavedSignature: string;
 }): boolean {
-  const currentSignature = getProjectSnapshotSignature({
+  const currentSignature = getPersistentProjectSnapshotSignature({
     name: state.projectName,
     nodes: state.nodes,
     edges: state.edges,
     groups: state.groups,
+    materials: state.materials,
   });
 
   return currentSignature !== state.lastSavedSignature;
@@ -999,21 +1133,24 @@ function createCanvasHistorySnapshot(state: {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materials: MaterialLibraryItem[];
 }): CanvasHistorySnapshot {
   return {
     projectName: state.projectName,
     nodes: state.nodes,
     edges: state.edges,
     groups: state.groups,
+    materials: state.materials,
   };
 }
 
 function getCanvasHistorySignature(snapshot: CanvasHistorySnapshot): string {
-  return getProjectSnapshotSignature({
+  return getPersistentProjectSnapshotSignature({
     name: snapshot.projectName,
     nodes: snapshot.nodes,
     edges: snapshot.edges,
     groups: snapshot.groups,
+    materials: snapshot.materials,
   });
 }
 
@@ -1669,6 +1806,7 @@ export interface CanvasState {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materials: MaterialLibraryItem[];
   loading: boolean;
   error: string | null;
   dirty: boolean;
@@ -1700,6 +1838,8 @@ export interface CanvasState {
   removeNodeFromGroup: (groupId: string, nodeId: string) => void;
   updateGroupBounds: (groupId: string, bounds: Partial<{ x: number; y: number; width: number; height: number }>) => void;
   moveGroup: (groupId: string, dx: number, dy: number) => void;
+  addMaterial: (item: Omit<MaterialLibraryItem, "id" | "createdAt">) => MaterialLibraryItem;
+  deleteMaterial: (id: string) => void;
 
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
   generateImageFromImageGenerationNode: (
@@ -1722,6 +1862,10 @@ export interface CanvasState {
     nodeId: string,
     cropRect: { x: number; y: number; width: number; height: number },
   ) => Promise<void>;
+  removeReferenceImageFromImageGenerationNode: (
+    imageGenerationNodeId: string,
+    referenceImageId: string,
+  ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
@@ -1770,15 +1914,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   nodes: [],
   edges: [],
   groups: [],
+  materials: [],
   loading: false,
   error: null,
   dirty: false,
   lastSavedAt: null,
-  lastSavedSignature: getProjectSnapshotSignature({
+  lastSavedSignature: getPersistentProjectSnapshotSignature({
     name: "Untitled",
     nodes: [],
     edges: [],
     groups: [],
+    materials: [],
   }),
   saveMessage: null,
   undoStack: [],
@@ -2026,6 +2172,50 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addMaterial: (item) => {
+    const normalizedName = item.name.trim();
+    const existing = get().materials.find(
+      (candidate) =>
+        candidate.name.trim() === normalizedName &&
+        candidate.category === item.category,
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const nextItem: MaterialLibraryItem = {
+      ...item,
+      name: normalizedName,
+      id: crypto.randomUUID(),
+      createdAt: nowIso(),
+    };
+
+    set((state) => ({
+      ...createUndoHistoryUpdate(state),
+      materials: [...state.materials, nextItem],
+      dirty: true,
+      error: null,
+    }));
+
+    return nextItem;
+  },
+
+  deleteMaterial: (id) => {
+    set((state) => {
+      if (!state.materials.some((item) => item.id === id)) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materials: state.materials.filter((item) => item.id !== id),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   generateTextFromTextNode: async (textNodeId) => {
     const state = get();
     const textNode = state.nodes.find(
@@ -2170,6 +2360,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: state.nodes,
         edges: state.edges,
         groups: state.groups,
+        materials: state.materials,
         lastSavedSignature: state.lastSavedSignature,
       }),
       error: null,
@@ -2197,6 +2388,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: previous.nodes,
         edges: previous.edges,
         groups: previous.groups,
+        materials: previous.materials,
         undoStack: state.undoStack.slice(0, -1),
         redoStack: [...state.redoStack, current].slice(-CANVAS_HISTORY_LIMIT),
         dirty: getCanvasHistorySignature(previous) !== state.lastSavedSignature,
@@ -2222,6 +2414,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: next.nodes,
         edges: next.edges,
         groups: next.groups,
+        materials: next.materials,
         undoStack: [...state.undoStack, current].slice(-CANVAS_HISTORY_LIMIT),
         redoStack: state.redoStack.slice(0, -1),
         dirty: getCanvasHistorySignature(next) !== state.lastSavedSignature,
@@ -2236,7 +2429,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectName: snapshot.name,
       projectCreatedAt: snapshot.createdAt,
       lastSavedAt: snapshot.updatedAt,
-      lastSavedSignature: getProjectSnapshotSignature(snapshot),
+      lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
       dirty: false,
     });
   },
@@ -2343,7 +2536,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const selfGeneratedReferences = normalizedPromptOverride
+      const shouldUseSelfGeneratedReference =
+        Boolean(normalizedPromptOverride) && connectedImages.length === 0;
+      const selfGeneratedReferences = shouldUseSelfGeneratedReference
         ? getGeneratedImageReferenceForImageGenerationNode(latestImageGenerationNode)
         : [];
       const referenceImages = [
@@ -2354,7 +2549,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         referenceImages.length > 0
           ? SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS
             ? await normalizeReferenceImagesViaOss(referenceImages)
-            : normalizeReferenceImagesForRequest(referenceImages)
+            : await normalizeReferenceImagesForRequest(referenceImages)
           : undefined;
 
       if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS && requestImages?.length) {
@@ -3076,6 +3271,89 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  removeReferenceImageFromImageGenerationNode: (
+    imageGenerationNodeId,
+    referenceImageId,
+  ) => {
+    set((state) => {
+      const imageGenerationNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+          node.id === imageGenerationNodeId && node.type === "image_generation",
+      );
+
+      if (!imageGenerationNode) {
+        return state;
+      }
+
+      const inlineReferenceImages =
+        imageGenerationNode.data.referenceImages ?? [];
+      const nextInlineReferenceImages = inlineReferenceImages.filter(
+        (image) => image.id !== referenceImageId,
+      );
+      const removedInline =
+        nextInlineReferenceImages.length !== inlineReferenceImages.length;
+      const nextEdges = removedInline
+        ? state.edges
+        : state.edges.filter(
+            (edge) =>
+              !(
+                edge.target === imageGenerationNodeId &&
+                edge.source === referenceImageId
+              ),
+          );
+      const removedEdge = nextEdges.length !== state.edges.length;
+
+      if (!removedInline && !removedEdge) {
+        return state;
+      }
+
+      const nextNodes = state.nodes.map((node) => {
+        if (node.id !== imageGenerationNodeId || node.type !== "image_generation") {
+          return node;
+        }
+
+        const nextNode: Extract<CanvasNode, { type: "image_generation" }> = {
+          ...node,
+          data: {
+            ...node.data,
+            referenceImages: nextInlineReferenceImages,
+            prompt: reconcileReferenceMentionTokens(
+              node.data.prompt,
+              getImageGenerationReferenceImages(
+                state.nodes.map((currentNode) =>
+                  currentNode.id === imageGenerationNodeId &&
+                  currentNode.type === "image_generation"
+                    ? {
+                        ...currentNode,
+                        data: {
+                          ...currentNode.data,
+                          referenceImages: nextInlineReferenceImages,
+                        },
+                      }
+                    : currentNode,
+                ),
+                nextEdges,
+                imageGenerationNodeId,
+              ),
+            ),
+            status: node.data.status === "error" ? "idle" : node.data.status,
+            errorMessage: undefined,
+          },
+        };
+
+        return nextNode;
+      });
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: nextNodes,
+        edges: nextEdges,
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   getConnectedImagesForImageGenerationNode: (imageGenerationNodeId) => {
     const state = get();
     return getImageGenerationReferenceImages(
@@ -3099,15 +3377,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [],
       edges: [],
       groups: [],
+      materials: [],
       loading: false,
       error: null,
       dirty: false,
       lastSavedAt: null,
-      lastSavedSignature: getProjectSnapshotSignature({
+      lastSavedSignature: getPersistentProjectSnapshotSignature({
         name: nextName,
         nodes: [],
         edges: [],
         groups: [],
+        materials: [],
       }),
       saveMessage: null,
       undoStack: [],
@@ -3143,7 +3423,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         error: null,
         dirty: false,
         lastSavedAt: savedSnapshot.updatedAt,
-        lastSavedSignature: getProjectSnapshotSignature(savedSnapshot),
+        lastSavedSignature: getPersistentProjectSnapshotSignature(savedSnapshot),
       });
 
       return savedSnapshot;
@@ -3173,11 +3453,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: hydrated.snapshot.nodes,
         edges: hydrated.snapshot.edges,
         groups: hydrated.snapshot.groups ?? [],
+        materials: hydrated.snapshot.materials ?? [],
         loading: false,
         error: null,
         dirty: false,
         lastSavedAt: hydrated.snapshot.updatedAt,
-        lastSavedSignature: getProjectSnapshotSignature(hydrated.snapshot),
+        lastSavedSignature: getPersistentProjectSnapshotSignature(hydrated.snapshot),
         undoStack: [],
         redoStack: [],
       });
@@ -3235,6 +3516,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             nodes: state.nodes,
             edges: state.edges,
             groups: state.groups,
+            materials: state.materials,
             lastSavedSignature: state.lastSavedSignature,
           }),
         }));
@@ -3278,11 +3560,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: snapshot.nodes,
       edges: snapshot.edges,
       groups: snapshot.groups ?? [],
+      materials: snapshot.materials ?? [],
       loading: false,
       error: null,
       dirty: false,
       lastSavedAt: snapshot.updatedAt,
-      lastSavedSignature: getProjectSnapshotSignature(snapshot),
+      lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
       saveMessage: null,
       undoStack: [],
       redoStack: [],

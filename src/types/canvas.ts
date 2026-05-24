@@ -145,12 +145,36 @@ export interface NodeGroup {
   height: number;
 }
 
+export type MaterialLibraryCategory =
+  | "人物"
+  | "场景"
+  | "物品"
+  | "风格"
+  | "其他";
+
+export interface MaterialLibraryItem {
+  id: string;
+  name: string;
+  category: MaterialLibraryCategory;
+  imageUrl: string;
+  hostedImageUrl?: string;
+  fileName?: string;
+  outputFileName?: string;
+  sourceNodeType?: "image_generation" | "image" | "uploaded_image";
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  format?: string;
+  createdAt: string;
+}
+
 export interface ProjectSnapshot {
   id: string;
   name: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups?: NodeGroup[];
+  materials?: MaterialLibraryItem[];
   createdAt: string;
   updatedAt: string;
 }

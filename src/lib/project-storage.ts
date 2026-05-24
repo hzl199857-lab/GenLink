@@ -3,6 +3,8 @@
 import type {
   CanvasNode,
   ImageGenerationNodeData,
+  MaterialLibraryCategory,
+  MaterialLibraryItem,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
 } from "@/types/canvas";
@@ -210,6 +212,78 @@ function compactOutputSourceKey(sourceKey: string | undefined, fileName: string)
   }
 
   return `file:${fileName}`;
+}
+
+function normalizeMaterialCategory(value: unknown): MaterialLibraryCategory | null {
+  return value === "人物" ||
+    value === "场景" ||
+    value === "物品" ||
+    value === "风格" ||
+    value === "其他"
+    ? value
+    : null;
+}
+
+function normalizeMaterialLibraryItems(value: unknown): MaterialLibraryItem[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items = value.flatMap((item, index): MaterialLibraryItem[] => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const category = normalizeMaterialCategory(record.category);
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    const imageUrl = typeof record.imageUrl === "string" ? record.imageUrl.trim() : "";
+
+    if (!category || !name || !imageUrl) {
+      return [];
+    }
+
+    return [{
+      id:
+        typeof record.id === "string" && record.id.trim()
+          ? record.id
+          : `material-${index}`,
+      name,
+      category,
+      imageUrl,
+      hostedImageUrl:
+        typeof record.hostedImageUrl === "string" && record.hostedImageUrl.trim()
+          ? record.hostedImageUrl
+          : undefined,
+      fileName:
+        typeof record.fileName === "string" && record.fileName.trim()
+          ? record.fileName
+          : undefined,
+      outputFileName:
+        typeof record.outputFileName === "string" && record.outputFileName.trim()
+          ? record.outputFileName
+          : undefined,
+      sourceNodeType:
+        record.sourceNodeType === "image_generation" ||
+        record.sourceNodeType === "image" ||
+        record.sourceNodeType === "uploaded_image"
+          ? record.sourceNodeType
+          : undefined,
+      width: typeof record.width === "number" ? record.width : undefined,
+      height: typeof record.height === "number" ? record.height : undefined,
+      sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+      format:
+        typeof record.format === "string" && record.format.trim()
+          ? record.format
+          : undefined,
+      createdAt:
+        typeof record.createdAt === "string" && record.createdAt.trim()
+          ? record.createdAt
+          : new Date(0).toISOString(),
+    }];
+  });
+
+  return items.length > 0 ? items : undefined;
 }
 
 export function stripEmbeddedImageDataFromNodeData(
@@ -632,7 +706,10 @@ async function readProjectSnapshotInternal(
     throw new Error("\u9879\u76ee\u6587\u4ef6\u635f\u574f\uff0c\u65e0\u6cd5\u8bfb\u53d6");
   }
 
-  return parsed;
+  return {
+    ...parsed,
+    materials: normalizeMaterialLibraryItems(parsed.materials),
+  };
 }
 
 async function findFirstImageFileRecursive(
@@ -1130,6 +1207,23 @@ function resolveSourceKeyFromNode(node: CanvasNode): string | null {
   return `${node.id}:${generatedAt}:${imageUrl}`;
 }
 
+function resolveOutputFileNameFromMaterial(item: MaterialLibraryItem): string | null {
+  const outputFileName = item.outputFileName?.trim();
+
+  if (outputFileName) {
+    return outputFileName;
+  }
+
+  const fileName = item.fileName?.trim();
+  const sourceUrl = item.imageUrl.trim();
+
+  if (fileName && sourceUrl === `output:${fileName}`) {
+    return fileName;
+  }
+
+  return null;
+}
+
 function withResolvedPreviewUrl(
   previewUrl: string,
   fileName: string,
@@ -1178,6 +1272,32 @@ export async function hydrateProjectSnapshotPreviewUrls(
   }
 
   const previewUrls: string[] = [];
+  const materials = await Promise.all(
+    (snapshot.materials ?? []).map(async (item) => {
+      const fileName = resolveOutputFileNameFromMaterial(item);
+
+      if (!fileName) {
+        return item;
+      }
+
+      const file = await readOutputPreviewFile(project.projectHandle, fileName);
+
+      if (!file) {
+        return item;
+      }
+
+      const previewUrl = URL.createObjectURL(file);
+      previewUrls.push(previewUrl);
+
+      return {
+        ...item,
+        imageUrl: previewUrl,
+        hostedImageUrl: previewUrl,
+        outputFileName: fileName,
+        fileName: item.fileName ?? fileName,
+      };
+    }),
+  );
   const nodes = await Promise.all(
     snapshot.nodes.map(async (node) => {
       if (node.type !== "image_generation") {
@@ -1213,6 +1333,7 @@ export async function hydrateProjectSnapshotPreviewUrls(
     snapshot: {
       ...snapshot,
       nodes,
+      materials,
     },
     previewUrls,
   };

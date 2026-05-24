@@ -9,9 +9,12 @@ import {
   Expand,
   FolderPlus,
   Group,
+  Image as ImageIcon,
   Grid2x2,
   Map as MapIcon,
+  MousePointer2,
   Plus,
+  Type,
   Rows3,
   X,
   Check,
@@ -65,6 +68,7 @@ import type {
   CanvasEdge,
   CanvasNode,
   ImageHistoryItem,
+  MaterialLibraryItem,
   NodeGroup,
   NodeType,
   TextNodeData,
@@ -95,6 +99,8 @@ import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasHeader } from './CanvasHeader';
 import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
+import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLibraryDialog';
+import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { downloadImageGenerationResult } from '@/lib/image-download';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
@@ -111,6 +117,9 @@ let notifyImageToolbarAction:
   | null = null;
 let notifyUploadedImageToolbarAction:
   | ((action: ImageGenerationToolbarAction, nodeId: string, data: UploadedImageNodeData, cardLayout: { left: number; top: number; width: number; height: number } | null) => void)
+  | null = null;
+let notifyMaterialLibraryRequest:
+  | ((source: PendingMaterialSource) => void)
   | null = null;
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
@@ -938,6 +947,90 @@ function createUploadedImageNode(
   };
 }
 
+function createUploadedImageNodeFromMaterial(
+  item: MaterialLibraryItem,
+  position: { x: number; y: number },
+): CanvasNode {
+  const imageUrl = item.hostedImageUrl?.trim() || item.imageUrl.trim();
+  const width = item.width || 320;
+  const height = item.height || 320;
+
+  return createUploadedImageNode(
+    {
+      title: item.name,
+      imageUrl,
+      hostedImageUrl: imageUrl,
+      fileName: item.fileName || item.outputFileName,
+      width,
+      height,
+      sizeBytes: item.sizeBytes,
+    },
+    position,
+  );
+}
+
+function createMaterialSourceFromImageGenerationData(
+  data: ImageGenerationNodeData,
+): PendingMaterialSource | null {
+  const imageUrl = data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim();
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return {
+    defaultName: data.title?.trim() || '图片素材',
+    imageUrl: data.generatedOutputFileName ? `output:${data.generatedOutputFileName}` : imageUrl,
+    hostedImageUrl: imageUrl,
+    outputFileName: data.generatedOutputFileName,
+    fileName: data.generatedOutputFileName,
+    sourceNodeType: 'image_generation',
+    width: data.generatedImageWidth,
+    height: data.generatedImageHeight,
+    sizeBytes: data.generatedImageSizeBytes,
+    format: data.generatedImageFormat,
+  };
+}
+
+function createMaterialSourceFromImageNodeData(data: ImageNodeData): PendingMaterialSource | null {
+  const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return {
+    defaultName: data.title?.trim() || '图片素材',
+    imageUrl,
+    hostedImageUrl: data.hostedImageUrl,
+    sourceNodeType: 'image',
+    width: data.width,
+    height: data.height,
+    sizeBytes: data.sizeBytes,
+  };
+}
+
+function createMaterialSourceFromUploadedImageData(
+  data: UploadedImageNodeData,
+): PendingMaterialSource | null {
+  const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return {
+    defaultName: data.title?.trim() || data.fileName?.trim() || '图片素材',
+    imageUrl,
+    hostedImageUrl: data.hostedImageUrl,
+    fileName: data.fileName,
+    sourceNodeType: 'uploaded_image',
+    width: data.width,
+    height: data.height,
+    sizeBytes: data.sizeBytes,
+  };
+}
+
 const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateText = useCanvasStore((s) => s.generateTextFromTextNode);
@@ -947,6 +1040,18 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
   const [promptFocused, setPromptFocused] = useState(false);
   const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+  const lastFocusRequestIdRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const focusRequestId = renderData.canvasFocusRequestId;
+
+    if (!focusRequestId || lastFocusRequestIdRef.current === focusRequestId) {
+      return;
+    }
+
+    lastFocusRequestIdRef.current = focusRequestId;
+    setEditing(true);
+  }, [renderData.canvasFocusRequestId]);
 
   useEffect(() => {
     const handleClearNodeUi = () => {
@@ -991,6 +1096,9 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
 const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateImage = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
+  const removeReferenceImage = useCanvasStore(
+    (s) => s.removeReferenceImageFromImageGenerationNode,
+  );
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForImageGenerationNode(id),
   );
@@ -1017,6 +1125,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
       onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
       onRun={(promptOverride) => generateImage(id, promptOverride)}
       onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
+      onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
       onToolbarAction={(action) => notifyImageToolbarAction?.(action, data as ImageGenerationNodeData)}
       onOpenLightbox={(next) => notifyImageToolbarAction?.('expand', next)}
       onImageCardClick={() => notifyCanvasImageInfoRequest?.(id)}
@@ -1031,6 +1140,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         }
         setPromptFocused(focused);
       }}
+      promptFocusRequestId={renderData.canvasFocusRequestId}
     />
   );
 });
@@ -1082,6 +1192,13 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
 
   const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
     switch (action) {
+      case 'organize': {
+        const source = createMaterialSourceFromImageNodeData(imageData);
+        if (source) {
+          notifyMaterialLibraryRequest?.(source);
+        }
+        break;
+      }
       case 'download': {
         const url = imageData.hostedImageUrl || imageData.imageUrl;
         if (url) {
@@ -1557,7 +1674,10 @@ function layoutGroupNodes(groupId: string, mode: GroupLayoutMode) {
 
 type CanvasNodeRenderData = CanvasNode['data'] & {
   canvasNodeActive?: boolean;
+  canvasFocusRequestId?: number;
 };
+
+type EmptyCanvasWelcomeAction = 'text' | 'image_generation';
 
 function getImageImportPosition(
   basePosition: { x: number; y: number },
@@ -1656,6 +1776,22 @@ function isTypingTarget(target: EventTarget | null): boolean {
     target instanceof HTMLTextAreaElement ||
     target.isContentEditable
   );
+}
+
+function isNodeCardFocusTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (
+    target.closest(
+      'button, input, textarea, select, [contenteditable="true"], [data-canvas-menu-ignore="true"], .node-visible-title',
+    )
+  ) {
+    return false;
+  }
+
+  return Boolean(target.closest('.node-connectable-card'));
 }
 
 function getClipboardImageFiles(data: DataTransfer | null): File[] {
@@ -4059,6 +4195,52 @@ function ImageLightbox({
   );
 }
 
+function EmptyCanvasWelcome({
+  onCreateNode,
+}: {
+  onCreateNode: (action: EmptyCanvasWelcomeAction) => void;
+}) {
+  return (
+    <div
+      className="pointer-events-none fixed left-1/2 top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-3 px-5"
+      data-canvas-menu-ignore="true"
+    >
+      <div className="flex flex-wrap items-center justify-center gap-3 text-center">
+        <span className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/12 bg-white/[0.08] px-4 text-[14px] font-semibold text-gl-text-primary shadow-[0_12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+          <MousePointer2 size={16} className="text-gl-text-secondary" />
+          双击
+        </span>
+        <span className="text-[18px] font-medium text-gl-text-secondary">
+          画布自由生成
+        </span>
+      </div>
+
+      <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={() => onCreateNode('text')}
+          className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
+        >
+          <Type size={15} strokeWidth={2} />
+          生文本
+        </button>
+        <button
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={() => onCreateNode('image_generation')}
+          className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
+        >
+          <ImageIcon size={15} strokeWidth={2} />
+          生图像
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface InnerCanvasProps {
   onBackToLibrary?: () => void;
 }
@@ -4094,6 +4276,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const addEdgeStore = useCanvasStore((s) => s.addEdge);
   const deleteEdge = useCanvasStore((s) => s.deleteEdge);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const materials = useCanvasStore((s) => s.materials);
+  const addMaterial = useCanvasStore((s) => s.addMaterial);
+  const deleteMaterial = useCanvasStore((s) => s.deleteMaterial);
   const storeGroups = useCanvasStore((s) => s.groups);
   const createGroup = useCanvasStore((s) => s.createGroup);
   const deleteGroup = useCanvasStore((s) => s.deleteGroup);
@@ -4104,6 +4289,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const selectedNodeIdsRef = useRef<Set<string>>(selectedNodeIds);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [nodeFocusRequest, setNodeFocusRequest] = useState<{
+    nodeId: string;
+    requestId: number;
+  } | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
@@ -4124,6 +4313,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [cropMode, setCropMode] = useState<CropOverlayData | null>(null);
   const [historyAnchor, setHistoryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
+  const [materialLibraryAnchor, setMaterialLibraryAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [pendingMaterialSource, setPendingMaterialSource] = useState<PendingMaterialSource | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
@@ -4161,6 +4352,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       data: {
         ...n.data,
         canvasNodeActive: activeNodeId === n.id,
+        canvasFocusRequestId: nodeFocusRequest?.nodeId === n.id
+          ? nodeFocusRequest.requestId
+          : undefined,
       },
       selected: selectedNodeIds.has(n.id),
       dragHandle:
@@ -4190,7 +4384,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     return nodes;
-  }, [activeNodeId, connectionMenu, storeNodes, selectedNodeIds]);
+  }, [activeNodeId, connectionMenu, nodeFocusRequest, storeNodes, selectedNodeIds]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
     const edgeType = getReactFlowEdgeType(edgeStyle);
@@ -4273,6 +4467,23 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
   const { fitBounds, fitView, getViewport, project, setViewport } = useReactFlow();
 
+  const showProjectMessage = useCallback((message: string) => {
+    setSaveMessage(message);
+    window.setTimeout(() => {
+      setSaveMessage(null);
+    }, 2200);
+  }, [setSaveMessage]);
+
+  const focusSingleNodeViewport = useCallback((nodeId: string) => {
+    smartResetFocusedSelectionRef.current = true;
+    void fitView({
+      duration: 220,
+      maxZoom: CANVAS_MAX_ZOOM,
+      nodes: [{ id: nodeId }],
+      padding: 0.32,
+    });
+  }, [fitView]);
+
   const handleSmartResetViewport = useCallback(() => {
     const selectedGroup = selectedGroupId
       ? storeGroups.find((group) => group.id === selectedGroupId) ?? null
@@ -4352,7 +4563,31 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, []);
 
   useEffect(() => {
+    notifyMaterialLibraryRequest = (source) => {
+      setPendingMaterialSource(source);
+      setImageInfoPopover(null);
+      setImageLightbox(null);
+    };
+
+    return () => {
+      notifyMaterialLibraryRequest = null;
+    };
+  }, []);
+
+  useEffect(() => {
     notifyImageToolbarAction = (action, data) => {
+      if (action === 'organize') {
+        const source = createMaterialSourceFromImageGenerationData(data);
+
+        if (!source) {
+          showProjectMessage('当前节点没有可加入素材库的图片');
+          return;
+        }
+
+        notifyMaterialLibraryRequest?.(source);
+        return;
+      }
+
       if (action === 'crop') {
         const targetNode = storeNodes.find(
           (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
@@ -4479,7 +4714,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         notifyImageToolbarAction = null;
       }
     };
-  }, [cropImageGenerationNode, getViewport, setCropMode, setSaveMessage, setViewport, splitImageGenerationNodeToGrid, storeNodes]);
+  }, [cropImageGenerationNode, getViewport, setCropMode, setSaveMessage, setViewport, showProjectMessage, splitImageGenerationNodeToGrid, storeNodes]);
 
   useEffect(() => {
     notifyUploadedImageToolbarAction = (action, nodeId, data, cardLayout) => {
@@ -4533,6 +4768,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         return;
       }
 
+      if (action === 'organize') {
+        const source = createMaterialSourceFromUploadedImageData(data);
+
+        if (!source) {
+          showProjectMessage('当前节点没有可加入素材库的图片');
+          return;
+        }
+
+        notifyMaterialLibraryRequest?.(source);
+        return;
+      }
+
       if (action === 'expand') {
         const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
         if (imageUrl) {
@@ -4570,7 +4817,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     return () => {
       notifyUploadedImageToolbarAction = null;
     };
-  }, [getViewport, setCropMode, setSaveMessage, setViewport, splitUploadedImageNodeToGrid, storeNodes]);
+  }, [getViewport, setCropMode, setSaveMessage, setViewport, showProjectMessage, splitUploadedImageNodeToGrid, storeNodes]);
 
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {
@@ -4611,6 +4858,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setActiveNodeId(nodeId);
     setSelectedGroupId(null);
     clearEdgeSelection();
+  }, [clearEdgeSelection]);
+
+  const focusCreatedNode = useCallback((nodeId: string) => {
+    setSelectedNodeIds(new Set([nodeId]));
+    setActiveNodeId(nodeId);
+    setSelectedGroupId(null);
+    clearEdgeSelection();
+    setNodeFocusRequest({
+      nodeId,
+      requestId: Date.now(),
+    });
   }, [clearEdgeSelection]);
 
   useEffect(() => {
@@ -4744,6 +5002,20 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     selectSingleNode(node.id);
   }, [clearEdgeSelection, selectSingleNode]);
+
+  const handleNodeDoubleClick = useCallback((
+    event: React.MouseEvent,
+    node: ReactFlowNode,
+  ) => {
+    if (!isNodeCardFocusTarget(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    selectSingleNode(node.id);
+    focusSingleNodeViewport(node.id);
+  }, [focusSingleNodeViewport, selectSingleNode]);
 
   const handleSelectionChange = useCallback(({ nodes }: { nodes: ReactFlowNode[] }) => {
     if (paneGroupDragRef.current) {
@@ -5428,7 +5700,54 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     referenceUploadNodeIdRef.current = null;
   }, [addUploadedImages, storeNodes, updateNodeData]);
 
+  const handleSelectMaterial = useCallback((
+    item: MaterialLibraryItem,
+    screenPosition?: { x: number; y: number },
+  ) => {
+    const screenPoint =
+      screenPosition && Number.isFinite(screenPosition.x) && Number.isFinite(screenPosition.y)
+        ? screenPosition
+        : {
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+          };
+    const center = project(screenPoint);
+    const position = findOpenHistoryNodePosition(
+      {
+        x: center.x - HISTORY_NODE_WIDTH / 2,
+        y: center.y - 260,
+      },
+      storeNodes,
+    );
+    const node = createUploadedImageNodeFromMaterial(item, position);
+
+    addNodes([node]);
+    setSelectedNodeIds(new Set([node.id]));
+    setActiveNodeId(node.id);
+    clearEdgeSelection();
+  }, [addNodes, clearEdgeSelection, project, storeNodes]);
+
   const handleImageDrop = useCallback((event: React.DragEvent) => {
+    const materialId = event.dataTransfer.getData('application/x-genlink-material-id');
+
+    if (materialId) {
+      const material = materials.find((item) => item.id === materialId);
+
+      if (!material) {
+        return;
+      }
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      setAddMenu(null);
+      setImageInfoPopover(null);
+      handleSelectMaterial(material, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+      return;
+    }
+
     const files = Array.from(event.dataTransfer.files).filter((item) => item.type.startsWith('image/'));
 
     if (files.length === 0) {
@@ -5442,7 +5761,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       files,
       project({ x: event.clientX, y: event.clientY }),
     );
-  }, [addUploadedImages, project]);
+  }, [addUploadedImages, handleSelectMaterial, materials, project]);
 
   const openAddMenuAtScreen = useCallback((screen: { x: number; y: number }) => {
     if (closeAddMenuTimeoutRef.current) {
@@ -5495,6 +5814,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clearConnectionMenu();
   }, [clearConnectionMenu, isNodeInternalTarget, project]);
 
+  const handleEmptyCanvasCreateNode = useCallback((action: EmptyCanvasWelcomeAction) => {
+    const canvasPosition = project({
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    });
+    const node = addNodeAtCenter(action, canvasPosition);
+
+    focusCreatedNode(node.id);
+    setAddMenu(null);
+    clearConnectionMenu();
+  }, [addNodeAtCenter, clearConnectionMenu, focusCreatedNode, project]);
+
   const handleAddMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (closeAddMenuTimeoutRef.current) {
       window.clearTimeout(closeAddMenuTimeoutRef.current);
@@ -5502,11 +5833,13 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     if (action === 'text' && addMenu) {
-      addNodeAtCenter('text', addMenu.canvas);
+      const node = addNodeAtCenter('text', addMenu.canvas);
+      focusCreatedNode(node.id);
     }
 
     if (action === 'image_generation' && addMenu) {
-      addNodeAtCenter('image_generation', addMenu.canvas);
+      const node = addNodeAtCenter('image_generation', addMenu.canvas);
+      focusCreatedNode(node.id);
     }
 
     if (action === 'upload' && addMenu) {
@@ -5514,14 +5847,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     setAddMenu(null);
-  }, [addMenu, addNodeAtCenter, openUploadPicker]);
-
-  const showProjectMessage = useCallback((message: string) => {
-    setSaveMessage(message);
-    window.setTimeout(() => {
-      setSaveMessage(null);
-    }, 2200);
-  }, [setSaveMessage]);
+  }, [addMenu, addNodeAtCenter, focusCreatedNode, openUploadPicker]);
 
   const addGroupConnectionEdges = useCallback((
     sourceRefs: GroupConnectionSource[],
@@ -5813,6 +6139,33 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clearConnectionMenu();
   }, [clearConnectionMenu]);
 
+  const toggleMaterialLibraryPanel = useCallback((anchor: DOMRect) => {
+    setMaterialLibraryAnchor((current) => {
+      if (current) {
+        return null;
+      }
+
+      return {
+        x: anchor.right + 16,
+        y: anchor.top - 72,
+      };
+    });
+    setHistoryAnchor(null);
+    setAddMenu(null);
+    clearConnectionMenu();
+  }, [clearConnectionMenu]);
+
+  const handleConfirmAddMaterial = useCallback((item: Omit<MaterialLibraryItem, 'id' | 'createdAt'>) => {
+    const existing = materials.find(
+      (candidate) =>
+        candidate.name.trim() === item.name.trim() &&
+        candidate.category === item.category,
+    );
+    addMaterial(item);
+    setPendingMaterialSource(null);
+    showProjectMessage(existing ? '素材已存在' : '已加入素材库');
+  }, [addMaterial, materials, showProjectMessage]);
+
   const handleSelectHistoryImage = useCallback(async (item: ImageHistoryItem) => {
     const viewportBeforeInsert = getViewport();
     const displayPrompt = getImageHistoryDisplayPrompt(item.nodeData);
@@ -5923,6 +6276,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       current.size === 1 && current.has(nextNode.id) ? current : new Set([nextNode.id]),
     );
     setActiveNodeId(nextNode.id);
+    setNodeFocusRequest({
+      nodeId: nextNode.id,
+      requestId: Date.now(),
+    });
     clearEdgeSelection();
     clearConnectionMenu();
   }, [
@@ -6182,6 +6539,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onEdgesChange={onEdgesChange}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
         onNodeDragStop={handleNodeDragStop}
         onSelectionChange={handleSelectionChange}
         onSelectionStart={handleSelectionStart}
@@ -6221,12 +6579,18 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         fitView
         onDrop={handleImageDrop}
         onDragOver={(event) => {
-          if (Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) {
+          if (
+            event.dataTransfer.types.includes('application/x-genlink-material-id') ||
+            Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')
+          ) {
             event.preventDefault();
             event.dataTransfer.dropEffect = 'copy';
           }
         }}
       >
+        {storeNodes.length === 0 && !loading ? (
+          <EmptyCanvasWelcome onCreateNode={handleEmptyCanvasCreateNode} />
+        ) : null}
         <Background
           gap={24}
           size={0.8}
@@ -6308,9 +6672,19 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onOpenAddMenu={openAddMenuAtScreen}
         onScheduleCloseAddMenu={scheduleCloseAddMenu}
         onOpenApiSettings={() => setApiSettingsOpen(true)}
+        onToggleMaterialLibrary={toggleMaterialLibraryPanel}
         onToggleHistory={toggleHistoryPopover}
         onSaveProject={() => void handleSaveProject()}
+        materialLibraryOpen={materialLibraryAnchor !== null}
         historyOpen={historyAnchor !== null}
+      />
+      <MaterialLibraryPanel
+        open={materialLibraryAnchor !== null}
+        anchor={materialLibraryAnchor}
+        materials={materials}
+        onClose={() => setMaterialLibraryAnchor(null)}
+        onSelectMaterial={handleSelectMaterial}
+        onDeleteMaterial={deleteMaterial}
       />
       <GenerationHistoryPopover
         key={historyOpenKey}
@@ -6328,6 +6702,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         key={imageLightbox?.imageUrl ?? 'image-lightbox-closed'}
         data={imageLightbox}
         onClose={() => setImageLightbox(null)}
+      />
+      <MaterialLibraryDialog
+        source={pendingMaterialSource}
+        existingMaterials={materials}
+        onClose={() => setPendingMaterialSource(null)}
+        onConfirm={handleConfirmAddMaterial}
       />
       <CropOverlay
         data={cropMode}

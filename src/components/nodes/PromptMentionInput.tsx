@@ -42,6 +42,7 @@ export interface PromptMentionInputProps {
   placeholder?: string;
   className?: string;
   style?: CSSProperties;
+  focusRequestId?: number;
   onChange?: (next: string) => void;
   onFocus?: () => void;
   onBlur?: () => void;
@@ -49,7 +50,7 @@ export interface PromptMentionInputProps {
 }
 
 function getMentionLabel(image: PromptMentionImage, index: number): string {
-  return `图片${index + 1}`;
+  return `\u56fe\u7247${index + 1}`;
 }
 
 function createPillElement(nodeId: string, label: string): HTMLSpanElement {
@@ -205,12 +206,27 @@ function setCaretAfter(node: Node) {
   selection.addRange(range);
 }
 
+function setCaretAtEnd(editor: HTMLDivElement) {
+  const selection = window.getSelection();
+
+  if (!selection) {
+    return;
+  }
+
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 export const PromptMentionInput = memo(function PromptMentionInput({
   value,
   connectedImages = [],
   placeholder,
   className,
   style,
+  focusRequestId,
   onChange,
   onFocus,
   onBlur,
@@ -218,6 +234,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
 }: PromptMentionInputProps) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastRenderedValueRef = useRef<string | null>(null);
+  const lastFocusRequestIdRef = useRef<number | undefined>(undefined);
   const composingRef = useRef(false);
   const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -320,6 +337,27 @@ export const PromptMentionInput = memo(function PromptMentionInput({
 
     setActiveIndex(0);
   }, [activeIndex, filteredOptions.length]);
+
+  useEffect(() => {
+    if (!focusRequestId || lastFocusRequestIdRef.current === focusRequestId) {
+      return;
+    }
+
+    lastFocusRequestIdRef.current = focusRequestId;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const editor = editorRef.current;
+
+      if (!editor) {
+        return;
+      }
+
+      editor.focus();
+      setCaretAtEnd(editor);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [focusRequestId]);
 
   useEffect(() => {
     if (!trigger) {
