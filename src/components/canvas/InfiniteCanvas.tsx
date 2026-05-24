@@ -49,11 +49,13 @@ import {
   CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY,
   CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY,
+  CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_API_PROVIDER_STORAGE_KEY,
   CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY,
   readStoredApiSettings,
@@ -6298,10 +6300,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     window.localStorage.setItem(CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY, values.textApiKeys.fucheers);
     window.localStorage.setItem(CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY, values.textApiKeys.comfly);
     window.localStorage.setItem(CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY, values.textApiKeys.zhenzhen);
+    window.localStorage.setItem(CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY, values.textApiKeys.runninghub);
     window.localStorage.setItem(CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY, values.imageApiKeys.vibe);
     window.localStorage.setItem(CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY, values.imageApiKeys.fucheers);
     window.localStorage.setItem(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY, values.imageApiKeys.comfly);
     window.localStorage.setItem(CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen);
+    window.localStorage.setItem(CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY, values.imageApiKeys.runninghub);
     setApiSettings(values);
   }, []);
 
@@ -6727,7 +6731,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         open={apiSettingsOpen}
         initialSettings={apiSettings}
         onClose={() => setApiSettingsOpen(false)}
-        onApply={persistApiSettings}
         onSave={handleSaveApiSettings}
       />
       <CreateProjectDialog

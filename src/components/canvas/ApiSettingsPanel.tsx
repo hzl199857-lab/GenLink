@@ -1,11 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Eye, EyeOff, X } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, X } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 import type {
-  ApiModelKind,
   ApiProvider,
   StoredApiSettings,
 } from '@/store/canvas-store';
@@ -14,20 +13,12 @@ export interface ApiSettingsPanelProps {
   open: boolean;
   initialSettings: StoredApiSettings;
   onClose?: () => void;
-  onApply?: (values: StoredApiSettings) => void;
   onSave?: (values: StoredApiSettings) => void;
 }
 
 type ProviderDraft = {
-  selectedProvider: ApiProvider;
-  expandedProvider: ApiProvider | null;
   apiKeys: Record<ApiProvider, string>;
 };
-
-const MODEL_TABS: Array<{ key: ApiModelKind; label: string }> = [
-  { key: 'text', label: '文本模型' },
-  { key: 'image', label: '图像模型' },
-];
 
 const PROVIDERS: Array<{
   key: ApiProvider;
@@ -54,6 +45,12 @@ const PROVIDERS: Array<{
     apiKeyLabel: 'Fucheers API Key',
   },
   {
+    key: 'runninghub',
+    label: 'RunningHub',
+    url: 'https://www.runninghub.cn',
+    apiKeyLabel: 'RunningHub API Key',
+  },
+  {
     key: 'zhenzhen',
     label: '真真 AI 工坊',
     url: 'https://ai.t8star.cn',
@@ -61,49 +58,44 @@ const PROVIDERS: Array<{
   },
 ];
 
-function createDraftFromSettings(settings: StoredApiSettings) {
-  const emptyApiKeys: Record<ApiProvider, string> = {
-    vibe: '',
-    fucheers: '',
-    comfly: '',
-    zhenzhen: '',
+const EMPTY_API_KEYS: Record<ApiProvider, string> = {
+  vibe: '',
+  fucheers: '',
+  comfly: '',
+  zhenzhen: '',
+  runninghub: '',
+};
+
+function createDraftFromSettings(settings: StoredApiSettings): ProviderDraft {
+  const apiKeys = { ...EMPTY_API_KEYS };
+
+  for (const provider of PROVIDERS) {
+    apiKeys[provider.key] =
+      settings.textApiKeys[provider.key]?.trim() ||
+      settings.imageApiKeys[provider.key]?.trim() ||
+      '';
+  }
+
+  return { apiKeys };
+}
+
+function createSettingsFromDraft(
+  draft: ProviderDraft,
+  previousSettings: StoredApiSettings,
+): StoredApiSettings {
+  const apiKeys: Record<ApiProvider, string> = {
+    vibe: (draft.apiKeys.vibe ?? '').trim(),
+    fucheers: (draft.apiKeys.fucheers ?? '').trim(),
+    comfly: (draft.apiKeys.comfly ?? '').trim(),
+    zhenzhen: (draft.apiKeys.zhenzhen ?? '').trim(),
+    runninghub: (draft.apiKeys.runninghub ?? '').trim(),
   };
 
   return {
-    text: {
-      selectedProvider: settings.textProvider,
-      expandedProvider: null,
-      apiKeys: { ...emptyApiKeys, ...settings.textApiKeys },
-    },
-    image: {
-      selectedProvider: settings.imageProvider,
-      expandedProvider: null,
-      apiKeys: { ...emptyApiKeys, ...settings.imageApiKeys },
-    },
-  } satisfies Record<ApiModelKind, ProviderDraft>;
-}
-
-function createSettingsFromDrafts(
-  drafts: Record<ApiModelKind, ProviderDraft>,
-): StoredApiSettings {
-  const textProvider = drafts.text.expandedProvider ?? drafts.text.selectedProvider;
-  const imageProvider = drafts.image.expandedProvider ?? drafts.image.selectedProvider;
-
-  return {
-    textProvider,
-    imageProvider,
-    textApiKeys: {
-      vibe: (drafts.text.apiKeys.vibe ?? '').trim(),
-      fucheers: (drafts.text.apiKeys.fucheers ?? '').trim(),
-      comfly: (drafts.text.apiKeys.comfly ?? '').trim(),
-      zhenzhen: (drafts.text.apiKeys.zhenzhen ?? '').trim(),
-    },
-    imageApiKeys: {
-      vibe: (drafts.image.apiKeys.vibe ?? '').trim(),
-      fucheers: (drafts.image.apiKeys.fucheers ?? '').trim(),
-      comfly: (drafts.image.apiKeys.comfly ?? '').trim(),
-      zhenzhen: (drafts.image.apiKeys.zhenzhen ?? '').trim(),
-    },
+    textProvider: previousSettings.textProvider,
+    imageProvider: previousSettings.imageProvider,
+    textApiKeys: apiKeys,
+    imageApiKeys: apiKeys,
   };
 }
 
@@ -111,101 +103,34 @@ export function ApiSettingsPanel({
   open,
   initialSettings,
   onClose,
-  onApply,
   onSave,
 }: ApiSettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<ApiModelKind>('text');
-  const [drafts, setDrafts] = useState<Record<ApiModelKind, ProviderDraft>>(() =>
+  const [draft, setDraft] = useState<ProviderDraft>(() =>
     createDraftFromSettings(initialSettings),
   );
-  const [revealed, setRevealed] = useState<Record<ApiModelKind, Record<ApiProvider, boolean>>>({
-    text: { vibe: false, fucheers: false, comfly: false, zhenzhen: false },
-    image: { vibe: false, fucheers: false, comfly: false, zhenzhen: false },
+  const [revealed, setRevealed] = useState<Record<ApiProvider, boolean>>({
+    vibe: false,
+    fucheers: false,
+    comfly: false,
+    zhenzhen: false,
+    runninghub: false,
   });
 
   if (!open) {
     return null;
   }
 
-  const currentDraft = drafts[activeTab];
-
-  const handleProviderUse = (provider: ApiProvider) => {
-    setDrafts((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        selectedProvider: provider,
-        expandedProvider: provider,
-      },
-    }));
-  };
-
   const handleApiKeyChange = (provider: ApiProvider, value: string) => {
-    setDrafts((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        apiKeys: {
-          ...current[activeTab].apiKeys,
-          [provider]: value,
-        },
+    setDraft((current) => ({
+      apiKeys: {
+        ...current.apiKeys,
+        [provider]: value,
       },
     }));
-  };
-
-  const handleProviderCancel = () => {
-    const expandedProvider = currentDraft.expandedProvider;
-
-    if (!expandedProvider) {
-      return;
-    }
-
-    setDrafts((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        expandedProvider: null,
-      },
-    }));
-    setRevealed((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        [expandedProvider]: false,
-      },
-    }));
-  };
-
-  const handleProviderConfirm = () => {
-    const expandedProvider = currentDraft.expandedProvider;
-
-    if (!expandedProvider) {
-      return;
-    }
-
-    const nextDrafts: Record<ApiModelKind, ProviderDraft> = {
-      ...drafts,
-      [activeTab]: {
-        ...currentDraft,
-        selectedProvider: expandedProvider,
-        expandedProvider: null,
-      },
-    };
-
-    setDrafts(nextDrafts);
-    setRevealed((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        [expandedProvider]: false,
-      },
-    }));
-
-    onApply?.(createSettingsFromDrafts(nextDrafts));
   };
 
   const handleSave = () => {
-    onSave?.(createSettingsFromDrafts(drafts));
+    onSave?.(createSettingsFromDraft(draft, initialSettings));
   };
 
   return (
@@ -214,95 +139,75 @@ export function ApiSettingsPanel({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[560px] origin-center scale-90 overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] shadow-[0_10px_40px_rgba(0,0,0,0.8)]"
+        className="flex h-[min(780px,calc(100vh-48px))] w-full max-w-[980px] origin-center scale-90 overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] shadow-[0_10px_40px_rgba(0,0,0,0.8)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4">
-          <h2 className="text-[16px] font-semibold tracking-[1px] text-white">模型配置</h2>
+        <aside className="flex w-[200px] shrink-0 flex-col border-r border-[#222222] bg-[#111217] px-3 py-6">
+          <div className="px-3 text-[18px] font-semibold tracking-[0.2px] text-white">
+            设置
+          </div>
 
-          <div className="group/tooltip relative">
+          <nav className="mt-7 space-y-1">
             <button
               type="button"
-              onClick={onClose}
-              aria-label="关闭"
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-[#666666] transition-colors hover:bg-white/5 hover:text-[#cccccc]"
+              className="flex h-11 w-full items-center gap-3 rounded-[8px] bg-[#26254b] px-3 text-left text-[15px] font-medium text-white"
             >
-              <X size={18} />
+              <KeyRound size={16} />
+              <span>API Key</span>
             </button>
-            <Tooltip label="关闭" side="left" />
+          </nav>
+        </aside>
+
+        <section className="flex min-w-0 flex-1 flex-col bg-[#050505]">
+          <div className="flex items-center justify-between border-b border-[#222222] px-8 py-5">
+            <h2 className="text-[18px] font-semibold tracking-[0.2px] text-white">API Key</h2>
+
+            <div className="group/tooltip relative">
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="关闭"
+                className="flex h-7 w-7 items-center justify-center rounded-sm text-[#666666] transition-colors hover:bg-white/5 hover:text-[#cccccc]"
+              >
+                <X size={18} />
+              </button>
+              <Tooltip label="关闭" side="left" />
+            </div>
           </div>
-        </div>
 
-        <div className="border-b border-[#222222] px-6">
-          <div className="flex items-center gap-[30px]">
-            {MODEL_TABS.map((tab) => {
-              const isActive = tab.key === activeTab;
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`relative py-3 text-[14px] transition-colors ${
-                    isActive ? 'font-medium text-[#ccff00]' : 'text-[#777777] hover:text-[#aaaaaa]'
-                  }`}
-                >
-                  {tab.label}
-                  {isActive ? (
-                    <span className="absolute inset-x-0 bottom-[-1px] h-[2px] bg-[#ccff00]" />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+          <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-8 py-6">
+            <div className="mb-4 text-[13px] leading-5 text-[#aaaaaa]">
+              为每个服务商填写对应 API Key。具体使用哪个服务商和模型，请在文本节点或图像生成节点中选择。
+            </div>
 
-        <div className="px-6 py-6">
-          <div className="mb-4 text-[13px] text-[#aaaaaa]">选择 API 服务商</div>
+            <div className="space-y-3">
+              {PROVIDERS.map((provider) => {
+                const isRevealed = revealed[provider.key];
+                const apiKeyValue = draft.apiKeys[provider.key] ?? '';
 
-          <div className="space-y-3">
-            {PROVIDERS.map((provider) => {
-              const isExpanded = currentDraft.expandedProvider === provider.key;
-              const isSelected = currentDraft.selectedProvider === provider.key;
-              const isRevealed = revealed[activeTab][provider.key];
-              const apiKeyValue = currentDraft.apiKeys[provider.key] ?? '';
-
-              return (
-                <div
-                  key={`${activeTab}-${provider.key}`}
-                  className={`overflow-hidden rounded border transition-colors ${
-                    isExpanded
-                      ? 'border-[#ccff00] bg-[#141414]'
-                      : isSelected
-                        ? 'border-[#333333] bg-[#141414]'
-                        : 'border-[#222222] bg-[#141414] hover:border-[#333333]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-4 px-5 py-4">
-                    <div>
-                      <div className="text-[15px] font-semibold text-white">
-                        {provider.label}
+                return (
+                  <div
+                    key={provider.key}
+                    className="overflow-hidden rounded border border-[#222222] bg-[#141414] transition-colors hover:border-[#333333]"
+                  >
+                    <div className="flex items-center justify-between gap-4 px-5 py-4">
+                      <div>
+                        <div className="text-[15px] font-semibold text-white">
+                          {provider.label}
+                        </div>
+                        <div className="mt-1.5 text-[12px] text-[#666666]">{provider.url}</div>
                       </div>
-                      <div className="mt-1.5 text-[12px] text-[#666666]">{provider.url}</div>
+
+                      <a
+                        href={provider.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-sm border border-[#333333] px-3 py-1.5 text-[12px] text-[#888888] transition-colors hover:border-[#555555] hover:text-white"
+                      >
+                        获取 Key
+                      </a>
                     </div>
 
-                    {isExpanded ? (
-                      <span className="text-[13px] font-medium text-[#ccff00]">填写中</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleProviderUse(provider.key)}
-                        className={`min-w-[66px] rounded-sm border px-[18px] py-1.5 text-[13px] transition-colors ${
-                          isSelected
-                            ? 'border-[#ccff00] text-[#ccff00]'
-                            : 'border-[#333333] text-[#888888] hover:border-[#555555] hover:text-white'
-                        }`}
-                      >
-                        使用
-                      </button>
-                    )}
-                  </div>
-
-                  {isExpanded ? (
                     <div className="border-t border-[#222222] px-5 pb-4 pt-4">
                       <label className="mb-2 block text-[12px] text-[#888888]">
                         {provider.apiKeyLabel}
@@ -322,10 +227,7 @@ export function ApiSettingsPanel({
                             onClick={() =>
                               setRevealed((current) => ({
                                 ...current,
-                                [activeTab]: {
-                                  ...current[activeTab],
-                                  [provider.key]: !current[activeTab][provider.key],
-                                },
+                                [provider.key]: !current[provider.key],
                               }))
                             }
                             aria-label={isRevealed ? '隐藏' : '显示'}
@@ -336,51 +238,30 @@ export function ApiSettingsPanel({
                           <Tooltip label={isRevealed ? '隐藏' : '显示'} side="top" />
                         </div>
                       </div>
-
-                      <div className="mt-3 flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={handleProviderCancel}
-                          className="rounded-sm border border-[#222222] px-4 py-2 text-[13px] text-[#aaaaaa] transition-colors hover:border-[#444444] hover:text-white"
-                        >
-                          取消
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleProviderConfirm}
-                          className="rounded-sm border border-transparent bg-[#ccff00] px-4 py-2 text-[13px] font-semibold text-[#101500] shadow-[0_0_0_1px_rgba(204,255,0,0.18),0_0_18px_rgba(204,255,0,0.18)] transition-colors hover:bg-[#d8ff33] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ccff00]"
-                        >
-                          确定
-                        </button>
-                      </div>
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          <p className="mt-4 text-[12px] leading-5 text-[#666666]">
-            切换服务商时，请先填写对应 API Key 再确认。
-          </p>
-        </div>
-
-        <div className="flex items-center justify-end gap-3 border-t border-[#222222] px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-sm border border-[#222222] px-6 py-2.5 text-[14px] text-[#aaaaaa] transition-colors hover:border-[#444444] hover:text-white"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="rounded-sm border border-transparent bg-[#ccff00] px-6 py-2.5 text-[14px] font-semibold text-[#101500] shadow-[0_0_0_1px_rgba(204,255,0,0.18),0_0_18px_rgba(204,255,0,0.18)] transition-colors hover:bg-[#d8ff33] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ccff00]"
-          >
-            保存
-          </button>
-        </div>
+          <div className="flex items-center justify-end gap-3 border-t border-[#222222] px-8 py-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-sm border border-[#222222] px-6 py-2.5 text-[14px] text-[#aaaaaa] transition-colors hover:border-[#444444] hover:text-white"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="rounded-sm border border-transparent bg-[#ccff00] px-6 py-2.5 text-[14px] font-semibold text-[#101500] shadow-[0_0_0_1px_rgba(204,255,0,0.18),0_0_18px_rgba(204,255,0,0.18)] transition-colors hover:bg-[#d8ff33] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ccff00]"
+            >
+              保存
+            </button>
+          </div>
+        </section>
       </div>
     </div>
   );

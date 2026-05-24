@@ -8,6 +8,10 @@ import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 import { TextNodeFloatingToolbar } from './TextNodeFloatingToolbar';
 import { TextNodePromptBar } from './TextNodePromptBar';
+import {
+  readStoredSelectedApiProvider,
+  type ApiProvider,
+} from '@/store/canvas-store';
 
 const TEXT_NODE_SCROLL_THRESHOLD_PX = 289;
 
@@ -118,6 +122,16 @@ export const TextNode = memo(function TextNode({
     onChange?.({
       ...data,
       backgroundColor,
+    });
+  };
+
+  const handleProviderModelChange = (next: { provider: ApiProvider; model: string }) => {
+    onChange?.({
+      ...data,
+      provider: next.provider,
+      model: next.model,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
     });
   };
 
@@ -315,9 +329,11 @@ export const TextNode = memo(function TextNode({
         nodeId={id}
         visible={uiVisible}
         prompt={data.aiPrompt || ''}
+        provider={data.provider || readStoredSelectedApiProvider('text')}
         model={data.model || 'gpt-5.4'}
         connectedImages={connectedImages}
         onPromptChange={handlePromptChange}
+        onProviderModelChange={handleProviderModelChange}
         onModelChange={handleModelChange}
         onRun={onRun}
         onPointerDownWithin={onPromptPointerDown}

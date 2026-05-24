@@ -15,6 +15,10 @@ import {
 } from './ImageGenerationNodeToolbar';
 import { ImageGenerationPromptBar } from './ImageGenerationPromptBar';
 import { Tooltip } from '@/components/ui/Tooltip';
+import {
+  readStoredSelectedApiProvider,
+  type ApiProvider,
+} from '@/store/canvas-store';
 
 const MAX_CARD_EDGE = 540;
 const MIN_CARD_EDGE = 220;
@@ -249,6 +253,39 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
       ...data,
       model: next,
       aspectRatio: nextAspectRatio,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  };
+
+  const handleProviderModelChange = (next: {
+    provider: ApiProvider;
+    model: string;
+    runningHubChannel?: 'official' | 'low-cost';
+  }) => {
+    const nextAspectRatio =
+      next.model.startsWith(NANO_BANANA_MODEL_PREFIX) && (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
+        ? '1:1'
+        : data.aspectRatio;
+
+    onChange?.({
+      ...data,
+      provider: next.provider,
+      model: next.model,
+      runningHubChannel:
+        next.provider === 'runninghub'
+          ? next.runningHubChannel ?? data.runningHubChannel ?? 'official'
+          : data.runningHubChannel,
+      aspectRatio: nextAspectRatio,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  };
+
+  const handleRunningHubChannelChange = (next: 'official' | 'low-cost') => {
+    onChange?.({
+      ...data,
+      runningHubChannel: next,
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -594,7 +631,9 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         nodeId={id}
         visible={uiVisible}
         prompt={data.prompt || ''}
+        provider={data.provider || readStoredSelectedApiProvider('image')}
         model={data.model}
+        runningHubChannel={data.runningHubChannel}
         aspectRatio={data.aspectRatio}
         quality={data.quality}
         detail={data.detail}
@@ -606,7 +645,9 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         connectedImages={connectedImages}
         focusRequestId={promptFocusRequestId}
         onPromptChange={handlePromptChange}
+        onProviderModelChange={handleProviderModelChange}
         onModelChange={handleModelChange}
+        onRunningHubChannelChange={handleRunningHubChannelChange}
         onAspectRatioChange={handleAspectRatioChange}
         onQualityChange={handleQualityChange}
         onDetailChange={handleDetailChange}

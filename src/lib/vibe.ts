@@ -10,7 +10,8 @@ import {
 
 // GenLink Vibe API client for server-side route handlers and actions only.
 
-export type ImageApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen";
+export type ImageApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub";
+export type RunningHubChannel = "official" | "low-cost";
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
@@ -24,6 +25,8 @@ function resolveApiProvider(value?: string): ImageApiProvider {
       return "fucheers";
     case "zhenzhen":
       return "zhenzhen";
+    case "runninghub":
+      return "runninghub";
     default:
       return "vibe";
   }
@@ -56,6 +59,9 @@ const ZHENZHEN_IMAGE_BASE_URL = normalizeBaseUrl(
 );
 const ZHENZHEN_TEXT_BASE_URL = normalizeBaseUrl(
   process.env.ZHENZHEN_TEXT_BASE_URL ?? ZHENZHEN_BASE_URL,
+);
+const RUNNINGHUB_BASE_URL = normalizeBaseUrl(
+  process.env.RUNNINGHUB_BASE_URL ?? "https://www.runninghub.cn",
 );
 const IMAGE_API_PROVIDER = resolveApiProvider(
   process.env.IMAGE_API_PROVIDER,
@@ -171,6 +177,7 @@ export interface GenerateImageParams {
   moderation?: string;
   n?: number;
   provider?: ImageApiProvider;
+  runningHubChannel?: RunningHubChannel;
   apiKey?: string;
   images?: Array<{
     url: string;
@@ -358,6 +365,39 @@ interface ComflyAsyncTaskStatusResponse {
   error?: {
     message?: string;
   };
+}
+
+interface RunningHubTaskResponse {
+  code?: number | string;
+  msg?: string;
+  message?: string;
+  data?: unknown;
+  taskId?: string;
+  task_id?: string;
+  id?: string;
+  status?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  results?: Array<{
+    url?: string | null;
+    outputType?: string | null;
+    text?: string | null;
+  }> | null;
+  clientId?: string;
+  promptTips?: string;
+  failedReason?: Record<string, unknown> | null;
+  usage?: Record<string, unknown> | null;
+}
+
+interface RunningHubUploadResponse {
+  code?: number;
+  message?: string;
+  data?: {
+    type?: string;
+    download_url?: string;
+    fileName?: string;
+    size?: string;
+  } | null;
 }
 
 interface VibeGeminiImageResponse {
@@ -690,6 +730,81 @@ function toT8ImageSizeParams(size?: string): {
   };
 }
 
+function resolveRunningHubChannel(channel?: RunningHubChannel): RunningHubChannel {
+  return channel === "low-cost" ? "low-cost" : "official";
+}
+
+function toRunningHubAspectRatio(size?: string): string {
+  const { width, height } = parseImageSize(size);
+  const ratio = width / height;
+  const supported = [
+    "1:1",
+    "1:2",
+    "2:1",
+    "1:3",
+    "3:1",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:3",
+    "4:5",
+    "5:4",
+    "9:16",
+    "21:9",
+    "9:21",
+    "16:9",
+  ] as const;
+
+  let best = "1:1";
+  let bestDelta = Number.POSITIVE_INFINITY;
+
+  for (const option of supported) {
+    const [w, h] = option.split(":").map(Number);
+    const delta = Math.abs(ratio - w / h);
+
+    if (delta < bestDelta) {
+      best = option;
+      bestDelta = delta;
+    }
+  }
+
+  return best;
+}
+
+function toRunningHubResolution(size?: string): "1k" | "2k" | "4k" {
+  const { width, height } = parseImageSize(size);
+  const maxDimension = Math.max(width, height);
+
+  if (maxDimension >= 3072) {
+    return "4k";
+  }
+
+  if (maxDimension >= 1536) {
+    return "2k";
+  }
+
+  return "1k";
+}
+
+function toRunningHubQuality(quality?: string): "low" | "medium" | "high" {
+  if (quality === "low" || quality === "high") {
+    return quality;
+  }
+
+  return "medium";
+}
+
+function getRunningHubImagePath(
+  channel: RunningHubChannel,
+  hasReferenceImages: boolean,
+): string {
+  const modelPath =
+    channel === "low-cost" ? "rhart-image-g-2" : "rhart-image-g-2-official";
+  const taskPath = hasReferenceImages ? "image-to-image" : "text-to-image";
+
+  return `/openapi/v2/${modelPath}/${taskPath}`;
+}
+
 function resolveComflyTextModel(model: string): string {
   return COMFLY_TEXT_MODEL_MAP.get(model) ?? model;
 }
@@ -708,6 +823,12 @@ function isVibeCompatibleProvider(
   provider: ImageApiProvider,
 ): provider is "vibe" | "fucheers" {
   return provider === "vibe" || provider === "fucheers";
+}
+
+function isRunningHubProvider(
+  provider: ImageApiProvider,
+): provider is "runninghub" {
+  return provider === "runninghub";
 }
 
 function getComflyCompatibleProviderLabel(provider: "comfly" | "zhenzhen"): string {
@@ -729,6 +850,10 @@ function getProviderLabel(baseUrl: string, fallback = "Upstream API"): string {
 
   if (baseUrl === FUCHEERS_BASE_URL || baseUrl === FUCHEERS_GEMINI_BASE_URL) {
     return "Fucheers API";
+  }
+
+  if (baseUrl === RUNNINGHUB_BASE_URL) {
+    return "RunningHub";
   }
 
   return fallback;
@@ -1299,6 +1424,195 @@ async function buildComflyAsyncImageResult(
   };
 }
 
+async function uploadRunningHubReferenceImage(
+  image: {
+    url: string;
+    fileName?: string;
+  },
+  index: number,
+  apiKey?: string,
+): Promise<string> {
+  const formData = new FormData();
+  formData.append(
+    "file",
+    await createImageFilePart(image, index),
+    getSafeMultipartFileName(image.fileName, `reference-${index + 1}`),
+  );
+
+  const json = await requestFormWithBaseUrl<RunningHubUploadResponse>(
+    RUNNINGHUB_BASE_URL,
+    "/openapi/v2/media/upload/binary",
+    formData,
+    apiKey,
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "RunningHub",
+  );
+
+  if (json.code !== 0) {
+    throw new VibeApiError(
+      502,
+      json.message || "RunningHub image upload failed",
+      json,
+    );
+  }
+
+  const downloadUrl = json.data?.download_url?.trim();
+
+  if (!downloadUrl) {
+    throw new VibeApiError(502, "RunningHub image upload returned no URL", json);
+  }
+
+  return downloadUrl;
+}
+
+async function resolveRunningHubReferenceImageUrls(
+  images?: Array<{
+    url: string;
+    fileName?: string;
+  }>,
+  apiKey?: string,
+): Promise<string[]> {
+  const resolvedUrls: string[] = [];
+
+  for (const [index, image] of (images ?? []).slice(0, 10).entries()) {
+    const url = image.url.trim();
+
+    if (!url) {
+      continue;
+    }
+
+    if (/^https?:\/\//i.test(url)) {
+      resolvedUrls.push(url);
+      continue;
+    }
+
+    resolvedUrls.push(await uploadRunningHubReferenceImage(image, index, apiKey));
+  }
+
+  return resolvedUrls;
+}
+
+async function buildRunningHubImageResult(
+  response: RunningHubTaskResponse,
+  fallbackModel: string,
+  size?: string,
+): Promise<GenerateImageResult> {
+  const dimensions = parseImageSize(size);
+  const rawResults = normalizeMaybeJson(getRunningHubResults(response));
+  const resultItems = Array.isArray(rawResults) ? rawResults : [];
+  const images = await Promise.all(
+    resultItems
+      .map((item) => {
+        if (typeof item === "string") {
+          return item.trim();
+        }
+
+        const record = asJsonObject(item);
+
+        return record
+          ? stringValue(record.url) ??
+              stringValue(record.imageUrl) ??
+              stringValue(record.image_url)
+          : undefined;
+      })
+      .filter((url): url is string => Boolean(url))
+      .map(async (imageUrl) => ({
+        imageUrl,
+        hostedImageUrl: await normalizeGeneratedImageUrl(imageUrl),
+        model: fallbackModel,
+        width: dimensions.width,
+        height: dimensions.height,
+      }) satisfies GenerateImageResultItem),
+  );
+
+  if (!images.length) {
+    throw new VibeApiError(502, "RunningHub returned no image data", response);
+  }
+
+  return {
+    images,
+    model: fallbackModel,
+  };
+}
+
+function normalizeRunningHubStatus(status?: string): string {
+  return status?.trim().replace(/[\s-]+/g, "_").toUpperCase() ?? "";
+}
+
+function getRunningHubDataRecord(response: RunningHubTaskResponse): JsonObject | null {
+  const normalizedData = normalizeMaybeJson(response.data);
+
+  return asJsonObject(normalizedData);
+}
+
+function getRunningHubStringField(
+  response: RunningHubTaskResponse,
+  field: string,
+): string | undefined {
+  const directValue = stringValue((response as JsonObject)[field]);
+
+  if (directValue) {
+    return directValue;
+  }
+
+  const dataRecord = getRunningHubDataRecord(response);
+
+  return dataRecord ? stringValue(dataRecord[field]) : undefined;
+}
+
+function extractRunningHubTaskId(response: RunningHubTaskResponse): string | null {
+  const data = normalizeMaybeJson(response.data);
+  const dataRecord = asJsonObject(data);
+  const candidates = [
+    response.taskId,
+    response.task_id,
+    response.id,
+    dataRecord?.taskId,
+    dataRecord?.task_id,
+    dataRecord?.id,
+    typeof data === "string" ? data : undefined,
+  ];
+
+  for (const candidate of candidates) {
+    const taskId =
+      typeof candidate === "string" ? candidate.trim() : undefined;
+
+    if (taskId) {
+      return taskId;
+    }
+  }
+
+  return null;
+}
+
+function extractRunningHubStatus(response: RunningHubTaskResponse): string {
+  return normalizeRunningHubStatus(
+    getRunningHubStringField(response, "status") ??
+      getRunningHubStringField(response, "taskStatus") ??
+      getRunningHubStringField(response, "task_status"),
+  );
+}
+
+function getRunningHubErrorMessage(response: RunningHubTaskResponse): string {
+  const message =
+    getRunningHubStringField(response, "errorMessage") ??
+    getRunningHubStringField(response, "message") ??
+    getRunningHubStringField(response, "msg") ??
+    "RunningHub image generation failed";
+
+  if (/APIKEY_USER_NOT_FOUND/i.test(message)) {
+    return "RunningHub API Key 无效或不属于当前账号，请在 API 设置中重新填写 RunningHub 的 API Key";
+  }
+
+  return message;
+}
+
+function getRunningHubResults(response: RunningHubTaskResponse): unknown {
+  const dataRecord = getRunningHubDataRecord(response);
+
+  return response.results ?? dataRecord?.results ?? dataRecord?.result;
+}
+
 function asJsonObject(value: unknown): JsonObject | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as JsonObject
@@ -1666,6 +1980,10 @@ export async function generateTextStream(
   params: GenerateTextParams,
 ): Promise<ReadableStream<Uint8Array>> {
   const textProvider = resolveApiProvider(params.provider ?? TEXT_API_PROVIDER);
+  if (isRunningHubProvider(textProvider)) {
+    throw new VibeApiError(400, "RunningHub is not configured for text generation");
+  }
+
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const isClaude = isClaudeModel(requestedModel);
   const providerModel =
@@ -1875,6 +2193,10 @@ export async function generateText(
   params: GenerateTextParams,
 ): Promise<GenerateTextResult> {
   const textProvider = resolveApiProvider(params.provider ?? TEXT_API_PROVIDER);
+  if (isRunningHubProvider(textProvider)) {
+    throw new VibeApiError(400, "RunningHub is not configured for text generation");
+  }
+
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const providerModel =
     isComflyCompatibleProvider(textProvider)
@@ -2449,6 +2771,148 @@ export async function getComflyImageTaskResult(params: {
   );
 }
 
+export async function submitRunningHubImageTask(
+  params: GenerateImageParams,
+): Promise<GenerateImageTaskResult> {
+  const model = params.model ?? DEFAULT_IMAGE_MODEL;
+  const size = params.size ?? DEFAULT_IMAGE_SIZE;
+  const channel = resolveRunningHubChannel(params.runningHubChannel);
+  const imageUrls = await resolveRunningHubReferenceImageUrls(
+    params.images,
+    params.apiKey,
+  );
+  const requestBody: {
+    prompt: string;
+    aspectRatio: string;
+    resolution: "1k" | "2k" | "4k";
+    quality?: "low" | "medium" | "high";
+    imageUrls?: string[];
+  } = {
+    prompt: params.prompt,
+    aspectRatio: toRunningHubAspectRatio(size),
+    resolution: toRunningHubResolution(size),
+  };
+
+  if (channel === "official") {
+    requestBody.quality = toRunningHubQuality(params.quality);
+  }
+
+  if (imageUrls.length) {
+    requestBody.imageUrls = imageUrls;
+  }
+
+  const json = await requestJsonWithBaseUrl<RunningHubTaskResponse>(
+    RUNNINGHUB_BASE_URL,
+    getRunningHubImagePath(channel, imageUrls.length > 0),
+    requestBody,
+    params.apiKey,
+    createHeaders,
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "RunningHub",
+  );
+  const upstreamCode =
+    typeof json.code === "number" || typeof json.code === "string"
+      ? String(json.code)
+      : "";
+
+  if (upstreamCode && upstreamCode !== "0") {
+    throw new VibeApiError(502, getRunningHubErrorMessage(json), json);
+  }
+
+  const taskId = extractRunningHubTaskId(json);
+
+  if (!taskId) {
+    throw new VibeApiError(502, getRunningHubErrorMessage(json), json);
+  }
+
+  const status = extractRunningHubStatus(json);
+
+  if (status === "FAILED" || status === "FAILURE" || status === "ERROR") {
+    throw new VibeApiError(
+      502,
+      getRunningHubErrorMessage(json),
+      json,
+    );
+  }
+
+  return {
+    taskId,
+    model,
+  };
+}
+
+export async function getRunningHubImageTaskResult(params: {
+  taskId: string;
+  apiKey?: string;
+  model?: string;
+  size?: string;
+}): Promise<
+  | { status: "pending" }
+  | { status: "completed"; result: GenerateImageResult }
+> {
+  const taskId = params.taskId.trim();
+
+  if (!taskId) {
+    throw new VibeApiError(400, "RunningHub task id is required");
+  }
+
+  const json = await requestJsonWithBaseUrl<RunningHubTaskResponse>(
+    RUNNINGHUB_BASE_URL,
+    "/openapi/v2/query",
+    { taskId },
+    params.apiKey,
+    createHeaders,
+    COMFLY_TASK_STATUS_TIMEOUT_MS,
+    "RunningHub",
+  );
+  const upstreamCode =
+    typeof json.code === "number" || typeof json.code === "string"
+      ? String(json.code)
+      : "";
+
+  if (upstreamCode && upstreamCode !== "0") {
+    throw new VibeApiError(502, getRunningHubErrorMessage(json), json);
+  }
+
+  const status = extractRunningHubStatus(json);
+
+  if (status === "SUCCESS" || status === "SUCCEEDED" || status === "COMPLETED") {
+    return {
+      status: "completed",
+      result: await buildRunningHubImageResult(
+        json,
+        params.model ?? DEFAULT_IMAGE_MODEL,
+        params.size,
+      ),
+    };
+  }
+
+  if (status === "FAILED" || status === "FAILURE" || status === "ERROR") {
+    throw new VibeApiError(
+      502,
+      getRunningHubErrorMessage(json),
+      json,
+    );
+  }
+
+  if (
+    status === "QUEUED" ||
+    status === "RUNNING" ||
+    status === "PENDING" ||
+    status === "PROCESSING" ||
+    status === "CREATED" ||
+    status === "SUBMITTED"
+  ) {
+    return { status: "pending" };
+  }
+
+  throw new VibeApiError(
+    502,
+    `RunningHub returned an unknown task status${status ? ` (${status})` : ""}`,
+    json,
+  );
+}
+
 async function generateImageGemini(
   params: GenerateImageParams,
 ): Promise<GenerateImageResult> {
@@ -2521,6 +2985,13 @@ export async function generateImage(
 
   if (imageProvider === "zhenzhen") {
     return generateImageT8(params);
+  }
+
+  if (isRunningHubProvider(imageProvider)) {
+    throw new VibeApiError(
+      400,
+      "RunningHub image generation must be submitted as an async task",
+    );
   }
 
   if (params.model && /^gemini-/i.test(params.model)) {

@@ -120,7 +120,7 @@ function resolveParallelCount(value?: number): 1 | 2 | 4 {
   return value === 2 || value === 4 ? value : 1;
 }
 
-export type ApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen";
+export type ApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub";
 export type ApiModelKind = "text" | "image";
 
 export type StoredApiSettings = {
@@ -135,7 +135,8 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   vibe: "VibeAPI",
   fucheers: "Fucheers API",
   comfly: "Comfly",
-  zhenzhen: "贞贞的AI工坊",
+  runninghub: "RunningHub",
+  zhenzhen: "真真 AI 工坊",
 };
 
 export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
@@ -144,10 +145,12 @@ export const CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
 export const CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersTextApiKey";
 export const CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyTextApiKey";
 export const CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenTextApiKey";
+export const CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY = "genlink.runninghubTextApiKey";
 export const CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
 export const CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersImageApiKey";
 export const CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyImageApiKey";
 export const CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenImageApiKey";
+export const CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY = "genlink.runninghubImageApiKey";
 
 function readStoredValue(storageKey: string): string {
   if (typeof window === "undefined") {
@@ -165,6 +168,8 @@ export function normalizeApiProvider(value?: string): ApiProvider {
       return "fucheers";
     case "zhenzhen":
       return "zhenzhen";
+    case "runninghub":
+      return "runninghub";
     default:
       return DEFAULT_API_PROVIDER;
   }
@@ -189,6 +194,8 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
         return CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY;
       case "zhenzhen":
         return CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY;
+      case "runninghub":
+        return CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY;
       default:
         return CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY;
     }
@@ -201,6 +208,8 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
       return CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY;
     case "zhenzhen":
       return CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY;
+    case "runninghub":
+      return CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY;
     default:
       return CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY;
   }
@@ -226,12 +235,14 @@ export function readStoredApiSettings(): StoredApiSettings {
       fucheers: readStoredApiKey("text", "fucheers"),
       comfly: readStoredApiKey("text", "comfly"),
       zhenzhen: readStoredApiKey("text", "zhenzhen"),
+      runninghub: readStoredApiKey("text", "runninghub"),
     },
     imageApiKeys: {
       vibe: readStoredApiKey("image", "vibe"),
       fucheers: readStoredApiKey("image", "fucheers"),
       comfly: readStoredApiKey("image", "comfly"),
       zhenzhen: readStoredApiKey("image", "zhenzhen"),
+      runninghub: readStoredApiKey("image", "runninghub"),
     },
   };
 }
@@ -241,7 +252,7 @@ function assertStoredApiKey(kind: ApiModelKind, provider: ApiProvider): string {
 
   if (!apiKey) {
     throw new Error(
-      `请先在 API 设置中配置${kind === "text" ? "语言模型" : "图像模型"}的 ${getApiProviderLabel(provider)} API Key`,
+      `Please configure the ${kind === "text" ? "text" : "image"} ${getApiProviderLabel(provider)} API Key in API settings first.`,
     );
   }
 
@@ -427,6 +438,7 @@ function createTextNodeData(): TextNodeData {
   return {
     title: "Text",
     text: "",
+    provider: DEFAULT_API_PROVIDER,
     model: "gpt-5.4",
     status: "idle",
   };
@@ -436,6 +448,7 @@ function createImageGenerationNodeData(): ImageGenerationNodeData {
   return {
     title: "Image",
     prompt: "",
+    provider: DEFAULT_API_PROVIDER,
     model: "gpt-image-2",
     aspectRatio: "auto",
     quality: "1K",
@@ -942,7 +955,7 @@ function toResponseTextErrorMessage(text: string, fallback: string): string {
   const normalized = text.trim();
 
   if (/request entity too large/i.test(normalized)) {
-    return "参考图过大，云端拒绝了请求。请减少参考图数量或压缩后重试。";
+    return "Reference images are too large. Reduce the number of references or compress them, then try again.";
   }
 
   if (/<(?:!doctype|html|script|body|head)\b/i.test(normalized)) {
@@ -1246,6 +1259,7 @@ async function submitImageGenerationJob(params: {
   quality?: string;
   outputFormat?: string;
   moderation?: string;
+  runningHubChannel?: "official" | "low-cost";
   apiKey?: string;
   provider?: ApiProvider;
   historyNodeData?: ImageGenerationNodeData;
@@ -2273,7 +2287,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
 
     try {
-      const textProvider = readStoredSelectedApiProvider("text");
+      const textProvider =
+        textNode.data.provider ?? readStoredSelectedApiProvider("text");
       const apiKey = assertStoredApiKey("text", textProvider);
       const response = await fetch("/api/ai/text", {
         method: "POST",
@@ -2581,7 +2596,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const parallelCount = resolveParallelCount(
         latestImageGenerationNode.data.parallelCount,
       );
-      const imageProvider = readStoredSelectedApiProvider("image");
+      const imageProvider =
+        latestImageGenerationNode.data.provider ?? readStoredSelectedApiProvider("image");
       const apiKey = assertStoredApiKey("image", imageProvider);
       const baseJobParams = {
         prompt: effectivePrompt,
@@ -2590,6 +2606,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         quality,
         outputFormat,
         moderation,
+        runningHubChannel: latestImageGenerationNode.data.runningHubChannel,
         provider: imageProvider,
         apiKey,
         images: requestImages,
@@ -3402,7 +3419,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const state = get();
 
       if (!state.currentProject) {
-        throw new Error("当前没有打开的项目");
+        throw new Error("No project is currently open.");
       }
 
       const snapshot = createSnapshot(state);

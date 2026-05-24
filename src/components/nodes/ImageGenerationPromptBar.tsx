@@ -8,6 +8,11 @@ import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, X } from 'l
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
+import {
+  getApiProviderLabel,
+  readStoredApiKey,
+  type ApiProvider,
+} from '@/store/canvas-store';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
@@ -18,6 +23,19 @@ const IMAGE_MODELS = [
   { id: 'gpt-image-2', label: 'gpt-image-2' },
   { id: 'nano-banana-2', label: 'Nano banana pro' },
 ] as const;
+const RUNNING_HUB_CHANNEL_OPTIONS = [
+  { id: 'official', label: '官方稳定版' },
+  { id: 'low-cost', label: '低价渠道版' },
+] as const;
+type RunningHubChannel = typeof RUNNING_HUB_CHANNEL_OPTIONS[number]['id'];
+const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen', 'runninghub'];
+const IMAGE_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly typeof IMAGE_MODELS[number][]> = {
+  vibe: IMAGE_MODELS,
+  fucheers: IMAGE_MODELS,
+  comfly: IMAGE_MODELS,
+  zhenzhen: IMAGE_MODELS,
+  runninghub: IMAGE_MODELS.filter((model) => model.id === 'gpt-image-2'),
+};
 const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
 const IMAGE_OUTPUT_FORMAT_OPTIONS = [
@@ -137,7 +155,9 @@ export interface ImageGenerationPromptBarProps {
   nodeId?: string;
   visible: boolean;
   prompt: string;
+  provider?: ApiProvider;
   model?: string;
+  runningHubChannel?: RunningHubChannel;
   aspectRatio?: string;
   quality?: string;
   detail?: string;
@@ -155,7 +175,9 @@ export interface ImageGenerationPromptBarProps {
     height?: number;
   }>;
   onPromptChange?: (next: string) => void;
+  onProviderModelChange?: (next: { provider: ApiProvider; model: string; runningHubChannel?: RunningHubChannel }) => void;
   onModelChange?: (next: string) => void;
+  onRunningHubChannelChange?: (next: RunningHubChannel) => void;
   onAspectRatioChange?: (next: string) => void;
   onQualityChange?: (next: string) => void;
   onDetailChange?: (next: string) => void;
@@ -307,6 +329,11 @@ function getImageModelLabel(model: string): string {
   return IMAGE_MODELS.find((option) => option.id === model)?.label ?? model;
 }
 
+function getRunningHubChannelLabel(channel?: RunningHubChannel): string {
+  const resolvedChannel = channel === 'low-cost' ? 'low-cost' : 'official';
+  return RUNNING_HUB_CHANNEL_OPTIONS.find((option) => option.id === resolvedChannel)?.label ?? '官方稳定版';
+}
+
 function RatioIcon({
   ratio,
   active = false,
@@ -349,7 +376,9 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   nodeId,
   visible,
   prompt,
+  provider = 'vibe',
   model = IMAGE_MODELS[0].id,
+  runningHubChannel = 'official',
   aspectRatio = 'auto',
   quality = IMAGE_SIZE_OPTIONS[0],
   detail = 'medium',
@@ -360,7 +389,9 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   canUsePromptPresets = false,
   connectedImages = [],
   onPromptChange,
+  onProviderModelChange,
   onModelChange,
+  onRunningHubChannelChange,
   onAspectRatioChange,
   onQualityChange,
   onDetailChange,
@@ -379,6 +410,9 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const [isComposing, setIsComposing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [activeProvider, setActiveProvider] = useState<ApiProvider>(provider);
+  const [activeModelForChannel, setActiveModelForChannel] = useState<string | null>(null);
+  const [providerWarning, setProviderWarning] = useState<string | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
   const [parallelMenuOpen, setParallelMenuOpen] = useState(false);
@@ -417,15 +451,22 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
       setParallelMenuOpen(false);
     };
 
-    window.addEventListener('pointerdown', handlePointerDown);
-    return () => window.removeEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerdown', handlePointerDown, true);
+    return () => window.removeEventListener('pointerdown', handlePointerDown, true);
   }, [modelMenuOpen, settingsMenuOpen, formatMenuOpen, parallelMenuOpen]);
 
   if (!visible) return null;
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
   const isNanoBananaModel = model?.startsWith('nano-banana') ?? false;
-  const modelLabel = getImageModelLabel(model);
+  const activeRunningHubChannel = runningHubChannel === 'low-cost' ? 'low-cost' : 'official';
+  const modelLabel =
+    provider === 'runninghub' && model === 'gpt-image-2'
+      ? `${getImageModelLabel(model)} / ${getRunningHubChannelLabel(activeRunningHubChannel)}`
+      : getImageModelLabel(model);
+  const activeImageModels = IMAGE_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
+  const showRunningHubChannelMenu =
+    activeProvider === 'runninghub' && activeModelForChannel === 'gpt-image-2';
   const modelAspectRatio = isNanoBananaModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
   const aspectRatioLayout = isNanoBananaModel
     ? GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
@@ -434,6 +475,31 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
   const promptPresetMenuOpen = isPromptFocused && !isComposing && resolvedValue.trimEnd().endsWith('/');
+
+  const handleModelSelect = (
+    nextProvider: ApiProvider,
+    nextModel: string,
+    nextRunningHubChannel: RunningHubChannel = activeRunningHubChannel,
+  ) => {
+    if (!readStoredApiKey('image', nextProvider)) {
+      setProviderWarning(`请先在 API 设置中填写 ${getApiProviderLabel(nextProvider)} API Key`);
+      return;
+    }
+
+    if (onProviderModelChange) {
+      onProviderModelChange({
+        provider: nextProvider,
+        model: nextModel,
+        runningHubChannel: nextProvider === 'runninghub' ? nextRunningHubChannel : undefined,
+      });
+    } else {
+      onModelChange?.(nextModel);
+      if (nextProvider === 'runninghub') {
+        onRunningHubChannelChange?.(nextRunningHubChannel);
+      }
+    }
+    setModelMenuOpen(false);
+  };
 
   const showReferencePreview = (
     image: NonNullable<ImageGenerationPromptBarProps['connectedImages']>[number],
@@ -696,7 +762,15 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                   label={modelLabel}
                   active={modelMenuOpen}
                   onClick={() => {
-                    setModelMenuOpen((open) => !open);
+                    setModelMenuOpen((open) => {
+                      if (!open) {
+                        setActiveProvider(provider);
+                        setActiveModelForChannel(null);
+                        setProviderWarning(null);
+                      }
+
+                      return !open;
+                    });
                     setSettingsMenuOpen(false);
                     setFormatMenuOpen(false);
                     setParallelMenuOpen(false);
@@ -704,38 +778,136 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 />
 
                 {modelMenuOpen ? (
-                  <div className="absolute bottom-full left-0 mb-2 w-[210px] overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
-                    <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
-                      Model
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      {IMAGE_MODELS.map((option) => {
-                        const selected = option.id === model;
+                  <div
+                    className={[
+                      'absolute bottom-full left-0 mb-2 flex overflow-hidden rounded-[16px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate',
+                      showRunningHubChannelMenu ? 'w-[650px]' : 'w-[470px]',
+                    ].join(' ')}
+                    translate="no"
+                  >
+                    <div className="w-[190px] border-r border-white/[0.06] pr-1.5">
+                      <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
+                        Provider
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        {API_PROVIDERS.map((option) => {
+                          const selected = option === activeProvider;
 
-                        return (
-                          <button
-                            key={option.id}
-                            type="button"
-                            translate="no"
-                            onClick={() => {
-                              onModelChange?.(option.id);
-                              setModelMenuOpen(false);
-                            }}
-                            className={[
-                              'flex h-11 w-full items-center justify-between rounded-[12px] px-4 text-left text-[15px] transition-colors duration-150',
-                              selected
-                                ? 'bg-white/[0.08] text-gl-text-primary'
-                                : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
-                            ].join(' ')}
-                          >
-                            <span className="truncate">{option.label}</span>
-                            {selected ? (
-                              <Check size={16} className="text-gl-text-primary" />
-                            ) : null}
-                          </button>
-                        );
-                      })}
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              translate="no"
+                              onPointerEnter={() => {
+                                setActiveProvider(option);
+                                setActiveModelForChannel(null);
+                                setProviderWarning(null);
+                              }}
+                              onClick={() => {
+                                setActiveProvider(option);
+                                setActiveModelForChannel(null);
+                                setProviderWarning(null);
+                              }}
+                              className={[
+                                'flex h-11 w-full items-center justify-between rounded-[12px] px-3 text-left text-[14px] transition-colors duration-150',
+                                selected
+                                  ? 'bg-white/[0.08] text-gl-text-primary'
+                                  : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
+                              ].join(' ')}
+                            >
+                              <span className="truncate">{getApiProviderLabel(option)}</span>
+                              <ChevronDown size={14} className="-rotate-90 text-gl-text-tertiary" />
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
+                    <div className="min-w-0 flex-1 pl-1.5">
+                      <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
+                        Model
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        {activeImageModels.map((option) => {
+                          const selected = activeProvider === provider && option.id === model;
+                          const hasChannelMenu =
+                            activeProvider === 'runninghub' && option.id === 'gpt-image-2';
+
+                          return (
+                            <button
+                              key={`${activeProvider}-${option.id}`}
+                              type="button"
+                              translate="no"
+                              onPointerEnter={() => {
+                                setActiveModelForChannel(
+                                  activeProvider === 'runninghub' ? option.id : null,
+                                );
+                              }}
+                              onClick={() => {
+                                if (activeProvider !== 'runninghub') {
+                                  handleModelSelect(activeProvider, option.id);
+                                } else if (hasChannelMenu) {
+                                  setActiveModelForChannel(option.id);
+                                }
+                              }}
+                              className={[
+                                'flex h-11 w-full items-center justify-between rounded-[12px] px-4 text-left text-[15px] transition-colors duration-150',
+                                selected || activeModelForChannel === option.id
+                                  ? 'bg-white/[0.08] text-gl-text-primary'
+                                  : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
+                              ].join(' ')}
+                            >
+                              <span className="truncate">{option.label}</span>
+                              {hasChannelMenu ? (
+                                <ChevronDown size={14} className="-rotate-90 text-gl-text-tertiary" />
+                              ) : selected ? (
+                                <Check size={16} className="text-gl-text-primary" />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {providerWarning ? (
+                        <div className="mt-1.5 rounded-[10px] border border-gl-error/30 bg-gl-error/10 px-3 py-2 text-[12px] leading-5 text-gl-error">
+                          {providerWarning}
+                        </div>
+                      ) : null}
+                    </div>
+                    {showRunningHubChannelMenu ? (
+                      <div className="w-[180px] border-l border-white/[0.06] pl-1.5">
+                        <div className="mb-1 px-2 py-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gl-text-muted">
+                          Channel
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          {RUNNING_HUB_CHANNEL_OPTIONS.map((option) => {
+                            const selected =
+                              activeProvider === provider &&
+                              provider === 'runninghub' &&
+                              model === 'gpt-image-2' &&
+                              option.id === activeRunningHubChannel;
+
+                            return (
+                              <button
+                                key={option.id}
+                                type="button"
+                                translate="no"
+                                onClick={() => handleModelSelect('runninghub', 'gpt-image-2', option.id)}
+                                className={[
+                                  'flex h-11 w-full items-center justify-between rounded-[12px] px-3 text-left text-[14px] transition-colors duration-150',
+                                  selected
+                                    ? 'bg-white/[0.08] text-gl-text-primary'
+                                    : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
+                                ].join(' ')}
+                              >
+                                <span className="truncate">{option.label}</span>
+                                {selected ? (
+                                  <Check size={16} className="text-gl-text-primary" />
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

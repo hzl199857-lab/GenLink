@@ -8,7 +8,9 @@ import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
 import { prisma } from "@/lib/prisma";
 import {
   getComflyImageTaskResult,
+  getRunningHubImageTaskResult,
   submitComflyImageTask,
+  submitRunningHubImageTask,
   VibeApiError,
   generateImage,
   type ImageApiProvider,
@@ -66,6 +68,7 @@ interface ImageRequestBody {
   quality?: unknown;
   outputFormat?: unknown;
   moderation?: unknown;
+  runningHubChannel?: unknown;
   n?: unknown;
   provider?: unknown;
   apiKey?: unknown;
@@ -80,6 +83,7 @@ interface ImageJobParams {
   quality?: string;
   outputFormat?: string;
   moderation?: string;
+  runningHubChannel?: "official" | "low-cost";
   n?: number;
   provider?: ImageApiProvider;
   apiKey?: string;
@@ -140,6 +144,8 @@ function normalizeImageGenerationNodeData(
     prompt: getImageHistoryDisplayPrompt(record) || effectivePrompt,
     effectivePromptOverride: undefined,
     model: normalizeString(record.model),
+    runningHubChannel:
+      record.runningHubChannel === "low-cost" ? "low-cost" : "official",
     aspectRatio: normalizeString(record.aspectRatio),
     quality: normalizeString(record.quality),
     detail: normalizeString(record.detail),
@@ -159,7 +165,8 @@ function parseProvider(value: unknown): ImageApiProvider | undefined {
     value === "vibe" ||
     value === "fucheers" ||
     value === "comfly" ||
-    value === "zhenzhen"
+    value === "zhenzhen" ||
+    value === "runninghub"
   ) {
     return value;
   }
@@ -997,6 +1004,23 @@ async function submitComflyJob(jobId: string, params: ImageJobParams) {
   return { provider, taskId: submission.taskId, model: submission.model };
 }
 
+async function submitRunningHubJob(jobId: string, params: ImageJobParams) {
+  const submission = await submitRunningHubImageTask({
+    ...params,
+    provider: "runninghub",
+  });
+
+  await prisma.imageJob.update({
+    where: { id: jobId },
+    data: {
+      provider: "runninghub",
+      upstreamTaskId: submission.taskId,
+    },
+  });
+
+  return { taskId: submission.taskId, model: submission.model };
+}
+
 async function pollComflyImageJob(
   jobId: string,
   params: ImageJobParams,
@@ -1056,6 +1080,56 @@ async function pollComflyImageJob(
   }
 }
 
+async function pollRunningHubImageJob(
+  jobId: string,
+  params: ImageJobParams,
+  taskId: string,
+  model: string,
+) {
+  try {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < COMFLY_IMAGE_JOB_TIMEOUT_MS) {
+      const task = await getRunningHubImageTaskResult({
+        taskId,
+        apiKey: params.apiKey,
+        model: params.model ?? model,
+        size: params.size,
+      });
+
+      if (task.status === "completed") {
+        await completeImageJob(jobId, task.result);
+        return;
+      }
+
+      await sleep(COMFLY_IMAGE_JOB_POLL_INTERVAL_MS);
+    }
+
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: "error",
+        error: "RunningHub image generation timed out",
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof VibeApiError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "Internal error";
+
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: "error",
+        error: message,
+      },
+    });
+  }
+}
+
 async function tryResumePendingComflyJob(job: {
   id: string;
   provider: string | null;
@@ -1086,22 +1160,35 @@ async function tryResumePendingComflyJob(job: {
   }
 
   if (
-    (job.provider !== "comfly" && job.provider !== "zhenzhen") ||
-    !job.upstreamTaskId
+    job.provider !== "comfly" &&
+    job.provider !== "zhenzhen" &&
+    job.provider !== "runninghub"
   ) {
     return { status: "pending" };
   }
 
+  if (!job.upstreamTaskId) {
+    return { status: "pending" };
+  }
+
   try {
-    const provider = job.provider;
     const historyNodeData = parseImageJobHistoryNodeData(job.historyNodeData);
-    const task = await getComflyImageTaskResult({
-      taskId: job.upstreamTaskId,
-      apiKey,
-      model: historyNodeData?.model,
-      size: resolveImageJobSizeFromHistory(historyNodeData),
-      provider,
-    });
+    const size = resolveImageJobSizeFromHistory(historyNodeData);
+    const task =
+      job.provider === "runninghub"
+        ? await getRunningHubImageTaskResult({
+            taskId: job.upstreamTaskId,
+            apiKey,
+            model: historyNodeData?.model,
+            size,
+          })
+        : await getComflyImageTaskResult({
+            taskId: job.upstreamTaskId,
+            apiKey,
+            model: historyNodeData?.model,
+            size,
+            provider: job.provider,
+          });
 
     if (task.status === "pending") {
       return { status: "pending" };
@@ -1164,6 +1251,8 @@ export async function POST(request: Request) {
         typeof body.outputFormat === "string" ? body.outputFormat : undefined,
       moderation:
         typeof body.moderation === "string" ? body.moderation : undefined,
+      runningHubChannel:
+        body.runningHubChannel === "low-cost" ? "low-cost" : "official",
       n: typeof body.n === "number" ? body.n : undefined,
       provider,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
@@ -1188,14 +1277,28 @@ export async function POST(request: Request) {
     if (process.env.NODE_ENV !== "production") {
       console.info(
         `[GenLink image] job=${jobId} provider=${provider ?? "default"} branch=${
-          provider === "comfly" || provider === "zhenzhen" ? "comfly-compatible" : "vibe-compatible"
+          provider === "runninghub"
+            ? "runninghub"
+            : provider === "comfly" || provider === "zhenzhen"
+              ? "comfly-compatible"
+              : "vibe-compatible"
         }`,
       );
     }
 
     const isGeminiModel = jobParams.model && /^gemini-/i.test(jobParams.model);
 
-    if ((provider === "comfly" || provider === "zhenzhen") && !isGeminiModel) {
+    if (provider === "runninghub") {
+      const submission = await submitRunningHubJob(jobId, jobParams);
+      after(async () => {
+        await pollRunningHubImageJob(
+          jobId,
+          jobParams,
+          submission.taskId,
+          submission.model,
+        );
+      });
+    } else if ((provider === "comfly" || provider === "zhenzhen") && !isGeminiModel) {
       const submission = await submitComflyJob(jobId, jobParams);
       after(async () => {
         await pollComflyImageJob(
@@ -1330,7 +1433,8 @@ export async function GET(request: Request) {
     if (
       jobAgeMs > STALE_JOB_TIMEOUT_MS &&
       job.provider !== "comfly" &&
-      job.provider !== "zhenzhen"
+      job.provider !== "zhenzhen" &&
+      job.provider !== "runninghub"
     ) {
       const errorMsg = "Image generation timed out (server may have restarted)";
       await prisma.imageJob.updateMany({
@@ -1380,7 +1484,9 @@ export async function GET(request: Request) {
   if (job.status === "error") {
     if (
       !job.result &&
-      (job.provider === "comfly" || job.provider === "zhenzhen") &&
+      (job.provider === "comfly" ||
+        job.provider === "zhenzhen" ||
+        job.provider === "runninghub") &&
       job.upstreamTaskId
     ) {
       const resumed = await tryResumePendingComflyJob(job, apiKey);
