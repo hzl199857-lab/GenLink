@@ -24,6 +24,56 @@ const IMAGE_JOB_RETENTION_MS = 60 * 60_000;
 const COMFLY_IMAGE_JOB_TIMEOUT_MS = 45 * 60_000;
 const COMFLY_IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_TIMING_LOG_PREFIX = "[GenLink image timing]";
+const NANO_IMAGE_SIZE_PRESETS = {
+  "1K": {
+    "1:1": "1024x1024",
+    "1:4": "512x2064",
+    "1:8": "352x2928",
+    "2:3": "848x1264",
+    "3:2": "1264x848",
+    "3:4": "896x1200",
+    "4:1": "2064x512",
+    "4:3": "1200x896",
+    "4:5": "928x1152",
+    "5:4": "1152x928",
+    "8:1": "2928x352",
+    "9:16": "768x1376",
+    "16:9": "1376x768",
+    "21:9": "1584x672",
+  },
+  "2K": {
+    "1:1": "2048x2048",
+    "1:4": "1024x4128",
+    "1:8": "704x5856",
+    "2:3": "1696x2528",
+    "3:2": "2528x1696",
+    "3:4": "1792x2400",
+    "4:1": "4128x1024",
+    "4:3": "2400x1792",
+    "4:5": "1856x2304",
+    "5:4": "2304x1856",
+    "8:1": "5856x704",
+    "9:16": "1536x2752",
+    "16:9": "2752x1536",
+    "21:9": "3168x1344",
+  },
+  "4K": {
+    "1:1": "4096x4096",
+    "1:4": "2048x8256",
+    "1:8": "1408x11712",
+    "2:3": "3392x5056",
+    "3:2": "5056x3392",
+    "3:4": "3584x4800",
+    "4:1": "8256x2048",
+    "4:3": "4800x3584",
+    "4:5": "3712x4608",
+    "5:4": "4608x3712",
+    "8:1": "11712x1408",
+    "9:16": "3072x5504",
+    "16:9": "5504x3072",
+    "21:9": "6336x2688",
+  },
+} as const;
 
 type ImageJobStatus = "pending" | "completed" | "error";
 
@@ -706,32 +756,47 @@ function isGeminiImageModel(model?: string): boolean {
   return typeof model === "string" && /^nano-banana/i.test(model);
 }
 
+function shouldUseNanoImageSizePresets(
+  provider: string | undefined,
+  model?: string,
+): boolean {
+  if (provider === "runninghub") {
+    return model === "nano-banana-pro" || model === "nano-banana-2";
+  }
+
+  return isGeminiImageModel(model);
+}
+
+function resolveNanoImageSizeFromHistory(
+  quality: "1K" | "2K" | "4K",
+  aspectRatio: string | undefined,
+): string {
+  const presets = NANO_IMAGE_SIZE_PRESETS[quality];
+
+  if (
+    aspectRatio &&
+    Object.prototype.hasOwnProperty.call(presets, aspectRatio)
+  ) {
+    return presets[aspectRatio as keyof typeof presets];
+  }
+
+  return presets["1:1"];
+}
+
 function resolveImageJobSizeFromHistory(
   historyNodeData: ImageGenerationNodeData | undefined,
 ): string | undefined {
   const quality = historyNodeData?.quality;
   const aspectRatio = historyNodeData?.aspectRatio;
   const model = historyNodeData?.model;
+  const provider = historyNodeData?.provider;
   const normalizedQuality = quality === "2K" || quality === "4K" ? quality : "1K";
 
-  if (isGeminiImageModel(model)) {
-    if (normalizedQuality === "4K") {
-      if (aspectRatio === "16:9") return "5504x3072";
-      if (aspectRatio === "9:16") return "3072x5504";
-      if (aspectRatio === "4:3") return "4800x3584";
-      if (aspectRatio === "3:4") return "3584x4800";
-      return "4096x4096";
-    }
-
-    if (normalizedQuality === "2K") {
-      if (aspectRatio === "16:9") return "2752x1536";
-      if (aspectRatio === "9:16") return "1536x2752";
-      if (aspectRatio === "4:3") return "2400x1792";
-      if (aspectRatio === "3:4") return "1792x2400";
-      return "2048x2048";
-    }
-
-    return "1024x1024";
+  if (shouldUseNanoImageSizePresets(provider, model)) {
+    return resolveNanoImageSizeFromHistory(
+      normalizedQuality,
+      aspectRatio,
+    );
   }
 
   if (normalizedQuality === "4K") {
@@ -743,6 +808,7 @@ function resolveImageJobSizeFromHistory(
     if (aspectRatio === "2:3") return "2336x3504";
     if (aspectRatio === "5:4") return "3200x2560";
     if (aspectRatio === "4:5") return "2560x3200";
+    if (aspectRatio === "2:1") return "3840x1920";
     if (aspectRatio === "21:9") return "3696x1584";
     if (aspectRatio === "9:21") return "1584x3696";
     return "2880x2880";
@@ -753,8 +819,17 @@ function resolveImageJobSizeFromHistory(
     if (aspectRatio === "9:16") return "1440x2560";
     if (aspectRatio === "4:3") return "2304x1728";
     if (aspectRatio === "3:4") return "1728x2304";
+    if (aspectRatio === "3:2") return "2496x1664";
+    if (aspectRatio === "2:3") return "1664x2496";
+    if (aspectRatio === "5:4") return "2240x1792";
+    if (aspectRatio === "4:5") return "1792x2240";
+    if (aspectRatio === "2:1") return "2048x1024";
+    if (aspectRatio === "21:9") return "3024x1296";
+    if (aspectRatio === "9:21") return "1296x3024";
     return "2048x2048";
   }
+
+  if (aspectRatio === "2:1") return "1024x512";
 
   return undefined;
 }

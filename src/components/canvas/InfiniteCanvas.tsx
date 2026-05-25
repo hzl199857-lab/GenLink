@@ -77,6 +77,8 @@ import type {
   ImageGenerationNodeData,
   AITextResultNodeData,
   ImageNodeData,
+  Panorama360NodeData,
+  Panorama360ViewState,
   UploadedImageNodeData,
 } from '@/types/canvas';
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
@@ -85,7 +87,8 @@ import { TextNode } from '../nodes/TextNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { ImageNode } from '../nodes/ImageNode';
-import { UploadedImageNode, type UploadedImageCardLayout } from '../nodes/UploadedImageNode';
+import { Panorama360Node } from '../nodes/Panorama360Node';
+import { UploadedImageNode } from '../nodes/UploadedImageNode';
 import { CardSideHandle } from '../nodes/CardSideHandle';
 import {
   ImageGenerationInfoPopover,
@@ -134,6 +137,9 @@ let notifyCanvasImageInfoRequest:
   | null = null;
 let notifyImageGenerationReferenceUpload:
   | ((nodeId: string) => void)
+  | null = null;
+let notifyPanorama360NavigationActiveChange:
+  | ((nodeId: string, active: boolean) => void)
   | null = null;
 
 function formatImageSize(bytes?: number): string {
@@ -560,6 +566,16 @@ function resolveMiniMapVisibleNodeRect(
     };
   }
 
+  if (node.type === 'panorama-360') {
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: 720,
+      height: 405,
+      radius: 22,
+    };
+  }
+
   if (node.type === 'image') {
     return {
       x: node.position.x,
@@ -654,6 +670,15 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
       y: node.position.y,
       width: IMAGE_NODE_CARD_WIDTH,
       height: IMAGE_NODE_CARD_HEIGHT + 116,
+    };
+  }
+
+  if (node.type === 'panorama-360') {
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: 720,
+      height: 445,
     };
   }
 
@@ -1125,7 +1150,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
       connectedImages={connectedImages}
       onChange={(next) => updateNodeData<'image_generation'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
-      onRun={(promptOverride) => generateImage(id, promptOverride)}
+      onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
       onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
       onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
       onToolbarAction={(action) => notifyImageToolbarAction?.(action, data as ImageGenerationNodeData)}
@@ -1283,12 +1308,49 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
   );
 });
 
+const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, selected }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const connectedImages = useCanvasStore((s) =>
+    s.getConnectedImagesForPanorama360Node(id),
+  );
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
+  const panoramaData = data as Panorama360NodeData;
+  const sourceImage = connectedImages[0] ?? null;
+
+  const handleViewChange = (view: Panorama360ViewState) => {
+    updateNodeData<'panorama-360'>(id, {
+      panorama360Node: {
+        ...panoramaData.panorama360Node,
+        viewport: {
+          ...panoramaData.panorama360Node.viewport,
+          panoramaView: view,
+        },
+      },
+    });
+  };
+
+  return (
+    <Panorama360Node
+      data={panoramaData}
+      selected={selected}
+      sourceImage={sourceImage}
+      accessoriesVisible={isActive}
+      onTitleChange={(nextTitle) => updateNodeData<'panorama-360'>(id, { title: nextTitle })}
+      onViewChange={handleViewChange}
+      onNavigationActiveChange={(active) => notifyPanorama360NavigationActiveChange?.(id, active)}
+      onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+    />
+  );
+});
+
 const nodeTypes = {
   text: TextNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
+  'panorama-360': Panorama360NodeAdapter,
 };
 
 const EDGE_DELETE_BUTTON_SIZE = 20;
@@ -3691,7 +3753,7 @@ function CropOverlay({
     };
     img.src = data.imageUrl;
     return () => { cancelled = true; };
-  }, [data?.imageUrl]);
+  }, [data]);
 
   useEffect(() => {
     if (!data) return;
@@ -4295,6 +4357,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     nodeId: string;
     requestId: number;
   } | null>(null);
+  const [panorama360NavigationNodeId, setPanorama360NavigationNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
@@ -4561,6 +4624,22 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       if (notifyPromptBarInteraction) {
         notifyPromptBarInteraction = null;
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    notifyPanorama360NavigationActiveChange = (nodeId, active) => {
+      setPanorama360NavigationNodeId((current) => {
+        if (active) {
+          return nodeId;
+        }
+
+        return current === nodeId ? null : current;
+      });
+    };
+
+    return () => {
+      notifyPanorama360NavigationActiveChange = null;
     };
   }, []);
 
@@ -5441,6 +5520,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         }
       } else if (change.type === 'remove') {
         setActiveNodeId((current) => (current === change.id ? null : current));
+        setPanorama360NavigationNodeId((current) => (current === change.id ? null : current));
         setSelectedNodeIds((current) => {
           if (!current.has(change.id)) return current;
 
@@ -5844,6 +5924,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       focusCreatedNode(node.id);
     }
 
+    if (action === 'panorama-360' && addMenu) {
+      const node = addNodeAtCenter('panorama-360', addMenu.canvas);
+      focusCreatedNode(node.id);
+    }
+
     if (action === 'upload' && addMenu) {
       openUploadPicker(addMenu.canvas);
     }
@@ -6240,7 +6325,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
-    if (action !== 'text' && action !== 'image_generation' && action !== 'video') {
+    if (action !== 'text' && action !== 'image_generation' && action !== 'panorama-360' && action !== 'video') {
       clearConnectionMenu();
       return;
     }
@@ -6250,7 +6335,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
-    const nodeType: NodeType = action === 'text' ? 'text' : 'image_generation';
+    const nodeType: NodeType =
+      action === 'text'
+        ? 'text'
+        : action === 'panorama-360'
+          ? 'panorama-360'
+          : 'image_generation';
     const nextNode = addNodeAtCenter(nodeType, connectionMenu.canvas);
     const connection = connectionMenu.connection;
 
@@ -6569,7 +6659,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         deleteKeyCode={null}
         panOnDrag={[1]}
         panActivationKeyCode="Space"
-        panOnScroll
+        panOnScroll={panorama360NavigationNodeId === null}
         panOnScrollMode={PanOnScrollMode.Free}
         zoomOnScroll={false}
         zoomActivationKeyCode="Control"

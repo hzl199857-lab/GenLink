@@ -5,6 +5,7 @@ import { Position, useUpdateNodeInternals } from 'reactflow';
 import { ChevronDown, Image as ImageIcon } from 'lucide-react';
 import type {
   ImageGenerationNodeData,
+  ImageGenerationRunOptions,
   ImageGenerationResultItem,
 } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
@@ -26,6 +27,7 @@ const CARD_ACCESSORY_TOP_SPACE = 64;
 const CARD_ACCESSORY_GAP = 12;
 const CARD_TOOLBAR_LIFT = 30;
 const NANO_BANANA_MODEL_PREFIX = 'nano-banana';
+const RUNNING_HUB_NANO_MODELS = new Set(['nano-banana-pro', 'nano-banana-2']);
 
 export interface ImageGenerationNodeProps {
   id?: string;
@@ -40,7 +42,7 @@ export interface ImageGenerationNodeProps {
     height?: number;
   }>;
   onChange?: (next: ImageGenerationNodeData) => void;
-  onRun?: (promptOverride?: string) => void;
+  onRun?: (promptOverride?: string, options?: ImageGenerationRunOptions) => void;
   onUpload?: () => void;
   onRemoveReference?: (referenceImageId: string) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
@@ -263,8 +265,13 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     model: string;
     runningHubChannel?: 'official' | 'low-cost';
   }) => {
+    const nextIsNanoSizeModel =
+      next.provider === 'runninghub'
+        ? RUNNING_HUB_NANO_MODELS.has(next.model)
+        : next.model.startsWith(NANO_BANANA_MODEL_PREFIX);
     const nextAspectRatio =
-      next.model.startsWith(NANO_BANANA_MODEL_PREFIX) && (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
+      nextIsNanoSizeModel &&
+      (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
         ? '1:1'
         : data.aspectRatio;
 
@@ -304,6 +311,15 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     onChange?.({
       ...data,
       quality: next,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  };
+
+  const handleRunOptionsChange = (next: ImageGenerationRunOptions) => {
+    onChange?.({
+      ...data,
+      ...next,
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -650,6 +666,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         onRunningHubChannelChange={handleRunningHubChannelChange}
         onAspectRatioChange={handleAspectRatioChange}
         onQualityChange={handleQualityChange}
+        onRunOptionsChange={handleRunOptionsChange}
         onDetailChange={handleDetailChange}
         onOutputFormatChange={handleOutputFormatChange}
         onModerationChange={handleModerationChange}

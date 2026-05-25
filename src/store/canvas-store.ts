@@ -29,10 +29,12 @@ import type {
   CanvasNode,
   ImageGenerationResultItem,
   ImageGenerationNodeData,
+  ImageGenerationRunOptions,
   ImageNodeData,
   MaterialLibraryItem,
   NodeGroup,
   NodeType,
+  Panorama360NodeData,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
   TextNodeData,
@@ -306,6 +308,7 @@ const IMAGE_SIZE_PRESETS = {
     "2:3": "832x1248",
     "5:4": "1120x896",
     "4:5": "896x1120",
+    "2:1": "1024x512",
     "21:9": "1456x624",
     "9:21": "624x1456",
   },
@@ -319,6 +322,7 @@ const IMAGE_SIZE_PRESETS = {
     "2:3": "1664x2496",
     "5:4": "2240x1792",
     "4:5": "1792x2240",
+    "2:1": "2048x1024",
     "21:9": "3024x1296",
     "9:21": "1296x3024",
   },
@@ -332,6 +336,7 @@ const IMAGE_SIZE_PRESETS = {
     "2:3": "2336x3504",
     "5:4": "3200x2560",
     "4:5": "2560x3200",
+    "2:1": "3840x1920",
     "21:9": "3696x1584",
     "9:21": "1584x3696",
   },
@@ -398,6 +403,7 @@ const SUPPORTED_IMAGE_ASPECT_RATIOS = [
   "2:3",
   "16:9",
   "9:16",
+  "2:1",
   "21:9",
   "9:21",
 ] as const;
@@ -432,6 +438,17 @@ function isClaudeModel(model?: string): boolean {
 
 function isGeminiImageModel(model?: string): boolean {
   return typeof model === "string" && /^nano-banana/i.test(model);
+}
+
+function shouldUseNanoImageSizePresets(
+  provider: ApiProvider | undefined,
+  model?: string,
+): boolean {
+  if (provider === "runninghub") {
+    return model === "nano-banana-pro" || model === "nano-banana-2";
+  }
+
+  return isGeminiImageModel(model);
 }
 
 function createTextNodeData(): TextNodeData {
@@ -484,6 +501,32 @@ function createUploadedImageNodeData(): UploadedImageNodeData {
     imageUrl: "",
     width: 320,
     height: 320,
+  };
+}
+
+function createPanorama360NodeData(): Panorama360NodeData {
+  return {
+    title: "360全景图",
+    panorama360Node: {
+      version: 1,
+      mode: "panorama",
+      viewport: {
+        activeView: "default",
+        panoramaView: {
+          yaw: 0,
+          pitch: 0,
+          fov: 72,
+        },
+      },
+      panorama: {
+        isLoaded: false,
+        error: null,
+      },
+      ui: {
+        mouseTool: "navigate",
+        isEditing: false,
+      },
+    },
   };
 }
 
@@ -889,6 +932,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createUploadedImageNodeData(),
+      };
+    case "panorama-360":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createPanorama360NodeData(),
       };
   }
 }
@@ -1393,11 +1443,12 @@ function resolveImageSize(
   aspectRatio: string | undefined,
   connectedImages: ConnectedImagePayload[],
   model?: string,
+  provider?: ApiProvider,
 ): string {
   const normalizedSizeTier =
     sizeTier === "2K" || sizeTier === "4K" ? sizeTier : "1K";
 
-  if (isGeminiImageModel(model)) {
+  if (shouldUseNanoImageSizePresets(provider, model)) {
     const presets = GEMINI_IMAGE_SIZE_PRESETS[normalizedSizeTier];
 
     if (aspectRatio === "auto") {
@@ -1859,6 +1910,7 @@ export interface CanvasState {
   generateImageFromImageGenerationNode: (
     imageGenerationNodeId: string,
     promptOverride?: string,
+    options?: ImageGenerationRunOptions,
   ) => Promise<void>;
   splitImageGenerationNodeToGrid: (
     imageGenerationNodeId: string,
@@ -1883,6 +1935,9 @@ export interface CanvasState {
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
+  ) => ConnectedImagePayload[];
+  getConnectedImagesForPanorama360Node: (
+    panorama360NodeId: string,
   ) => ConnectedImagePayload[];
 
   setProjectName: (name: string) => void;
@@ -2458,7 +2513,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     );
   },
 
-  generateImageFromImageGenerationNode: async (imageGenerationNodeId, promptOverride) => {
+  generateImageFromImageGenerationNode: async (imageGenerationNodeId, promptOverride, options) => {
     const state = get();
     const imageGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -2578,12 +2633,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         );
       }
 
-      const size = resolveImageSize(
-        latestImageGenerationNode.data.quality,
-        latestImageGenerationNode.data.aspectRatio,
-        referenceImages,
-        latestImageGenerationNode.data.model,
-      );
       const quality = resolveImageApiQuality(
         latestImageGenerationNode.data.detail,
       );
@@ -2599,6 +2648,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const imageProvider =
         latestImageGenerationNode.data.provider ?? readStoredSelectedApiProvider("image");
       const apiKey = assertStoredApiKey("image", imageProvider);
+      const imageQuality = options?.quality ?? latestImageGenerationNode.data.quality;
+      const imageAspectRatio = options?.aspectRatio ?? latestImageGenerationNode.data.aspectRatio;
+      const size = resolveImageSize(
+        imageQuality,
+        imageAspectRatio,
+        referenceImages,
+        latestImageGenerationNode.data.model,
+        imageProvider,
+      );
       const baseJobParams = {
         prompt: effectivePrompt,
         model: latestImageGenerationNode.data.model,
@@ -2617,6 +2675,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const historyNodeData: ImageGenerationNodeData = {
         ...latestImageGenerationNode.data,
         prompt: historyDisplayPrompt,
+        aspectRatio: imageAspectRatio,
+        quality: imageQuality,
         effectivePromptOverride: undefined,
         referenceImages: referenceImages.map((image, index) => {
           const requestImageUrl = requestImages?.[index]?.url || image.hostedImageUrl || image.imageUrl;
@@ -3377,6 +3437,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       state.nodes,
       state.edges,
       imageGenerationNodeId,
+    );
+  },
+
+  getConnectedImagesForPanorama360Node: (panorama360NodeId) => {
+    const state = get();
+    return getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      panorama360NodeId,
     );
   },
 

@@ -6,6 +6,7 @@ import type {
   ImageGenerationNodeData,
   ImageNodeData,
   NodeType,
+  Panorama360NodeData,
   ProjectSnapshot,
   TextNodeData,
   UploadedImageNodeData,
@@ -45,7 +46,8 @@ function isNodeType(value: string): value is NodeType {
     value === "image_generation" ||
     value === "ai_text_result" ||
     value === "image" ||
-    value === "uploaded_image"
+    value === "uploaded_image" ||
+    value === "panorama-360"
   );
 }
 
@@ -303,6 +305,104 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
   };
 }
 
+function normalizeNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizePanorama360NodeData(value: unknown): Panorama360NodeData {
+  const fallback: Panorama360NodeData = {
+    title: "360全景图",
+    panorama360Node: {
+      version: 1,
+      mode: "panorama",
+      viewport: {
+        activeView: "default",
+        panoramaView: {
+          yaw: 0,
+          pitch: 0,
+          fov: 72,
+        },
+      },
+      panorama: {
+        isLoaded: false,
+        error: null,
+      },
+      ui: {
+        mouseTool: "navigate",
+        isEditing: false,
+      },
+    },
+  };
+
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const record = value as Record<string, unknown>;
+  const panorama360Node =
+    record.panorama360Node &&
+    typeof record.panorama360Node === "object"
+      ? record.panorama360Node as Record<string, unknown>
+      : {};
+  const viewport =
+    panorama360Node.viewport &&
+    typeof panorama360Node.viewport === "object"
+      ? panorama360Node.viewport as Record<string, unknown>
+      : {};
+  const panoramaView =
+    viewport.panoramaView &&
+    typeof viewport.panoramaView === "object"
+      ? viewport.panoramaView as Record<string, unknown>
+      : {};
+  const panorama =
+    panorama360Node.panorama &&
+    typeof panorama360Node.panorama === "object"
+      ? panorama360Node.panorama as Record<string, unknown>
+      : {};
+  const ui =
+    panorama360Node.ui &&
+    typeof panorama360Node.ui === "object"
+      ? panorama360Node.ui as Record<string, unknown>
+      : {};
+
+  return {
+    title: typeof record.title === "string" ? record.title : fallback.title,
+    panorama360Node: {
+      version: 1,
+      mode: "panorama",
+      viewport: {
+        activeView: "default",
+        panoramaView: {
+          yaw: normalizeNumber(panoramaView.yaw, 0),
+          pitch: normalizeNumber(panoramaView.pitch, 0),
+          fov: normalizeNumber(panoramaView.fov, 72),
+        },
+      },
+      panorama: {
+        sourceSignature:
+          typeof panorama.sourceSignature === "string"
+            ? panorama.sourceSignature
+            : undefined,
+        isLoaded:
+          typeof panorama.isLoaded === "boolean"
+            ? panorama.isLoaded
+            : false,
+        error:
+          typeof panorama.error === "string"
+            ? panorama.error
+            : null,
+      },
+      ui: {
+        mouseTool: "navigate",
+        isEditing:
+          typeof ui.isEditing === "boolean"
+            ? ui.isEditing
+            : false,
+      },
+    },
+  };
+}
+
 function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
   const parsed = parseNodeJson(record.data);
 
@@ -359,6 +459,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "uploaded_image",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeUploadedImageNodeData(parsed),
+      };
+    case "panorama-360":
+      return {
+        id: record.id,
+        type: "panorama-360",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizePanorama360NodeData(parsed),
       };
   }
 }

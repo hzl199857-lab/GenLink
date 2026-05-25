@@ -734,26 +734,12 @@ function resolveRunningHubChannel(channel?: RunningHubChannel): RunningHubChanne
   return channel === "low-cost" ? "low-cost" : "official";
 }
 
-function toRunningHubAspectRatio(size?: string): string {
+function toNearestAspectRatio(
+  size: string | undefined,
+  supported: readonly string[],
+): string {
   const { width, height } = parseImageSize(size);
   const ratio = width / height;
-  const supported = [
-    "1:1",
-    "1:2",
-    "2:1",
-    "1:3",
-    "3:1",
-    "2:3",
-    "3:2",
-    "3:4",
-    "4:3",
-    "4:5",
-    "5:4",
-    "9:16",
-    "21:9",
-    "9:21",
-    "16:9",
-  ] as const;
 
   let best = "1:1";
   let bestDelta = Number.POSITIVE_INFINITY;
@@ -770,6 +756,52 @@ function toRunningHubAspectRatio(size?: string): string {
 
   return best;
 }
+
+const RUNNINGHUB_GPT_IMAGE_ASPECT_RATIOS = [
+  "1:1",
+  "1:2",
+  "2:1",
+  "1:3",
+  "3:1",
+  "2:3",
+  "3:2",
+  "3:4",
+  "4:3",
+  "4:5",
+  "5:4",
+  "9:16",
+  "21:9",
+  "9:21",
+  "16:9",
+] as const;
+const RUNNINGHUB_NANO_PRO_ASPECT_RATIOS = [
+  "1:1",
+  "3:2",
+  "2:3",
+  "3:4",
+  "4:3",
+  "4:5",
+  "5:4",
+  "9:16",
+  "16:9",
+  "21:9",
+] as const;
+const RUNNINGHUB_NANO_V2_ASPECT_RATIOS = [
+  "1:1",
+  "16:9",
+  "9:16",
+  "4:3",
+  "3:4",
+  "3:2",
+  "2:3",
+  "5:4",
+  "4:5",
+  "21:9",
+  "1:4",
+  "4:1",
+  "1:8",
+  "8:1",
+] as const;
 
 function toRunningHubResolution(size?: string): "1k" | "2k" | "4k" {
   const { width, height } = parseImageSize(size);
@@ -794,15 +826,78 @@ function toRunningHubQuality(quality?: string): "low" | "medium" | "high" {
   return "medium";
 }
 
-function getRunningHubImagePath(
+type RunningHubImageModelConfig = {
+  supportedAspectRatios: readonly string[];
+  official: {
+    textToImage: string;
+    imageToImage: string;
+    supportsQuality?: boolean;
+  };
+  lowCost: {
+    textToImage: string;
+    imageToImage: string;
+    supportsQuality?: boolean;
+  };
+};
+
+const RUNNINGHUB_IMAGE_MODEL_CONFIGS: Record<string, RunningHubImageModelConfig> = {
+  "gpt-image-2": {
+    supportedAspectRatios: RUNNINGHUB_GPT_IMAGE_ASPECT_RATIOS,
+    official: {
+      textToImage: "/openapi/v2/rhart-image-g-2-official/text-to-image",
+      imageToImage: "/openapi/v2/rhart-image-g-2-official/image-to-image",
+      supportsQuality: true,
+    },
+    lowCost: {
+      textToImage: "/openapi/v2/rhart-image-g-2/text-to-image",
+      imageToImage: "/openapi/v2/rhart-image-g-2/image-to-image",
+    },
+  },
+  "nano-banana-pro": {
+    supportedAspectRatios: RUNNINGHUB_NANO_PRO_ASPECT_RATIOS,
+    official: {
+      textToImage: "/openapi/v2/rhart-image-n-pro-official/text-to-image",
+      imageToImage: "/openapi/v2/rhart-image-n-pro-official/edit",
+    },
+    lowCost: {
+      textToImage: "/openapi/v2/rhart-image-n-pro/text-to-image",
+      imageToImage: "/openapi/v2/rhart-image-n-pro/edit",
+    },
+  },
+  "nano-banana-2": {
+    supportedAspectRatios: RUNNINGHUB_NANO_V2_ASPECT_RATIOS,
+    official: {
+      textToImage: "/openapi/v2/rhart-image-n-g31-flash-official/text-to-image",
+      imageToImage: "/openapi/v2/rhart-image-n-g31-flash-official/image-to-image",
+    },
+    lowCost: {
+      textToImage: "/openapi/v2/rhart-image-n-g31-flash/text-to-image",
+      imageToImage: "/openapi/v2/rhart-image-n-g31-flash/image-to-image",
+    },
+  },
+};
+
+function getRunningHubModelConfig(model?: string): RunningHubImageModelConfig {
+  return RUNNINGHUB_IMAGE_MODEL_CONFIGS[model ?? ""] ?? RUNNINGHUB_IMAGE_MODEL_CONFIGS["gpt-image-2"];
+}
+
+function getRunningHubImageEndpoint(
+  model: string | undefined,
   channel: RunningHubChannel,
   hasReferenceImages: boolean,
-): string {
-  const modelPath =
-    channel === "low-cost" ? "rhart-image-g-2" : "rhart-image-g-2-official";
-  const taskPath = hasReferenceImages ? "image-to-image" : "text-to-image";
+): { path: string; supportedAspectRatios: readonly string[]; supportsQuality?: boolean } {
+  const modelConfig = getRunningHubModelConfig(model);
+  const channelConfig = channel === "low-cost"
+    ? modelConfig.lowCost
+    : modelConfig.official;
 
-  return `/openapi/v2/${modelPath}/${taskPath}`;
+  return {
+    path: hasReferenceImages
+      ? channelConfig.imageToImage
+      : channelConfig.textToImage,
+    supportedAspectRatios: modelConfig.supportedAspectRatios,
+    supportsQuality: channelConfig.supportsQuality,
+  };
 }
 
 function resolveComflyTextModel(model: string): string {
@@ -2781,6 +2876,7 @@ export async function submitRunningHubImageTask(
     params.images,
     params.apiKey,
   );
+  const endpoint = getRunningHubImageEndpoint(model, channel, imageUrls.length > 0);
   const requestBody: {
     prompt: string;
     aspectRatio: string;
@@ -2789,11 +2885,11 @@ export async function submitRunningHubImageTask(
     imageUrls?: string[];
   } = {
     prompt: params.prompt,
-    aspectRatio: toRunningHubAspectRatio(size),
+    aspectRatio: toNearestAspectRatio(size, endpoint.supportedAspectRatios),
     resolution: toRunningHubResolution(size),
   };
 
-  if (channel === "official") {
+  if (endpoint.supportsQuality) {
     requestBody.quality = toRunningHubQuality(params.quality);
   }
 
@@ -2803,7 +2899,7 @@ export async function submitRunningHubImageTask(
 
   const json = await requestJsonWithBaseUrl<RunningHubTaskResponse>(
     RUNNINGHUB_BASE_URL,
-    getRunningHubImagePath(channel, imageUrls.length > 0),
+    endpoint.path,
     requestBody,
     params.apiKey,
     createHeaders,

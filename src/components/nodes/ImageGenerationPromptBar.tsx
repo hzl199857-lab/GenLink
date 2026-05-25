@@ -8,6 +8,7 @@ import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, X } from 'l
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
+import type { ImageGenerationRunOptions } from '@/types/canvas';
 import {
   getApiProviderLabel,
   readStoredApiKey,
@@ -19,22 +20,44 @@ const EXPANDED_PROMPT_HEIGHT = 225;
 const REFERENCE_PREVIEW_WIDTH = 132;
 const REFERENCE_PREVIEW_HEIGHT = 176;
 const REFERENCE_PREVIEW_GAP = 10;
+type ImageModelOption = {
+  id: string;
+  label: string;
+};
+type ImagePromptPreset = {
+  id: string;
+  title: string;
+  prompt: string;
+  runOptions?: ImageGenerationRunOptions;
+};
 const IMAGE_MODELS = [
   { id: 'gpt-image-2', label: 'gpt-image-2' },
   { id: 'nano-banana-2', label: 'Nano banana pro' },
-] as const;
+] as const satisfies readonly ImageModelOption[];
+const RUNNING_HUB_IMAGE_MODELS = [
+  { id: 'gpt-image-2', label: 'gpt-image-2' },
+  { id: 'nano-banana-pro', label: 'Nano banana pro' },
+  { id: 'nano-banana-2', label: 'Nano banana 2' },
+] as const satisfies readonly ImageModelOption[];
+const RUNNING_HUB_CHANNEL_MODEL_IDS: ReadonlySet<string> = new Set(
+  RUNNING_HUB_IMAGE_MODELS.map((model) => model.id),
+);
+const RUNNING_HUB_NANO_MODEL_IDS: ReadonlySet<string> = new Set([
+  'nano-banana-pro',
+  'nano-banana-2',
+]);
 const RUNNING_HUB_CHANNEL_OPTIONS = [
   { id: 'official', label: '官方稳定版' },
   { id: 'low-cost', label: '低价渠道版' },
 ] as const;
 type RunningHubChannel = typeof RUNNING_HUB_CHANNEL_OPTIONS[number]['id'];
 const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen', 'runninghub'];
-const IMAGE_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly typeof IMAGE_MODELS[number][]> = {
+const IMAGE_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly ImageModelOption[]> = {
   vibe: IMAGE_MODELS,
   fucheers: IMAGE_MODELS,
   comfly: IMAGE_MODELS,
   zhenzhen: IMAGE_MODELS,
-  runninghub: IMAGE_MODELS.filter((model) => model.id === 'gpt-image-2'),
+  runninghub: RUNNING_HUB_IMAGE_MODELS,
 };
 const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
@@ -63,8 +86,9 @@ const IMAGE_ASPECT_RATIO_LAYOUT = [
   { value: '2:3', className: 'col-start-4 row-start-2 h-[54px]' },
   { value: '16:9', className: 'col-start-5 row-start-2 h-[54px]' },
   { value: '9:16', className: 'col-start-2 row-start-3 h-[54px]' },
-  { value: '21:9', className: 'col-start-3 row-start-3 h-[54px]' },
-  { value: '9:21', className: 'col-start-4 row-start-3 h-[54px]' },
+  { value: '2:1', className: 'col-start-3 row-start-3 h-[54px]' },
+  { value: '21:9', className: 'col-start-4 row-start-3 h-[54px]' },
+  { value: '9:21', className: 'col-start-5 row-start-3 h-[54px]' },
 ] as const;
 const GEMINI_IMAGE_ASPECT_RATIO_LAYOUT = [
   { value: '1:1', className: 'col-start-1 row-start-1 h-[54px]' },
@@ -95,12 +119,103 @@ const IMAGE_PROMPT_PRESETS = [
   },
   {
     id: 'storyboard-four-grid',
-    title: '剧情推演四宫格',
-    prompt: '占位提示词：剧情推演四宫格',
+    title: '角色设定表',
+    runOptions: {
+      aspectRatio: '16:9',
+      quality: '2K',
+    },
+    prompt: `Create an artistic 16:9 CHARACTER IDENTITY BOARD.
+
+[SUBJECT]: use reference image
+
+Pure white / soft off-white background.
+No environment, no props, no logo, no watermark.
+
+DESIGN DIRECTION:
+Do not create a standard character reference sheet.
+Create a cinematic identity board that feels like a high-end animation studio character study mixed with an artbook layout.
+
+The layout should be asymmetrical, elegant and visually memorable.
+Use large empty space, varied image scale and intentional imbalance.
+Avoid grids, blueprint design, catalog layout and repetitive turnaround presentation.
+
+IMPORTANT LAYOUT RULE:
+Do not overlap any character images.
+Every view must have clear separation and breathing room.
+Keep all bodies, portraits, silhouettes and detail studies visually distinct.
+No cropped faces, no hidden limbs, no stacked figures, no merged poses.
+
+MAIN COMPOSITION:
+Place one large hero full-body view slightly off-center as the visual anchor.
+
+Around it, arrange smaller supporting studies with clean spacing:
+neutral full-body view,
+back view,
+profile view,
+seated pose,
+leaning pose,
+crouching pose,
+top-down body angle,
+low-angle body angle,
+expressive portrait studies.
+
+Each view should feel like a separate clean character study, not a frame from one scene.
+
+IDENTITY LOCK:
+Preserve strict identity consistency across all views:
+same face,
+same facial proportions,
+same hairstyle,
+same outfit,
+same body proportions,
+same posture language,
+same visual personality.
+
+USEFUL REFERENCE DETAILS:
+Make the character readable for future image and video generation:
+clear face shape,
+clear hair silhouette,
+clear outfit silhouette,
+clear body shape,
+clear hands,
+clear posture,
+clear expression range.
+
+ARTISTIC SECTIONS:
+Include a small silhouette study area with 2-3 simplified black character silhouettes.
+Include a small expression study area with subtle emotional variations.
+Include a small detail study area showing key visual features of the face, hair and outfit.
+
+TEXT DESIGN:
+Add one stylish CHARACTER ID block.
+Keep it minimal, bold and art-directed.
+Use only:
+NAME
+ROLE
+CORE MOOD
+VISUAL SIGNATURE
+
+Use small handwritten-style labels only where helpful.
+Subtle editorial arrows and annotation marks are allowed, but keep them minimal and elegant.
+
+STYLE:
+minimal,
+cinematic,
+premium,
+artbook-like,
+clean,
+expressive,
+useful for production.
+
+The final image should feel like an artistic character identity board designed to help an AI model understand the character’s face, silhouette, outfit, posture and emotional range.`,
   },
   {
     id: 'character-face-three-view',
     title: '角色脸部三视图',
+    runOptions: {
+      aspectRatio: '16:9',
+      quality: '2K',
+    },
     prompt: '生成全身三视图以及一张脸部特写（最左边占满三分之一的位置是上半身特写），右边三分之二放正视图，45度的侧视图，后视图，{用户输入 || 白色背景}',
   },
   {
@@ -133,7 +248,7 @@ const IMAGE_PROMPT_PRESETS = [
     title: '画面推演 - 5秒前',
     prompt: '占位提示词：画面推演 - 5秒前',
   },
-] as const;
+] as const satisfies readonly ImagePromptPreset[];
 
 function getPromptPresetUserInput(value: string): string {
   const trimmedEnd = value.trimEnd();
@@ -180,11 +295,12 @@ export interface ImageGenerationPromptBarProps {
   onRunningHubChannelChange?: (next: RunningHubChannel) => void;
   onAspectRatioChange?: (next: string) => void;
   onQualityChange?: (next: string) => void;
+  onRunOptionsChange?: (next: ImageGenerationRunOptions) => void;
   onDetailChange?: (next: string) => void;
   onOutputFormatChange?: (next: string) => void;
   onModerationChange?: (next: string) => void;
   onParallelCountChange?: (next: 1 | 2 | 4) => void;
-  onRun?: (promptOverride?: string) => void;
+  onRun?: (promptOverride?: string, options?: ImageGenerationRunOptions) => void;
   onAddReference?: () => void;
   onRemoveReference?: (referenceImageId: string) => void;
   onPointerDownWithin?: () => void;
@@ -308,6 +424,8 @@ function getRatioShapeClass(ratio: string) {
       return 'h-[9px] w-[16px]';
     case '9:16':
       return 'h-[16px] w-[9px]';
+    case '2:1':
+      return 'h-[8px] w-[16px]';
     case '21:9':
       return 'h-[8px] w-[18px]';
     case '9:21':
@@ -326,7 +444,11 @@ function getRatioShapeClass(ratio: string) {
 }
 
 function getImageModelLabel(model: string): string {
-  return IMAGE_MODELS.find((option) => option.id === model)?.label ?? model;
+  return (
+    RUNNING_HUB_IMAGE_MODELS.find((option) => option.id === model)?.label ??
+    IMAGE_MODELS.find((option) => option.id === model)?.label ??
+    model
+  );
 }
 
 function getRunningHubChannelLabel(channel?: RunningHubChannel): string {
@@ -394,6 +516,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   onRunningHubChannelChange,
   onAspectRatioChange,
   onQualityChange,
+  onRunOptionsChange,
   onDetailChange,
   onOutputFormatChange,
   onModerationChange,
@@ -412,6 +535,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [activeProvider, setActiveProvider] = useState<ApiProvider>(provider);
   const [activeModelForChannel, setActiveModelForChannel] = useState<string | null>(null);
+  const [hoveredRunningHubChannel, setHoveredRunningHubChannel] = useState<RunningHubChannel | null>(null);
   const [providerWarning, setProviderWarning] = useState<string | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
@@ -458,15 +582,20 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   if (!visible) return null;
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
-  const isNanoBananaModel = model?.startsWith('nano-banana') ?? false;
+  const isNanoBananaModel =
+    provider === 'runninghub'
+      ? RUNNING_HUB_NANO_MODEL_IDS.has(model)
+      : (model?.startsWith('nano-banana') ?? false);
   const activeRunningHubChannel = runningHubChannel === 'low-cost' ? 'low-cost' : 'official';
   const modelLabel =
-    provider === 'runninghub' && model === 'gpt-image-2'
+    provider === 'runninghub' && RUNNING_HUB_CHANNEL_MODEL_IDS.has(model)
       ? `${getImageModelLabel(model)} / ${getRunningHubChannelLabel(activeRunningHubChannel)}`
       : getImageModelLabel(model);
   const activeImageModels = IMAGE_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
   const showRunningHubChannelMenu =
-    activeProvider === 'runninghub' && activeModelForChannel === 'gpt-image-2';
+    activeProvider === 'runninghub' &&
+    activeModelForChannel !== null &&
+    RUNNING_HUB_CHANNEL_MODEL_IDS.has(activeModelForChannel);
   const modelAspectRatio = isNanoBananaModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
   const aspectRatioLayout = isNanoBananaModel
     ? GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
@@ -529,19 +658,31 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     setHoveredReferencePreview(null);
   };
 
-  const handlePromptPresetClick = (presetPrompt: string) => {
+  const handlePromptPresetClick = (preset: ImagePromptPreset) => {
     if (!canUsePromptPresets || generating) {
       return;
     }
 
     const resolvedPrompt = resolvePromptPresetTemplate(
-      presetPrompt,
+      preset.prompt,
       getPromptPresetUserInput(resolvedValue),
     );
 
     setDraftPrompt('');
     onPromptChange?.('');
-    onRun?.(resolvedPrompt);
+    if (preset.runOptions) {
+      if (onRunOptionsChange) {
+        onRunOptionsChange(preset.runOptions);
+      } else {
+        if (preset.runOptions.aspectRatio) {
+          onAspectRatioChange?.(preset.runOptions.aspectRatio);
+        }
+        if (preset.runOptions.quality) {
+          onQualityChange?.(preset.runOptions.quality);
+        }
+      }
+    }
+    onRun?.(resolvedPrompt, preset.runOptions);
   };
 
   return (
@@ -687,7 +828,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         onPointerDown={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          handlePromptPresetClick(preset.prompt);
+                          handlePromptPresetClick(preset);
                         }}
                         className={[
                           'flex min-h-[52px] w-full items-center gap-3 rounded-[12px] px-3 py-1.5 text-left transition-colors duration-150',
@@ -749,7 +890,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
               className="text-node-prompt-input prompt-mention-input nodrag nopan w-full overflow-y-auto border-0 bg-transparent pr-10 text-[14px] leading-7 text-gl-text-primary outline-none"
               style={{
                 minHeight: promptHeight,
-                height: expanded ? promptHeight : undefined,
+                height: promptHeight,
               }}
             />
           </div>
@@ -766,6 +907,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       if (!open) {
                         setActiveProvider(provider);
                         setActiveModelForChannel(null);
+                        setHoveredRunningHubChannel(null);
                         setProviderWarning(null);
                       }
 
@@ -788,7 +930,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       </div>
                       <div className="flex flex-col gap-0.5">
                         {API_PROVIDERS.map((option) => {
-                          const selected = option === activeProvider;
+                          const hovered = option === activeProvider;
 
                           return (
                             <button
@@ -798,16 +940,18 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                               onPointerEnter={() => {
                                 setActiveProvider(option);
                                 setActiveModelForChannel(null);
+                                setHoveredRunningHubChannel(null);
                                 setProviderWarning(null);
                               }}
                               onClick={() => {
                                 setActiveProvider(option);
                                 setActiveModelForChannel(null);
+                                setHoveredRunningHubChannel(null);
                                 setProviderWarning(null);
                               }}
                               className={[
                                 'flex h-11 w-full items-center justify-between rounded-[12px] px-3 text-left text-[14px] transition-colors duration-150',
-                                selected
+                                hovered
                                   ? 'bg-white/[0.08] text-gl-text-primary'
                                   : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
                               ].join(' ')}
@@ -826,8 +970,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       <div className="flex flex-col gap-0.5">
                         {activeImageModels.map((option) => {
                           const selected = activeProvider === provider && option.id === model;
+                          const hovered = activeModelForChannel === option.id;
                           const hasChannelMenu =
-                            activeProvider === 'runninghub' && option.id === 'gpt-image-2';
+                            activeProvider === 'runninghub' &&
+                            RUNNING_HUB_CHANNEL_MODEL_IDS.has(option.id);
 
                           return (
                             <button
@@ -838,6 +984,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                                 setActiveModelForChannel(
                                   activeProvider === 'runninghub' ? option.id : null,
                                 );
+                                setHoveredRunningHubChannel(null);
                               }}
                               onClick={() => {
                                 if (activeProvider !== 'runninghub') {
@@ -848,7 +995,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                               }}
                               className={[
                                 'flex h-11 w-full items-center justify-between rounded-[12px] px-4 text-left text-[15px] transition-colors duration-150',
-                                selected || activeModelForChannel === option.id
+                                hovered
                                   ? 'bg-white/[0.08] text-gl-text-primary'
                                   : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
                               ].join(' ')}
@@ -879,18 +1026,26 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                             const selected =
                               activeProvider === provider &&
                               provider === 'runninghub' &&
-                              model === 'gpt-image-2' &&
+                              model === activeModelForChannel &&
                               option.id === activeRunningHubChannel;
+                            const hovered = option.id === hoveredRunningHubChannel;
 
                             return (
                               <button
                                 key={option.id}
                                 type="button"
                                 translate="no"
-                                onClick={() => handleModelSelect('runninghub', 'gpt-image-2', option.id)}
+                                onPointerEnter={() => setHoveredRunningHubChannel(option.id)}
+                                onClick={() =>
+                                  handleModelSelect(
+                                    'runninghub',
+                                    activeModelForChannel ?? 'gpt-image-2',
+                                    option.id,
+                                  )
+                                }
                                 className={[
                                   'flex h-11 w-full items-center justify-between rounded-[12px] px-3 text-left text-[14px] transition-colors duration-150',
-                                  selected
+                                  hovered
                                     ? 'bg-white/[0.08] text-gl-text-primary'
                                     : 'text-gl-text-secondary hover:bg-white/[0.05] hover:text-gl-text-primary',
                                 ].join(' ')}

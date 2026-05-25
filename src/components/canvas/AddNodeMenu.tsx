@@ -3,6 +3,7 @@
 import React from 'react';
 import {
   AlignLeft,
+  Globe2,
   Grid2X2,
   Image as ImageIcon,
   Upload,
@@ -13,6 +14,7 @@ import {
 export type AddNodeMenuAction =
   | 'text'
   | 'image_generation'
+  | 'panorama-360'
   | 'video'
   | 'audio'
   | 'storyboard'
@@ -40,6 +42,11 @@ const NODE_ITEMS: Array<{
     action: 'image_generation',
     title: '图像',
     icon: ImageIcon,
+  },
+  {
+    action: 'panorama-360',
+    title: '360全景图',
+    icon: Globe2,
   },
   {
     action: 'video',

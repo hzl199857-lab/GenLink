@@ -5,7 +5,8 @@ export type NodeType =
   | "image_generation"
   | "ai_text_result"
   | "image"
-  | "uploaded_image";
+  | "uploaded_image"
+  | "panorama-360";
 
 export interface BaseCanvasNode<
   TType extends NodeType = NodeType,
@@ -81,6 +82,11 @@ export interface ImageGenerationNodeData {
   errorMessage?: string;
 }
 
+export type ImageGenerationRunOptions = {
+  aspectRatio?: string;
+  quality?: string;
+};
+
 export interface AITextResultNodeData {
   title?: string;
   content: string;
@@ -115,19 +121,48 @@ export interface UploadedImageNodeData {
   sizeBytes?: number;
 }
 
+export interface Panorama360ViewState {
+  yaw: number;
+  pitch: number;
+  fov: number;
+}
+
+export interface Panorama360NodeData {
+  title?: string;
+  panorama360Node: {
+    version: 1;
+    mode: "panorama";
+    viewport: {
+      activeView: "default";
+      panoramaView: Panorama360ViewState;
+    };
+    panorama: {
+      sourceSignature?: string;
+      isLoaded: boolean;
+      error: string | null;
+    };
+    ui: {
+      mouseTool: "navigate";
+      isEditing: boolean;
+    };
+  };
+}
+
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
-  | { type: "uploaded_image"; data: UploadedImageNodeData };
+  | { type: "uploaded_image"; data: UploadedImageNodeData }
+  | { type: "panorama-360"; data: Panorama360NodeData };
 
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
-  | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>;
+  | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>
+  | BaseCanvasNode<"panorama-360", Panorama360NodeData>;
 
 export interface CanvasEdge {
   id: string;
