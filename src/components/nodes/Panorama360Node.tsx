@@ -177,20 +177,35 @@ export function Panorama360Node({
     width?: number;
     height?: number;
   }>({
-    width: sourceImage?.width,
-    height: sourceImage?.height,
+    width: data.panorama360Node.panorama.generatedImageWidth ?? sourceImage?.width,
+    height: data.panorama360Node.panorama.generatedImageHeight ?? sourceImage?.height,
   });
-  const sourceUrl = sourceImage?.imageUrl?.trim() || '';
+  const generatedImageUrl =
+    data.panorama360Node.panorama.generatedHostedImageUrl?.trim() ||
+    data.panorama360Node.panorama.generatedImageUrl?.trim() ||
+    '';
+  const sourceUrl = generatedImageUrl || sourceImage?.imageUrl?.trim() || '';
   const sourceSignature = useMemo(
     () => [
       sourceUrl,
-      sourceImage?.width ?? '',
-      sourceImage?.height ?? '',
+      data.panorama360Node.panorama.generatedImageWidth ?? sourceImage?.width ?? '',
+      data.panorama360Node.panorama.generatedImageHeight ?? sourceImage?.height ?? '',
     ].join('|'),
-    [sourceImage?.height, sourceImage?.width, sourceUrl],
+    [
+      data.panorama360Node.panorama.generatedImageHeight,
+      data.panorama360Node.panorama.generatedImageWidth,
+      sourceImage?.height,
+      sourceImage?.width,
+      sourceUrl,
+    ],
   );
+  const generationStatus = data.panorama360Node.panorama.generationStatus ?? 'idle';
   const loadState: 'empty' | 'loading' | 'ready' | 'error' =
-    !sourceUrl
+    generationStatus === 'generating'
+      ? 'loading'
+      : generationStatus === 'error' && !sourceUrl
+        ? 'error'
+    : !sourceUrl
       ? 'empty'
       : textureStatus?.signature === sourceSignature
         ? textureStatus.state
@@ -201,8 +216,12 @@ export function Panorama360Node({
   const showAspectWarning =
     loadState === 'ready' &&
     !isCloseToEquirectangular(
-      textureSize.width ?? sourceImage?.width,
-      textureSize.height ?? sourceImage?.height,
+      textureSize.width ??
+        data.panorama360Node.panorama.generatedImageWidth ??
+        sourceImage?.width,
+      textureSize.height ??
+        data.panorama360Node.panorama.generatedImageHeight ??
+        sourceImage?.height,
     );
 
   const commitView = () => {
@@ -421,8 +440,8 @@ export function Panorama360Node({
     material.map = null;
     material.needsUpdate = true;
     setTextureSize({
-      width: sourceImage?.width,
-      height: sourceImage?.height,
+      width: data.panorama360Node.panorama.generatedImageWidth ?? sourceImage?.width,
+      height: data.panorama360Node.panorama.generatedImageHeight ?? sourceImage?.height,
     });
 
     if (!sourceUrl) {
@@ -477,7 +496,16 @@ export function Panorama360Node({
     return () => {
       cancelled = true;
     };
-  }, [runtimeReady, runtimeVersion, sourceImage?.height, sourceImage?.width, sourceSignature, sourceUrl]);
+  }, [
+    data.panorama360Node.panorama.generatedImageHeight,
+    data.panorama360Node.panorama.generatedImageWidth,
+    runtimeReady,
+    runtimeVersion,
+    sourceImage?.height,
+    sourceImage?.width,
+    sourceSignature,
+    sourceUrl,
+  ]);
 
   useEffect(() => {
     runtimeRef.current?.render();
@@ -652,13 +680,13 @@ export function Panorama360Node({
 
       {loadState === 'loading' ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/18 text-[13px] font-medium text-white/70">
-          加载全景图...
+          {generationStatus === 'generating' ? '正在生成全景图...' : '加载全景图...'}
         </div>
       ) : null}
 
       {loadState === 'error' ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-5 text-center text-[13px] font-medium text-red-200">
-          全景图加载失败
+          {data.panorama360Node.panorama.generationErrorMessage || '全景图加载失败'}
         </div>
       ) : null}
 

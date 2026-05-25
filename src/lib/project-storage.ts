@@ -1222,6 +1222,18 @@ function isObjectUrl(value?: string): boolean {
 }
 
 function resolveSourceKeyFromNode(node: CanvasNode): string | null {
+  if (node.type === "panorama-360") {
+    const data = node.data.panorama360Node.panorama;
+    const generatedAt = data.generatedAt?.trim();
+    const imageUrl = data.generatedImageUrl?.trim();
+
+    if (!generatedAt || !imageUrl) {
+      return null;
+    }
+
+    return `${node.id}:${generatedAt}:${imageUrl}`;
+  }
+
   if (node.type !== "image_generation") {
     return null;
   }
@@ -1286,6 +1298,27 @@ function withResolvedPreviewUrl(
   };
 }
 
+function withResolvedPanoramaPreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "panorama-360" }>,
+): Extract<CanvasNode, { type: "panorama-360" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      panorama360Node: {
+        ...node.data.panorama360Node,
+        panorama: {
+          ...node.data.panorama360Node.panorama,
+          generatedHostedImageUrl: previewUrl,
+          generatedOutputFileName: fileName,
+        },
+      },
+    },
+  };
+}
+
 export async function hydrateProjectSnapshotPreviewUrls(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
@@ -1330,14 +1363,14 @@ export async function hydrateProjectSnapshotPreviewUrls(
   );
   const nodes = await Promise.all(
     snapshot.nodes.map(async (node) => {
-      if (node.type !== "image_generation") {
-        return node;
-      }
-
       const sourceKey = resolveSourceKeyFromNode(node);
-      const fileName =
-        node.data.generatedOutputFileName?.trim() ||
-        (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined);
+      const fileName = node.type === "image_generation"
+        ? node.data.generatedOutputFileName?.trim() ||
+          (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
+        : node.type === "panorama-360"
+          ? node.data.panorama360Node.panorama.generatedOutputFileName?.trim() ||
+            (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
+          : undefined;
 
       if (!fileName) {
         return node;
@@ -1352,10 +1385,18 @@ export async function hydrateProjectSnapshotPreviewUrls(
       const previewUrl = URL.createObjectURL(file);
       previewUrls.push(previewUrl);
 
-      return {
-        ...node,
-        data: withResolvedPreviewUrl(previewUrl, fileName, node.data),
-      };
+      if (node.type === "panorama-360") {
+        return withResolvedPanoramaPreviewUrl(previewUrl, fileName, node);
+      }
+
+      if (node.type === "image_generation") {
+        return {
+          ...node,
+          data: withResolvedPreviewUrl(previewUrl, fileName, node.data),
+        };
+      }
+
+      return node;
     }),
   );
 

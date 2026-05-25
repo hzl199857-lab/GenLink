@@ -1244,6 +1244,18 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
       case 'expand':
         notifyCanvasImageInfoRequest?.(id);
         break;
+      case 'panorama-360':
+        void useCanvasStore.getState().createPanorama360FromImageNode(id)
+          .then((nextNodeId) => {
+            notifyCanvasNodeSelect?.(nextNodeId);
+          })
+          .catch((error) => {
+            console.error('create panorama 360 node failed', error);
+            const message = error instanceof Error ? error.message : '360全景图生成失败';
+            useCanvasStore.getState().setSaveMessage(message);
+            window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+          });
+        break;
       default:
         break;
     }
@@ -1321,7 +1333,16 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const panoramaData = data as Panorama360NodeData;
-  const sourceImage = connectedImages[0] ?? null;
+  const panorama = panoramaData.panorama360Node.panorama;
+  const hasGeneratedPanoramaImage = Boolean(
+    panorama.generatedHostedImageUrl?.trim() ||
+    panorama.generatedImageUrl?.trim(),
+  );
+  const usesInternalPanoramaImage =
+    hasGeneratedPanoramaImage ||
+    panorama.generationStatus === 'generating' ||
+    panorama.generationStatus === 'error';
+  const sourceImage = usesInternalPanoramaImage ? null : connectedImages[0] ?? null;
 
   const handleViewChange = (view: Panorama360ViewState) => {
     updateNodeData<'panorama-360'>(id, {
@@ -4383,6 +4404,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const deleteProject = useCanvasStore((s) => s.deleteProject);
   const generateTextFromTextNode = useCanvasStore((s) => s.generateTextFromTextNode);
   const generateImageFromImageGenerationNode = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
+  const createPanorama360FromImageNode = useCanvasStore((s) => s.createPanorama360FromImageNode);
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
@@ -4805,6 +4827,33 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         return;
       }
 
+      if (action === 'panorama-360') {
+        const targetNode = storeNodes.find(
+          (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
+            node.type === 'image_generation' &&
+            node.data.generatedImageUrl === data.generatedImageUrl &&
+            node.data.generatedHostedImageUrl === data.generatedHostedImageUrl &&
+            node.data.generatedAt === data.generatedAt,
+        );
+
+        if (!targetNode) {
+          return;
+        }
+
+        void createPanorama360FromImageNode(targetNode.id)
+          .then((nextNodeId) => {
+            setSelectedNodeIds(new Set([nextNodeId]));
+            setActiveNodeId(nextNodeId);
+            setSelectedEdgeId(null);
+            setEdgeDeleteButtonPosition(null);
+          })
+          .catch((error) => {
+            setSaveMessage(error instanceof Error ? error.message : '360全景图生成失败');
+            window.setTimeout(() => setSaveMessage(null), 2200);
+          });
+        return;
+      }
+
       if (action === 'download') {
         void downloadImageGenerationResult(data)
           .then((status) => {
@@ -4852,7 +4901,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         notifyImageToolbarAction = null;
       }
     };
-  }, [cropImageGenerationNode, getViewport, setCropMode, setSaveMessage, setViewport, showProjectMessage, splitImageGenerationNodeToGrid, storeNodes]);
+  }, [
+    createPanorama360FromImageNode,
+    cropImageGenerationNode,
+    getViewport,
+    setCropMode,
+    setSaveMessage,
+    setViewport,
+    showProjectMessage,
+    splitImageGenerationNodeToGrid,
+    storeNodes,
+  ]);
 
   useEffect(() => {
     notifyUploadedImageToolbarAction = (action, nodeId, data, cardLayout) => {
@@ -4918,6 +4977,21 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         return;
       }
 
+      if (action === 'panorama-360') {
+        void createPanorama360FromImageNode(nodeId)
+          .then((nextNodeId) => {
+            setSelectedNodeIds(new Set([nextNodeId]));
+            setActiveNodeId(nextNodeId);
+            setSelectedEdgeId(null);
+            setEdgeDeleteButtonPosition(null);
+          })
+          .catch((error) => {
+            setSaveMessage(error instanceof Error ? error.message : '360全景图生成失败');
+            window.setTimeout(() => setSaveMessage(null), 2200);
+          });
+        return;
+      }
+
       if (action === 'expand') {
         const imageUrl = data.hostedImageUrl?.trim() || data.imageUrl?.trim();
         if (imageUrl) {
@@ -4955,7 +5029,16 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     return () => {
       notifyUploadedImageToolbarAction = null;
     };
-  }, [getViewport, setCropMode, setSaveMessage, setViewport, showProjectMessage, splitUploadedImageNodeToGrid, storeNodes]);
+  }, [
+    createPanorama360FromImageNode,
+    getViewport,
+    setCropMode,
+    setSaveMessage,
+    setViewport,
+    showProjectMessage,
+    splitUploadedImageNodeToGrid,
+    storeNodes,
+  ]);
 
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {

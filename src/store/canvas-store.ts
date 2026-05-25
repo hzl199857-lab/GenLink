@@ -101,14 +101,31 @@ const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase();
-const SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS =
-  REFERENCE_IMAGE_UPLOAD_MODE === "oss";
+const SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES =
+  REFERENCE_IMAGE_UPLOAD_MODE !== "local";
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
 const CANVAS_HISTORY_LIMIT = 100;
 const CANVAS_HISTORY_COALESCE_MS = 700;
 const SAVE_MESSAGE_AUTO_CLEAR_MS = 3_000;
+const PANORAMA_360_PROMPT = `A seamless 360-degree equirectangular panorama of a {scene_type} environment, 
+designed for VR viewing with perfect spherical continuity. 
+
+{scene_description}
+
+The space features consistent architectural/landscape logic, 
+with {lighting_desc} lighting that creates {color_tone} tones throughout. 
+Textures, perspectives, and environmental elements wrap continuously 
+around the full 360 degrees—left and right edges match flawlessly, 
+horizon line flows without breaks, no visible seams or stitch lines.
+
+Photorealistic, ultra-detailed, cinematic composition, 
+with delicate attention to material textures and atmospheric depth. 
+{emotional_keywords}`;
+const PANORAMA_360_ASPECT_RATIO = 2;
+const PANORAMA_360_ASPECT_RATIO_TOLERANCE = 0.04;
+const PANORAMA_360_NODE_OFFSET_X = 620;
 
 type CanvasHistorySnapshot = {
   projectName: string;
@@ -357,6 +374,16 @@ type ConnectedImagePayload = {
   fileName?: string;
   alt: string;
   sourceType: "image" | "uploaded_image" | "inline_reference";
+  width?: number;
+  height?: number;
+};
+
+type CanvasImageSource = {
+  imageUrl: string;
+  hostedImageUrl?: string;
+  fileName?: string;
+  title?: string;
+  alt: string;
   width?: number;
   height?: number;
 };
@@ -621,6 +648,25 @@ function createPanorama360NodeData(): Panorama360NodeData {
   };
 }
 
+function createPanorama360NodeDataWithStatus(
+  status: NonNullable<
+    Panorama360NodeData["panorama360Node"]["panorama"]["generationStatus"]
+  > = "idle",
+): Panorama360NodeData {
+  const data = createPanorama360NodeData();
+
+  return {
+    ...data,
+    panorama360Node: {
+      ...data.panorama360Node,
+      panorama: {
+        ...data.panorama360Node.panorama,
+        generationStatus: status,
+      },
+    },
+  };
+}
+
 function sanitizeSplitNodeTitle(value?: string): string {
   const title = value?.trim();
   return title ? title : "image";
@@ -636,6 +682,57 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
     image.crossOrigin = "anonymous";
     image.src = src;
   });
+}
+
+function isCloseToPanorama360AspectRatio(width?: number, height?: number): boolean {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return false;
+  }
+
+  return Math.abs(width / height - PANORAMA_360_ASPECT_RATIO) <=
+    PANORAMA_360_ASPECT_RATIO_TOLERANCE;
+}
+
+function getDisplayDimensionsForImage(width?: number, height?: number): {
+  width: number;
+  height: number;
+} {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return {
+      width: IMAGE_GENERATION_NODE_STAGE_WIDTH,
+      height: Math.round(IMAGE_GENERATION_NODE_STAGE_WIDTH / PANORAMA_360_ASPECT_RATIO),
+    };
+  }
+
+  return getImageGenerationPreviewDimensions(width, height);
+}
+
+async function resolveImageSourceDimensions(source: CanvasImageSource): Promise<{
+  width?: number;
+  height?: number;
+}> {
+  if (source.width && source.height) {
+    return {
+      width: source.width,
+      height: source.height,
+    };
+  }
+
+  try {
+    const image = await loadImageElement(
+      source.hostedImageUrl?.trim() || source.imageUrl.trim(),
+    );
+
+    return {
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+    };
+  } catch {
+    return {
+      width: source.width,
+      height: source.height,
+    };
+  }
 }
 
 async function createOssUploadTarget(params: {
@@ -1176,6 +1273,10 @@ function isObjectUrl(value?: string): boolean {
   return typeof value === "string" && value.startsWith("blob:");
 }
 
+function isDataUrl(value?: string): boolean {
+  return typeof value === "string" && value.startsWith("data:");
+}
+
 function isSameOriginUrl(value: string): boolean {
   if (typeof window === "undefined") {
     return false;
@@ -1276,6 +1377,29 @@ function sanitizeImageGenerationNodeDataForPersistence(
 
 function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
   return nodes.map((node) => {
+    if (node.type === "panorama-360") {
+      const panorama = node.data.panorama360Node.panorama;
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          panorama360Node: {
+            ...node.data.panorama360Node,
+            panorama: {
+              ...panorama,
+              generatedImageUrl: isDataUrl(panorama.generatedImageUrl)
+                ? undefined
+                : panorama.generatedImageUrl,
+              generatedHostedImageUrl: isObjectUrl(panorama.generatedHostedImageUrl)
+                ? undefined
+                : panorama.generatedHostedImageUrl,
+            },
+          },
+        },
+      };
+    }
+
     if (node.type !== "image_generation") {
       return node;
     }
@@ -1314,6 +1438,16 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
   const urls = new Set<string>();
 
   for (const node of nodes) {
+    if (node.type === "panorama-360") {
+      const panorama = node.data.panorama360Node.panorama;
+
+      if (isObjectUrl(panorama.generatedHostedImageUrl)) {
+        urls.add(panorama.generatedHostedImageUrl as string);
+      }
+
+      continue;
+    }
+
     if (node.type !== "image_generation") {
       continue;
     }
@@ -1914,6 +2048,62 @@ function getGeneratedImageReferenceForImageGenerationNode(
   ];
 }
 
+function getCanvasImageSource(node: CanvasNode): CanvasImageSource | null {
+  if (node.type === "image_generation") {
+    const imageUrl =
+      node.data.generatedHostedImageUrl?.trim() ||
+      node.data.generatedImageUrl?.trim() ||
+      "";
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      imageUrl,
+      hostedImageUrl: node.data.generatedHostedImageUrl?.trim() || undefined,
+      fileName: node.data.generatedOutputFileName,
+      title: node.data.title,
+      alt: node.data.prompt?.trim() || "Generated image",
+      width: node.data.generatedImageWidth,
+      height: node.data.generatedImageHeight,
+    };
+  }
+
+  if (node.type === "image") {
+    if (!node.data.imageUrl.trim()) {
+      return null;
+    }
+
+    return {
+      imageUrl: node.data.hostedImageUrl?.trim() || node.data.imageUrl,
+      hostedImageUrl: node.data.hostedImageUrl?.trim() || undefined,
+      title: node.data.title,
+      alt: node.data.prompt?.trim() || "Generated image",
+      width: node.data.width,
+      height: node.data.height,
+    };
+  }
+
+  if (node.type === "uploaded_image") {
+    if (!node.data.imageUrl.trim()) {
+      return null;
+    }
+
+    return {
+      imageUrl: node.data.hostedImageUrl?.trim() || node.data.imageUrl,
+      hostedImageUrl: node.data.hostedImageUrl?.trim() || undefined,
+      fileName: node.data.fileName,
+      title: node.data.title,
+      alt: node.data.fileName?.trim() || node.data.title?.trim() || "Uploaded image",
+      width: node.data.width,
+      height: node.data.height,
+    };
+  }
+
+  return null;
+}
+
 function appendImageGenerationNodeResults(
   nodes: CanvasNode[],
   imageGenerationNodeId: string,
@@ -2088,6 +2278,7 @@ export interface CanvasState {
     nodeId: string,
     cropRect: { x: number; y: number; width: number; height: number },
   ) => Promise<void>;
+  createPanorama360FromImageNode: (nodeId: string) => Promise<string>;
   removeReferenceImageFromImageGenerationNode: (
     imageGenerationNodeId: string,
     referenceImageId: string,
@@ -2792,7 +2983,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const imageProvider =
         latestImageGenerationNode.data.provider ?? readStoredSelectedApiProvider("image");
       const shouldUploadReferenceImagesToOss =
-        SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS || imageProvider === "grsai";
+        SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES || imageProvider === "grsai";
       let requestImages:
         | Array<{
             url: string;
@@ -2806,7 +2997,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             requestImages = await normalizeReferenceImagesViaOss(referenceImages);
           } catch (error) {
             if (
-              imageProvider !== "grsai" ||
               !(error instanceof Error) ||
               !/oss is not configured/i.test(error.message)
             ) {
@@ -2987,7 +3177,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         for (const result of completedResults) {
           try {
             const ossImageUrl =
-              SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS || imageProvider === "grsai"
+              shouldUploadReferenceImagesToOss
                 ? await uploadGeneratedResultToOss(
                     result,
                     latestImageGenerationNode.data.title,
@@ -3028,7 +3218,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }
       })();
 
-      if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS && imageProvider !== "grsai") {
+      if (shouldUploadReferenceImagesToOss && imageProvider !== "grsai") {
         void (async () => {
           for (const result of completedResults) {
             try {
@@ -3559,6 +3749,220 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set({ error: message });
       throw error;
     }
+  },
+
+  createPanorama360FromImageNode: async (nodeId) => {
+    const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === nodeId);
+
+    if (!sourceNode) {
+      throw new Error("Image node not found");
+    }
+
+    const source = getCanvasImageSource(sourceNode);
+
+    if (!source) {
+      throw new Error("Source image is missing");
+    }
+
+    const dimensions = await resolveImageSourceDimensions(source);
+    const sourceWidth = dimensions.width ?? source.width;
+    const sourceHeight = dimensions.height ?? source.height;
+    const sourceIsPanorama = isCloseToPanorama360AspectRatio(sourceWidth, sourceHeight);
+    const sourceDisplay = getDisplayDimensionsForImage(sourceWidth, sourceHeight);
+    const panoramaNodeId = crypto.randomUUID();
+    const panoramaNode: Extract<CanvasNode, { type: "panorama-360" }> = {
+      id: panoramaNodeId,
+      type: "panorama-360",
+      position: {
+        x: sourceNode.position.x + sourceDisplay.width + PANORAMA_360_NODE_OFFSET_X,
+        y: sourceNode.position.y,
+      },
+      data: createPanorama360NodeDataWithStatus(
+        sourceIsPanorama ? "idle" : "generating",
+      ),
+    };
+    const edge: CanvasEdge = {
+      id: crypto.randomUUID(),
+      source: sourceNode.id,
+      target: panoramaNode.id,
+    };
+
+    set((currentState) => ({
+      ...createUndoHistoryUpdate(currentState),
+      nodes: [...currentState.nodes, panoramaNode],
+      edges: [...currentState.edges, edge],
+      dirty: true,
+      error: null,
+    }));
+
+    if (sourceIsPanorama) {
+      return panoramaNode.id;
+    }
+
+    try {
+      const imageProvider = readStoredSelectedApiProvider("image");
+      const apiKey = assertStoredApiKey("image", imageProvider);
+      const historyNodeData: ImageGenerationNodeData = {
+        title: "360全景图",
+        prompt: PANORAMA_360_PROMPT,
+        provider: imageProvider,
+        model: "gpt-image-2",
+        aspectRatio: "2:1",
+        quality: "4K",
+        detail: "medium",
+        outputFormat: "png",
+        moderation: "auto",
+        parallelCount: 1,
+        referenceImages: [{
+          id: sourceNode.id,
+          imageUrl: source.hostedImageUrl?.trim() || source.imageUrl,
+          hostedImageUrl: source.hostedImageUrl,
+          fileName: source.fileName,
+          width: sourceWidth,
+          height: sourceHeight,
+        }],
+        status: "idle",
+      };
+      const result = await submitImageGenerationJob({
+        prompt: PANORAMA_360_PROMPT,
+        model: "gpt-image-2",
+        size: resolveImageSize("4K", "2:1", [], "gpt-image-2", imageProvider),
+        quality: "medium",
+        outputFormat: "png",
+        moderation: "auto",
+        provider: imageProvider,
+        apiKey,
+        historyNodeData,
+      });
+      const primaryImage = result.images[0];
+
+      if (!primaryImage?.imageUrl) {
+        throw new Error("Image generation failed");
+      }
+
+      const generatedAt = nowIso();
+      const persistedSourceUrl = primaryImage.hostedImageUrl?.trim() || primaryImage.imageUrl;
+      let persistedPreviewUrl: string | undefined;
+      let persistedFileName: string | undefined;
+
+      try {
+        const currentProject = get().currentProject;
+
+        if (currentProject) {
+          const persisted = await persistGeneratedOutput(currentProject, {
+            sourceKey: `${panoramaNode.id}:${generatedAt}:${primaryImage.imageUrl}`,
+            imageUrl: persistedSourceUrl,
+            fileName: "360全景图",
+            generatedAt,
+            nodeData: {
+              ...historyNodeData,
+              generatedImageUrl: primaryImage.imageUrl,
+              generatedHostedImageUrl: primaryImage.hostedImageUrl,
+              generatedImageWidth: primaryImage.width,
+              generatedImageHeight: primaryImage.height,
+              generatedImageFormat: primaryImage.format,
+              generatedImageSizeBytes: primaryImage.sizeBytes,
+              generatedModel: primaryImage.model,
+              generatedAt,
+              generationResults: [{
+                status: "completed",
+                imageUrl: primaryImage.imageUrl,
+                hostedImageUrl: primaryImage.hostedImageUrl,
+                model: primaryImage.model,
+                width: primaryImage.width,
+                height: primaryImage.height,
+                format: primaryImage.format,
+                sizeBytes: primaryImage.sizeBytes,
+                generatedAt,
+              }],
+              status: "idle",
+            },
+            title: "360全景图",
+            model: primaryImage.model,
+            width: primaryImage.width,
+            height: primaryImage.height,
+            format: primaryImage.format,
+            sizeBytes: primaryImage.sizeBytes,
+          });
+          persistedPreviewUrl = persisted.previewUrl;
+          persistedFileName = persisted.fileName;
+        }
+      } catch (error) {
+        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+      }
+
+      set((currentState) => ({
+        dirty: true,
+        error: null,
+        currentProjectPreviewUrls: persistedPreviewUrl
+          ? [...currentState.currentProjectPreviewUrls, persistedPreviewUrl]
+          : currentState.currentProjectPreviewUrls,
+        nodes: currentState.nodes.map((node) => {
+          if (node.id !== panoramaNode.id || node.type !== "panorama-360") {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              panorama360Node: {
+                ...node.data.panorama360Node,
+                panorama: {
+                  ...node.data.panorama360Node.panorama,
+                  generatedImageUrl: primaryImage.imageUrl,
+                  generatedHostedImageUrl:
+                    persistedPreviewUrl || primaryImage.hostedImageUrl,
+                  generatedOutputFileName: persistedFileName,
+                  generatedImageWidth: primaryImage.width,
+                  generatedImageHeight: primaryImage.height,
+                  generatedImageFormat: primaryImage.format,
+                  generatedImageSizeBytes: primaryImage.sizeBytes,
+                  generatedModel: primaryImage.model,
+                  generatedAt,
+                  generationStatus: "idle",
+                  generationErrorMessage: undefined,
+                  isLoaded: false,
+                  error: null,
+                },
+              },
+            },
+          };
+        }),
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        dirty: true,
+        error: message,
+        nodes: currentState.nodes.map((node) => {
+          if (node.id !== panoramaNode.id || node.type !== "panorama-360") {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              panorama360Node: {
+                ...node.data.panorama360Node,
+                panorama: {
+                  ...node.data.panorama360Node.panorama,
+                  generationStatus: "error",
+                  generationErrorMessage: message,
+                  error: message,
+                },
+              },
+            },
+          };
+        }),
+      }));
+      throw error;
+    }
+
+    return panoramaNode.id;
   },
 
   removeReferenceImageFromImageGenerationNode: (

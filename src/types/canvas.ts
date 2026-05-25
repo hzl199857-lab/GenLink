@@ -140,6 +140,17 @@ export interface Panorama360NodeData {
       sourceSignature?: string;
       isLoaded: boolean;
       error: string | null;
+      generatedImageUrl?: string;
+      generatedHostedImageUrl?: string;
+      generatedOutputFileName?: string;
+      generatedImageWidth?: number;
+      generatedImageHeight?: number;
+      generatedImageFormat?: string;
+      generatedImageSizeBytes?: number;
+      generatedModel?: string;
+      generatedAt?: string;
+      generationStatus?: "idle" | "generating" | "error";
+      generationErrorMessage?: string;
     };
     ui: {
       mouseTool: "navigate";

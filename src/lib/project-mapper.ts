@@ -391,6 +391,51 @@ function normalizePanorama360NodeData(value: unknown): Panorama360NodeData {
           typeof panorama.error === "string"
             ? panorama.error
             : null,
+        generatedImageUrl:
+          typeof panorama.generatedImageUrl === "string"
+            ? panorama.generatedImageUrl
+            : undefined,
+        generatedHostedImageUrl:
+          typeof panorama.generatedHostedImageUrl === "string"
+            ? panorama.generatedHostedImageUrl
+            : undefined,
+        generatedOutputFileName:
+          typeof panorama.generatedOutputFileName === "string"
+            ? panorama.generatedOutputFileName
+            : undefined,
+        generatedImageWidth:
+          typeof panorama.generatedImageWidth === "number"
+            ? panorama.generatedImageWidth
+            : undefined,
+        generatedImageHeight:
+          typeof panorama.generatedImageHeight === "number"
+            ? panorama.generatedImageHeight
+            : undefined,
+        generatedImageFormat:
+          typeof panorama.generatedImageFormat === "string"
+            ? panorama.generatedImageFormat
+            : undefined,
+        generatedImageSizeBytes:
+          typeof panorama.generatedImageSizeBytes === "number"
+            ? panorama.generatedImageSizeBytes
+            : undefined,
+        generatedModel:
+          typeof panorama.generatedModel === "string"
+            ? panorama.generatedModel
+            : undefined,
+        generatedAt:
+          typeof panorama.generatedAt === "string"
+            ? panorama.generatedAt
+            : undefined,
+        generationStatus:
+          panorama.generationStatus === "generating" ||
+          panorama.generationStatus === "error"
+            ? panorama.generationStatus
+            : "idle",
+        generationErrorMessage:
+          typeof panorama.generationErrorMessage === "string"
+            ? panorama.generationErrorMessage
+            : undefined,
       },
       ui: {
         mouseTool: "navigate",

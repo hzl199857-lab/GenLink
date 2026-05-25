@@ -22,7 +22,7 @@ export type ImageGenerationToolbarAction =
   | 'split-2x2-crop'
   | 'split-3x3-crop'
   | 'split-5x5-crop'
-  | 'edit'
+  | 'panorama-360'
   | 'pan'
   | 'more'
   | 'organize'
@@ -47,7 +47,7 @@ type ToolbarActionConfig = {
 
 const GENERATED_IMAGE_ACTIONS: ToolbarActionConfig[] = [
   { id: 'variations', title: '分割', icon: Grid3x3 },
-  { id: 'edit', title: '360全景图', icon: Orbit },
+  { id: 'panorama-360', title: '360全景图', icon: Orbit },
   { id: 'pan', title: '平移', icon: Hand },
   { id: 'more', title: '更多', icon: MoreHorizontal },
   { id: 'organize', title: '加入素材库', icon: FolderPlus },
