@@ -1379,7 +1379,9 @@ async function tryResumePendingComflyJob(job: {
       return { status: "pending" };
     }
 
-    const result = await completeImageJob(job.id, task.result);
+    const result = await completeImageJob(job.id, task.result, {
+      cacheRemoteBeforeComplete: job.provider === "grsai",
+    });
 
     return {
       status: "completed",

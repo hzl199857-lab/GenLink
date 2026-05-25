@@ -3142,13 +3142,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       void (async () => {
         for (const result of completedResults) {
           try {
+            if (imageProvider === "grsai" && !result.hostedImageUrl?.trim()) {
+              throw new Error("Grsai result was not cached to OSS");
+            }
+
             const ossImageUrl =
-              shouldUploadReferenceImagesToOss
-                ? await uploadGeneratedResultToOss(
-                    result,
-                    latestImageGenerationNode.data.title,
-                  )
-                : undefined;
+              imageProvider === "grsai"
+                ? result.hostedImageUrl?.trim()
+                : shouldUploadReferenceImagesToOss
+                  ? await uploadGeneratedResultToOss(
+                      result,
+                      latestImageGenerationNode.data.title,
+                    )
+                  : undefined;
             const persistedImageUrl =
               ossImageUrl || result.hostedImageUrl?.trim() || result.imageUrl;
 
@@ -3184,7 +3190,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }
       })();
 
-      if (shouldUploadReferenceImagesToOss) {
+      if (shouldUploadReferenceImagesToOss && imageProvider !== "grsai") {
         void (async () => {
           for (const result of completedResults) {
             try {
