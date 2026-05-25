@@ -11,6 +11,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import type { ImageGenerationRunOptions } from '@/types/canvas';
 import {
   getApiProviderLabel,
+  persistSelectedModel,
   readStoredApiKey,
   type ApiProvider,
 } from '@/store/canvas-store';
@@ -637,6 +638,12 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
         onRunningHubChannelChange?.(nextRunningHubChannel);
       }
     }
+    persistSelectedModel({
+      kind: 'image',
+      provider: nextProvider,
+      model: nextModel,
+      runningHubChannel: nextProvider === 'runninghub' ? nextRunningHubChannel : undefined,
+    });
     setModelMenuOpen(false);
   };
 

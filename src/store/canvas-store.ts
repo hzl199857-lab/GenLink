@@ -157,6 +157,15 @@ export const CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyImageApiKe
 export const CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenImageApiKey";
 export const CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY = "genlink.runninghubImageApiKey";
 export const CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY = "genlink.grsaiImageApiKey";
+const CANVAS_TEXT_MODEL_STORAGE_KEY = "genlink.textModel";
+const CANVAS_IMAGE_MODEL_STORAGE_KEY = "genlink.imageModel";
+const CANVAS_IMAGE_RUNNINGHUB_CHANNEL_STORAGE_KEY = "genlink.imageRunningHubChannel";
+
+type StoredImageModelSelection = {
+  provider: ApiProvider;
+  model: string;
+  runningHubChannel?: "official" | "low-cost";
+};
 
 function readStoredValue(storageKey: string): string {
   if (typeof window === "undefined") {
@@ -191,6 +200,12 @@ function getApiProviderStorageKey(kind: ApiModelKind): string {
   return kind === "text"
     ? CANVAS_TEXT_API_PROVIDER_STORAGE_KEY
     : CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY;
+}
+
+function getModelStorageKey(kind: ApiModelKind): string {
+  return kind === "text"
+    ? CANVAS_TEXT_MODEL_STORAGE_KEY
+    : CANVAS_IMAGE_MODEL_STORAGE_KEY;
 }
 
 function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string {
@@ -229,6 +244,44 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
 
 export function readStoredSelectedApiProvider(kind: ApiModelKind): ApiProvider {
   return normalizeApiProvider(readStoredValue(getApiProviderStorageKey(kind)));
+}
+
+export function readStoredSelectedModel(
+  kind: ApiModelKind,
+  fallbackModel: string,
+): string {
+  return readStoredValue(getModelStorageKey(kind)) || fallbackModel;
+}
+
+export function readStoredImageModelSelection(): StoredImageModelSelection {
+  const runningHubChannel = readStoredValue(CANVAS_IMAGE_RUNNINGHUB_CHANNEL_STORAGE_KEY);
+
+  return {
+    provider: readStoredSelectedApiProvider("image"),
+    model: readStoredSelectedModel("image", "gpt-image-2"),
+    runningHubChannel: runningHubChannel === "low-cost" ? "low-cost" : "official",
+  };
+}
+
+export function persistSelectedModel(params: {
+  kind: ApiModelKind;
+  provider: ApiProvider;
+  model: string;
+  runningHubChannel?: "official" | "low-cost";
+}): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getApiProviderStorageKey(params.kind), params.provider);
+  window.localStorage.setItem(getModelStorageKey(params.kind), params.model);
+
+  if (params.kind === "image" && params.provider === "runninghub") {
+    window.localStorage.setItem(
+      CANVAS_IMAGE_RUNNINGHUB_CHANNEL_STORAGE_KEY,
+      params.runningHubChannel === "low-cost" ? "low-cost" : "official",
+    );
+  }
 }
 
 export function readStoredApiKey(
@@ -480,21 +533,29 @@ function selectPromptReferences<T extends { id: string }>(
 }
 
 function createTextNodeData(): TextNodeData {
+  const provider = readStoredSelectedApiProvider("text");
+
   return {
     title: "Text",
     text: "",
-    provider: DEFAULT_API_PROVIDER,
-    model: "gpt-5.4",
+    provider,
+    model: readStoredSelectedModel("text", "gpt-5.4"),
     status: "idle",
   };
 }
 
 function createImageGenerationNodeData(): ImageGenerationNodeData {
+  const selection = readStoredImageModelSelection();
+
   return {
     title: "Image",
     prompt: "",
-    provider: DEFAULT_API_PROVIDER,
-    model: "gpt-image-2",
+    provider: selection.provider,
+    model: selection.model,
+    runningHubChannel:
+      selection.provider === "runninghub"
+        ? selection.runningHubChannel
+        : undefined,
     aspectRatio: "auto",
     quality: "1K",
     detail: "medium",

@@ -15,6 +15,7 @@ import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   getApiProviderLabel,
+  persistSelectedModel,
   readStoredApiKey,
   type ApiProvider,
 } from '@/store/canvas-store';
@@ -120,6 +121,11 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
     } else {
       onModelChange?.(nextModel);
     }
+    persistSelectedModel({
+      kind: 'text',
+      provider: nextProvider,
+      model: nextModel,
+    });
     setModelMenuOpen(false);
   };
 
