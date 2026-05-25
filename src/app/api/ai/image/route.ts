@@ -1275,7 +1275,9 @@ async function pollGrsaiImageJob(
       });
 
       if (task.status === "completed") {
-        await completeImageJob(jobId, task.result);
+        await completeImageJob(jobId, task.result, {
+          cacheRemoteBeforeComplete: true,
+        });
         return;
       }
 
