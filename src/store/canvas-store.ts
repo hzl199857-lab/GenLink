@@ -3227,6 +3227,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 }),
               }));
             } catch (error) {
+              console.warn(
+                "[GenLink generated image OSS upload failed]",
+                {
+                  provider: imageProvider,
+                  sourceType: getReferenceImageDebugLabel(result.hostedImageUrl || result.imageUrl),
+                  error: toErrorMessage(error),
+                },
+              );
               get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
             }
           }
