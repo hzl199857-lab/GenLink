@@ -801,41 +801,7 @@ async function uploadReferenceBlobToOss(
   blob: Blob,
   fileName?: string,
 ): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-      } else {
-        reject(new Error("Failed to read reference image"));
-      }
-    };
-    reader.onerror = () => reject(new Error("Failed to read reference image"));
-    reader.readAsDataURL(blob);
-  });
-  const response = await fetch("/api/image-hosting/upload", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ dataUrl, fileName, folder: "references" }),
-  });
-  const json = await readJsonResponse<
-    | {
-        ok: true;
-        result: {
-          imageUrl: string;
-        };
-      }
-    | ApiErrorResponse
-  >(response, "Failed to upload reference image");
-
-  if (!response.ok || !json.ok) {
-    throw new Error("error" in json ? json.error : "Failed to upload reference image");
-  }
-
-  return json.result.imageUrl;
+  return uploadImageBlobToOss(blob, fileName, "references");
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
