@@ -26,7 +26,7 @@ export interface TextNodeData {
   title?: string;
   backgroundColor?: string;
   aiPrompt?: string;
-  provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub";
+  provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
   status?: "idle" | "generating" | "error";
   errorMessage?: string;
@@ -49,7 +49,7 @@ export interface ImageGenerationNodeData {
   title?: string;
   prompt?: string;
   effectivePromptOverride?: string;
-  provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub";
+  provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
   runningHubChannel?: "official" | "low-cost";
   generatedModel?: string;

@@ -10,7 +10,7 @@ import {
 
 // GenLink Vibe API client for server-side route handlers and actions only.
 
-export type ImageApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub";
+export type ImageApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
 export type RunningHubChannel = "official" | "low-cost";
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -27,6 +27,8 @@ function resolveApiProvider(value?: string): ImageApiProvider {
       return "zhenzhen";
     case "runninghub":
       return "runninghub";
+    case "grsai":
+      return "grsai";
     default:
       return "vibe";
   }
@@ -62,6 +64,9 @@ const ZHENZHEN_TEXT_BASE_URL = normalizeBaseUrl(
 );
 const RUNNINGHUB_BASE_URL = normalizeBaseUrl(
   process.env.RUNNINGHUB_BASE_URL ?? "https://www.runninghub.cn",
+);
+const GRSAI_BASE_URL = normalizeBaseUrl(
+  process.env.GRSAI_BASE_URL ?? "https://grsai.dakka.com.cn",
 );
 const IMAGE_API_PROVIDER = resolveApiProvider(
   process.env.IMAGE_API_PROVIDER,
@@ -398,6 +403,16 @@ interface RunningHubUploadResponse {
     fileName?: string;
     size?: string;
   } | null;
+}
+
+interface GrsaiTaskResponse {
+  id?: string;
+  status?: string;
+  results?: Array<{
+    url?: string;
+  }>;
+  progress?: number;
+  error?: string;
 }
 
 interface VibeGeminiImageResponse {
@@ -826,6 +841,21 @@ function toRunningHubQuality(quality?: string): "low" | "medium" | "high" {
   return "medium";
 }
 
+function toImageSizeTier(size?: string): "1K" | "2K" | "4K" {
+  const { width, height } = parseImageSize(size);
+  const maxDimension = Math.max(width, height);
+
+  if (maxDimension >= 3072) {
+    return "4K";
+  }
+
+  if (maxDimension >= 1536) {
+    return "2K";
+  }
+
+  return "1K";
+}
+
 type RunningHubImageModelConfig = {
   supportedAspectRatios: readonly string[];
   official: {
@@ -926,6 +956,12 @@ function isRunningHubProvider(
   return provider === "runninghub";
 }
 
+function isGrsaiProvider(
+  provider: ImageApiProvider,
+): provider is "grsai" {
+  return provider === "grsai";
+}
+
 function getComflyCompatibleProviderLabel(provider: "comfly" | "zhenzhen"): string {
   return provider === "zhenzhen" ? "贞贞的AI工坊" : "Comfly";
 }
@@ -949,6 +985,10 @@ function getProviderLabel(baseUrl: string, fallback = "Upstream API"): string {
 
   if (baseUrl === RUNNINGHUB_BASE_URL) {
     return "RunningHub";
+  }
+
+  if (baseUrl === GRSAI_BASE_URL) {
+    return "Grsai";
   }
 
   return fallback;
@@ -2079,6 +2119,10 @@ export async function generateTextStream(
     throw new VibeApiError(400, "RunningHub is not configured for text generation");
   }
 
+  if (isGrsaiProvider(textProvider)) {
+    throw new VibeApiError(400, "Grsai is not configured for text generation");
+  }
+
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const isClaude = isClaudeModel(requestedModel);
   const providerModel =
@@ -2290,6 +2334,10 @@ export async function generateText(
   const textProvider = resolveApiProvider(params.provider ?? TEXT_API_PROVIDER);
   if (isRunningHubProvider(textProvider)) {
     throw new VibeApiError(400, "RunningHub is not configured for text generation");
+  }
+
+  if (isGrsaiProvider(textProvider)) {
+    throw new VibeApiError(400, "Grsai is not configured for text generation");
   }
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
@@ -3009,6 +3057,327 @@ export async function getRunningHubImageTaskResult(params: {
   );
 }
 
+function toGrsaiAspectRatio(size?: string): string {
+  return toNearestAspectRatio(size, [
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "5:4",
+    "4:5",
+    "21:9",
+  ]);
+}
+
+function toGrsaiGptImageVipSize(size?: string): string {
+  const tier = toImageSizeTier(size);
+  const aspectRatio = toNearestAspectRatio(size, [
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "5:4",
+    "4:5",
+    "21:9",
+    "9:21",
+    "1:3",
+    "3:1",
+    "2:1",
+    "1:2",
+  ]);
+  const sizeByAspectRatio = {
+    "1:1": { "1K": "1024x1024", "2K": "2048x2048", "4K": "2880x2880" },
+    "16:9": { "1K": "1280x720", "2K": "2048x1152", "4K": "3840x2160" },
+    "9:16": { "1K": "720x1280", "2K": "1152x2048", "4K": "2160x3840" },
+    "4:3": { "1K": "1152x864", "2K": "2304x1728", "4K": "3264x2448" },
+    "3:4": { "1K": "864x1152", "2K": "1728x2304", "4K": "2448x3264" },
+    "3:2": { "1K": "1536x1024", "2K": "2048x1360", "4K": "3504x2336" },
+    "2:3": { "1K": "1024x1536", "2K": "1360x2048", "4K": "2336x3504" },
+    "5:4": { "1K": "1120x896", "2K": "2240x1792", "4K": "3200x2560" },
+    "4:5": { "1K": "896x1120", "2K": "1792x2240", "4K": "2560x3200" },
+    "21:9": { "1K": "1456x624", "2K": "2912x1248", "4K": "3840x1648" },
+    "9:21": { "1K": "624x1456", "2K": "1248x2912", "4K": "1648x3840" },
+    "1:3": { "1K": "688x2048", "2K": "688x2048", "4K": "1280x3840" },
+    "3:1": { "1K": "2048x688", "2K": "2048x688", "4K": "3840x1280" },
+    "2:1": { "1K": "1536x768", "2K": "3072x1536", "4K": "3840x1920" },
+    "1:2": { "1K": "768x1536", "2K": "1536x3072", "4K": "1920x3840" },
+  } as const;
+
+  return sizeByAspectRatio[aspectRatio as keyof typeof sizeByAspectRatio][tier];
+}
+
+function buildGrsaiRequestBody(params: GenerateImageParams): {
+  model: string;
+  prompt: string;
+  images?: string[];
+  aspectRatio?: string;
+  imageSize?: "1K" | "2K" | "4K";
+  replyType: "async";
+} {
+  const model = params.model ?? DEFAULT_IMAGE_MODEL;
+  const requestBody: {
+    model: string;
+    prompt: string;
+    images?: string[];
+    aspectRatio?: string;
+    imageSize?: "1K" | "2K" | "4K";
+    replyType: "async";
+  } = {
+    model,
+    prompt: params.prompt,
+    replyType: "async",
+  };
+
+  if (params.images?.length) {
+    requestBody.images = params.images
+      .map((image) => image.url.trim())
+      .filter(Boolean);
+  }
+
+  if (model === "nano-banana-pro") {
+    requestBody.aspectRatio = toGrsaiAspectRatio(params.size);
+    requestBody.imageSize = toImageSizeTier(params.size);
+  } else {
+    requestBody.aspectRatio = toGrsaiGptImageVipSize(params.size);
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    console.info(
+      "[GenLink Grsai request body]",
+      JSON.stringify({
+        model: requestBody.model,
+        fields: Object.keys(requestBody),
+        images: requestBody.images?.length ?? 0,
+        imageUrlTypes: requestBody.images?.map((url) => {
+          if (url.startsWith("data:")) return "data";
+          if (/^https?:\/\//i.test(url)) return new URL(url).hostname;
+          return "other";
+        }),
+        aspectRatio: requestBody.aspectRatio,
+        imageSize: requestBody.imageSize,
+        replyType: requestBody.replyType,
+      }),
+    );
+  }
+
+  return requestBody;
+}
+
+async function normalizeGrsaiReferenceUrls(
+  images?: Array<{
+    url: string;
+    fileName?: string;
+  }>,
+): Promise<string[]> {
+  const normalized: string[] = [];
+
+  for (const [index, image] of (images ?? []).entries()) {
+    const url = image.url.trim();
+
+    if (!url) {
+      continue;
+    }
+
+    if (url.startsWith("data:") || /^https?:\/\//i.test(url)) {
+      normalized.push(url);
+      continue;
+    }
+
+    const referenceImage = await readReferenceImage(image, index);
+    normalized.push(
+      `data:${referenceImage.mediaType};base64,${referenceImage.bytes.toString("base64")}`,
+    );
+  }
+
+  return normalized;
+}
+
+function extractGrsaiErrorMessage(response: GrsaiTaskResponse): string {
+  return response.error || "Grsai image generation failed";
+}
+
+function normalizeGrsaiStatus(status?: string): string {
+  return status?.trim().toLowerCase() ?? "";
+}
+
+function buildGrsaiImageResult(
+  response: GrsaiTaskResponse,
+  model: string,
+  size?: string,
+): GenerateImageResult {
+  const dimensions = parseImageSize(size);
+  const images =
+    response.results
+      ?.map((result) => {
+        const imageUrl = result.url?.trim();
+
+        if (!imageUrl) {
+          return null;
+        }
+
+        return {
+          imageUrl,
+          model,
+          width: dimensions.width,
+          height: dimensions.height,
+        } satisfies GenerateImageResultItem;
+      })
+      .filter((image): image is GenerateImageResultItem => Boolean(image)) ?? [];
+
+  if (!images.length) {
+    throw new VibeApiError(502, "Grsai returned no image data", response);
+  }
+
+  return { images, model };
+}
+
+export async function submitGrsaiImageTask(
+  params: GenerateImageParams,
+): Promise<GenerateImageTaskResult> {
+  const model = params.model ?? DEFAULT_IMAGE_MODEL;
+
+  const json = await requestJsonWithBaseUrl<GrsaiTaskResponse>(
+    GRSAI_BASE_URL,
+    "/v1/api/generate",
+    buildGrsaiRequestBody(params),
+    params.apiKey,
+    createHeaders,
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "Grsai",
+  );
+  const taskId = json.id?.trim();
+
+  if (!taskId) {
+    throw new VibeApiError(502, "Grsai returned no task id", json);
+  }
+
+  const status = normalizeGrsaiStatus(json.status);
+
+  if (status === "failed" || status === "violation") {
+    throw new VibeApiError(502, extractGrsaiErrorMessage(json), json);
+  }
+
+  return { taskId, model };
+}
+
+export async function getGrsaiImageTaskResult(params: {
+  taskId: string;
+  apiKey?: string;
+  model?: string;
+  size?: string;
+}): Promise<
+  | { status: "pending" }
+  | { status: "completed"; result: GenerateImageResult }
+> {
+  const taskId = params.taskId.trim();
+
+  if (!taskId) {
+    throw new VibeApiError(400, "Grsai task id is required");
+  }
+
+  const json = await requestGetWithBaseUrl<GrsaiTaskResponse>(
+    GRSAI_BASE_URL,
+    `/v1/api/result?id=${encodeURIComponent(taskId)}`,
+    params.apiKey,
+    createHeaders,
+    COMFLY_TASK_STATUS_TIMEOUT_MS,
+    "Grsai",
+  );
+  const status = normalizeGrsaiStatus(json.status);
+
+  if (status === "succeeded") {
+    return {
+      status: "completed",
+      result: buildGrsaiImageResult(
+        json,
+        params.model ?? DEFAULT_IMAGE_MODEL,
+        params.size,
+      ),
+    };
+  }
+
+  if (status === "failed" || status === "violation") {
+    throw new VibeApiError(502, extractGrsaiErrorMessage(json), json);
+  }
+
+  if (status === "running" || status === "pending" || status === "processing") {
+    return { status: "pending" };
+  }
+
+  throw new VibeApiError(
+    502,
+    `Grsai returned an unknown task status${status ? ` (${status})` : ""}`,
+    json,
+  );
+}
+
+export async function generateGrsaiOpenAIImage(
+  params: GenerateImageParams,
+): Promise<GenerateImageResult> {
+  const model = params.model ?? DEFAULT_IMAGE_MODEL;
+  const size = params.size ?? DEFAULT_IMAGE_SIZE;
+  const requestBody: {
+    model: string;
+    prompt: string;
+    size: string;
+    response_format: "url";
+    image?: string[];
+    urls?: string[];
+  } = {
+    model,
+    prompt: params.prompt,
+    size,
+    response_format: "url",
+  };
+
+  if (params.images?.length) {
+    const urls = await normalizeGrsaiReferenceUrls(params.images);
+
+    requestBody.image = urls;
+    requestBody.urls = urls;
+  }
+
+  const json = await requestJsonWithBaseUrl<VibeImageResponse>(
+    GRSAI_BASE_URL,
+    "/v1/images/generations",
+    requestBody,
+    params.apiKey,
+    createHeaders,
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "Grsai",
+  );
+  const dimensions = parseImageSize(size);
+  const images =
+    json.data
+      ?.map((image) => {
+        const imageUrl = image.url?.trim();
+
+        if (!imageUrl) {
+          return null;
+        }
+
+        return {
+          imageUrl,
+          model,
+          width: dimensions.width,
+          height: dimensions.height,
+        } satisfies GenerateImageResultItem;
+      })
+      .filter((image): image is GenerateImageResultItem => Boolean(image)) ?? [];
+
+  if (!images.length) {
+    throw new VibeApiError(502, "Grsai returned no image data", json);
+  }
+
+  return { images, model };
+}
+
 async function generateImageGemini(
   params: GenerateImageParams,
 ): Promise<GenerateImageResult> {
@@ -3087,6 +3456,13 @@ export async function generateImage(
     throw new VibeApiError(
       400,
       "RunningHub image generation must be submitted as an async task",
+    );
+  }
+
+  if (isGrsaiProvider(imageProvider)) {
+    throw new VibeApiError(
+      400,
+      "Grsai image generation must be submitted as an async task",
     );
   }
 

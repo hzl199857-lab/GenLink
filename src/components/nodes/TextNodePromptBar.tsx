@@ -38,6 +38,7 @@ const TEXT_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly string[]> = {
   comfly: MODEL_OPTIONS.filter((model) => model !== 'gemini-3.5-flash'),
   zhenzhen: MODEL_OPTIONS.filter((model) => model !== 'gemini-3.5-flash'),
   runninghub: [],
+  grsai: [],
 };
 
 export interface TextNodePromptBarProps {

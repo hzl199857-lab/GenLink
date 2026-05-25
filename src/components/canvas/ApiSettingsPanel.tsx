@@ -51,6 +51,12 @@ const PROVIDERS: Array<{
     apiKeyLabel: 'RunningHub API Key',
   },
   {
+    key: 'grsai',
+    label: 'Grsai',
+    url: 'https://grsai.ai/zh/dashboard/api-keys',
+    apiKeyLabel: 'Grsai API Key',
+  },
+  {
     key: 'zhenzhen',
     label: '真真 AI 工坊',
     url: 'https://ai.t8star.cn',
@@ -64,6 +70,7 @@ const EMPTY_API_KEYS: Record<ApiProvider, string> = {
   comfly: '',
   zhenzhen: '',
   runninghub: '',
+  grsai: '',
 };
 
 function createDraftFromSettings(settings: StoredApiSettings): ProviderDraft {
@@ -89,6 +96,7 @@ function createSettingsFromDraft(
     comfly: (draft.apiKeys.comfly ?? '').trim(),
     zhenzhen: (draft.apiKeys.zhenzhen ?? '').trim(),
     runninghub: (draft.apiKeys.runninghub ?? '').trim(),
+    grsai: (draft.apiKeys.grsai ?? '').trim(),
   };
 
   return {
@@ -114,6 +122,7 @@ export function ApiSettingsPanel({
     comfly: false,
     zhenzhen: false,
     runninghub: false,
+    grsai: false,
   });
 
   if (!open) {

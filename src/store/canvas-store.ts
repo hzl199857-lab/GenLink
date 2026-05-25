@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 import { stripImagePromptSectionLabels } from "@/lib/image-prompt";
 import {
+  parseReferenceMentions,
   reconcileReferenceMentionTokens,
   selectMentionedReferences,
   stripReferenceMentionTokens,
@@ -122,7 +123,7 @@ function resolveParallelCount(value?: number): 1 | 2 | 4 {
   return value === 2 || value === 4 ? value : 1;
 }
 
-export type ApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub";
+export type ApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
 export type ApiModelKind = "text" | "image";
 
 export type StoredApiSettings = {
@@ -138,6 +139,7 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   fucheers: "Fucheers API",
   comfly: "Comfly",
   runninghub: "RunningHub",
+  grsai: "Grsai",
   zhenzhen: "真真 AI 工坊",
 };
 
@@ -148,11 +150,13 @@ export const CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersTextApi
 export const CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyTextApiKey";
 export const CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenTextApiKey";
 export const CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY = "genlink.runninghubTextApiKey";
+export const CANVAS_TEXT_GRSAI_API_KEY_STORAGE_KEY = "genlink.grsaiTextApiKey";
 export const CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeImageApiKey";
 export const CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersImageApiKey";
 export const CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyImageApiKey";
 export const CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenImageApiKey";
 export const CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY = "genlink.runninghubImageApiKey";
+export const CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY = "genlink.grsaiImageApiKey";
 
 function readStoredValue(storageKey: string): string {
   if (typeof window === "undefined") {
@@ -172,6 +176,8 @@ export function normalizeApiProvider(value?: string): ApiProvider {
       return "zhenzhen";
     case "runninghub":
       return "runninghub";
+    case "grsai":
+      return "grsai";
     default:
       return DEFAULT_API_PROVIDER;
   }
@@ -198,6 +204,8 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
         return CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY;
       case "runninghub":
         return CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY;
+      case "grsai":
+        return CANVAS_TEXT_GRSAI_API_KEY_STORAGE_KEY;
       default:
         return CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY;
     }
@@ -212,6 +220,8 @@ function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string 
       return CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY;
     case "runninghub":
       return CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY;
+    case "grsai":
+      return CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY;
     default:
       return CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY;
   }
@@ -238,6 +248,7 @@ export function readStoredApiSettings(): StoredApiSettings {
       comfly: readStoredApiKey("text", "comfly"),
       zhenzhen: readStoredApiKey("text", "zhenzhen"),
       runninghub: readStoredApiKey("text", "runninghub"),
+      grsai: readStoredApiKey("text", "grsai"),
     },
     imageApiKeys: {
       vibe: readStoredApiKey("image", "vibe"),
@@ -245,6 +256,7 @@ export function readStoredApiSettings(): StoredApiSettings {
       comfly: readStoredApiKey("image", "comfly"),
       zhenzhen: readStoredApiKey("image", "zhenzhen"),
       runninghub: readStoredApiKey("image", "runninghub"),
+      grsai: readStoredApiKey("image", "grsai"),
     },
   };
 }
@@ -448,7 +460,23 @@ function shouldUseNanoImageSizePresets(
     return model === "nano-banana-pro" || model === "nano-banana-2";
   }
 
+  if (provider === "grsai") {
+    return model === "nano-banana-pro";
+  }
+
   return isGeminiImageModel(model);
+}
+
+function selectPromptReferences<T extends { id: string }>(
+  references: T[],
+  prompt: string | undefined,
+): T[] {
+  if (!parseReferenceMentions(prompt).length) {
+    return references;
+  }
+
+  const selected = selectMentionedReferences(references, prompt);
+  return selected.length > 0 ? selected : references;
 }
 
 function createTextNodeData(): TextNodeData {
@@ -613,7 +641,41 @@ async function uploadReferenceBlobToOss(
   blob: Blob,
   fileName?: string,
 ): Promise<string> {
-  return uploadImageBlobToOss(blob, fileName, "references");
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Failed to read reference image"));
+      }
+    };
+    reader.onerror = () => reject(new Error("Failed to read reference image"));
+    reader.readAsDataURL(blob);
+  });
+  const response = await fetch("/api/image-hosting/upload", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ dataUrl, fileName, folder: "references" }),
+  });
+  const json = await readJsonResponse<
+    | {
+        ok: true;
+        result: {
+          imageUrl: string;
+        };
+      }
+    | ApiErrorResponse
+  >(response, "Failed to upload reference image");
+
+  if (!response.ok || !json.ok) {
+    throw new Error("error" in json ? json.error : "Failed to upload reference image");
+  }
+
+  return json.result.imageUrl;
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -1932,6 +1994,17 @@ export interface CanvasState {
     imageGenerationNodeId: string,
     referenceImageId: string,
   ) => void;
+  addReferenceImagesToImageGenerationNode: (
+    imageGenerationNodeId: string,
+    images: Array<{
+      imageUrl: string;
+      hostedImageUrl?: string;
+      fileName?: string;
+      width?: number;
+      height?: number;
+      sizeBytes?: number;
+    }>,
+  ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
@@ -2300,7 +2373,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt is required");
     }
 
-    const connectedImages = selectMentionedReferences(
+    const connectedImages = selectPromptReferences(
       getConnectedImagesForTargetNode(
         state.nodes,
         state.edges,
@@ -2553,7 +2626,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const normalizedPromptOverride = promptOverride?.trim();
       const directPrompt =
         normalizedPromptOverride || latestImageGenerationNode.data.prompt?.trim() || "";
-      const connectedImages = selectMentionedReferences(
+      const connectedImages = selectPromptReferences(
         getImageGenerationReferenceImages(
           latestState.nodes,
           latestState.edges,
@@ -2566,12 +2639,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         connectedImages,
       );
       const effectivePrompt = [
-        connectedTextPrompt
-          ? `Upstream text node content:\n${connectedTextPrompt}`
-          : "",
-        cleanDirectPrompt
-          ? `Additional image instructions:\n${cleanDirectPrompt}`
-          : "",
+        connectedTextPrompt,
+        cleanDirectPrompt,
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -2615,14 +2684,38 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...connectedImages,
         ...selfGeneratedReferences,
       ];
-      const requestImages =
-        referenceImages.length > 0
-          ? SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS
-            ? await normalizeReferenceImagesViaOss(referenceImages)
-            : await normalizeReferenceImagesForRequest(referenceImages)
-          : undefined;
+      const imageProvider =
+        latestImageGenerationNode.data.provider ?? readStoredSelectedApiProvider("image");
+      const shouldUploadReferenceImagesToOss =
+        SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS || imageProvider === "grsai";
+      let requestImages:
+        | Array<{
+            url: string;
+            fileName?: string;
+          }>
+        | undefined;
 
-      if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS && requestImages?.length) {
+      if (referenceImages.length > 0) {
+        if (shouldUploadReferenceImagesToOss) {
+          try {
+            requestImages = await normalizeReferenceImagesViaOss(referenceImages);
+          } catch (error) {
+            if (
+              imageProvider !== "grsai" ||
+              !(error instanceof Error) ||
+              !/oss is not configured/i.test(error.message)
+            ) {
+              throw error;
+            }
+
+            requestImages = await normalizeReferenceImagesForRequest(referenceImages);
+          }
+        } else {
+          requestImages = await normalizeReferenceImagesForRequest(referenceImages);
+        }
+      }
+
+      if (shouldUploadReferenceImagesToOss && requestImages?.length) {
         console.info(
           "[GenLink] reference images for API",
           requestImages.map((image, index) => ({
@@ -2631,6 +2724,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             url: image.url,
           })),
         );
+      }
+
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[GenLink] image generation references", {
+          nodeId: imageGenerationNodeId,
+          provider: imageProvider,
+          referenceImages: referenceImages.length,
+          requestImages: requestImages?.length ?? 0,
+        });
       }
 
       const quality = resolveImageApiQuality(
@@ -2645,8 +2747,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const parallelCount = resolveParallelCount(
         latestImageGenerationNode.data.parallelCount,
       );
-      const imageProvider =
-        latestImageGenerationNode.data.provider ?? readStoredSelectedApiProvider("image");
       const apiKey = assertStoredApiKey("image", imageProvider);
       const imageQuality = options?.quality ?? latestImageGenerationNode.data.quality;
       const imageAspectRatio = options?.aspectRatio ?? latestImageGenerationNode.data.aspectRatio;
@@ -3425,6 +3525,51 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ...createUndoHistoryUpdate(state),
         nodes: nextNodes,
         edges: nextEdges,
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  addReferenceImagesToImageGenerationNode: (
+    imageGenerationNodeId,
+    images,
+  ) => {
+    if (images.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const imageGenerationNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
+          node.id === imageGenerationNodeId && node.type === "image_generation",
+      );
+
+      if (!imageGenerationNode) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
+        nodes: state.nodes.map((node) =>
+          node.id === imageGenerationNodeId && node.type === "image_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: [
+                    ...(node.data.referenceImages ?? []),
+                    ...images.map((image) => ({
+                      id: crypto.randomUUID(),
+                      ...image,
+                    })),
+                  ],
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
         dirty: true,
         error: null,
       };

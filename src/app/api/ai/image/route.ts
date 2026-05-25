@@ -8,8 +8,10 @@ import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
 import { prisma } from "@/lib/prisma";
 import {
   getComflyImageTaskResult,
+  getGrsaiImageTaskResult,
   getRunningHubImageTaskResult,
   submitComflyImageTask,
+  submitGrsaiImageTask,
   submitRunningHubImageTask,
   VibeApiError,
   generateImage,
@@ -216,7 +218,8 @@ function parseProvider(value: unknown): ImageApiProvider | undefined {
     value === "fucheers" ||
     value === "comfly" ||
     value === "zhenzhen" ||
-    value === "runninghub"
+    value === "runninghub" ||
+    value === "grsai"
   ) {
     return value;
   }
@@ -273,6 +276,20 @@ function normalizeImages(images: unknown):
           ? image.fileName
           : undefined,
     }));
+}
+
+function getImagesFromHistoryNodeData(
+  historyNodeData: ImageGenerationNodeData | undefined,
+): Array<{ url: string; fileName?: string }> | undefined {
+  const images =
+    historyNodeData?.referenceImages
+      ?.map((image) => ({
+        url: image.hostedImageUrl?.trim() || image.imageUrl.trim(),
+        fileName: image.fileName,
+      }))
+      .filter((image) => image.url) ?? [];
+
+  return images.length ? images : undefined;
 }
 
 function readUInt32BigEndian(buffer: Buffer, offset: number): number | undefined {
@@ -1096,6 +1113,23 @@ async function submitRunningHubJob(jobId: string, params: ImageJobParams) {
   return { taskId: submission.taskId, model: submission.model };
 }
 
+async function submitGrsaiJob(jobId: string, params: ImageJobParams) {
+  const submission = await submitGrsaiImageTask({
+    ...params,
+    provider: "grsai",
+  });
+
+  await prisma.imageJob.update({
+    where: { id: jobId },
+    data: {
+      provider: "grsai",
+      upstreamTaskId: submission.taskId,
+    },
+  });
+
+  return { taskId: submission.taskId, model: submission.model };
+}
+
 async function pollComflyImageJob(
   jobId: string,
   params: ImageJobParams,
@@ -1173,7 +1207,9 @@ async function pollRunningHubImageJob(
       });
 
       if (task.status === "completed") {
-        await completeImageJob(jobId, task.result);
+        await completeImageJob(jobId, task.result, {
+          cacheRemoteBeforeComplete: true,
+        });
         return;
       }
 
@@ -1185,6 +1221,56 @@ async function pollRunningHubImageJob(
       data: {
         status: "error",
         error: "RunningHub image generation timed out",
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof VibeApiError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "Internal error";
+
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: "error",
+        error: message,
+      },
+    });
+  }
+}
+
+async function pollGrsaiImageJob(
+  jobId: string,
+  params: ImageJobParams,
+  taskId: string,
+  model: string,
+) {
+  try {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < COMFLY_IMAGE_JOB_TIMEOUT_MS) {
+      const task = await getGrsaiImageTaskResult({
+        taskId,
+        apiKey: params.apiKey,
+        model: params.model ?? model,
+        size: params.size,
+      });
+
+      if (task.status === "completed") {
+        await completeImageJob(jobId, task.result);
+        return;
+      }
+
+      await sleep(COMFLY_IMAGE_JOB_POLL_INTERVAL_MS);
+    }
+
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: "error",
+        error: "Grsai image generation timed out",
       },
     });
   } catch (error) {
@@ -1237,7 +1323,8 @@ async function tryResumePendingComflyJob(job: {
   if (
     job.provider !== "comfly" &&
     job.provider !== "zhenzhen" &&
-    job.provider !== "runninghub"
+    job.provider !== "runninghub" &&
+    job.provider !== "grsai"
   ) {
     return { status: "pending" };
   }
@@ -1257,6 +1344,13 @@ async function tryResumePendingComflyJob(job: {
             model: historyNodeData?.model,
             size,
           })
+        : job.provider === "grsai"
+          ? await getGrsaiImageTaskResult({
+              taskId: job.upstreamTaskId,
+              apiKey,
+              model: historyNodeData?.model,
+              size,
+            })
         : await getComflyImageTaskResult({
             taskId: job.upstreamTaskId,
             apiKey,
@@ -1269,7 +1363,9 @@ async function tryResumePendingComflyJob(job: {
       return { status: "pending" };
     }
 
-    const result = await completeImageJob(job.id, task.result);
+    const result = await completeImageJob(job.id, task.result, {
+      cacheRemoteBeforeComplete: job.provider === "grsai",
+    });
 
     return {
       status: "completed",
@@ -1317,6 +1413,11 @@ export async function POST(request: Request) {
 
     const jobId = randomUUID();
     const provider = parseProvider(body.provider);
+    const requestImages = normalizeImages(body.images);
+    const historyNodeData = normalizeImageGenerationNodeData(
+      body.historyNodeData,
+      body.prompt.trim(),
+    );
     const jobParams: ImageJobParams = {
       prompt: body.prompt.trim(),
       model: typeof body.model === "string" ? body.model : undefined,
@@ -1331,12 +1432,27 @@ export async function POST(request: Request) {
       n: typeof body.n === "number" ? body.n : undefined,
       provider,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
-      images: normalizeImages(body.images),
+      images: requestImages ?? getImagesFromHistoryNodeData(historyNodeData),
     };
-    const historyNodeData = normalizeImageGenerationNodeData(
-      body.historyNodeData,
-      jobParams.prompt,
-    );
+
+    if (process.env.NODE_ENV !== "production") {
+      console.info(
+        "[GenLink image request]",
+        JSON.stringify({
+          provider,
+          model: jobParams.model,
+          images: jobParams.images?.length ?? 0,
+          imageUrlTypes: jobParams.images?.map((image) => {
+            const url = image.url.trim();
+
+            if (url.startsWith("data:")) return "data";
+            if (url.startsWith("/")) return "local";
+            if (/^https?:\/\//i.test(url)) return new URL(url).hostname;
+            return "other";
+          }),
+        }),
+      );
+    }
 
     await prisma.imageJob.create({
       data: {
@@ -1354,6 +1470,8 @@ export async function POST(request: Request) {
         `[GenLink image] job=${jobId} provider=${provider ?? "default"} branch=${
           provider === "runninghub"
             ? "runninghub"
+            : provider === "grsai"
+              ? "grsai"
             : provider === "comfly" || provider === "zhenzhen"
               ? "comfly-compatible"
               : "vibe-compatible"
@@ -1367,6 +1485,16 @@ export async function POST(request: Request) {
       const submission = await submitRunningHubJob(jobId, jobParams);
       after(async () => {
         await pollRunningHubImageJob(
+          jobId,
+          jobParams,
+          submission.taskId,
+          submission.model,
+        );
+      });
+    } else if (provider === "grsai") {
+      const submission = await submitGrsaiJob(jobId, jobParams);
+      after(async () => {
+        await pollGrsaiImageJob(
           jobId,
           jobParams,
           submission.taskId,
@@ -1509,7 +1637,8 @@ export async function GET(request: Request) {
       jobAgeMs > STALE_JOB_TIMEOUT_MS &&
       job.provider !== "comfly" &&
       job.provider !== "zhenzhen" &&
-      job.provider !== "runninghub"
+      job.provider !== "runninghub" &&
+      job.provider !== "grsai"
     ) {
       const errorMsg = "Image generation timed out (server may have restarted)";
       await prisma.imageJob.updateMany({
@@ -1561,7 +1690,8 @@ export async function GET(request: Request) {
       !job.result &&
       (job.provider === "comfly" ||
         job.provider === "zhenzhen" ||
-        job.provider === "runninghub") &&
+        job.provider === "runninghub" ||
+        job.provider === "grsai") &&
       job.upstreamTaskId
     ) {
       const resumed = await tryResumePendingComflyJob(job, apiKey);

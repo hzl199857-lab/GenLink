@@ -49,12 +49,14 @@ import {
   CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY,
   CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY,
+  CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_API_PROVIDER_STORAGE_KEY,
   CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY,
+  CANVAS_TEXT_GRSAI_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY,
@@ -4393,7 +4395,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const deleteNodes = useCanvasStore((s) => s.deleteNodes);
   const addEdgeStore = useCanvasStore((s) => s.addEdge);
   const deleteEdge = useCanvasStore((s) => s.deleteEdge);
-  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const addReferenceImagesToImageGenerationNode = useCanvasStore(
+    (s) => s.addReferenceImagesToImageGenerationNode,
+  );
   const materials = useCanvasStore((s) => s.materials);
   const addMaterial = useCanvasStore((s) => s.addMaterial);
   const deleteMaterial = useCanvasStore((s) => s.deleteMaterial);
@@ -5817,26 +5821,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         }
 
         const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
-        const currentNode = storeNodes.find(
-          (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
-            node.id === referenceUploadNodeId && node.type === 'image_generation',
-        );
-
-        if (!currentNode) {
-          return;
-        }
-
-        updateNodeData<'image_generation'>(referenceUploadNodeId, {
-          referenceImages: [
-            ...(currentNode.data.referenceImages ?? []),
-            ...imageDataList.map((image) => ({
-              id: crypto.randomUUID(),
-              ...image,
-            })),
-          ],
-          status: currentNode.data.status === 'error' ? 'idle' : currentNode.data.status,
-          errorMessage: undefined,
-        });
+        addReferenceImagesToImageGenerationNode(referenceUploadNodeId, imageDataList);
       })();
     } else if (files.length > 0 && position) {
       void addUploadedImages(files, position);
@@ -5845,7 +5830,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     event.target.value = '';
     uploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
-  }, [addUploadedImages, storeNodes, updateNodeData]);
+  }, [addReferenceImagesToImageGenerationNode, addUploadedImages]);
 
   const handleSelectMaterial = useCallback((
     item: MaterialLibraryItem,
@@ -6456,11 +6441,13 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     window.localStorage.setItem(CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY, values.textApiKeys.comfly);
     window.localStorage.setItem(CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY, values.textApiKeys.zhenzhen);
     window.localStorage.setItem(CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY, values.textApiKeys.runninghub);
+    window.localStorage.setItem(CANVAS_TEXT_GRSAI_API_KEY_STORAGE_KEY, values.textApiKeys.grsai);
     window.localStorage.setItem(CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY, values.imageApiKeys.vibe);
     window.localStorage.setItem(CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY, values.imageApiKeys.fucheers);
     window.localStorage.setItem(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY, values.imageApiKeys.comfly);
     window.localStorage.setItem(CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen);
     window.localStorage.setItem(CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY, values.imageApiKeys.runninghub);
+    window.localStorage.setItem(CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY, values.imageApiKeys.grsai);
     setApiSettings(values);
   }, []);
 

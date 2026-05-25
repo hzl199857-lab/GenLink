@@ -28,6 +28,19 @@ const CARD_ACCESSORY_GAP = 12;
 const CARD_TOOLBAR_LIFT = 30;
 const NANO_BANANA_MODEL_PREFIX = 'nano-banana';
 const RUNNING_HUB_NANO_MODELS = new Set(['nano-banana-pro', 'nano-banana-2']);
+const GRSAI_NANO_MODELS = new Set(['nano-banana-pro']);
+const GRSAI_NANO_ASPECT_RATIOS = new Set([
+  '1:1',
+  '16:9',
+  '9:16',
+  '4:3',
+  '3:4',
+  '3:2',
+  '2:3',
+  '5:4',
+  '4:5',
+  '21:9',
+]);
 
 export interface ImageGenerationNodeProps {
   id?: string;
@@ -74,6 +87,33 @@ function parseAspectRatioValue(value?: string): number | null {
   }
 
   return width / height;
+}
+
+function resolveModelAspectRatio(
+  provider: ApiProvider | undefined,
+  model: string,
+  aspectRatio?: string,
+): string | undefined {
+  const isNanoSizeModel =
+    provider === 'runninghub'
+      ? RUNNING_HUB_NANO_MODELS.has(model)
+      : provider === 'grsai'
+        ? GRSAI_NANO_MODELS.has(model)
+        : model.startsWith(NANO_BANANA_MODEL_PREFIX);
+
+  if (!isNanoSizeModel) {
+    return aspectRatio;
+  }
+
+  if (provider === 'grsai') {
+    return aspectRatio && GRSAI_NANO_ASPECT_RATIOS.has(aspectRatio)
+      ? aspectRatio
+      : '1:1';
+  }
+
+  return !aspectRatio || aspectRatio === 'auto' || aspectRatio === '9:21'
+    ? '1:1'
+    : aspectRatio;
 }
 
 function resolveCardDimensions(
@@ -246,15 +286,10 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   };
 
   const handleModelChange = (next: string) => {
-    const nextAspectRatio =
-      next.startsWith(NANO_BANANA_MODEL_PREFIX) && (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
-        ? '1:1'
-        : data.aspectRatio;
-
     onChange?.({
       ...data,
       model: next,
-      aspectRatio: nextAspectRatio,
+      aspectRatio: resolveModelAspectRatio(data.provider, next, data.aspectRatio),
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -265,16 +300,6 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     model: string;
     runningHubChannel?: 'official' | 'low-cost';
   }) => {
-    const nextIsNanoSizeModel =
-      next.provider === 'runninghub'
-        ? RUNNING_HUB_NANO_MODELS.has(next.model)
-        : next.model.startsWith(NANO_BANANA_MODEL_PREFIX);
-    const nextAspectRatio =
-      nextIsNanoSizeModel &&
-      (!data.aspectRatio || data.aspectRatio === 'auto' || data.aspectRatio === '9:21')
-        ? '1:1'
-        : data.aspectRatio;
-
     onChange?.({
       ...data,
       provider: next.provider,
@@ -283,7 +308,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         next.provider === 'runninghub'
           ? next.runningHubChannel ?? data.runningHubChannel ?? 'official'
           : data.runningHubChannel,
-      aspectRatio: nextAspectRatio,
+      aspectRatio: resolveModelAspectRatio(next.provider, next.model, data.aspectRatio),
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });

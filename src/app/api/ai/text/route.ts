@@ -26,7 +26,8 @@ function parseProvider(value: unknown): ImageApiProvider | undefined {
     value === "vibe" ||
     value === "fucheers" ||
     value === "comfly" ||
-    value === "zhenzhen"
+    value === "zhenzhen" ||
+    value === "grsai"
   ) {
     return value;
   }

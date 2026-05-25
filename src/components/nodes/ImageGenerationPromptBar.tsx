@@ -39,6 +39,10 @@ const RUNNING_HUB_IMAGE_MODELS = [
   { id: 'nano-banana-pro', label: 'Nano banana pro' },
   { id: 'nano-banana-2', label: 'Nano banana 2' },
 ] as const satisfies readonly ImageModelOption[];
+const GRSAI_IMAGE_MODELS = [
+  { id: 'gpt-image-2-vip', label: 'gpt-image-2-vip' },
+  { id: 'nano-banana-pro', label: 'Nano banana pro' },
+] as const satisfies readonly ImageModelOption[];
 const RUNNING_HUB_CHANNEL_MODEL_IDS: ReadonlySet<string> = new Set(
   RUNNING_HUB_IMAGE_MODELS.map((model) => model.id),
 );
@@ -51,13 +55,14 @@ const RUNNING_HUB_CHANNEL_OPTIONS = [
   { id: 'low-cost', label: '低价渠道版' },
 ] as const;
 type RunningHubChannel = typeof RUNNING_HUB_CHANNEL_OPTIONS[number]['id'];
-const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen', 'runninghub'];
+const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen', 'runninghub', 'grsai'];
 const IMAGE_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly ImageModelOption[]> = {
   vibe: IMAGE_MODELS,
   fucheers: IMAGE_MODELS,
   comfly: IMAGE_MODELS,
   zhenzhen: IMAGE_MODELS,
   runninghub: RUNNING_HUB_IMAGE_MODELS,
+  grsai: GRSAI_IMAGE_MODELS,
 };
 const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
 const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
@@ -445,6 +450,7 @@ function getRatioShapeClass(ratio: string) {
 
 function getImageModelLabel(model: string): string {
   return (
+    GRSAI_IMAGE_MODELS.find((option) => option.id === model)?.label ??
     RUNNING_HUB_IMAGE_MODELS.find((option) => option.id === model)?.label ??
     IMAGE_MODELS.find((option) => option.id === model)?.label ??
     model
@@ -585,6 +591,8 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const isNanoBananaModel =
     provider === 'runninghub'
       ? RUNNING_HUB_NANO_MODEL_IDS.has(model)
+      : provider === 'grsai'
+        ? model === 'nano-banana-pro'
       : (model?.startsWith('nano-banana') ?? false);
   const activeRunningHubChannel = runningHubChannel === 'low-cost' ? 'low-cost' : 'official';
   const modelLabel =
@@ -598,7 +606,9 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     RUNNING_HUB_CHANNEL_MODEL_IDS.has(activeModelForChannel);
   const modelAspectRatio = isNanoBananaModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
   const aspectRatioLayout = isNanoBananaModel
-    ? GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
+    ? provider === 'grsai'
+      ? IMAGE_ASPECT_RATIO_LAYOUT.filter((item) => item.value !== 'auto' && item.value !== '2:1' && item.value !== '9:21')
+      : GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
     : IMAGE_ASPECT_RATIO_LAYOUT;
   const settingsLabel = `${modelAspectRatio} / ${quality}`;
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;

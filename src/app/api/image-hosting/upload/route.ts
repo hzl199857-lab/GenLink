@@ -9,6 +9,7 @@ interface UploadImageRequestBody {
   dataUrl?: unknown;
   imageUrl?: unknown;
   fileName?: unknown;
+  folder?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -16,15 +17,17 @@ export async function POST(request: Request) {
     const body = (await request.json()) as UploadImageRequestBody;
 
     const fileName = typeof body.fileName === "string" ? body.fileName : undefined;
+    const folder = typeof body.folder === "string" ? body.folder : undefined;
     let imageUrl: string;
 
     if (typeof body.dataUrl === "string" && body.dataUrl.trim() !== "") {
-      imageUrl = await saveImageDataUrl(body.dataUrl, fileName);
+      imageUrl = await saveImageDataUrl(body.dataUrl, fileName, folder);
     } else if (typeof body.imageUrl === "string" && body.imageUrl.trim() !== "") {
       const sourceUrl = body.imageUrl.trim();
       imageUrl = await saveRemoteImageUrl(
         sourceUrl.startsWith("/") ? new URL(sourceUrl, request.url).toString() : sourceUrl,
         fileName,
+        folder,
       );
     } else {
       return NextResponse.json(
