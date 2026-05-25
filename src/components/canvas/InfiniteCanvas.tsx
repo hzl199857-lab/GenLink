@@ -141,6 +141,9 @@ let notifyImageGenerationReferenceUpload:
 let notifyPanorama360NavigationActiveChange:
   | ((nodeId: string, active: boolean) => void)
   | null = null;
+let notifyPanorama360UploadRequest:
+  | ((nodeId: string, file: File) => void)
+  | null = null;
 
 function formatImageSize(bytes?: number): string {
   if (!bytes || bytes <= 0) {
@@ -1339,6 +1342,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
       onTitleChange={(nextTitle) => updateNodeData<'panorama-360'>(id, { title: nextTitle })}
       onViewChange={handleViewChange}
       onNavigationActiveChange={(active) => notifyPanorama360NavigationActiveChange?.(id, active)}
+      onUploadPanorama={(file) => notifyPanorama360UploadRequest?.(id, file)}
       onSelectNode={() => notifyCanvasNodeSelect?.(id)}
     />
   );
@@ -1452,6 +1456,56 @@ function cloneNodeData<T>(data: T): T {
     : JSON.parse(JSON.stringify(data)) as T;
 }
 
+function resetCopiedNodeData(node: CanvasNode): CanvasNode['data'] {
+  if (node.type === 'text') {
+    const data = cloneNodeData(node.data);
+
+    return {
+      ...data,
+      status: 'idle',
+      errorMessage: undefined,
+    };
+  }
+
+  if (node.type === 'image_generation') {
+    const data = cloneNodeData(node.data);
+
+    return {
+      ...data,
+      effectivePromptOverride: undefined,
+      generatedModel: undefined,
+      generatedImageUrl: undefined,
+      generatedHostedImageUrl: undefined,
+      generatedOutputFileName: undefined,
+      generatedImageWidth: undefined,
+      generatedImageHeight: undefined,
+      generatedImageFormat: undefined,
+      generatedImageSizeBytes: undefined,
+      generatedAt: undefined,
+      generationResults: undefined,
+      status: 'idle',
+      errorMessage: undefined,
+    };
+  }
+
+  if (node.type === 'panorama-360') {
+    const data = cloneNodeData(node.data);
+
+    return {
+      ...data,
+      panorama360Node: {
+        ...data.panorama360Node,
+        ui: {
+          ...data.panorama360Node.ui,
+          isEditing: false,
+        },
+      },
+    };
+  }
+
+  return cloneNodeData(node.data);
+}
+
 function cloneCanvasNode(
   node: CanvasNode,
   offsetMultiplier = 1,
@@ -1463,7 +1517,7 @@ function cloneCanvasNode(
       x: node.position.x + NODE_PASTE_OFFSET * offsetMultiplier,
       y: node.position.y + NODE_PASTE_OFFSET * offsetMultiplier,
     },
-    data: cloneNodeData(node.data),
+    data: resetCopiedNodeData(node),
   } as CanvasNode;
 }
 
@@ -4517,7 +4571,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const copiedNodesRef = useRef<CanvasNode[]>([]);
   const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
   const pasteCountRef = useRef(0);
-  const connectedPasteCountRef = useRef(0);
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
   const suppressNextPaneClearRef = useRef(false);
@@ -4923,6 +4976,44 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setEdgeDeleteButtonPosition(null);
   }, []);
 
+  useEffect(() => {
+    notifyPanorama360UploadRequest = (nodeId, file) => {
+      void (async () => {
+        const state = useCanvasStore.getState();
+        const targetNode = state.nodes.find((node) => node.id === nodeId);
+
+        if (!targetNode) {
+          return;
+        }
+
+        const imageData = await readImageFile(file);
+        const sourceNode = createUploadedImageNode(imageData, {
+          x: targetNode.position.x - 480,
+          y: targetNode.position.y,
+        });
+        const incomingEdges = state.edges.filter((edge) => edge.target === nodeId);
+
+        incomingEdges.forEach((edge) => deleteEdge(edge.id));
+        addNodes([sourceNode]);
+        addEdgeStore({
+          id: crypto.randomUUID(),
+          source: sourceNode.id,
+          target: nodeId,
+        });
+        setSelectedNodeIds(new Set([nodeId]));
+        setActiveNodeId(nodeId);
+        clearEdgeSelection();
+      })().catch((error) => {
+        setSaveMessage(error instanceof Error ? error.message : '上传全景图失败');
+        window.setTimeout(() => setSaveMessage(null), 2200);
+      });
+    };
+
+    return () => {
+      notifyPanorama360UploadRequest = null;
+    };
+  }, [addEdgeStore, addNodes, clearEdgeSelection, deleteEdge, setSaveMessage]);
+
   const selectGroup = useCallback((groupId: string) => {
     clearCanvasNodeUi();
     setActiveNodeId(null);
@@ -5272,29 +5363,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     copiedNodesRef.current = selectedNodes.map((node) => cloneCanvasNode(node, 0));
-    connectedCopyBufferRef.current = null;
-    pasteCountRef.current = 0;
-    return true;
-  }, [selectedNodeIds, storeNodes]);
-
-  const handleCopySelectedNodesWithUpstream = useCallback(() => {
-    if (selectedNodeIds.size === 0) {
-      return false;
-    }
-
-    const selectedNodes = storeNodes.filter((node) => selectedNodeIds.has(node.id));
-
-    if (selectedNodes.length === 0) {
-      return false;
-    }
-
     connectedCopyBufferRef.current = createConnectedCopyBuffer(
       selectedNodes,
       storeEdges,
       selectedNodeIds,
     );
-    copiedNodesRef.current = [];
-    connectedPasteCountRef.current = 0;
+    pasteCountRef.current = 0;
     return true;
   }, [selectedNodeIds, storeEdges, storeNodes]);
 
@@ -5323,10 +5397,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return false;
     }
 
-    connectedPasteCountRef.current += 1;
+    pasteCountRef.current += 1;
 
     const pastedNodes = copyBuffer.nodes.map((node) =>
-      cloneCanvasNode(node, connectedPasteCountRef.current),
+      cloneCanvasNode(node, pasteCountRef.current),
     );
     const pastedNodeIdsByCopiedId = new Map<string, string>(
       copyBuffer.nodes.map((node, index) => [node.id, pastedNodes[index].id]),
@@ -5397,15 +5471,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         return;
       }
 
-      if (isModifierPressed && event.shiftKey && key === 'c') {
-        event.preventDefault();
-        if (handleCopySelectedNodesWithUpstream()) {
-          return;
-        }
-        return;
-      }
-
-      if (isModifierPressed && key === 'c') {
+      if (isModifierPressed && !event.altKey && !event.shiftKey && key === 'c') {
         if (handleCopySelectedNodes()) {
           event.preventDefault();
         }
@@ -5446,7 +5512,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     clearEdgeSelection,
-    handleCopySelectedNodesWithUpstream,
     handleCopySelectedNodes,
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
