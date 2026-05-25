@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   ChevronUp,
@@ -637,18 +638,40 @@ export function Panorama360Node({
     setNavigationMode(true);
   };
 
-  const exitFullscreen = () => {
+  const exitFullscreen = useCallback(() => {
     setFullscreen(false);
     setNavigationMode(fullscreenPreviousNavigationRef.current);
-  };
+  }, [setNavigationMode]);
+
+  useEffect(() => {
+    if (!fullscreen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        exitFullscreen();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [exitFullscreen, fullscreen]);
 
   const viewer = (
     <div
       className={[
-        'node-connectable-card relative overflow-hidden rounded-gl-xl border bg-[#080b10] shadow-gl-card transition-all duration-150',
+        'node-connectable-card relative overflow-hidden border bg-[#080b10] transition-all duration-150',
+        fullscreen
+          ? 'h-full w-full rounded-[14px] border-white/10 shadow-none'
+          : 'rounded-gl-xl shadow-gl-card',
         selected && !fullscreen
           ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
-          : 'border-transparent shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
+          : fullscreen
+            ? ''
+            : 'border-transparent shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
       ].join(' ')}
       style={{ height: fullscreen ? '100%' : cardHeight }}
       onClick={(event) => {
@@ -778,9 +801,9 @@ export function Panorama360Node({
         />
       </div>
 
-      {fullscreen ? (
+      {fullscreen && typeof document !== 'undefined' ? createPortal(
         <div
-          className="fixed inset-0 z-[100] bg-black/94 p-8"
+          className="fixed inset-0 z-[100] bg-black p-3"
           role="dialog"
           aria-modal="true"
           onPointerDown={(event) => event.stopPropagation()}
@@ -788,19 +811,20 @@ export function Panorama360Node({
           <button
             type="button"
             aria-label="退出全屏"
-            className="nodrag nopan absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
+            className="nodrag nopan absolute right-8 top-7 z-20 rounded-full px-3 py-1.5 text-[13px] font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
               exitFullscreen();
             }}
           >
-            <X size={18} strokeWidth={2.2} />
+            退出全屏
           </button>
-          <div className="h-full w-full overflow-hidden rounded-gl-xl">
+          <div className="h-full w-full overflow-hidden rounded-[14px]">
             {viewer}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );
