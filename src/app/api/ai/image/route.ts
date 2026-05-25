@@ -1223,9 +1223,7 @@ async function pollRunningHubImageJob(
       });
 
       if (task.status === "completed") {
-        await completeImageJob(jobId, task.result, {
-          cacheRemoteBeforeComplete: true,
-        });
+        await completeImageJob(jobId, task.result);
         return;
       }
 
@@ -1381,9 +1379,7 @@ async function tryResumePendingComflyJob(job: {
       return { status: "pending" };
     }
 
-    const result = await completeImageJob(job.id, task.result, {
-      cacheRemoteBeforeComplete: job.provider === "grsai",
-    });
+    const result = await completeImageJob(job.id, task.result);
 
     return {
       status: "completed",

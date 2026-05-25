@@ -3184,7 +3184,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }
       })();
 
-      if (shouldUploadReferenceImagesToOss && imageProvider !== "grsai") {
+      if (shouldUploadReferenceImagesToOss) {
         void (async () => {
           for (const result of completedResults) {
             try {
