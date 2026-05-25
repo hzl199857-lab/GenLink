@@ -3141,22 +3141,38 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       void (async () => {
         for (const result of completedResults) {
+          let hostedImageUrl = result.hostedImageUrl?.trim() || undefined;
+
           try {
             if (imageProvider === "grsai" && !result.hostedImageUrl?.trim()) {
               throw new Error("Grsai result was not cached to OSS");
             }
 
-            const ossImageUrl =
-              imageProvider === "grsai"
-                ? result.hostedImageUrl?.trim()
-                : shouldUploadReferenceImagesToOss
-                  ? await uploadGeneratedResultToOss(
-                      result,
-                      latestImageGenerationNode.data.title,
-                    )
-                  : undefined;
+            if (imageProvider === "grsai") {
+              hostedImageUrl = result.hostedImageUrl?.trim();
+            } else if (shouldUploadReferenceImagesToOss) {
+              try {
+                hostedImageUrl = await uploadGeneratedResultToOss(
+                  result,
+                  latestImageGenerationNode.data.title,
+                );
+              } catch (error) {
+                console.warn(
+                  "[GenLink generated image OSS upload failed]",
+                  {
+                    provider: imageProvider,
+                    sourceType: getReferenceImageDebugLabel(result.hostedImageUrl || result.imageUrl),
+                    error: toErrorMessage(error),
+                  },
+                );
+              }
+            }
+
             const persistedImageUrl =
-              ossImageUrl || result.hostedImageUrl?.trim() || result.imageUrl;
+              hostedImageUrl || result.imageUrl;
+            const persistedResult = hostedImageUrl
+              ? { ...result, hostedImageUrl }
+              : result;
 
             await get().persistProjectOutput({
               sourceKey: `${imageGenerationNodeId}:${result.generatedAt}:${result.imageUrl}`,
@@ -3166,16 +3182,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               nodeData: {
                 ...historyNodeData,
                 generatedImageUrl: result.imageUrl,
-                generatedHostedImageUrl: ossImageUrl || result.hostedImageUrl,
+                generatedHostedImageUrl: hostedImageUrl,
                 generatedImageWidth: result.width,
                 generatedImageHeight: result.height,
                 generatedImageFormat: result.format,
                 generatedImageSizeBytes: result.sizeBytes,
                 generatedModel: result.model,
                 generatedAt: result.generatedAt,
-                generationResults: [
-                  ossImageUrl ? { ...result, hostedImageUrl: ossImageUrl } : result,
-                ],
+                generationResults: [persistedResult],
               },
               title: latestImageGenerationNode.data.title,
               model: result.model,
@@ -3184,25 +3198,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               format: result.format,
               sizeBytes: result.sizeBytes,
             });
-          } catch (error) {
-            get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
-          }
-        }
-      })();
 
-      if (shouldUploadReferenceImagesToOss && imageProvider !== "grsai") {
-        void (async () => {
-          for (const result of completedResults) {
-            try {
-              const ossImageUrl = await uploadGeneratedResultToOss(
-                result,
-                latestImageGenerationNode.data.title,
-              );
-
-              if (!ossImageUrl) {
-                continue;
-              }
-
+            if (hostedImageUrl) {
               set((currentState) => ({
                 dirty: true,
                 nodes: currentState.nodes.map((node) => {
@@ -3219,33 +3216,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                     data: {
                       ...node.data,
                       ...(matchesPrimaryImage
-                        ? { generatedHostedImageUrl: ossImageUrl }
+                        ? { generatedHostedImageUrl: hostedImageUrl }
                         : {}),
                       generationResults: node.data.generationResults?.map((item) =>
                         item.status === "completed" &&
                         item.generatedAt === result.generatedAt &&
                         item.imageUrl === result.imageUrl
-                          ? { ...item, hostedImageUrl: ossImageUrl }
+                          ? { ...item, hostedImageUrl }
                           : item,
                       ),
                     },
                   };
                 }),
               }));
-            } catch (error) {
-              console.warn(
-                "[GenLink generated image OSS upload failed]",
-                {
-                  provider: imageProvider,
-                  sourceType: getReferenceImageDebugLabel(result.hostedImageUrl || result.imageUrl),
-                  error: toErrorMessage(error),
-                },
-              );
-              get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
             }
+          } catch (error) {
+            get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
           }
-        })();
-      }
+        }
+      })();
 
       set((currentState) => ({
         error: primaryResult
