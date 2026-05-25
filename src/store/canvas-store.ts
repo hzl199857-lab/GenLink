@@ -108,6 +108,7 @@ const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
 const CANVAS_HISTORY_LIMIT = 100;
 const CANVAS_HISTORY_COALESCE_MS = 700;
+const SAVE_MESSAGE_AUTO_CLEAR_MS = 3_000;
 
 type CanvasHistorySnapshot = {
   projectName: string;
@@ -118,6 +119,7 @@ type CanvasHistorySnapshot = {
 };
 
 let lastCanvasHistoryPushAt = 0;
+let saveMessageClearTimer: number | undefined;
 
 function resolveParallelCount(value?: number): 1 | 2 | 4 {
   return value === 2 || value === 4 ? value : 1;
@@ -1124,6 +1126,17 @@ function toProjectOutputSaveErrorMessage(error: unknown): string {
   return `\u56fe\u7247\u5df2\u751f\u6210\uff0c\u4f46\u4fdd\u5b58\u5230\u9879\u76ee\u5386\u53f2\u5931\u8d25\uff1a${message}`;
 }
 
+function scheduleSaveMessageClear(set: (state: Partial<CanvasState>) => void): void {
+  if (saveMessageClearTimer !== undefined) {
+    window.clearTimeout(saveMessageClearTimer);
+  }
+
+  saveMessageClearTimer = window.setTimeout(() => {
+    saveMessageClearTimer = undefined;
+    set({ saveMessage: null });
+  }, SAVE_MESSAGE_AUTO_CLEAR_MS);
+}
+
 function toResponseTextErrorMessage(text: string, fallback: string): string {
   const normalized = text.trim();
 
@@ -1220,6 +1233,30 @@ async function uploadGeneratedResultToOss(
     !/^https?:\/\//i.test(sourceUrl)
   ) {
     return undefined;
+  }
+
+  if (/^https?:\/\//i.test(sourceUrl) && !isSameOriginUrl(sourceUrl)) {
+    const response = await fetch("/api/image-hosting/upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        imageUrl: sourceUrl,
+        fileName,
+        folder: "generated",
+      }),
+    });
+    const json = await readJsonResponse<
+      | { ok: true; result: { imageUrl: string } }
+      | ApiErrorResponse
+    >(response, "Failed to host generated image");
+
+    if (!response.ok || !json.ok) {
+      throw new Error("error" in json ? json.error : "Failed to host generated image");
+    }
+
+    return json.result.imageUrl;
   }
 
   const response = await fetch(sourceUrl);
@@ -2573,6 +2610,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   setSaveMessage: (message) => {
     set({ saveMessage: message });
+
+    if (message) {
+      scheduleSaveMessageClear(set);
+    } else if (saveMessageClearTimer !== undefined) {
+      window.clearTimeout(saveMessageClearTimer);
+      saveMessageClearTimer = undefined;
+    }
   },
 
   undo: () => {
@@ -2942,22 +2986,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       void (async () => {
         for (const result of completedResults) {
           try {
+            const ossImageUrl =
+              SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS || imageProvider === "grsai"
+                ? await uploadGeneratedResultToOss(
+                    result,
+                    latestImageGenerationNode.data.title,
+                  )
+                : undefined;
+            const persistedImageUrl =
+              ossImageUrl || result.hostedImageUrl?.trim() || result.imageUrl;
+
             await get().persistProjectOutput({
               sourceKey: `${imageGenerationNodeId}:${result.generatedAt}:${result.imageUrl}`,
-              imageUrl: result.hostedImageUrl?.trim() || result.imageUrl,
+              imageUrl: persistedImageUrl,
               fileName: latestImageGenerationNode.data.title,
               generatedAt: result.generatedAt,
               nodeData: {
                 ...historyNodeData,
                 generatedImageUrl: result.imageUrl,
-                generatedHostedImageUrl: result.hostedImageUrl,
+                generatedHostedImageUrl: ossImageUrl || result.hostedImageUrl,
                 generatedImageWidth: result.width,
                 generatedImageHeight: result.height,
                 generatedImageFormat: result.format,
                 generatedImageSizeBytes: result.sizeBytes,
                 generatedModel: result.model,
                 generatedAt: result.generatedAt,
-                generationResults: [result],
+                generationResults: [
+                  ossImageUrl ? { ...result, hostedImageUrl: ossImageUrl } : result,
+                ],
               },
               title: latestImageGenerationNode.data.title,
               model: result.model,
@@ -2967,14 +3023,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               sizeBytes: result.sizeBytes,
             });
           } catch (error) {
-            set({
-              saveMessage: toProjectOutputSaveErrorMessage(error),
-            });
+            get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
           }
         }
       })();
 
-      if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS) {
+      if (SHOULD_UPLOAD_REFERENCE_IMAGES_TO_OSS && imageProvider !== "grsai") {
         void (async () => {
           for (const result of completedResults) {
             try {
@@ -3017,9 +3071,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 }),
               }));
             } catch (error) {
-              set({
-                saveMessage: toProjectOutputSaveErrorMessage(error),
-              });
+              get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
             }
           }
         })();

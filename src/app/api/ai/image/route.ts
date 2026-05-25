@@ -705,13 +705,29 @@ async function cacheRemoteImages(
         const hostedImageUrl = await saveRemoteImageUrl(
           remoteUrl,
           `generated-image-${jobId}-${index + 1}.png`,
+          "generated",
         );
 
         return {
           ...image,
           hostedImageUrl,
         };
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            "[GenLink image cache failed]",
+            JSON.stringify({
+              jobId,
+              index: index + 1,
+              host: new URL(remoteUrl).hostname,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown cache error",
+            }),
+          );
+        }
+
         return image;
       }
     }),

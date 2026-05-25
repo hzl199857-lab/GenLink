@@ -383,6 +383,22 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
+async function readRemoteImageBlobViaProxy(imageUrl: string): Promise<Blob> {
+  const response = await fetch("/api/image-hosting/read", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ imageUrl }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to read generated image");
+  }
+
+  return response.blob();
+}
+
 export async function readImageOutputBlob(
   imageUrl: string,
   fileName?: string,
@@ -406,10 +422,24 @@ export async function readImageOutputBlob(
       throw new Error("Failed to read generated image");
     }
 
+    if (/^https?:\/\//i.test(trimmedImageUrl)) {
+      try {
+        return await readRemoteImageBlobViaProxy(trimmedImageUrl);
+      } catch {
+        // Fall back to hosting first for URLs that need server-side normalization.
+      }
+    }
+
     const hostedImageUrl = await hostImageUrlForBrowserRead(trimmedImageUrl, fileName);
     const response = await fetch(hostedImageUrl);
 
     if (!response.ok) {
+      try {
+        return await readRemoteImageBlobViaProxy(hostedImageUrl);
+      } catch {
+        // Fall through to the existing user-facing save error.
+      }
+
       throw new Error("Failed to read hosted generated image");
     }
 
