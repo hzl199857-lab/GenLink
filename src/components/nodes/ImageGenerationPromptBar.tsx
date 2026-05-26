@@ -578,6 +578,8 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     alt: string;
     left: number;
     top: number;
+    width: number;
+    height: number;
   } | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -678,14 +680,15 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     target: HTMLElement,
   ) => {
     const rect = target.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || REFERENCE_PREVIEW_WIDTH;
+    const previewDimensions = getReferencePreviewDimensions(image.width, image.height);
+    const viewportWidth = window.innerWidth || previewDimensions.width;
     const left = Math.min(
-      Math.max(8, rect.left + rect.width / 2 - REFERENCE_PREVIEW_WIDTH / 2),
-      Math.max(8, viewportWidth - REFERENCE_PREVIEW_WIDTH - 8),
+      Math.max(8, rect.left + rect.width / 2 - previewDimensions.width / 2),
+      Math.max(8, viewportWidth - previewDimensions.width - 8),
     );
     const top = Math.max(
       8,
-      rect.top - REFERENCE_PREVIEW_HEIGHT - REFERENCE_PREVIEW_GAP,
+      rect.top - previewDimensions.height - REFERENCE_PREVIEW_GAP,
     );
 
     setHoveredReferencePreview({
@@ -694,6 +697,8 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
       alt: image.alt,
       left,
       top,
+      width: previewDimensions.width,
+      height: previewDimensions.height,
     });
   };
 
@@ -785,20 +790,20 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
         </div>
 
         <div className="flex min-h-[104px] flex-col">
-          <div className="mb-4 flex items-start gap-2">
+          <div className="mb-4 flex items-center gap-2">
             <ToolSquareButton title="参考图" onClick={onAddReference}>
               <ReferenceImageIcon />
             </ToolSquareButton>
 
             {connectedImages.length > 0 ? (
-              <div className="flex items-center gap-2 overflow-x-auto py-1 pr-1 nodrag nopan">
+              <div className="flex items-center gap-2 overflow-x-auto pr-1 nodrag nopan">
                 {connectedImages.map((image, index) => (
                   <div
                     key={image.id}
-                    className="group/reference-thumb relative h-[50px] w-[50px] shrink-0"
+                    className="group/reference-thumb relative h-11 w-11 shrink-0"
                   >
                     <div
-                      className="relative h-full w-full overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                      className="relative h-full w-full overflow-hidden rounded-[12px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
                       onPointerEnter={(event) =>
                         showReferencePreview(image, event.currentTarget)
                       }
@@ -809,7 +814,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         alt={image.alt || `Connected image ${index + 1}`}
                         fill
                         unoptimized
-                        sizes="50px"
+                        sizes="44px"
                         className="object-cover"
                       />
                       <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
@@ -1366,8 +1371,8 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 style={{
                   left: hoveredReferencePreview.left,
                   top: hoveredReferencePreview.top,
-                  width: REFERENCE_PREVIEW_WIDTH,
-                  height: REFERENCE_PREVIEW_HEIGHT,
+                  width: hoveredReferencePreview.width,
+                  height: hoveredReferencePreview.height,
                 }}
               >
                 <div className="relative h-full w-full overflow-hidden rounded-[14px]">
@@ -1376,8 +1381,8 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                     alt={hoveredReferencePreview.alt || 'Reference preview'}
                     fill
                     unoptimized
-                    sizes={`${REFERENCE_PREVIEW_WIDTH}px`}
-                    className="object-contain"
+                    sizes={`${hoveredReferencePreview.width}px`}
+                    className="object-cover"
                   />
                 </div>
               </div>,
