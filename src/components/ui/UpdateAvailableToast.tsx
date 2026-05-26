@@ -2,6 +2,7 @@
 
 import { RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useCanvasStore } from "@/store/canvas-store";
 
 const VERSION_ENDPOINT = "/api/app-version";
 const CHECK_INTERVAL_MS = 60_000;
@@ -29,6 +30,8 @@ export function UpdateAvailableToast() {
   const currentVersionRef = useRef<string | null>(CURRENT_APP_VERSION);
   const latestVersionRef = useRef<string | null>(null);
   const [isVisible, setIsVisible] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -47,6 +50,7 @@ export function UpdateAvailableToast() {
         }
 
         if (latestVersion !== currentVersionRef.current) {
+          setSaveError(null);
           setIsVisible(true);
         }
       } catch (error) {
@@ -74,7 +78,36 @@ export function UpdateAvailableToast() {
 
   const dismiss = () => {
     currentVersionRef.current = latestVersionRef.current;
+    setSaveError(null);
     setIsVisible(false);
+  };
+
+  const refreshAfterSave = async () => {
+    const state = useCanvasStore.getState();
+
+    if (state.loading || saving) {
+      setSaveError("项目正在处理中，请稍后再刷新。");
+      return;
+    }
+
+    if (state.dirty && !state.currentProject) {
+      setSaveError("当前画布还没有保存位置，请先创建或打开项目后再刷新。");
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      if (state.currentProject) {
+        await state.saveProject();
+      }
+
+      window.location.reload();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "保存失败，请重试。");
+      setSaving(false);
+    }
   };
 
   return (
@@ -85,14 +118,17 @@ export function UpdateAvailableToast() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="font-medium leading-5 text-white">发现新版本</p>
-          <p className="mt-0.5 leading-5 text-white/70">刷新页面即可使用最新内容。</p>
+          <p className="mt-0.5 leading-5 text-white/70">
+            {saveError ?? "点击刷新前会先保存当前画布。"}
+          </p>
         </div>
         <button
           type="button"
-          onClick={() => window.location.reload()}
-          className="shrink-0 rounded-full bg-white px-3.5 py-2 text-sm font-medium text-[#111318] transition hover:bg-white/90 active:scale-[0.98]"
+          onClick={() => void refreshAfterSave()}
+          disabled={saving}
+          className="shrink-0 rounded-full bg-white px-3.5 py-2 text-sm font-medium text-[#111318] transition hover:bg-white/90 active:scale-[0.98] disabled:cursor-wait disabled:bg-white/70 disabled:active:scale-100"
         >
-          刷新
+          {saving ? "保存中" : "刷新"}
         </button>
         <button
           type="button"
