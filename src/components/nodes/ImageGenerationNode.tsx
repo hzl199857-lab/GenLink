@@ -127,16 +127,16 @@ function resolveCardDimensions(
     height?: number;
   },
 ): { width: number; height: number } {
-  const autoImage =
-    generatedImage?.width && generatedImage?.height
-      ? generatedImage
-      : connectedImages?.[0];
+  const explicitAspectRatio = parseAspectRatioValue(aspectRatio);
+  const autoImage = aspectRatio === 'auto'
+    ? connectedImages?.find((image) => image.width && image.height && image.width > 0 && image.height > 0) ??
+      generatedImage
+    : generatedImage;
   const autoAspectRatio =
     autoImage?.width && autoImage?.height && autoImage.width > 0 && autoImage.height > 0
       ? autoImage.width / autoImage.height
       : null;
-  const resolvedAspectRatio =
-    parseAspectRatioValue(aspectRatio) ?? autoAspectRatio ?? 16 / 9;
+  const resolvedAspectRatio = explicitAspectRatio ?? autoAspectRatio ?? 16 / 9;
 
   if (resolvedAspectRatio >= 1) {
     const width = MAX_CARD_EDGE;

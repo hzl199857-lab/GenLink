@@ -7,7 +7,7 @@ import {
   ChevronRight,
   Grid3x3,
   Orbit,
-  Hand,
+  Box,
   MoreHorizontal,
   FolderPlus,
   Download,
@@ -48,7 +48,7 @@ type ToolbarActionConfig = {
 const GENERATED_IMAGE_ACTIONS: ToolbarActionConfig[] = [
   { id: 'variations', title: '分割', icon: Grid3x3 },
   { id: 'panorama-360', title: '360全景图', icon: Orbit },
-  { id: 'pan', title: '平移', icon: Hand },
+  { id: 'pan', title: '3D视角', icon: Box },
   { id: 'more', title: '更多', icon: MoreHorizontal },
   { id: 'organize', title: '加入素材库', icon: FolderPlus },
   { id: 'download', title: '下载', icon: Download },

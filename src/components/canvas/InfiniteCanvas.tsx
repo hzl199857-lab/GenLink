@@ -461,20 +461,23 @@ function parseCanvasAspectRatio(value?: string): number | null {
 
 function resolveImageGenerationCardDimensions(
   data: ImageGenerationNodeData,
+  referenceImages?: ImageGenerationReferenceDimensions[],
 ): { width: number; height: number } {
   const generatedAspectRatio =
     data.generatedImageWidth && data.generatedImageHeight && data.generatedImageWidth > 0 && data.generatedImageHeight > 0
       ? data.generatedImageWidth / data.generatedImageHeight
       : null;
-  const referenceImage = data.referenceImages?.find(
-    (image) => image.width && image.height && image.width > 0 && image.height > 0,
-  );
+  const referenceImage = getFirstValidImageDimensions(referenceImages ?? data.referenceImages);
   const referenceAspectRatio =
     referenceImage?.width && referenceImage?.height
       ? referenceImage.width / referenceImage.height
       : null;
-  const resolvedAspectRatio =
-    parseCanvasAspectRatio(data.aspectRatio) ?? generatedAspectRatio ?? referenceAspectRatio ?? 16 / 9;
+  const explicitAspectRatio = parseCanvasAspectRatio(data.aspectRatio);
+  const autoAspectRatio =
+    data.aspectRatio === 'auto'
+      ? referenceAspectRatio ?? generatedAspectRatio
+      : generatedAspectRatio;
+  const resolvedAspectRatio = explicitAspectRatio ?? autoAspectRatio ?? 16 / 9;
 
   if (resolvedAspectRatio >= 1) {
     const width = IMAGE_GENERATION_MAX_CARD_EDGE;
@@ -537,7 +540,11 @@ function resolveMiniMapVisibleNodeRect(
   }
 
   if (node.type === 'image_generation') {
-    const dimensions = resolveImageGenerationCardDimensions(node.data as ImageGenerationNodeData);
+    const data = node.data as ImageGenerationNodeData;
+    const referenceImages = data.aspectRatio === 'auto'
+      ? useCanvasStore.getState().getConnectedImagesForImageGenerationNode(node.id)
+      : undefined;
+    const dimensions = resolveImageGenerationCardDimensions(data, referenceImages);
     const stageHeight = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
 
     return {
@@ -633,6 +640,19 @@ type MultiNodeSelectionBounds = {
   height: number;
 };
 
+type ImageGenerationReferenceDimensions = {
+  width?: number;
+  height?: number;
+};
+
+function getFirstValidImageDimensions(
+  images: ImageGenerationReferenceDimensions[] | undefined,
+): ImageGenerationReferenceDimensions | null {
+  return images?.find(
+    (image) => image.width && image.height && image.width > 0 && image.height > 0,
+  ) ?? null;
+}
+
 function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSelectionBounds {
   if (node.type === 'text') {
     return {
@@ -644,7 +664,11 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
   }
 
   if (node.type === 'image_generation') {
-    const dimensions = resolveImageGenerationCardDimensions(node.data as ImageGenerationNodeData);
+    const data = node.data as ImageGenerationNodeData;
+    const referenceImages = data.aspectRatio === 'auto'
+      ? useCanvasStore.getState().getConnectedImagesForImageGenerationNode(node.id)
+      : undefined;
+    const dimensions = resolveImageGenerationCardDimensions(data, referenceImages);
     const stageHeight =
       IMAGE_GENERATION_MAX_CARD_EDGE +
       IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
@@ -4772,6 +4796,14 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           return;
         }
 
+        const connectedImages = useCanvasStore
+          .getState()
+          .getConnectedImagesForImageGenerationNode(targetNode.id);
+        const referenceImage = getFirstValidImageDimensions(connectedImages);
+        const referenceAspectRatio =
+          referenceImage?.width && referenceImage?.height
+            ? referenceImage.width / referenceImage.height
+            : null;
         const aspectRatioValue = (() => {
           const ar = data.aspectRatio;
           if (!ar || ar === 'auto') return null;
@@ -4780,10 +4812,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           const w = Number(m[1]); const h = Number(m[2]);
           return (w > 0 && h > 0) ? w / h : null;
         })();
-        const resolvedAspect = aspectRatioValue ??
-          (data.generatedImageWidth && data.generatedImageHeight
+        const generatedAspectRatio =
+          data.generatedImageWidth && data.generatedImageHeight
             ? data.generatedImageWidth / data.generatedImageHeight
-            : 16 / 9);
+            : null;
+        const autoAspectRatio =
+          data.aspectRatio === 'auto'
+            ? referenceAspectRatio ?? generatedAspectRatio
+            : generatedAspectRatio;
+        const resolvedAspect = aspectRatioValue ??
+          autoAspectRatio ??
+          16 / 9;
         let cardW: number, cardH: number;
         if (resolvedAspect >= 1) {
           cardW = IMAGE_GENERATION_MAX_CARD_EDGE;
