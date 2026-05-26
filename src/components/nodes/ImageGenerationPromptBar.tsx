@@ -18,8 +18,7 @@ import {
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
-const REFERENCE_PREVIEW_WIDTH = 132;
-const REFERENCE_PREVIEW_HEIGHT = 176;
+const REFERENCE_PREVIEW_MAX_EDGE = 176;
 const REFERENCE_PREVIEW_GAP = 10;
 type ImageModelOption = {
   id: string;
@@ -464,6 +463,29 @@ function getImageModelLabel(model: string): string {
 function getRunningHubChannelLabel(channel?: RunningHubChannel): string {
   const resolvedChannel = channel === 'low-cost' ? 'low-cost' : 'official';
   return RUNNING_HUB_CHANNEL_OPTIONS.find((option) => option.id === resolvedChannel)?.label ?? '官方稳定版';
+}
+
+function getReferencePreviewDimensions(width?: number, height?: number) {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return {
+      width: REFERENCE_PREVIEW_MAX_EDGE,
+      height: REFERENCE_PREVIEW_MAX_EDGE,
+    };
+  }
+
+  const aspectRatio = width / height;
+
+  if (aspectRatio >= 1) {
+    return {
+      width: REFERENCE_PREVIEW_MAX_EDGE,
+      height: Math.round(REFERENCE_PREVIEW_MAX_EDGE / aspectRatio),
+    };
+  }
+
+  return {
+    width: Math.round(REFERENCE_PREVIEW_MAX_EDGE * aspectRatio),
+    height: REFERENCE_PREVIEW_MAX_EDGE,
+  };
 }
 
 function RatioIcon({
