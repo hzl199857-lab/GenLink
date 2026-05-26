@@ -1327,6 +1327,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
 
 const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const createPanorama360ScreenshotNode = useCanvasStore((s) => s.createPanorama360ScreenshotNode);
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForPanorama360Node(id),
   );
@@ -1366,6 +1367,14 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
       onViewChange={handleViewChange}
       onNavigationActiveChange={(active) => notifyPanorama360NavigationActiveChange?.(id, active)}
       onUploadPanorama={(file) => notifyPanorama360UploadRequest?.(id, file)}
+      onScreenshot={(capture) => createPanorama360ScreenshotNode(id, capture)
+        .then((nextNodeId) => notifyCanvasNodeSelect?.(nextNodeId))
+        .catch((error) => {
+          console.error('create panorama screenshot node failed', error);
+          const message = error instanceof Error ? error.message : '场景截图生成失败';
+          useCanvasStore.getState().setSaveMessage(message);
+          window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+        })}
       onSelectNode={() => notifyCanvasNodeSelect?.(id)}
     />
   );

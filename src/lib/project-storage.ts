@@ -1319,6 +1319,41 @@ function withResolvedPanoramaPreviewUrl(
   };
 }
 
+function resolveUploadedImageOutputFileName(
+  node: Extract<CanvasNode, { type: "uploaded_image" }>,
+): string | null {
+  const fileName = node.data.outputFileName?.trim();
+
+  if (!fileName) {
+    return null;
+  }
+
+  const imageUrl = node.data.imageUrl.trim();
+
+  if (!imageUrl || imageUrl === `output:${fileName}`) {
+    return fileName;
+  }
+
+  return null;
+}
+
+function withResolvedUploadedImagePreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "uploaded_image" }>,
+): Extract<CanvasNode, { type: "uploaded_image" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      imageUrl: previewUrl,
+      hostedImageUrl: previewUrl,
+      fileName: node.data.fileName ?? fileName,
+      outputFileName: fileName,
+    },
+  };
+}
+
 export async function hydrateProjectSnapshotPreviewUrls(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
@@ -1370,6 +1405,8 @@ export async function hydrateProjectSnapshotPreviewUrls(
         : node.type === "panorama-360"
           ? node.data.panorama360Node.panorama.generatedOutputFileName?.trim() ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
+          : node.type === "uploaded_image"
+            ? resolveUploadedImageOutputFileName(node)
           : undefined;
 
       if (!fileName) {
@@ -1394,6 +1431,10 @@ export async function hydrateProjectSnapshotPreviewUrls(
           ...node,
           data: withResolvedPreviewUrl(previewUrl, fileName, node.data),
         };
+      }
+
+      if (node.type === "uploaded_image") {
+        return withResolvedUploadedImagePreviewUrl(previewUrl, fileName, node);
       }
 
       return node;

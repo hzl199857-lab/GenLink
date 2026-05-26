@@ -36,6 +36,7 @@ import type {
   NodeGroup,
   NodeType,
   Panorama360NodeData,
+  Panorama360ViewState,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
   TextNodeData,
@@ -1395,6 +1396,17 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
     }
 
     if (node.type !== "image_generation") {
+      if (node.type === "uploaded_image" && node.data.outputFileName?.trim()) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            imageUrl: `output:${node.data.outputFileName}`,
+            hostedImageUrl: undefined,
+          },
+        };
+      }
+
       return node;
     }
 
@@ -1660,7 +1672,12 @@ function resolveImageApiQuality(detail?: string): "low" | "medium" | "high" {
 
 function resolveImageApiOutputFormat(
   outputFormat?: string,
+  model?: string,
 ): "png" | "jpeg" | "webp" {
+  if (model === "gpt-image-2") {
+    return "png";
+  }
+
   if (outputFormat === "jpeg" || outputFormat === "webp") {
     return outputFormat;
   }
@@ -1668,7 +1685,11 @@ function resolveImageApiOutputFormat(
   return "png";
 }
 
-function resolveImageApiModeration(moderation?: string): "auto" | "low" {
+function resolveImageApiModeration(moderation?: string, model?: string): "auto" | "low" {
+  if (model === "gpt-image-2") {
+    return "auto";
+  }
+
   if (moderation === "low") {
     return "low";
   }
@@ -2272,6 +2293,18 @@ export interface CanvasState {
     nodeId: string,
     cropRect: { x: number; y: number; width: number; height: number },
   ) => Promise<void>;
+  createPanorama360ScreenshotNode: (
+    nodeId: string,
+    capture: {
+      dataUrl: string;
+      width: number;
+      height: number;
+      displayWidth: number;
+      displayHeight: number;
+      aspect: string;
+      view: Panorama360ViewState;
+    },
+  ) => Promise<string>;
   createPanorama360FromImageNode: (nodeId: string) => Promise<string>;
   removeReferenceImageFromImageGenerationNode: (
     imageGenerationNodeId: string,
@@ -3029,9 +3062,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       );
       const outputFormat = resolveImageApiOutputFormat(
         latestImageGenerationNode.data.outputFormat,
+        latestImageGenerationNode.data.model,
       );
       const moderation = resolveImageApiModeration(
         latestImageGenerationNode.data.moderation,
+        latestImageGenerationNode.data.model,
       );
       const parallelCount = resolveParallelCount(
         latestImageGenerationNode.data.parallelCount,
@@ -3746,6 +3781,118 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set({ error: message });
       throw error;
     }
+  },
+
+  createPanorama360ScreenshotNode: async (nodeId, capture) => {
+    const state = get();
+    const sourceNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "panorama-360" }> =>
+        node.id === nodeId && node.type === "panorama-360",
+    );
+
+    if (!sourceNode) {
+      throw new Error("Panorama 360 node not found");
+    }
+
+    if (!capture.dataUrl.trim()) {
+      throw new Error("Screenshot image is missing");
+    }
+
+    const generatedAt = nowIso();
+    const screenshotNodeId = crypto.randomUUID();
+    const title = "场景截图";
+    const imageUrl = capture.dataUrl;
+    const sourceKey = `${screenshotNodeId}:${generatedAt}:${capture.dataUrl}`;
+    const historyNodeData: ImageGenerationNodeData = {
+      title,
+      prompt: "360全景图场景截图",
+      model: "panorama-360-capture",
+      aspectRatio: capture.aspect,
+      quality: "source",
+      detail: "source",
+      outputFormat: "png",
+      moderation: "auto",
+      parallelCount: 1,
+      generatedImageUrl: imageUrl,
+      generatedImageWidth: capture.width,
+      generatedImageHeight: capture.height,
+      generatedImageFormat: "PNG",
+      generatedAt,
+      generationResults: [{
+        status: "completed",
+        imageUrl,
+        model: "panorama-360-capture",
+        width: capture.width,
+        height: capture.height,
+        format: "PNG",
+        generatedAt,
+      }],
+      status: "idle",
+    };
+    let hostedImageUrl: string | undefined;
+    let fileName: string | undefined;
+    let sizeBytes: number | undefined;
+
+    try {
+      if (state.currentProject) {
+        const persisted = await persistGeneratedOutput(state.currentProject, {
+          sourceKey,
+          imageUrl,
+          fileName: title,
+          generatedAt,
+          nodeData: historyNodeData,
+          title,
+          model: historyNodeData.model,
+          width: capture.width,
+          height: capture.height,
+          format: "PNG",
+        });
+
+        hostedImageUrl = persisted.previewUrl;
+        fileName = persisted.fileName;
+        historyNodeData.generatedHostedImageUrl = persisted.previewUrl;
+        historyNodeData.generatedOutputFileName = persisted.fileName;
+        historyNodeData.generationResults = historyNodeData.generationResults?.map((result) => ({
+          ...result,
+          hostedImageUrl: persisted.previewUrl,
+        }));
+      }
+    } catch (error) {
+      get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+    }
+
+    const nextNode: CanvasNode = {
+      id: screenshotNodeId,
+      type: "uploaded_image",
+      position: {
+        x: sourceNode.position.x + PANORAMA_360_NODE_HEIGHT * 16 / 9 + PANORAMA_360_NODE_GAP,
+        y: sourceNode.position.y,
+      },
+      data: {
+        title,
+        imageUrl: hostedImageUrl || imageUrl,
+        hostedImageUrl,
+        fileName,
+        outputFileName: fileName,
+        width: capture.width,
+        height: capture.height,
+        displayWidth: capture.displayWidth,
+        displayHeight: capture.displayHeight,
+        sizeBytes,
+      },
+    };
+
+    set((currentState) => ({
+      ...createUndoHistoryUpdate(currentState),
+      currentProjectPreviewUrls: hostedImageUrl
+        ? [...currentState.currentProjectPreviewUrls, hostedImageUrl]
+        : currentState.currentProjectPreviewUrls,
+      nodes: [...currentState.nodes, nextNode],
+      dirty: true,
+      error: null,
+    }));
+
+    return screenshotNodeId;
   },
 
   createPanorama360FromImageNode: async (nodeId) => {

@@ -51,6 +51,9 @@ const RUNNING_HUB_NANO_MODEL_IDS: ReadonlySet<string> = new Set([
   'nano-banana-pro',
   'nano-banana-2',
 ]);
+const FIXED_IMAGE_FORMAT_MODEL_IDS: ReadonlySet<string> = new Set([
+  'gpt-image-2',
+]);
 const RUNNING_HUB_CHANNEL_OPTIONS = [
   { id: 'official', label: '官方稳定版' },
   { id: 'low-cost', label: '低价渠道版' },
@@ -613,6 +616,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     : IMAGE_ASPECT_RATIO_LAYOUT;
   const settingsLabel = `${modelAspectRatio} / ${quality}`;
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
+  const showFormatMenu = !isNanoBananaModel && !FIXED_IMAGE_FORMAT_MODEL_IDS.has(model);
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
   const promptPresetMenuOpen = isPromptFocused && !isComposing && resolvedValue.trimEnd().endsWith('/');
 
@@ -1200,7 +1204,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 ) : null}
               </div>
 
-              {isNanoBananaModel ? null : (
+              {showFormatMenu ? (
                 <div className="relative" ref={formatMenuRef}>
                   <BottomMenuButton
                     icon={<Sparkles size={14} />}
@@ -1276,7 +1280,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                     </div>
                   ) : null}
                 </div>
-              )}
+              ) : null}
             </div>
 
             <div className="relative" ref={parallelMenuRef}>

@@ -114,6 +114,7 @@ export interface UploadedImageNodeData {
   imageUrl: string;
   hostedImageUrl?: string;
   fileName?: string;
+  outputFileName?: string;
   width: number;
   height: number;
   displayWidth?: number;

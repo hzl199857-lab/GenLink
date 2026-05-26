@@ -3,12 +3,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Camera,
   ChevronDown,
   ChevronUp,
   Expand,
   Globe2,
   Image as ImageIcon,
   Pencil,
+  RotateCcw,
   Upload,
   X,
 } from 'lucide-react';
@@ -34,6 +36,14 @@ const DEFAULT_VIEW: Panorama360ViewState = {
   pitch: 0,
   fov: 72,
 };
+const SCREENSHOT_ASPECT_OPTIONS = [
+  { id: 'auto', label: '自适应', ratio: null },
+  { id: '9:16', label: '9:16', ratio: 9 / 16 },
+  { id: '2.35:1', label: '2.35:1', ratio: 2.35 },
+  { id: '16:9', label: '16:9', ratio: 16 / 9 },
+] as const;
+
+type ScreenshotAspectId = typeof SCREENSHOT_ASPECT_OPTIONS[number]['id'];
 
 type ThreeRuntime = {
   THREE: typeof import('three');
@@ -54,6 +64,16 @@ export type Panorama360SourceImage = {
   height?: number;
 };
 
+export type Panorama360ScreenshotCapture = {
+  dataUrl: string;
+  width: number;
+  height: number;
+  displayWidth: number;
+  displayHeight: number;
+  aspect: ScreenshotAspectId;
+  view: Panorama360ViewState;
+};
+
 export interface Panorama360NodeProps {
   data: Panorama360NodeData;
   selected?: boolean;
@@ -64,6 +84,7 @@ export interface Panorama360NodeProps {
   onNavigationActiveChange?: (active: boolean) => void;
   onSelectNode?: () => void;
   onUploadPanorama?: (file: File) => void;
+  onScreenshot?: (capture: Panorama360ScreenshotCapture) => Promise<void> | void;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -106,6 +127,14 @@ function isCloseToEquirectangular(width?: number, height?: number): boolean {
   }
 
   return Math.abs(width / height - 2) <= 0.04;
+}
+
+function getScreenshotAspectRatio(aspect: ScreenshotAspectId, width: number, height: number): number | null {
+  if (aspect === 'auto') {
+    return null;
+  }
+
+  return SCREENSHOT_ASPECT_OPTIONS.find((option) => option.id === aspect)?.ratio ?? width / Math.max(height, 1);
 }
 
 function PanoramaToolbarButton({
@@ -151,6 +180,7 @@ export function Panorama360Node({
   onNavigationActiveChange,
   onSelectNode,
   onUploadPanorama,
+  onScreenshot,
 }: Panorama360NodeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -159,6 +189,7 @@ export function Panorama360Node({
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const navigationActiveRef = useRef(false);
   const fullscreenPreviousNavigationRef = useRef(false);
+  const aspectMenuCloseTimerRef = useRef<number | null>(null);
   const onSelectNodeRef = useRef(onSelectNode);
   const onViewChangeRef = useRef(onViewChange);
   const viewRef = useRef(
@@ -170,6 +201,10 @@ export function Panorama360Node({
   const [navigationActive, setNavigationActive] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [screenshotAspect, setScreenshotAspect] = useState<ScreenshotAspectId | null>(null);
+  const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
+  const [capturingScreenshot, setCapturingScreenshot] = useState(false);
+  const [viewerSize, setViewerSize] = useState({ width: EXPANDED_WIDTH, height: EXPANDED_HEIGHT });
   const [textureStatus, setTextureStatus] = useState<{
     signature: string;
     state: 'ready' | 'error';
@@ -214,6 +249,34 @@ export function Panorama360Node({
   const canNavigate = navigationActive || fullscreen;
   const cardWidth = collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
   const cardHeight = collapsed ? COLLAPSED_HEIGHT : EXPANDED_HEIGHT;
+  const screenshotFrame = useMemo(() => {
+    if (!screenshotAspect || screenshotAspect === 'auto') {
+      return null;
+    }
+
+    const width = Math.max(1, viewerSize.width);
+    const height = Math.max(1, viewerSize.height);
+    const ratio = getScreenshotAspectRatio(screenshotAspect, width, height);
+
+    if (!ratio) {
+      return null;
+    }
+
+    const fittedHeightFromWidth = width / ratio;
+    const frameWidth = fittedHeightFromWidth <= height
+      ? width
+      : height * ratio;
+    const frameHeight = fittedHeightFromWidth <= height
+      ? fittedHeightFromWidth
+      : height;
+
+    return {
+      x: Math.round((width - frameWidth) / 2),
+      y: Math.round((height - frameHeight) / 2),
+      width: Math.round(frameWidth),
+      height: Math.round(frameHeight),
+    };
+  }, [screenshotAspect, viewerSize.height, viewerSize.width]);
   const showAspectWarning =
     loadState === 'ready' &&
     !isCloseToEquirectangular(
@@ -229,11 +292,45 @@ export function Panorama360Node({
     onViewChange?.({ ...viewRef.current });
   };
 
+  const updateViewerSize = useCallback((width: number, height: number) => {
+    setViewerSize((current) =>
+      current.width === width && current.height === height
+        ? current
+        : { width, height },
+    );
+  }, []);
+
+  const cancelAspectMenuClose = useCallback(() => {
+    if (aspectMenuCloseTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(aspectMenuCloseTimerRef.current);
+    aspectMenuCloseTimerRef.current = null;
+  }, []);
+
+  const openAspectMenu = useCallback(() => {
+    cancelAspectMenuClose();
+    setAspectMenuOpen(true);
+  }, [cancelAspectMenuClose]);
+
+  const scheduleAspectMenuClose = useCallback(() => {
+    cancelAspectMenuClose();
+    aspectMenuCloseTimerRef.current = window.setTimeout(() => {
+      setAspectMenuOpen(false);
+      aspectMenuCloseTimerRef.current = null;
+    }, 260);
+  }, [cancelAspectMenuClose]);
+
   const setNavigationMode = useCallback((active: boolean) => {
     const nextActive = active && Boolean(sourceUrl);
     navigationActiveRef.current = nextActive;
+    if (!nextActive) {
+      cancelAspectMenuClose();
+      setAspectMenuOpen(false);
+    }
     setNavigationActive(nextActive);
-  }, [sourceUrl]);
+  }, [cancelAspectMenuClose, sourceUrl]);
 
   const updateFovFromWheel = (deltaY: number) => {
     const view = viewRef.current;
@@ -273,6 +370,10 @@ export function Panorama360Node({
   useEffect(() => {
     return () => onNavigationActiveChange?.(false);
   }, [onNavigationActiveChange]);
+
+  useEffect(() => {
+    return () => cancelAspectMenuClose();
+  }, [cancelAspectMenuClose]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -356,6 +457,7 @@ export function Panorama360Node({
         const width = Math.max(1, Math.floor(element?.clientWidth || cardWidth));
         const height = Math.max(1, Math.floor(element?.clientHeight || cardHeight));
 
+        updateViewerSize(width, height);
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
@@ -395,7 +497,7 @@ export function Panorama360Node({
       runtime.renderer.domElement.onwheel = null;
       runtime.renderer.domElement.remove();
     };
-  }, [cardHeight, cardWidth, fullscreen]);
+  }, [cardHeight, cardWidth, fullscreen, updateViewerSize]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -413,6 +515,7 @@ export function Panorama360Node({
       const width = Math.max(1, Math.floor(container.clientWidth || cardWidth));
       const height = Math.max(1, Math.floor(container.clientHeight || cardHeight));
 
+      updateViewerSize(width, height);
       runtime.camera.aspect = width / height;
       runtime.camera.updateProjectionMatrix();
       runtime.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.5));
@@ -425,7 +528,7 @@ export function Panorama360Node({
     resize();
 
     return () => resizeObserver.disconnect();
-  }, [cardHeight, cardWidth, collapsed, fullscreen, runtimeReady]);
+  }, [cardHeight, cardWidth, collapsed, fullscreen, runtimeReady, updateViewerSize]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -628,6 +731,83 @@ export function Panorama360Node({
     setCollapsed(nextCollapsed);
   };
 
+  const resetView = () => {
+    viewRef.current = { ...DEFAULT_VIEW };
+    runtimeRef.current?.render();
+    onViewChangeRef.current?.({ ...DEFAULT_VIEW });
+  };
+
+  const captureScreenshot = async () => {
+    if (capturingScreenshot || loadState !== 'ready') {
+      return;
+    }
+
+    const runtime = runtimeRef.current;
+    const sourceCanvas = runtime?.renderer.domElement;
+    const container = containerRef.current;
+
+    if (!runtime || !sourceCanvas || !container) {
+      return;
+    }
+
+    const cssWidth = Math.max(1, container.clientWidth);
+    const cssHeight = Math.max(1, container.clientHeight);
+    const cropCss = screenshotAspect === 'auto' || !screenshotFrame
+      ? { x: 0, y: 0, width: cssWidth, height: cssHeight }
+      : screenshotFrame;
+    const scaleX = sourceCanvas.width / cssWidth;
+    const scaleY = sourceCanvas.height / cssHeight;
+    const sourceX = Math.max(0, Math.round(cropCss.x * scaleX));
+    const sourceY = Math.max(0, Math.round(cropCss.y * scaleY));
+    const sourceWidth = Math.max(1, Math.min(sourceCanvas.width - sourceX, Math.round(cropCss.width * scaleX)));
+    const sourceHeight = Math.max(1, Math.min(sourceCanvas.height - sourceY, Math.round(cropCss.height * scaleY)));
+    const outputCanvas = document.createElement('canvas');
+
+    outputCanvas.width = sourceWidth;
+    outputCanvas.height = sourceHeight;
+    const context = outputCanvas.getContext('2d');
+
+    if (!context) {
+      return;
+    }
+
+    try {
+      setCapturingScreenshot(true);
+      runtime.render();
+      context.drawImage(
+        sourceCanvas,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        sourceWidth,
+        sourceHeight,
+      );
+      await onScreenshot?.({
+        dataUrl: outputCanvas.toDataURL('image/png'),
+        width: sourceWidth,
+        height: sourceHeight,
+        displayWidth: Math.round(cropCss.width),
+        displayHeight: Math.round(cropCss.height),
+        aspect: screenshotAspect ?? 'auto',
+        view: { ...viewRef.current },
+      });
+    } finally {
+      setCapturingScreenshot(false);
+    }
+  };
+
+  const handleScreenshotButton = () => {
+    if (!screenshotAspect) {
+      setAspectMenuOpen(true);
+      return;
+    }
+
+    void captureScreenshot();
+  };
+
   const enterFullscreen = () => {
     if (!sourceUrl) {
       return;
@@ -718,6 +898,19 @@ export function Panorama360Node({
           建议使用 2:1 等距柱状投影图片
         </div>
       ) : null}
+
+      {navigationActive && !collapsed && loadState === 'ready' && screenshotFrame ? (
+        <div
+          className="pointer-events-none absolute border border-dashed border-white/62 bg-white/[0.03] shadow-[0_0_0_9999px_rgba(0,0,0,0.18)]"
+          style={{
+            left: screenshotFrame.x,
+            top: screenshotFrame.y,
+            width: screenshotFrame.width,
+            height: screenshotFrame.height,
+          }}
+        />
+      ) : null}
+
     </div>
   );
 
@@ -783,6 +976,105 @@ export function Panorama360Node({
         </div>
 
         {fullscreen ? null : viewer}
+
+        {navigationActive && !collapsed ? (
+          <div
+            className="nodrag nopan absolute left-1/2 z-30 -translate-x-1/2"
+            data-canvas-menu-ignore="true"
+            style={{
+              top: `${cardHeight + 54}px`,
+              transform: `translateX(-50%) scale(${1 / Math.max(zoom, 0.0001)})`,
+              transformOrigin: 'top center',
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseEnter={cancelAspectMenuClose}
+            onMouseLeave={scheduleAspectMenuClose}
+          >
+            {aspectMenuOpen ? (
+              <div
+                className="absolute bottom-[52px] left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-gl-xl border border-white/10 bg-gl-panel/95 px-2 py-2 text-gl-text-secondary shadow-gl-toolbar backdrop-blur-md"
+                onMouseEnter={cancelAspectMenuClose}
+                onMouseLeave={scheduleAspectMenuClose}
+              >
+                {SCREENSHOT_ASPECT_OPTIONS.map((option) => {
+                  const active = screenshotAspect === option.id;
+
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-label={`截图比例 ${option.label}`}
+                      className={[
+                        'flex h-[48px] min-w-[54px] flex-col items-center justify-center gap-1 rounded-gl-md px-2 text-[11px] font-medium transition-colors',
+                        active
+                          ? 'bg-gl-panel-hover text-gl-text-primary shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]'
+                          : 'hover:bg-gl-panel-hover hover:text-gl-text-primary',
+                      ].join(' ')}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setScreenshotAspect(option.id);
+                        setAspectMenuOpen(false);
+                      }}
+                    >
+                      <span
+                        className={[
+                          'block border border-current opacity-90',
+                          option.id === 'auto'
+                            ? 'h-3 w-5 rounded-[4px] border-dashed'
+                            : option.ratio && option.ratio < 1
+                              ? 'h-5 w-3 rounded-[4px]'
+                              : 'h-2.5 w-6 rounded-[4px]',
+                        ].join(' ')}
+                      />
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <div className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md">
+              <div className="group/tooltip relative">
+                <button
+                  type="button"
+                  aria-label={screenshotAspect ? '生成场景截图' : '选择截图比例'}
+                  className="flex h-10 w-10 items-center justify-center rounded-gl-pill text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={capturingScreenshot || loadState !== 'ready'}
+                  onMouseEnter={openAspectMenu}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleScreenshotButton();
+                  }}
+                >
+                  <Camera size={16} strokeWidth={1.9} />
+                </button>
+                {aspectMenuOpen ? null : (
+                  <Tooltip label={screenshotAspect ? '生成场景截图' : '选择截图比例'} side="top" />
+                )}
+              </div>
+
+              <div className="mx-1 h-5 w-px bg-white/10" />
+
+              <div className="group/tooltip relative">
+                <button
+                  type="button"
+                  aria-label="重置视角"
+                  className="flex h-10 w-10 items-center justify-center rounded-gl-pill text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    resetView();
+                  }}
+                >
+                  <RotateCcw size={16} strokeWidth={1.9} />
+                </button>
+                <Tooltip label="重置视角" side="top" />
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <input
           ref={fileInputRef}

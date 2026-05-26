@@ -286,6 +286,8 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
           ? record.hostedImageUrl
           : undefined,
       fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+      outputFileName:
+        typeof record.outputFileName === "string" ? record.outputFileName : undefined,
       width: typeof record.width === "number" ? record.width : 320,
       height: typeof record.height === "number" ? record.height : 320,
       displayWidth:
