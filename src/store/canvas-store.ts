@@ -3778,7 +3778,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         provider: imageProvider,
         model: "gpt-image-2",
         aspectRatio: "2:1",
-        quality: "4K",
+        quality: "2K",
         detail: "medium",
         outputFormat: "png",
         moderation: "auto",
@@ -3796,7 +3796,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const result = await submitImageGenerationJob({
         prompt: PANORAMA_360_PROMPT,
         model: "gpt-image-2",
-        size: resolveImageSize("4K", "2:1", [], "gpt-image-2", imageProvider),
+        size: resolveImageSize("2K", "2:1", [], "gpt-image-2", imageProvider),
         quality: "medium",
         outputFormat: "png",
         moderation: "auto",
