@@ -56,9 +56,8 @@ export function GenLinkHero({ onEnter, isLeaving = false }: GenLinkHeroProps) {
                 />
               </h1>
               <p className="mx-auto mt-6 max-w-[34rem] text-[1rem] font-light leading-relaxed text-white/55 sm:mt-8 sm:text-[1.05rem]">
-                Turn your ideas into high-quality visuals in seconds,
-                <br className="hidden sm:block" />
-                {' '}no design skills needed.
+                <span className="block">无需任何设计技能，</span>
+                <span className="block">几秒钟内即可将你的想法转化为高质量的视觉内容</span>
               </p>
               <div className="mt-9 flex justify-center">
                 <ShinyButton onClick={onEnter}>
