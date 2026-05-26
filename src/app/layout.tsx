@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { UpdateAvailableToast } from "@/components/ui/UpdateAvailableToast";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -36,6 +37,7 @@ export default function RootLayout({
     >
       <body className="gl-canvas-bg min-h-full bg-gl-app text-gl-text-primary">
         {children}
+        <UpdateAvailableToast />
         <Analytics />
       </body>
     </html>
