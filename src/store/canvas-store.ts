@@ -125,7 +125,8 @@ with delicate attention to material textures and atmospheric depth.
 {emotional_keywords}`;
 const PANORAMA_360_ASPECT_RATIO = 2;
 const PANORAMA_360_ASPECT_RATIO_TOLERANCE = 0.04;
-const PANORAMA_360_NODE_OFFSET_X = 620;
+const PANORAMA_360_NODE_GAP = 48;
+const PANORAMA_360_NODE_HEIGHT = 405;
 
 type CanvasHistorySnapshot = {
   projectName: string;
@@ -705,6 +706,33 @@ function getDisplayDimensionsForImage(width?: number, height?: number): {
   }
 
   return getImageGenerationPreviewDimensions(width, height);
+}
+
+function getCanvasImageNodeDisplayDimensions(
+  node: CanvasNode,
+  sourceWidth?: number,
+  sourceHeight?: number,
+): {
+  width: number;
+  height: number;
+} {
+  if (node.type === "uploaded_image") {
+    const fallback = getDisplayDimensionsForImage(sourceWidth, sourceHeight);
+
+    return {
+      width: node.data.displayWidth ?? fallback.width,
+      height: node.data.displayHeight ?? fallback.height,
+    };
+  }
+
+  if (node.type === "image") {
+    return {
+      width: 420,
+      height: 420 * 3 / 4,
+    };
+  }
+
+  return getDisplayDimensionsForImage(sourceWidth, sourceHeight);
 }
 
 async function resolveImageSourceDimensions(source: CanvasImageSource): Promise<{
@@ -3738,29 +3766,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const sourceWidth = dimensions.width ?? source.width;
     const sourceHeight = dimensions.height ?? source.height;
     const sourceIsPanorama = isCloseToPanorama360AspectRatio(sourceWidth, sourceHeight);
-    const sourceDisplay = getDisplayDimensionsForImage(sourceWidth, sourceHeight);
+    const sourceDisplay = getCanvasImageNodeDisplayDimensions(
+      sourceNode,
+      sourceWidth,
+      sourceHeight,
+    );
     const panoramaNodeId = crypto.randomUUID();
     const panoramaNode: Extract<CanvasNode, { type: "panorama-360" }> = {
       id: panoramaNodeId,
       type: "panorama-360",
       position: {
-        x: sourceNode.position.x + sourceDisplay.width + PANORAMA_360_NODE_OFFSET_X,
-        y: sourceNode.position.y,
+        x: sourceNode.position.x + sourceDisplay.width + PANORAMA_360_NODE_GAP,
+        y: sourceNode.position.y + sourceDisplay.height - PANORAMA_360_NODE_HEIGHT,
       },
       data: createPanorama360NodeDataWithStatus(
         sourceIsPanorama ? "idle" : "generating",
       ),
     };
-    const edge: CanvasEdge = {
-      id: crypto.randomUUID(),
-      source: sourceNode.id,
-      target: panoramaNode.id,
-    };
+    const edge = sourceIsPanorama
+      ? {
+          id: crypto.randomUUID(),
+          source: sourceNode.id,
+          target: panoramaNode.id,
+        }
+      : null;
 
     set((currentState) => ({
       ...createUndoHistoryUpdate(currentState),
       nodes: [...currentState.nodes, panoramaNode],
-      edges: [...currentState.edges, edge],
+      edges: edge ? [...currentState.edges, edge] : currentState.edges,
       dirty: true,
       error: null,
     }));
