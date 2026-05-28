@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import {
@@ -14,6 +14,7 @@ import {
 export type AddNodeMenuAction =
   | 'text'
   | 'image_generation'
+  | 'video_generation'
   | 'panorama-360'
   | 'video'
   | 'audio'
@@ -49,7 +50,7 @@ const NODE_ITEMS: Array<{
     icon: Globe2,
   },
   {
-    action: 'video',
+    action: 'video_generation',
     title: '视频',
     icon: Video,
   },
@@ -87,28 +88,26 @@ export function AddNodeMenu({ x, y, onSelect, onMouseEnter, onMouseLeave }: AddN
               onClick={() => onSelect?.(item.action)}
               className="flex min-h-[28px] w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left transition-colors hover:bg-white/[0.07]"
             >
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[8px] bg-white/[0.08] text-gl-text-secondary">
-                <Icon size={12} strokeWidth={2} />
+              <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-white/[0.06] text-gl-text-secondary">
+                <Icon size={14} strokeWidth={1.9} />
               </span>
-              <span className="min-w-0 text-[10px] font-semibold leading-4 text-gl-text-secondary">
-                {item.title}
-              </span>
+              <span className="text-[13px] font-medium text-gl-text-primary">{item.title}</span>
             </button>
           );
         })}
       </div>
-
-      <div className="px-1 pb-1.5 pt-2.5 text-[11px] font-medium text-gl-text-muted">添加资源</div>
-      <button
-        type="button"
-        onClick={() => onSelect?.('upload')}
-        className="flex min-h-[28px] w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left transition-colors hover:bg-white/[0.07]"
-      >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[8px] bg-white/[0.08] text-gl-text-secondary">
-          <Upload size={12} strokeWidth={2} />
-        </span>
-        <span className="text-[10px] font-semibold leading-4 text-gl-text-secondary">上传</span>
-      </button>
+      <div className="mt-1 border-t border-white/[0.06] pt-1">
+        <button
+          type="button"
+          onClick={() => onSelect?.('upload')}
+          className="flex min-h-[28px] w-full items-center gap-2 rounded-[8px] px-2 py-1.5 text-left transition-colors hover:bg-white/[0.07]"
+        >
+          <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-white/[0.06] text-gl-text-secondary">
+            <Upload size={14} strokeWidth={1.9} />
+          </span>
+          <span className="text-[13px] font-medium text-gl-text-primary">上传</span>
+        </button>
+      </div>
     </div>
   );
 }

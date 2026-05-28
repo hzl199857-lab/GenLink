@@ -7,6 +7,7 @@ import type {
   MaterialLibraryItem,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
+  VideoGenerationNodeData,
 } from "@/types/canvas";
 import { buildProjectSnapshot } from "@/lib/project-snapshot";
 
@@ -41,8 +42,20 @@ type OutputHistoryManifestItem = {
   width?: number;
   height?: number;
   format?: string;
-  nodeData?: ImageGenerationNodeData;
+  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData;
 };
+
+function isImageHistoryManifestItem(
+  item: OutputHistoryManifestItem | undefined,
+): item is OutputHistoryManifestItem & { kind: "image"; nodeData?: ImageGenerationNodeData } {
+  return item?.kind === "image";
+}
+
+function isVideoHistoryManifestItem(
+  item: OutputHistoryManifestItem | undefined,
+): item is OutputHistoryManifestItem & { kind: "video"; nodeData?: VideoGenerationNodeData } {
+  return item?.kind === "video";
+}
 
 type OutputHistoryManifest = {
   items: OutputHistoryManifestItem[];
@@ -75,9 +88,10 @@ export interface ImportProjectsResult {
 export interface PersistProjectOutputParams {
   sourceKey: string;
   imageUrl: string;
+  kind?: "image" | "video";
   fileName?: string;
   generatedAt: string;
-  nodeData: ImageGenerationNodeData;
+  nodeData: ImageGenerationNodeData | VideoGenerationNodeData;
   title?: string;
   model?: string;
   width?: number;
@@ -669,7 +683,9 @@ async function writeOutputHistoryManifest(
       ...item,
       sourceKey: compactOutputSourceKey(item.sourceKey, item.fileName),
       nodeData: item.nodeData
-        ? stripEmbeddedImageDataFromNodeData(item.nodeData, item.fileName)
+        ? item.kind === "image"
+          ? stripEmbeddedImageDataFromNodeData(item.nodeData as ImageGenerationNodeData, item.fileName)
+          : item.nodeData
         : undefined,
     })),
   };
@@ -1172,7 +1188,7 @@ export async function persistGeneratedOutput(
     id: existingIndex >= 0 ? manifest.items[existingIndex].id : crypto.randomUUID(),
     sourceKey: compactOutputSourceKey(params.sourceKey, fileName),
     fileName,
-    kind: "image",
+    kind: params.kind ?? (blob.type.startsWith("video/") ? "video" : "image"),
     createdAt: params.generatedAt,
     modifiedAt: new Date().toISOString(),
     mimeType: blob.type || undefined,
@@ -1181,7 +1197,10 @@ export async function persistGeneratedOutput(
     width: params.width,
     height: params.height,
     format: params.format,
-    nodeData: stripEmbeddedImageDataFromNodeData(params.nodeData, fileName),
+    nodeData:
+      "generatedImageUrl" in params.nodeData
+        ? stripEmbeddedImageDataFromNodeData(params.nodeData, fileName)
+        : params.nodeData,
   };
 
   if (existingIndex >= 0) {
@@ -1242,6 +1261,17 @@ function resolveSourceKeyFromNode(node: CanvasNode): string | null {
     }
 
     return `${node.id}:${generatedAt}:${imageUrl}`;
+  }
+
+  if (node.type === "video_generation") {
+    const generatedAt = node.data.generatedAt?.trim();
+    const videoUrl = node.data.hostedVideoUrl?.trim() || node.data.videoUrl?.trim();
+
+    if (!generatedAt || !videoUrl) {
+      return null;
+    }
+
+    return `${node.id}:${generatedAt}:${videoUrl}`;
   }
 
   if (node.type !== "image_generation") {
@@ -1305,6 +1335,22 @@ function withResolvedPreviewUrl(
     generatedHostedImageUrl: previewUrl,
     generatedOutputFileName: fileName,
     generationResults: nextResults,
+  };
+}
+
+function withResolvedVideoPreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "video_generation" }>,
+): Extract<CanvasNode, { type: "video_generation" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      videoUrl: previewUrl,
+      hostedVideoUrl: previewUrl,
+      generatedOutputFileName: fileName,
+    },
   };
 }
 
@@ -1388,10 +1434,27 @@ export async function hydrateProjectSnapshotPreviewUrls(
 
   const manifest = await readOutputHistoryManifest(project.projectHandle);
   const fileNameBySourceKey = new Map<string, string>();
+  const latestVideoFileNameByNodeId = new Map<string, string>();
 
   for (const item of manifest.items) {
     if (item.sourceKey?.trim()) {
       fileNameBySourceKey.set(item.sourceKey, item.fileName);
+    }
+
+    if (item.kind === "video" && item.sourceKey?.trim()) {
+      const nodeId = item.sourceKey.split(":")[0];
+      const currentFileName = latestVideoFileNameByNodeId.get(nodeId);
+      const currentItem = currentFileName
+        ? manifest.items.find((candidate) => candidate.fileName === currentFileName)
+        : undefined;
+      const currentTime = currentItem
+        ? new Date(currentItem.modifiedAt || currentItem.createdAt).getTime()
+        : -Infinity;
+      const nextTime = new Date(item.modifiedAt || item.createdAt).getTime();
+
+      if (nodeId && nextTime >= currentTime) {
+        latestVideoFileNameByNodeId.set(nodeId, item.fileName);
+      }
     }
   }
 
@@ -1428,6 +1491,10 @@ export async function hydrateProjectSnapshotPreviewUrls(
       const fileName = node.type === "image_generation"
         ? node.data.generatedOutputFileName?.trim() ||
           (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
+        : node.type === "video_generation"
+          ? node.data.generatedOutputFileName?.trim() ||
+            (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined) ||
+            latestVideoFileNameByNodeId.get(node.id)
         : node.type === "panorama-360"
           ? node.data.panorama360Node.panorama.generatedOutputFileName?.trim() ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
@@ -1460,6 +1527,10 @@ export async function hydrateProjectSnapshotPreviewUrls(
           ...node,
           data: withResolvedPreviewUrl(previewUrl, fileName, node.data),
         };
+      }
+
+      if (node.type === "video_generation") {
+        return withResolvedVideoPreviewUrl(previewUrl, fileName, node);
       }
 
       if (node.type === "image") {
@@ -1520,11 +1591,10 @@ export async function readProjectHistory(
     const manifestItem = manifestByFileName.get(file.name);
     const previewUrl = URL.createObjectURL(file);
 
-    items.push({
+    const baseItem = {
       id: manifestItem?.id ?? crypto.randomUUID(),
       sourceKey: manifestItem?.sourceKey,
       fileName: file.name,
-      kind,
       previewUrl,
       createdAt:
         manifestItem?.createdAt ||
@@ -1538,8 +1608,25 @@ export async function readProjectHistory(
       width: manifestItem?.width,
       height: manifestItem?.height,
       format: manifestItem?.format,
-      nodeData: manifestItem?.nodeData,
-    });
+    };
+
+    items.push(
+      kind === "image"
+        ? {
+            ...baseItem,
+            kind,
+            nodeData: isImageHistoryManifestItem(manifestItem)
+              ? (manifestItem.nodeData as ImageGenerationNodeData | undefined)
+              : undefined,
+          }
+        : {
+            ...baseItem,
+            kind,
+            nodeData: isVideoHistoryManifestItem(manifestItem)
+              ? (manifestItem.nodeData as VideoGenerationNodeData | undefined)
+              : undefined,
+          },
+    );
   }
 
   return items.sort(

@@ -44,6 +44,8 @@ import type {
   ProjectSnapshot,
   TextNodeData,
   UploadedImageNodeData,
+  VideoGenerationMediaReference,
+  VideoGenerationNodeData,
 } from "@/types/canvas";
 
 type ApiErrorResponse = {
@@ -82,6 +84,22 @@ type ImageJobPollResponse =
       };
     };
 
+type VideoGenerationResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      result: {
+        taskId: string;
+        model: string;
+        videoUrl: string;
+        lastFrameUrl?: string;
+        ratio?: string;
+        resolution?: string;
+        duration?: string;
+        seed?: string;
+      };
+    };
+
 type ImageGenerationRunResult = {
   model: string;
   images: Array<{
@@ -98,6 +116,7 @@ type ImageGenerationRunResult = {
 type SplitGridDimension = 2 | 3 | 5;
 
 const inFlightImageGenerationNodeIds = new Set<string>();
+const inFlightVideoGenerationNodeIds = new Set<string>();
 const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
 const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
@@ -150,7 +169,7 @@ function resolveParallelCount(value?: number): 1 | 2 | 4 {
 }
 
 export type ApiProvider = "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
-export type ApiModelKind = "text" | "image";
+export type ApiModelKind = "text" | "image" | "video";
 
 export type StoredApiSettings = {
   textProvider: ApiProvider;
@@ -187,6 +206,7 @@ export const CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY = "genlink.runninghu
 export const CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY = "genlink.grsaiImageApiKey";
 const CANVAS_TEXT_MODEL_STORAGE_KEY = "genlink.textModel";
 const CANVAS_IMAGE_MODEL_STORAGE_KEY = "genlink.imageModel";
+const CANVAS_VIDEO_MODEL_STORAGE_KEY = "genlink.videoModel";
 const CANVAS_IMAGE_RUNNINGHUB_CHANNEL_STORAGE_KEY = "genlink.imageRunningHubChannel";
 const THREE_VIEW_RUNNINGHUB_WORKFLOW_ID = "2059192086624296961";
 
@@ -226,18 +246,30 @@ export function getApiProviderLabel(provider: ApiProvider): string {
 }
 
 function getApiProviderStorageKey(kind: ApiModelKind): string {
-  return kind === "text"
-    ? CANVAS_TEXT_API_PROVIDER_STORAGE_KEY
+  if (kind === "text") {
+    return CANVAS_TEXT_API_PROVIDER_STORAGE_KEY;
+  }
+
+  return kind === "video"
+    ? CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY
     : CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY;
 }
 
 function getModelStorageKey(kind: ApiModelKind): string {
-  return kind === "text"
-    ? CANVAS_TEXT_MODEL_STORAGE_KEY
+  if (kind === "text") {
+    return CANVAS_TEXT_MODEL_STORAGE_KEY;
+  }
+
+  return kind === "video"
+    ? CANVAS_VIDEO_MODEL_STORAGE_KEY
     : CANVAS_IMAGE_MODEL_STORAGE_KEY;
 }
 
 function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string {
+  if (kind === "video") {
+    return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+  }
+
   if (kind === "text") {
     switch (provider) {
       case "comfly":
@@ -303,6 +335,9 @@ export function persistSelectedModel(params: {
   }
 
   window.localStorage.setItem(getApiProviderStorageKey(params.kind), params.provider);
+  if (params.kind === "video") {
+    window.localStorage.setItem(getApiProviderStorageKey(params.kind), "comfly");
+  }
   window.localStorage.setItem(getModelStorageKey(params.kind), params.model);
 
   if (params.kind === "image" && params.provider === "runninghub") {
@@ -317,6 +352,10 @@ export function readStoredApiKey(
   kind: ApiModelKind,
   provider: ApiProvider,
 ): string {
+  if (kind === "video" && provider === "comfly") {
+    return readStoredValue(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY);
+  }
+
   return readStoredValue(getApiKeyStorageKey(kind, provider));
 }
 
@@ -362,8 +401,9 @@ function assertStoredApiKey(kind: ApiModelKind, provider: ApiProvider): string {
   const apiKey = readStoredApiKey(kind, provider);
 
   if (!apiKey) {
+    const kindLabel = kind === "text" ? "text" : kind === "video" ? "video" : "image";
     throw new Error(
-      `Please configure the ${kind === "text" ? "text" : "image"} ${getApiProviderLabel(provider)} API Key in API settings first.`,
+      `Please configure the ${kindLabel} ${getApiProviderLabel(provider)} API Key in API settings first.`,
     );
   }
 
@@ -401,6 +441,19 @@ type ConnectedImagePayload = {
   sourceType: "image" | "uploaded_image" | "inline_reference";
   width?: number;
   height?: number;
+};
+
+type ConnectedVideoPayload = {
+  id: string;
+  videoUrl: string;
+  previewUrl?: string;
+  hostedVideoUrl?: string;
+  fileName?: string;
+  alt: string;
+  sourceType: "video_generation" | "inline_reference";
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
 };
 
 function getConnectedImageDedupKey(image: ConnectedImagePayload): string {
@@ -656,6 +709,24 @@ function createImageGenerationNodeData(): ImageGenerationNodeData {
     outputFormat: "png",
     moderation: "auto",
     parallelCount: 1,
+    status: "idle",
+  };
+}
+
+function createVideoGenerationNodeData(): VideoGenerationNodeData {
+  return {
+    title: "Video",
+    prompt: "",
+    provider: "comfly",
+    model: readStoredSelectedModel("video", "doubao-seedance-2-0-260128"),
+    mode: "all-reference",
+    ratio: "16:9",
+    resolution: "720p",
+    duration: 5,
+    watermark: false,
+    camerafixed: false,
+    returnLastFrame: false,
+    generateAudio: false,
     status: "idle",
   };
 }
@@ -1209,6 +1280,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createImageGenerationNodeData(),
+      };
+    case "video_generation":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createVideoGenerationNodeData(),
       };
     case "image":
       return {
@@ -2120,6 +2198,50 @@ function getConnectedImagesForTargetNode(
   }, []);
 }
 
+function getConnectedVideosForTargetNode(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  targetNodeId: string,
+): ConnectedVideoPayload[] {
+  const connectedSourceIds = edges
+    .filter((edge) => edge.target === targetNodeId)
+    .map((edge) => edge.source);
+
+  return connectedSourceIds.reduce<ConnectedVideoPayload[]>((acc, sourceId) => {
+    const sourceNode = nodes.find((node) => node.id === sourceId);
+
+    if (!sourceNode || sourceNode.type !== "video_generation") {
+      return acc;
+    }
+
+    const videoUrl =
+      sourceNode.data.hostedVideoUrl?.trim() ||
+      sourceNode.data.videoUrl?.trim() ||
+      "";
+
+    if (!videoUrl) {
+      return acc;
+    }
+
+    const ratioMatch = sourceNode.data.ratio?.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+    const inferredWidth = ratioMatch ? Number(ratioMatch[1]) : undefined;
+    const inferredHeight = ratioMatch ? Number(ratioMatch[2]) : undefined;
+
+    acc.push({
+      id: sourceNode.id,
+      videoUrl,
+      hostedVideoUrl: sourceNode.data.hostedVideoUrl?.trim() || undefined,
+      previewUrl: sourceNode.data.lastFrameUrl?.trim() || undefined,
+      alt: sourceNode.data.prompt?.trim() || "Connected video",
+      sourceType: "video_generation",
+      width: inferredWidth && inferredHeight ? inferredWidth : undefined,
+      height: inferredWidth && inferredHeight ? inferredHeight : undefined,
+      durationSeconds: sourceNode.data.duration,
+    });
+    return acc;
+  }, []);
+}
+
 function getInlineReferenceImagesForImageGenerationNode(
   node: Extract<CanvasNode, { type: "image_generation" }>,
 ): ConnectedImagePayload[] {
@@ -2145,6 +2267,55 @@ function getInlineReferenceImagesForImageGenerationNode(
     },
     [],
   );
+}
+
+function getInlineReferenceVideosForVideoGenerationNode(
+  node: Extract<CanvasNode, { type: "video_generation" }>,
+): ConnectedVideoPayload[] {
+  return (node.data.referenceVideos ?? []).reduce<ConnectedVideoPayload[]>(
+    (acc, video, index) => {
+      const videoUrl = video.hostedUrl?.trim() || video.url.trim();
+
+      if (!videoUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: video.id || `${node.id}-video-reference-${index}`,
+        videoUrl,
+        hostedVideoUrl: video.hostedUrl?.trim() || undefined,
+        previewUrl: video.previewUrl,
+        fileName: video.fileName,
+        alt: video.fileName?.trim() || `Reference video ${index + 1}`,
+        sourceType: "inline_reference",
+        width: video.width,
+        height: video.height,
+        durationSeconds: video.durationSeconds,
+      });
+      return acc;
+    },
+    [],
+  );
+}
+
+function getVideoGenerationReferenceVideos(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  videoGenerationNodeId: string,
+): ConnectedVideoPayload[] {
+  const videoGenerationNode = nodes.find(
+    (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
+      node.id === videoGenerationNodeId && node.type === "video_generation",
+  );
+
+  if (!videoGenerationNode) {
+    return [];
+  }
+
+  return [
+    ...getInlineReferenceVideosForVideoGenerationNode(videoGenerationNode),
+    ...getConnectedVideosForTargetNode(nodes, edges, videoGenerationNodeId),
+  ];
 }
 
 function getGeneratedImageReferenceForImageGenerationNode(
@@ -2378,6 +2549,8 @@ export interface CanvasState {
   deleteNodes: (ids: string[]) => void;
   addEdge: (edge: CanvasEdge) => void;
   deleteEdge: (id: string) => void;
+  deleteIncomingEdges: (targetNodeId: string) => void;
+  deleteIncomingVideoEdges: (targetNodeId: string) => void;
   createGroup: (nodeIds: string[], bounds: { x: number; y: number; width: number; height: number }) => NodeGroup;
   deleteGroup: (groupId: string) => void;
   renameGroup: (groupId: string, name: string | undefined) => void;
@@ -2393,6 +2566,10 @@ export interface CanvasState {
     imageGenerationNodeId: string,
     promptOverride?: string,
     options?: ImageGenerationRunOptions,
+  ) => Promise<void>;
+  generateVideoFromVideoGenerationNode: (
+    videoGenerationNodeId: string,
+    promptOverride?: string,
   ) => Promise<void>;
   generateThreeViewImageFromNode: (
     nodeId: string,
@@ -2450,10 +2627,20 @@ export interface CanvasState {
       sizeBytes?: number;
     }>,
   ) => void;
+  addReferenceMediaToVideoGenerationNode: (
+    videoGenerationNodeId: string,
+    media: VideoGenerationMediaReference[],
+  ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
   ) => ConnectedImagePayload[];
+  getConnectedImagesForVideoGenerationNode: (
+    videoGenerationNodeId: string,
+  ) => ConnectedImagePayload[];
+  getConnectedVideosForVideoGenerationNode: (
+    videoGenerationNodeId: string,
+  ) => ConnectedVideoPayload[];
   getConnectedImagesForPanorama360Node: (
     panorama360NodeId: string,
   ) => ConnectedImagePayload[];
@@ -2479,9 +2666,10 @@ export interface CanvasState {
   persistProjectOutput: (params: {
     sourceKey: string;
     imageUrl: string;
+    kind?: "image" | "video";
     fileName?: string;
     generatedAt: string;
-    nodeData: ImageGenerationNodeData;
+    nodeData: ImageGenerationNodeData | VideoGenerationNodeData;
     title?: string;
     model?: string;
     width?: number;
@@ -2663,12 +2851,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   addEdge: (edge) => {
-    set((state) => ({
-      ...createUndoHistoryUpdate(state),
-      edges: [...state.edges, edge],
-      dirty: true,
-      error: null,
-    }));
+    set((state) => {
+      const sourceNode = state.nodes.find((node) => node.id === edge.source);
+      const connectsVideoReference =
+        sourceNode?.type === "video_generation" &&
+        Boolean(
+          sourceNode.data.hostedVideoUrl?.trim() ||
+            sourceNode.data.videoUrl?.trim(),
+        );
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        edges: [...state.edges, edge],
+        nodes: connectsVideoReference
+          ? state.nodes.map((node) =>
+              node.id === edge.target && node.type === "video_generation"
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      mode: "all-reference",
+                      status: node.data.status === "error" ? "idle" : node.data.status,
+                      errorMessage: undefined,
+                    },
+                  }
+                : node,
+            )
+          : state.nodes,
+        dirty: true,
+        error: null,
+      };
+    });
   },
 
   deleteEdge: (id) => {
@@ -2677,6 +2890,45 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter((edge) => edge.id !== id),
       dirty: true,
     }));
+  },
+
+  deleteIncomingEdges: (targetNodeId) => {
+    set((state) => {
+      const nextEdges = state.edges.filter((edge) => edge.target !== targetNodeId);
+
+      if (nextEdges.length === state.edges.length) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
+        edges: nextEdges,
+        dirty: true,
+      };
+    });
+  },
+
+  deleteIncomingVideoEdges: (targetNodeId) => {
+    set((state) => {
+      const videoSourceIds = new Set(
+        state.nodes
+          .filter((node) => node.type === "video_generation")
+          .map((node) => node.id),
+      );
+      const nextEdges = state.edges.filter(
+        (edge) => edge.target !== targetNodeId || !videoSourceIds.has(edge.source),
+      );
+
+      if (nextEdges.length === state.edges.length) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
+        edges: nextEdges,
+        dirty: true,
+      };
+    });
   },
 
   createGroup: (nodeIds, bounds) => {
@@ -3510,6 +3762,213 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
     } finally {
       inFlightImageGenerationNodeIds.delete(imageGenerationNodeId);
+    }
+  },
+
+  generateVideoFromVideoGenerationNode: async (videoGenerationNodeId, promptOverride) => {
+    const state = get();
+    const videoGenerationNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
+        node.id === videoGenerationNodeId && node.type === "video_generation",
+    );
+
+    if (!videoGenerationNode) {
+      throw new Error("Video generation node not found");
+    }
+
+    if (videoGenerationNode.data.status === "generating") {
+      return;
+    }
+
+    if (inFlightVideoGenerationNodeIds.has(videoGenerationNodeId)) {
+      return;
+    }
+
+    inFlightVideoGenerationNodeIds.add(videoGenerationNodeId);
+
+    try {
+      const latestState = get();
+      const latestVideoGenerationNode = latestState.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
+          node.id === videoGenerationNodeId && node.type === "video_generation",
+      );
+
+      if (!latestVideoGenerationNode) {
+        throw new Error("Video generation node not found");
+      }
+
+      const prompt =
+        promptOverride?.trim() ||
+        latestVideoGenerationNode.data.prompt?.trim() ||
+        "";
+
+      if (!prompt) {
+        throw new Error("Prompt is required");
+      }
+
+      const connectedImages = getConnectedImagesForTargetNode(
+        latestState.nodes,
+        latestState.edges,
+        videoGenerationNodeId,
+      );
+      const inlineImages = (latestVideoGenerationNode.data.referenceImages ?? [])
+        .map((image) => ({
+          url: image.hostedUrl?.trim() || image.url.trim(),
+          fileName: image.fileName,
+        }))
+        .filter((image) => image.url);
+      const requestImages = [
+        ...connectedImages.map((image) => ({
+          url: image.hostedImageUrl?.trim() || image.imageUrl.trim(),
+          fileName: image.fileName,
+        })),
+        ...inlineImages,
+      ].filter((image) => image.url);
+      const requestVideos = (latestVideoGenerationNode.data.referenceVideos ?? [])
+        .map((video) => ({
+          url: video.hostedUrl?.trim() || video.url.trim(),
+          fileName: video.fileName,
+        }))
+        .filter((video) => video.url);
+      const requestAudio = (latestVideoGenerationNode.data.referenceAudio ?? [])
+        .map((audio) => ({
+          url: audio.hostedUrl?.trim() || audio.url.trim(),
+          fileName: audio.fileName,
+        }))
+        .filter((audio) => audio.url);
+      const mode = latestVideoGenerationNode.data.mode ?? "all-reference";
+
+      if (mode === "image-to-video" && requestImages.length === 0) {
+        throw new Error("Image to video requires at least one image");
+      }
+
+      if (mode === "first-last-frame" && requestImages.length !== 2) {
+        throw new Error("First-last-frame mode requires exactly two images");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoGenerationNodeId && node.type === "video_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: undefined,
+                  progress: undefined,
+                  videoUrl: undefined,
+                  hostedVideoUrl: undefined,
+                  lastFrameUrl: undefined,
+                  generatedModel: undefined,
+                  generatedAt: undefined,
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const apiKey = assertStoredApiKey("video", "comfly");
+      const response = await fetch("/api/ai/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey,
+          provider: "comfly",
+          model: latestVideoGenerationNode.data.model,
+          mode,
+          prompt,
+          ratio: latestVideoGenerationNode.data.ratio,
+          resolution: latestVideoGenerationNode.data.resolution,
+          duration: latestVideoGenerationNode.data.duration,
+          seed: latestVideoGenerationNode.data.seed,
+          camerafixed: latestVideoGenerationNode.data.camerafixed,
+          watermark: latestVideoGenerationNode.data.watermark,
+          returnLastFrame: latestVideoGenerationNode.data.returnLastFrame,
+          generateAudio: latestVideoGenerationNode.data.generateAudio,
+          images: requestImages,
+          videos: requestVideos,
+          audio: requestAudio,
+        }),
+      });
+      const json = (await response.json()) as VideoGenerationResponse;
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.ok ? "Video generation failed" : json.error);
+      }
+
+      const generatedAt = nowIso();
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoGenerationNodeId && node.type === "video_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: json.result.taskId,
+                  progress: "100%",
+                  videoUrl: json.result.videoUrl,
+                  hostedVideoUrl: json.result.videoUrl,
+                  lastFrameUrl: json.result.lastFrameUrl,
+                  generatedModel: json.result.model,
+                  generatedAt,
+                  status: "idle",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      void get().persistProjectOutput({
+        sourceKey: `${videoGenerationNodeId}:${generatedAt}:${json.result.videoUrl}`,
+        imageUrl: json.result.videoUrl,
+        kind: "video",
+        fileName: `${latestVideoGenerationNode.data.title || "video"}.mp4`,
+        generatedAt,
+        nodeData: {
+          ...latestVideoGenerationNode.data,
+          taskId: json.result.taskId,
+          videoUrl: json.result.videoUrl,
+          hostedVideoUrl: json.result.videoUrl,
+          lastFrameUrl: json.result.lastFrameUrl,
+          generatedModel: json.result.model,
+          generatedAt,
+          status: "idle",
+          errorMessage: undefined,
+        },
+        title: latestVideoGenerationNode.data.title,
+        model: json.result.model,
+        format: "mp4",
+      }).catch((error) => {
+        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+      });
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        error: message,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoGenerationNodeId && node.type === "video_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "error",
+                  errorMessage: message,
+                },
+              }
+            : node,
+        ),
+      }));
+    } finally {
+      inFlightVideoGenerationNodeIds.delete(videoGenerationNodeId);
     }
   },
 
@@ -4794,12 +5253,82 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addReferenceMediaToVideoGenerationNode: (videoGenerationNodeId, media) => {
+    if (media.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const videoGenerationNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
+          node.id === videoGenerationNodeId && node.type === "video_generation",
+      );
+
+      if (!videoGenerationNode) {
+        return state;
+      }
+
+      const imageRefs = media.filter((item) => item.mimeType?.startsWith("image/"));
+      const videoRefs = media.filter((item) => item.mimeType?.startsWith("video/"));
+      const audioRefs = media.filter((item) => item.mimeType?.startsWith("audio/"));
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: state.nodes.map((node) =>
+          node.id === videoGenerationNodeId && node.type === "video_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: [
+                    ...(node.data.referenceImages ?? []),
+                    ...imageRefs,
+                  ],
+                  referenceVideos: [
+                    ...(node.data.referenceVideos ?? []),
+                    ...videoRefs,
+                  ],
+                  referenceAudio: [
+                    ...(node.data.referenceAudio ?? []),
+                    ...audioRefs,
+                  ],
+                  mode: videoRefs.length > 0 ? "all-reference" : node.data.mode,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   getConnectedImagesForImageGenerationNode: (imageGenerationNodeId) => {
     const state = get();
     return getImageGenerationReferenceImages(
       state.nodes,
       state.edges,
       imageGenerationNodeId,
+    );
+  },
+
+  getConnectedImagesForVideoGenerationNode: (videoGenerationNodeId) => {
+    const state = get();
+    return getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      videoGenerationNodeId,
+    );
+  },
+
+  getConnectedVideosForVideoGenerationNode: (videoGenerationNodeId) => {
+    const state = get();
+    return getVideoGenerationReferenceVideos(
+      state.nodes,
+      state.edges,
+      videoGenerationNodeId,
     );
   },
 
@@ -5031,6 +5560,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const persisted = await persistGeneratedOutput(state.currentProject, params);
 
     set((currentState) => {
+      if (params.kind === "video") {
+        const nodeData = params.nodeData as VideoGenerationNodeData;
+        const nodes = currentState.nodes.map((node) => {
+          if (node.type !== "video_generation") {
+            return node;
+          }
+
+          const sourceKey = `${node.id}:${params.generatedAt}:${nodeData.videoUrl ?? ""}`;
+
+          if (sourceKey !== params.sourceKey) {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              videoUrl: persisted.previewUrl,
+              hostedVideoUrl: persisted.previewUrl,
+              generatedOutputFileName: persisted.fileName,
+            },
+          };
+        });
+
+        return {
+          nodes,
+          currentProjectPreviewUrls: [
+            ...currentState.currentProjectPreviewUrls,
+            persisted.previewUrl,
+          ],
+        };
+      }
+
+      const nodeData = params.nodeData as ImageGenerationNodeData;
       let previousPreviewUrl: string | null = null;
 
       const nodes = currentState.nodes.map((node) => {
@@ -5038,7 +5601,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           return node;
         }
 
-        const sourceKey = `${node.id}:${params.generatedAt}:${params.nodeData.generatedImageUrl ?? ""}`;
+        const sourceKey = `${node.id}:${params.generatedAt}:${nodeData.generatedImageUrl ?? ""}`;
 
         if (sourceKey !== params.sourceKey) {
           return node;
@@ -5046,7 +5609,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
         const matchesPrimaryImage =
           node.data.generatedAt === params.generatedAt &&
-          node.data.generatedImageUrl === params.nodeData.generatedImageUrl;
+          node.data.generatedImageUrl === nodeData.generatedImageUrl;
 
         previousPreviewUrl = matchesPrimaryImage
           ? node.data.generatedHostedImageUrl?.trim() || null
@@ -5066,7 +5629,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               if (
                 result.status !== "completed" ||
                 result.generatedAt !== params.generatedAt ||
-                result.imageUrl !== params.nodeData.generatedImageUrl
+                result.imageUrl !== nodeData.generatedImageUrl
               ) {
                 return result;
               }

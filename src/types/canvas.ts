@@ -3,6 +3,7 @@
 export type NodeType =
   | "text"
   | "image_generation"
+  | "video_generation"
   | "ai_text_result"
   | "image"
   | "uploaded_image"
@@ -93,6 +94,56 @@ export type ImageGenerationRunOptions = {
   quality?: string;
 };
 
+export type VideoGenerationMode =
+  | "text-to-video"
+  | "image-to-video"
+  | "all-reference"
+  | "first-last-frame";
+
+export type VideoGenerationProvider = "comfly";
+
+export interface VideoGenerationMediaReference {
+  id: string;
+  url: string;
+  hostedUrl?: string;
+  previewUrl?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+}
+
+export interface VideoGenerationNodeData {
+  title?: string;
+  prompt?: string;
+  provider?: VideoGenerationProvider;
+  model?: string;
+  mode?: VideoGenerationMode;
+  ratio?: string;
+  resolution?: "480p" | "720p" | "1080p";
+  duration?: number;
+  seed?: number;
+  camerafixed?: boolean;
+  watermark?: boolean;
+  returnLastFrame?: boolean;
+  generateAudio?: boolean;
+  referenceImages?: VideoGenerationMediaReference[];
+  referenceVideos?: VideoGenerationMediaReference[];
+  referenceAudio?: VideoGenerationMediaReference[];
+  taskId?: string;
+  progress?: string;
+  videoUrl?: string;
+  hostedVideoUrl?: string;
+  generatedOutputFileName?: string;
+  lastFrameUrl?: string;
+  generatedModel?: string;
+  generatedAt?: string;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
+}
+
 export interface AITextResultNodeData {
   title?: string;
   content: string;
@@ -178,6 +229,7 @@ export interface Panorama360NodeData {
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
+  | { type: "video_generation"; data: VideoGenerationNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData }
@@ -186,6 +238,7 @@ export type CanvasNodeData =
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
+  | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>
@@ -270,11 +323,10 @@ export interface ImageHistoryListItem {
   generatedAt: string;
 }
 
-export interface ProjectOutputHistoryItem {
+interface BaseProjectOutputHistoryItem {
   id: string;
   sourceKey?: string;
   fileName: string;
-  kind: "image" | "video";
   previewUrl: string;
   createdAt: string;
   modifiedAt: string;
@@ -284,5 +336,14 @@ export interface ProjectOutputHistoryItem {
   width?: number;
   height?: number;
   format?: string;
-  nodeData?: ImageGenerationNodeData;
 }
+
+export type ProjectOutputHistoryItem =
+  | (BaseProjectOutputHistoryItem & {
+      kind: "image";
+      nodeData?: ImageGenerationNodeData;
+    })
+  | (BaseProjectOutputHistoryItem & {
+      kind: "video";
+      nodeData?: VideoGenerationNodeData;
+    });

@@ -85,11 +85,16 @@ import type {
   Panorama360NodeData,
   Panorama360ViewState,
   UploadedImageNodeData,
+  VideoGenerationNodeData,
 } from '@/types/canvas';
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
 import { TextNode } from '../nodes/TextNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
+import {
+  VideoGenerationNode,
+  type VideoGenerationToolbarAction,
+} from '../nodes/VideoGenerationNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { Panorama360Node } from '../nodes/Panorama360Node';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
@@ -145,6 +150,9 @@ let notifyCanvasImageInfoRequest:
   | ((nodeId: string) => void)
   | null = null;
 let notifyImageGenerationReferenceUpload:
+  | ((nodeId: string) => void)
+  | null = null;
+let notifyVideoGenerationReferenceUpload:
   | ((nodeId: string) => void)
   | null = null;
 let notifyPanorama360NavigationActiveChange:
@@ -466,6 +474,30 @@ function parseCanvasAspectRatio(value?: string): number | null {
   return width / height;
 }
 
+function resolveAspectDrivenCardDimensions(
+  aspectRatio?: string,
+): { width: number; height: number } {
+  const resolvedAspectRatio = parseCanvasAspectRatio(aspectRatio) ?? 16 / 9;
+
+  if (resolvedAspectRatio >= 1) {
+    const width = IMAGE_GENERATION_MAX_CARD_EDGE;
+    const height = Math.max(
+      IMAGE_GENERATION_MIN_CARD_EDGE,
+      Math.round(width / resolvedAspectRatio),
+    );
+
+    return { width, height };
+  }
+
+  const height = IMAGE_GENERATION_MAX_CARD_EDGE;
+  const width = Math.max(
+    IMAGE_GENERATION_MIN_CARD_EDGE,
+    Math.round(height * resolvedAspectRatio),
+  );
+
+  return { width, height };
+}
+
 function resolveImageGenerationCardDimensions(
   data: ImageGenerationNodeData,
   referenceImages?: ImageGenerationReferenceDimensions[],
@@ -683,6 +715,16 @@ function resolveMiniMapVisibleNodeRect(
       y: node.position.y + stageHeight - dimensions.height,
       width: dimensions.width,
       height: dimensions.height,
+      radius: 18,
+    };
+  }
+
+  if (node.type === 'video_generation') {
+    return {
+      x: node.position.x,
+      y: node.position.y + 76,
+      width: 540,
+      height: 304,
       radius: 18,
     };
   }
@@ -1039,6 +1081,83 @@ function readImageFile(file: File): Promise<ImportedImageData> {
   });
 }
 
+function captureVideoFirstFrame(file: File): Promise<{
+  previewUrl: string;
+  width: number;
+  height: number;
+  durationSeconds?: number;
+}> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    let settled = false;
+
+    const cleanup = () => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    const finish = (value: {
+      previewUrl: string;
+      width: number;
+      height: number;
+      durationSeconds?: number;
+    }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const fail = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(new Error('Failed to capture video thumbnail'));
+    };
+
+    const capture = () => {
+      const width = video.videoWidth || 320;
+      const height = video.videoHeight || 180;
+
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          fail();
+          return;
+        }
+
+        context.drawImage(video, 0, 0, width, height);
+        finish({
+          previewUrl: canvas.toDataURL('image/jpeg', 0.82),
+          width,
+          height,
+          durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined,
+        });
+      } catch {
+        fail();
+      }
+    };
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.src = objectUrl;
+    video.addEventListener('loadeddata', capture, { once: true });
+    video.addEventListener('error', fail, { once: true });
+    video.load();
+  });
+}
+
 function isBrowserObjectUrl(value?: string): boolean {
   return typeof value === 'string' && value.startsWith('blob:');
 }
@@ -1087,6 +1206,61 @@ async function uploadImageDataUrl(dataUrl: string, fileName?: string): Promise<s
   }
 
   return json.result.imageUrl;
+}
+
+async function uploadMediaFileToOss(file: File): Promise<{
+  url: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}> {
+  const folder = file.type.startsWith('video/')
+    ? 'references/videos'
+    : file.type.startsWith('audio/')
+      ? 'references/audio'
+      : 'references/images';
+  const response = await fetch('/api/media-hosting/upload-url', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contentType: file.type || 'application/octet-stream',
+      fileName: file.name,
+      folder,
+    }),
+  });
+  const json = (await response.json()) as
+    | {
+        ok: true;
+        result: {
+          uploadUrl: string;
+          mediaUrl: string;
+          headers: Record<string, string>;
+        };
+      }
+    | { ok: false; error: string };
+
+  if (!response.ok || !json.ok) {
+    throw new Error('error' in json ? json.error : 'Media upload URL creation failed');
+  }
+
+  const uploadResponse = await fetch(json.result.uploadUrl, {
+    method: 'PUT',
+    headers: json.result.headers,
+    body: file,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Media upload failed (${uploadResponse.status})`);
+  }
+
+  return {
+    url: json.result.mediaUrl,
+    fileName: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    sizeBytes: file.size,
+  };
 }
 
 async function resolveHistoryImageUrls(item: ImageHistoryItem): Promise<{
@@ -1425,6 +1599,82 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         </div>
       ) : null}
     </div>
+  );
+});
+
+const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateVideo = useCanvasStore((s) => s.generateVideoFromVideoGenerationNode);
+  const connectedImages = useCanvasStore((s) =>
+    s.getConnectedImagesForVideoGenerationNode(id),
+  );
+  const connectedVideos = useCanvasStore((s) =>
+    s.getConnectedVideosForVideoGenerationNode(id),
+  );
+  const renderData = data as CanvasNodeRenderData;
+  const [promptFocused, setPromptFocused] = useState(false);
+  const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
+  const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+  const videoData = data as VideoGenerationNodeData;
+  const cardDimensions = resolveAspectDrivenCardDimensions(videoData.ratio);
+  const handleToolbarAction = (action: VideoGenerationToolbarAction) => {
+    const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim() || '';
+
+    switch (action) {
+      case 'download': {
+        if (videoUrl) {
+          const a = document.createElement('a');
+          a.href = videoUrl;
+          a.download = videoData.title || 'video';
+          a.click();
+        }
+        break;
+      }
+      case 'copy-link': {
+        if (videoUrl) {
+          void navigator.clipboard?.writeText(videoUrl);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const handleClearNodeUi = () => setPromptFocused(false);
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
+
+  return (
+    <VideoGenerationNode
+      id={id}
+      data={data as VideoGenerationNodeData}
+      cardDimensions={cardDimensions}
+      selected={isActive}
+      dragging={!!dragging}
+      connectedImages={connectedImages}
+      connectedVideos={connectedVideos}
+      onChange={(next) => updateNodeData<'video_generation'>(id, next)}
+      onTitleChange={(nextTitle) => updateNodeData<'video_generation'>(id, { title: nextTitle })}
+      onRun={(promptOverride) => generateVideo(id, promptOverride)}
+      onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
+      onToolbarAction={handleToolbarAction}
+      onSelectNode={handleSelectNode}
+      onPromptPointerDown={() => {
+        handleSelectNode();
+        notifyPromptBarInteraction?.();
+      }}
+      onPromptFocusWithinChange={(focused) => {
+        if (focused) {
+          handleSelectNode();
+        }
+        setPromptFocused(focused);
+      }}
+      promptFocusRequestId={renderData.canvasFocusRequestId}
+    />
   );
 });
 
@@ -1781,6 +2031,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
 const nodeTypes = {
   text: TextNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
+  video_generation: VideoGenerationNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
@@ -4836,6 +5087,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const addReferenceImagesToImageGenerationNode = useCanvasStore(
     (s) => s.addReferenceImagesToImageGenerationNode,
   );
+  const addReferenceMediaToVideoGenerationNode = useCanvasStore(
+    (s) => s.addReferenceMediaToVideoGenerationNode,
+  );
   const materials = useCanvasStore((s) => s.materials);
   const addMaterial = useCanvasStore((s) => s.addMaterial);
   const deleteMaterial = useCanvasStore((s) => s.deleteMaterial);
@@ -4921,7 +5175,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       dragHandle:
         n.type === 'text'
           ? '.text-node-drag-handle'
-          : n.type === 'image_generation'
+          : n.type === 'image_generation' || n.type === 'video_generation'
             ? '.image-generation-node-drag-handle'
           : undefined,
     }));
@@ -5010,6 +5264,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const referenceUploadNodeIdRef = React.useRef<string | null>(null);
+  const videoReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const copiedNodesRef = useRef<CanvasNode[]>([]);
   const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
   const pasteCountRef = useRef(0);
@@ -5545,6 +5800,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {
       referenceUploadNodeIdRef.current = nodeId;
+      videoReferenceUploadNodeIdRef.current = null;
       const input = uploadInputRef.current;
 
       if (!input) {
@@ -5557,6 +5813,23 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       if (notifyImageGenerationReferenceUpload) {
         notifyImageGenerationReferenceUpload = null;
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    notifyVideoGenerationReferenceUpload = (nodeId) => {
+      videoReferenceUploadNodeIdRef.current = nodeId;
+      referenceUploadNodeIdRef.current = null;
+      const input = uploadInputRef.current;
+
+      if (!input) {
+        return;
+      }
+      openFileInput(input);
+    };
+
+    return () => {
+      notifyVideoGenerationReferenceUpload = null;
     };
   }, []);
 
@@ -6396,8 +6669,45 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const files = Array.from(event.target.files ?? []);
     const position = uploadPositionRef.current;
     const referenceUploadNodeId = referenceUploadNodeIdRef.current;
+    const videoReferenceUploadNodeId = videoReferenceUploadNodeIdRef.current;
 
-    if (files.length > 0 && referenceUploadNodeId) {
+    if (files.length > 0 && videoReferenceUploadNodeId) {
+      void (async () => {
+        const media = await Promise.all(
+          files
+            .filter((file) =>
+              file.type.startsWith('image/') ||
+              file.type.startsWith('video/') ||
+              file.type.startsWith('audio/'),
+            )
+            .map(async (file) => {
+              const videoFrame = file.type.startsWith('video/')
+                ? await captureVideoFirstFrame(file).catch(() => null)
+                : null;
+              const uploaded = await uploadMediaFileToOss(file);
+              return {
+                id: crypto.randomUUID(),
+                url: uploaded.url,
+                hostedUrl: uploaded.url,
+                previewUrl: file.type.startsWith('image/')
+                  ? URL.createObjectURL(file)
+                  : videoFrame?.previewUrl,
+                fileName: uploaded.fileName,
+                mimeType: uploaded.mimeType,
+                sizeBytes: uploaded.sizeBytes,
+                width: videoFrame?.width,
+                height: videoFrame?.height,
+                durationSeconds: videoFrame?.durationSeconds,
+              };
+            }),
+        );
+
+        addReferenceMediaToVideoGenerationNode(videoReferenceUploadNodeId, media);
+      })().catch((error) => {
+        setSaveMessage(error instanceof Error ? error.message : '上传视频参考失败');
+        window.setTimeout(() => setSaveMessage(null), 2200);
+      });
+    } else if (files.length > 0 && referenceUploadNodeId) {
       void (async () => {
         const imageFiles = files.filter((file) => file.type.startsWith('image/'));
 
@@ -6415,7 +6725,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     event.target.value = '';
     uploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
-  }, [addReferenceImagesToImageGenerationNode, addUploadedImages]);
+    videoReferenceUploadNodeIdRef.current = null;
+  }, [addReferenceImagesToImageGenerationNode, addReferenceMediaToVideoGenerationNode, addUploadedImages, setSaveMessage]);
 
   const handleSelectMaterial = useCallback((
     item: MaterialLibraryItem,
@@ -6556,6 +6867,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     if (action === 'image_generation' && addMenu) {
       const node = addNodeAtCenter('image_generation', addMenu.canvas);
+      focusCreatedNode(node.id);
+    }
+
+    if (action === 'video_generation' && addMenu) {
+      const node = addNodeAtCenter('video_generation', addMenu.canvas);
       focusCreatedNode(node.id);
     }
 
@@ -6960,7 +7276,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
-    if (action !== 'text' && action !== 'image_generation' && action !== 'panorama-360' && action !== 'video') {
+    if (action !== 'text' && action !== 'image_generation' && action !== 'video_generation' && action !== 'panorama-360' && action !== 'video') {
       clearConnectionMenu();
       return;
     }
@@ -6973,6 +7289,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const nodeType: NodeType =
       action === 'text'
         ? 'text'
+        : action === 'video_generation'
+          ? 'video_generation'
         : action === 'panorama-360'
           ? 'panorama-360'
           : 'image_generation';
@@ -7451,7 +7769,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       <input
         ref={uploadInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*,audio/*"
         multiple
         className="sr-only"
         onChange={handleUploadInputChange}
@@ -7508,5 +7826,3 @@ export function InfiniteCanvas({ onBackToLibrary }: InnerCanvasProps) {
     </ReactFlowProvider>
   );
 }
-
-

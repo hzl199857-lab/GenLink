@@ -29,6 +29,7 @@ function ToolbarButton({
   title,
   active = false,
   onClick,
+  onMouseLeave,
   historyToggle = false,
   materialLibraryToggle = false,
 }: {
@@ -36,6 +37,7 @@ function ToolbarButton({
   title: string;
   active?: boolean;
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onMouseLeave?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   historyToggle?: boolean;
   materialLibraryToggle?: boolean;
 }) {
@@ -47,6 +49,7 @@ function ToolbarButton({
         data-history-toggle={historyToggle ? 'true' : undefined}
         data-material-library-toggle={materialLibraryToggle ? 'true' : undefined}
         onClick={onClick}
+        onMouseLeave={onMouseLeave}
         className={[
           'flex h-[31px] w-[31px] items-center justify-center rounded-full border border-white/0 transition duration-150 hover:bg-white/8 hover:text-white focus-visible:bg-white/8 focus-visible:text-white focus-visible:outline-none',
           active ? 'bg-white/10 text-white' : 'text-white/72',
@@ -95,7 +98,10 @@ export function CanvasToolbar({
             aria-label="添加"
             className="group relative flex h-[25px] w-[25px] items-center justify-center rounded-full border border-black/5 bg-[#f1f1ef] text-[#111214] shadow-[0_4px_12px_rgba(0,0,0,0.26)] transition duration-200 ease-out hover:rotate-90 hover:bg-[#2a2b2f] hover:text-white focus-visible:bg-[#2a2b2f] focus-visible:text-white focus-visible:outline-none"
             onMouseEnter={openAddMenu}
-            onMouseLeave={onScheduleCloseAddMenu}
+            onMouseLeave={(event) => {
+              onScheduleCloseAddMenu?.();
+              event.currentTarget.blur();
+            }}
             onFocus={openAddMenu}
           >
             <Plus
@@ -118,18 +124,33 @@ export function CanvasToolbar({
             title="素材库"
             active={materialLibraryOpen}
             materialLibraryToggle
+            onMouseLeave={(event) => event.currentTarget.blur()}
             onClick={(event) => onToggleMaterialLibrary?.(event.currentTarget.getBoundingClientRect())}
           />
-          <ToolbarButton icon={LayoutList} title="列表" />
-          <ToolbarButton icon={MessageCircle} title="消息" />
+          <ToolbarButton
+            icon={LayoutList}
+            title="列表"
+            onMouseLeave={(event) => event.currentTarget.blur()}
+          />
+          <ToolbarButton
+            icon={MessageCircle}
+            title="消息"
+            onMouseLeave={(event) => event.currentTarget.blur()}
+          />
           <ToolbarButton
             icon={Clock3}
             title="历史"
             active={historyOpen}
             historyToggle
+            onMouseLeave={(event) => event.currentTarget.blur()}
             onClick={(event) => onToggleHistory?.(event.currentTarget.getBoundingClientRect())}
           />
-          <ToolbarButton icon={Save} title="保存" onClick={() => onSaveProject?.()} />
+          <ToolbarButton
+            icon={Save}
+            title="保存"
+            onMouseLeave={(event) => event.currentTarget.blur()}
+            onClick={() => onSaveProject?.()}
+          />
         </div>
 
         <div className="mb-2 mt-1 h-px w-3 rounded-full bg-white/10" />
@@ -138,6 +159,7 @@ export function CanvasToolbar({
           <button
             type="button"
             onClick={onOpenApiSettings}
+            onMouseLeave={(event) => event.currentTarget.blur()}
             aria-label="设置"
             className="flex h-[25px] w-[25px] items-center justify-center rounded-full bg-[#2a2b2f] text-[#8f8f94] transition duration-150 hover:bg-[#323338] hover:text-white focus-visible:bg-[#323338] focus-visible:text-white focus-visible:outline-none"
           >

@@ -10,6 +10,9 @@ import type {
   ProjectSnapshot,
   TextNodeData,
   UploadedImageNodeData,
+  VideoGenerationMediaReference,
+  VideoGenerationMode,
+  VideoGenerationNodeData,
 } from "@/types/canvas";
 
 interface DbProjectRecord {
@@ -44,11 +47,120 @@ function isNodeType(value: string): value is NodeType {
   return (
     value === "text" ||
     value === "image_generation" ||
+    value === "video_generation" ||
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image" ||
     value === "panorama-360"
   );
+}
+
+function normalizeVideoGenerationMode(value: unknown): VideoGenerationMode {
+  switch (value) {
+    case "text-to-video":
+    case "image-to-video":
+    case "first-last-frame":
+    case "all-reference":
+      return value;
+    default:
+      return "all-reference";
+  }
+}
+
+function normalizeMediaReferences(value: unknown): VideoGenerationMediaReference[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const references = value
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object",
+    )
+    .map((item, index) => ({
+      id:
+        typeof item.id === "string" && item.id.trim()
+          ? item.id
+          : `reference-${index}`,
+      url: typeof item.url === "string" ? item.url : "",
+      hostedUrl: typeof item.hostedUrl === "string" ? item.hostedUrl : undefined,
+      previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
+      fileName: typeof item.fileName === "string" ? item.fileName : undefined,
+      mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+      sizeBytes: typeof item.sizeBytes === "number" ? item.sizeBytes : undefined,
+      width: typeof item.width === "number" ? item.width : undefined,
+      height: typeof item.height === "number" ? item.height : undefined,
+      durationSeconds:
+        typeof item.durationSeconds === "number" ? item.durationSeconds : undefined,
+    }))
+    .filter((item) => item.url.trim());
+
+  return references.length ? references : undefined;
+}
+
+function normalizeVideoGenerationNodeData(value: unknown): VideoGenerationNodeData {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    return {
+      title: typeof record.title === "string" ? record.title : "Video",
+      prompt: typeof record.prompt === "string" ? record.prompt : "",
+      provider: "comfly",
+      model:
+        typeof record.model === "string"
+          ? record.model
+          : "doubao-seedance-2-0-260128",
+      mode: normalizeVideoGenerationMode(record.mode),
+      ratio: typeof record.ratio === "string" ? record.ratio : "16:9",
+      resolution:
+        record.resolution === "480p" ||
+        record.resolution === "720p" ||
+        record.resolution === "1080p"
+          ? record.resolution
+          : "720p",
+      duration: typeof record.duration === "number" ? record.duration : 5,
+      seed: typeof record.seed === "number" ? record.seed : undefined,
+      camerafixed: record.camerafixed === true,
+      watermark: record.watermark === true,
+      returnLastFrame: record.returnLastFrame === true,
+      generateAudio: record.generateAudio === true,
+      referenceImages: normalizeMediaReferences(record.referenceImages),
+      referenceVideos: normalizeMediaReferences(record.referenceVideos),
+      referenceAudio: normalizeMediaReferences(record.referenceAudio),
+      taskId: typeof record.taskId === "string" ? record.taskId : undefined,
+      progress: typeof record.progress === "string" ? record.progress : undefined,
+      videoUrl: typeof record.videoUrl === "string" ? record.videoUrl : undefined,
+      hostedVideoUrl:
+        typeof record.hostedVideoUrl === "string" ? record.hostedVideoUrl : undefined,
+      generatedOutputFileName:
+        typeof record.generatedOutputFileName === "string"
+          ? record.generatedOutputFileName
+          : undefined,
+      lastFrameUrl:
+        typeof record.lastFrameUrl === "string" ? record.lastFrameUrl : undefined,
+      generatedModel:
+        typeof record.generatedModel === "string" ? record.generatedModel : undefined,
+      generatedAt:
+        typeof record.generatedAt === "string" ? record.generatedAt : undefined,
+      status:
+        record.status === "generating" || record.status === "error"
+          ? record.status
+          : "idle",
+      errorMessage:
+        typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+    };
+  }
+
+  return {
+    title: "Video",
+    prompt: "",
+    provider: "comfly",
+    model: "doubao-seedance-2-0-260128",
+    mode: "all-reference",
+    ratio: "16:9",
+    resolution: "720p",
+    duration: 5,
+    status: "idle",
+  };
 }
 
 function parseNodeJson(value: string): unknown {
@@ -160,6 +272,32 @@ function normalizeImageGenerationNodeData(value: unknown): ImageGenerationNodeDa
       referenceImageUrl:
         typeof record.referenceImageUrl === "string"
           ? record.referenceImageUrl
+          : undefined,
+      provider:
+        record.provider === "vibe" ||
+        record.provider === "fucheers" ||
+        record.provider === "comfly" ||
+        record.provider === "zhenzhen" ||
+        record.provider === "runninghub" ||
+        record.provider === "grsai"
+          ? record.provider
+          : undefined,
+      outputFormat:
+        typeof record.outputFormat === "string" ? record.outputFormat : undefined,
+      moderation:
+        typeof record.moderation === "string" ? record.moderation : undefined,
+      runningHubChannel:
+        record.runningHubChannel === "official" ||
+        record.runningHubChannel === "low-cost"
+          ? record.runningHubChannel
+          : undefined,
+      runningHubWorkflowId:
+        typeof record.runningHubWorkflowId === "string"
+          ? record.runningHubWorkflowId
+          : undefined,
+      effectivePromptOverride:
+        typeof record.effectivePromptOverride === "string"
+          ? record.effectivePromptOverride
           : undefined,
       referenceImages: Array.isArray(record.referenceImages)
         ? record.referenceImages
@@ -517,6 +655,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "image_generation",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeImageGenerationNodeData(parsed),
+      };
+    case "video_generation":
+      return {
+        id: record.id,
+        type: "video_generation",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeVideoGenerationNodeData(parsed),
       };
     case "ai_text_result":
       return {

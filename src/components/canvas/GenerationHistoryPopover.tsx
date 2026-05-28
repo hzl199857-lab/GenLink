@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
-import { Maximize2 } from 'lucide-react';
+import { Maximize2, Play } from 'lucide-react';
 import type { ImageHistoryItem, ProjectOutputHistoryItem } from '@/types/canvas';
 import { useCanvasStore } from '@/store/canvas-store';
 
@@ -146,10 +146,11 @@ export function GenerationHistoryPopover({
     () => items.filter((item) => item.kind === 'video'),
     [items],
   );
-  const groups = useMemo(() => groupHistoryItems(imageItems), [imageItems]);
+  const imageGroups = useMemo(() => groupHistoryItems(imageItems), [imageItems]);
+  const videoGroups = useMemo(() => groupHistoryItems(videoItems), [videoItems]);
 
   const handleSelectItem = async (item: ProjectOutputHistoryItem) => {
-    if (selectingItemId || !item.nodeData) {
+    if (selectingItemId || item.kind !== 'image' || !item.nodeData) {
       return;
     }
 
@@ -239,24 +240,48 @@ export function GenerationHistoryPopover({
               暂无视频历史
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-2.5">
-              {videoItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex h-[68px] items-center rounded-md border border-white/8 bg-black/20 px-3 text-[11px] text-white/72"
-                >
-                  {item.fileName}
-                </div>
+            <div className="space-y-3.5 pb-3.5">
+              {videoGroups.map((group) => (
+                <section key={group.date}>
+                  <h3 className="mb-2 text-[11px] font-semibold leading-none text-white/68">
+                    {group.date}
+                  </h3>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="group relative h-[92px] overflow-hidden rounded-md bg-black/30 text-left outline-none ring-1 ring-white/0 transition hover:scale-[1.015] hover:ring-white/36 focus-visible:ring-white/70"
+                        title={item.fileName}
+                      >
+                        <video
+                          src={item.previewUrl}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          className="h-full w-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/5 to-transparent opacity-90" />
+                        <div className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white/86 shadow-[0_6px_16px_rgba(0,0,0,0.35)]">
+                          <Play size={13} fill="currentColor" strokeWidth={1.8} />
+                        </div>
+                        <div className="absolute bottom-1.5 left-1.5 right-1.5 truncate text-[9px] font-medium leading-4 text-white/78">
+                          {item.fileName}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           )
-        ) : groups.length === 0 ? (
+        ) : imageGroups.length === 0 ? (
           <div className="flex h-full items-center justify-center text-[10px] text-white/34">
             暂无图片历史
           </div>
         ) : (
           <div className="space-y-3.5 pb-3.5">
-            {groups.map((group) => (
+            {imageGroups.map((group) => (
               <section key={group.date}>
                 <h3 className="mb-2 text-[11px] font-semibold leading-none text-white/68">
                   {group.date}
