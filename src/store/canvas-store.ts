@@ -832,46 +832,47 @@ async function uploadImageBlobToOss(
   fileName?: string,
   folder = "references",
 ): Promise<string> {
-  const dataUrl = await blobToDataUrl(blob);
-  const response = await fetch("/api/image-hosting/upload", {
+  const contentType = blob.type || "image/png";
+  const targetResponse = await fetch("/api/image-hosting/upload-url", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      dataUrl,
       fileName,
       folder,
-      forceOss: true,
+      contentType,
     }),
   });
-  const json = await readJsonResponse<
-    | { ok: true; result: { imageUrl: string } }
+  const targetJson = await readJsonResponse<
+    | {
+        ok: true;
+        result: {
+          uploadUrl: string;
+          imageUrl: string;
+          headers: Record<string, string>;
+        };
+      }
     | ApiErrorResponse
-  >(response, "Failed to upload image to OSS");
+  >(targetResponse, "Failed to create OSS upload URL");
 
-  if (!response.ok || !json.ok) {
-    throw new Error("error" in json ? json.error : "Failed to upload image to OSS");
+  if (!targetResponse.ok || !targetJson.ok) {
+    throw new Error(
+      "error" in targetJson ? targetJson.error : "Failed to create OSS upload URL",
+    );
   }
 
-  return json.result.imageUrl;
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === "string" && reader.result.trim()) {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error("Failed to read image data"));
-    };
-    reader.onerror = () => reject(new Error("Failed to read image data"));
-    reader.readAsDataURL(blob);
+  const uploadResponse = await fetch(targetJson.result.uploadUrl, {
+    method: "PUT",
+    headers: targetJson.result.headers,
+    body: blob,
   });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
+  }
+
+  return targetJson.result.imageUrl;
 }
 
 async function uploadReferenceBlobToOss(
@@ -1032,8 +1033,12 @@ function isLocalImageHostingUrl(value: string): boolean {
 function shouldHostReferenceImageBeforeRequest(value: string): boolean {
   const trimmed = value.trim();
 
-  if (!trimmed || trimmed.startsWith("data:") || isLocalImageHostingUrl(trimmed)) {
+  if (!trimmed || isLocalImageHostingUrl(trimmed)) {
     return false;
+  }
+
+  if (trimmed.startsWith("data:")) {
+    return SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES;
   }
 
   return isObjectUrl(trimmed) || isSameOriginUrl(trimmed);
@@ -1048,6 +1053,11 @@ async function hostReferenceImageForRequest(image: {
     url,
     "Failed to read reference image before local upload",
   );
+
+  if (SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES) {
+    return uploadReferenceBlobToOss(blob, image.fileName);
+  }
+
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
 
