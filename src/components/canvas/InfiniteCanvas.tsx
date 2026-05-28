@@ -129,6 +129,9 @@ let notifyImageToolbarAction:
 let notifyUploadedImageToolbarAction:
   | ((action: ImageGenerationToolbarAction, nodeId: string, data: UploadedImageNodeData, cardLayout: { left: number; top: number; width: number; height: number } | null) => void)
   | null = null;
+let notifyImageNodeCropRequest:
+  | ((nodeId: string, data: ImageNodeData, cardDimensions: { width: number; height: number }, imageUrl: string) => void)
+  | null = null;
 let notifyMaterialLibraryRequest:
   | ((source: PendingMaterialSource) => void)
   | null = null;
@@ -1466,6 +1469,7 @@ const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data
 const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateThreeViewImage = useCanvasStore((s) => s.generateThreeViewImageFromNode);
+  const splitImageNodeToGrid = useCanvasStore((s) => s.splitImageNodeToGrid);
   const threeViewControllerNodeId = useCanvasStore((s) => s.threeViewControllerNodeId);
   const setThreeViewControllerNodeId = useCanvasStore((s) => s.setThreeViewControllerNodeId);
   const animateFocusViewport = useThreeViewFocusAnimator();
@@ -1512,10 +1516,10 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
         notifyCanvasImageInfoRequest?.(id);
         break;
       case 'pan':
-    focusNodeViewport();
-    setThreeViewControllerNodeId(threeViewOpen ? null : id);
-      notifyCanvasNodeSelect?.(id);
-      break;
+        focusNodeViewport();
+        setThreeViewControllerNodeId(threeViewOpen ? null : id);
+        notifyCanvasNodeSelect?.(id);
+        break;
       case 'panorama-360':
         void useCanvasStore.getState().createPanorama360FromImageNode(id)
           .then((nextNodeId) => {
@@ -1528,6 +1532,28 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
             window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
           });
         break;
+      case 'crop': {
+        const imageUrl = imageData.hostedImageUrl?.trim() || imageData.imageUrl?.trim();
+
+        if (!imageUrl) {
+          break;
+        }
+
+        notifyImageNodeCropRequest?.(id, imageData, cardDimensions, imageUrl);
+        break;
+      }
+      case 'split-2x2-crop':
+      case 'split-3x3-crop':
+      case 'split-5x5-crop': {
+        const dimension = action === 'split-2x2-crop' ? 2 : action === 'split-3x3-crop' ? 3 : 5;
+        void splitImageNodeToGrid(id, dimension).catch((error) => {
+          console.error('split image node failed', error);
+          const message = error instanceof Error ? error.message : 'split image failed';
+          useCanvasStore.getState().setSaveMessage(message);
+          window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+        });
+        break;
+      }
       default:
         break;
     }
@@ -4163,7 +4189,7 @@ function clampCropRect(rect: CropRect): CropRect {
 
 type CropOverlayData = {
   nodeId: string;
-  nodeType: 'image_generation' | 'uploaded_image';
+  nodeType: 'image_generation' | 'uploaded_image' | 'image';
   imageUrl: string;
   nodeData: ImageGenerationNodeData;
   nodePosition: { x: number; y: number };
@@ -4801,6 +4827,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const cropImageGenerationNode = useCanvasStore((s) => s.cropImageGenerationNode);
   const splitUploadedImageNodeToGrid = useCanvasStore((s) => s.splitUploadedImageNodeToGrid);
   const cropUploadedImageNode = useCanvasStore((s) => s.cropUploadedImageNode);
+  const cropImageNode = useCanvasStore((s) => s.cropImageNode);
   const updateNodePosition = useCanvasStore((s) => s.updateNodePosition);
   const deleteNode = useCanvasStore((s) => s.deleteNode);
   const deleteNodes = useCanvasStore((s) => s.deleteNodes);
@@ -5452,6 +5479,66 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setViewport,
     showProjectMessage,
     splitUploadedImageNodeToGrid,
+    storeNodes,
+  ]);
+
+  useEffect(() => {
+    notifyImageNodeCropRequest = (nodeId, data, cardDimensions, imageUrl) => {
+      const targetNode = storeNodes.find(
+        (node): node is Extract<CanvasNode, { type: 'image' }> =>
+          node.id === nodeId && node.type === 'image',
+      );
+
+      if (!targetNode) {
+        return;
+      }
+
+      const ADAPTER_PADDING_TOP = 74;
+      const cardW = cardDimensions.width;
+      const cardH = cardDimensions.height;
+      const cardLeft = 0;
+      const cardTop = ADAPTER_PADDING_TOP + 22;
+
+      cropPrevViewportRef.current = getViewport();
+
+      const targetZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM,
+        Math.min(
+          (window.innerWidth * 0.72) / cardW,
+          (window.innerHeight * 0.72) / cardH,
+        ),
+      ));
+      const cardCenterX = targetNode.position.x + cardLeft + cardW / 2;
+      const cardCenterY = targetNode.position.y + cardTop + cardH / 2;
+      void setViewport({
+        x: window.innerWidth / 2 - cardCenterX * targetZoom,
+        y: window.innerHeight / 2 - cardCenterY * targetZoom,
+        zoom: targetZoom,
+      }, { duration: 520 });
+
+      setImageInfoPopover(null);
+      setImageLightbox(null);
+      setCropMode({
+        nodeId: targetNode.id,
+        nodeType: 'image',
+        imageUrl,
+        nodeData: {} as ImageGenerationNodeData,
+        nodePosition: targetNode.position,
+        cardLeft,
+        cardTop,
+        cardWidth: cardW,
+        cardHeight: cardH,
+        imageNaturalWidth: data.width || cardW,
+        imageNaturalHeight: data.height || cardH,
+      });
+    };
+
+    return () => {
+      notifyImageNodeCropRequest = null;
+    };
+  }, [
+    getViewport,
+    setCropMode,
+    setViewport,
     storeNodes,
   ]);
 
@@ -6971,6 +7058,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     try {
       if (nodeType === 'uploaded_image') {
         await cropUploadedImageNode(nodeId, cropRect);
+      } else if (nodeType === 'image') {
+        await cropImageNode(nodeId, cropRect);
       } else {
         await cropImageGenerationNode(nodeId, cropRect);
       }
@@ -6978,7 +7067,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       setSaveMessage(error instanceof Error ? error.message : '裁剪失败');
       window.setTimeout(() => setSaveMessage(null), 2200);
     }
-  }, [cropImageGenerationNode, cropUploadedImageNode, cropMode?.nodeType, setSaveMessage]);
+  }, [cropImageGenerationNode, cropImageNode, cropUploadedImageNode, cropMode?.nodeType, setSaveMessage]);
 
   const handleGroup = useCallback((nodeIds: string[]) => {
     if (nodeIds.length < 2) return;
