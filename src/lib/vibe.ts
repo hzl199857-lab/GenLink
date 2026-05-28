@@ -183,6 +183,7 @@ export interface GenerateImageParams {
   n?: number;
   provider?: ImageApiProvider;
   runningHubChannel?: RunningHubChannel;
+  runningHubWorkflowId?: string;
   apiKey?: string;
   images?: Array<{
     url: string;
@@ -397,6 +398,7 @@ interface RunningHubTaskResponse {
 interface RunningHubUploadResponse {
   code?: number;
   message?: string;
+  msg?: string;
   data?: {
     type?: string;
     download_url?: string;
@@ -1598,6 +1600,69 @@ async function uploadRunningHubReferenceImage(
   }
 
   return downloadUrl;
+}
+
+async function uploadRunningHubWorkflowImage(
+  image: {
+    url: string;
+    fileName?: string;
+  },
+  apiKey?: string,
+): Promise<string> {
+  const formData = new FormData();
+  formData.append(
+    "file",
+    await createImageFilePart(image, 0),
+    getSafeMultipartFileName(image.fileName, "workflow-reference"),
+  );
+
+  const json = await requestFormWithBaseUrl<RunningHubUploadResponse>(
+    RUNNINGHUB_BASE_URL,
+    "/openapi/v2/media/upload/binary",
+    formData,
+    apiKey,
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "RunningHub",
+  );
+
+  if (json.code !== 0) {
+    throw new VibeApiError(
+      502,
+      json.message || json.msg || "RunningHub workflow image upload failed",
+      json,
+    );
+  }
+
+  const fileName = json.data?.fileName?.trim();
+
+  if (!fileName) {
+    throw new VibeApiError(
+      502,
+      "RunningHub workflow image upload returned no fileName",
+      json,
+    );
+  }
+
+  return fileName;
+}
+
+async function resolveRunningHubWorkflowImageFileName(
+  images?: Array<{
+    url: string;
+    fileName?: string;
+  }>,
+  apiKey?: string,
+): Promise<string> {
+  const image = images?.find((item) => item.url.trim());
+
+  if (!image) {
+    throw new VibeApiError(
+      400,
+      "RunningHub workflow requires one source image",
+    );
+  }
+
+  return uploadRunningHubWorkflowImage(image, apiKey);
 }
 
 async function resolveRunningHubReferenceImageUrls(
@@ -2918,6 +2983,70 @@ export async function submitRunningHubImageTask(
   params: GenerateImageParams,
 ): Promise<GenerateImageTaskResult> {
   const model = params.model ?? DEFAULT_IMAGE_MODEL;
+  const workflowId = params.runningHubWorkflowId?.trim();
+
+  if (workflowId) {
+    const imageFileName = await resolveRunningHubWorkflowImageFileName(
+      params.images,
+      params.apiKey,
+    );
+    const requestBody = {
+      apiKey: assertConfigured(params.apiKey),
+      workflowId,
+      nodeInfoList: [
+        {
+          nodeId: "41",
+          fieldName: "image",
+          fieldValue: imageFileName,
+        },
+        {
+          nodeId: "156",
+          fieldName: "text",
+          fieldValue: params.prompt,
+        },
+      ],
+    };
+
+    const json = await requestJsonWithBaseUrl<RunningHubTaskResponse>(
+      RUNNINGHUB_BASE_URL,
+      "/task/openapi/create",
+      requestBody,
+      params.apiKey,
+      createHeaders,
+      IMAGE_REQUEST_TIMEOUT_MS,
+      "RunningHub",
+    );
+    const upstreamCode =
+      typeof json.code === "number" || typeof json.code === "string"
+        ? String(json.code)
+        : "";
+
+    if (upstreamCode && upstreamCode !== "0") {
+      throw new VibeApiError(502, getRunningHubErrorMessage(json), json);
+    }
+
+    const taskId = extractRunningHubTaskId(json);
+
+    if (!taskId) {
+      throw new VibeApiError(502, getRunningHubErrorMessage(json), json);
+    }
+
+    const status = extractRunningHubStatus(json);
+
+    if (status === "FAILED" || status === "FAILURE" || status === "ERROR") {
+      throw new VibeApiError(
+        502,
+        getRunningHubErrorMessage(json),
+        json,
+      );
+    }
+
+    return {
+      taskId,
+      model,
+    };
+  }
+
   const size = params.size ?? DEFAULT_IMAGE_SIZE;
   const channel = resolveRunningHubChannel(params.runningHubChannel);
   const imageUrls = await resolveRunningHubReferenceImageUrls(

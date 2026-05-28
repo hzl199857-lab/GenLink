@@ -121,6 +121,7 @@ interface ImageRequestBody {
   outputFormat?: unknown;
   moderation?: unknown;
   runningHubChannel?: unknown;
+  runningHubWorkflowId?: unknown;
   n?: unknown;
   provider?: unknown;
   apiKey?: unknown;
@@ -136,6 +137,7 @@ interface ImageJobParams {
   outputFormat?: string;
   moderation?: string;
   runningHubChannel?: "official" | "low-cost";
+  runningHubWorkflowId?: string;
   n?: number;
   provider?: ImageApiProvider;
   apiKey?: string;
@@ -1445,6 +1447,10 @@ export async function POST(request: Request) {
         typeof body.moderation === "string" ? body.moderation : undefined,
       runningHubChannel:
         body.runningHubChannel === "low-cost" ? "low-cost" : "official",
+      runningHubWorkflowId:
+        typeof body.runningHubWorkflowId === "string"
+          ? body.runningHubWorkflowId.trim() || undefined
+          : undefined,
       n: typeof body.n === "number" ? body.n : undefined,
       provider,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,

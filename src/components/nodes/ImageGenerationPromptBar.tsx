@@ -799,7 +799,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
               <div className="flex items-center gap-2 overflow-x-auto pr-1 nodrag nopan">
                 {connectedImages.map((image, index) => (
                   <div
-                    key={image.id}
+                    key={`${image.id}-${image.imageUrl}-${index}`}
                     className="group/reference-thumb relative h-11 w-11 shrink-0"
                   >
                     <div

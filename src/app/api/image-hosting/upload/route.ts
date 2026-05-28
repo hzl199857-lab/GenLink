@@ -10,6 +10,7 @@ interface UploadImageRequestBody {
   imageUrl?: unknown;
   fileName?: unknown;
   folder?: unknown;
+  forceOss?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -18,16 +19,18 @@ export async function POST(request: Request) {
 
     const fileName = typeof body.fileName === "string" ? body.fileName : undefined;
     const folder = typeof body.folder === "string" ? body.folder : undefined;
+    const forceOss = body.forceOss === true;
     let imageUrl: string;
 
     if (typeof body.dataUrl === "string" && body.dataUrl.trim() !== "") {
-      imageUrl = await saveImageDataUrl(body.dataUrl, fileName, folder);
+      imageUrl = await saveImageDataUrl(body.dataUrl, fileName, folder, { forceOss });
     } else if (typeof body.imageUrl === "string" && body.imageUrl.trim() !== "") {
       const sourceUrl = body.imageUrl.trim();
       imageUrl = await saveRemoteImageUrl(
         sourceUrl.startsWith("/") ? new URL(sourceUrl, request.url).toString() : sourceUrl,
         fileName,
         folder,
+        { forceOss },
       );
     } else {
       return NextResponse.json(

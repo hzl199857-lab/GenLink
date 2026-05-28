@@ -2,7 +2,10 @@
 
 import { create } from "zustand";
 
-import { stripImagePromptSectionLabels } from "@/lib/image-prompt";
+import {
+  buildThreeViewPrompt,
+  stripImagePromptSectionLabels,
+} from "@/lib/image-prompt";
 import {
   parseReferenceMentions,
   reconcileReferenceMentionTokens,
@@ -100,6 +103,8 @@ const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
+const IMAGE_JOB_SUBMIT_RETRY_COUNT = 3;
+const IMAGE_JOB_SUBMIT_RETRY_DELAY_MS = 800;
 const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase();
 const SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES =
@@ -152,6 +157,7 @@ export type StoredApiSettings = {
   imageProvider: ApiProvider;
   textApiKeys: Record<ApiProvider, string>;
   imageApiKeys: Record<ApiProvider, string>;
+  runningHubWorkflowApiKey: string;
 };
 
 const DEFAULT_API_PROVIDER: ApiProvider = "vibe";
@@ -177,10 +183,12 @@ export const CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersImageA
 export const CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyImageApiKey";
 export const CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY = "genlink.zhenzhenImageApiKey";
 export const CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY = "genlink.runninghubImageApiKey";
+export const CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY = "genlink.runninghubWorkflowApiKey";
 export const CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY = "genlink.grsaiImageApiKey";
 const CANVAS_TEXT_MODEL_STORAGE_KEY = "genlink.textModel";
 const CANVAS_IMAGE_MODEL_STORAGE_KEY = "genlink.imageModel";
 const CANVAS_IMAGE_RUNNINGHUB_CHANNEL_STORAGE_KEY = "genlink.imageRunningHubChannel";
+const THREE_VIEW_RUNNINGHUB_WORKFLOW_ID = "2059192086624296961";
 
 type StoredImageModelSelection = {
   provider: ApiProvider;
@@ -312,6 +320,10 @@ export function readStoredApiKey(
   return readStoredValue(getApiKeyStorageKey(kind, provider));
 }
 
+export function readStoredRunningHubWorkflowApiKey(): string {
+  return readStoredValue(CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY);
+}
+
 export function readStoredApiSettings(): StoredApiSettings {
   return {
     textProvider: readStoredSelectedApiProvider("text"),
@@ -332,7 +344,18 @@ export function readStoredApiSettings(): StoredApiSettings {
       runninghub: readStoredApiKey("image", "runninghub"),
       grsai: readStoredApiKey("image", "grsai"),
     },
+    runningHubWorkflowApiKey: readStoredRunningHubWorkflowApiKey(),
   };
+}
+
+function assertStoredRunningHubWorkflowApiKey(): string {
+  const apiKey = readStoredRunningHubWorkflowApiKey();
+
+  if (!apiKey) {
+    throw new Error("Please configure the RunningHub workflow API Key in API settings first.");
+  }
+
+  return apiKey;
 }
 
 function assertStoredApiKey(kind: ApiModelKind, provider: ApiProvider): string {
@@ -379,6 +402,46 @@ type ConnectedImagePayload = {
   width?: number;
   height?: number;
 };
+
+function getConnectedImageDedupKey(image: ConnectedImagePayload): string {
+  const originalUrl = image.originalImageUrl?.trim();
+  const hostedUrl = image.hostedImageUrl?.trim();
+  const imageUrl = image.imageUrl.trim();
+
+  if (image.sourceType !== "inline_reference") {
+    return `node:${image.id}`;
+  }
+
+  return `url:${hostedUrl || imageUrl || originalUrl || image.id}`;
+}
+
+function dedupeConnectedImages(
+  images: ConnectedImagePayload[],
+): ConnectedImagePayload[] {
+  const seen = new Set<string>();
+  const deduped: ConnectedImagePayload[] = [];
+
+  for (const image of images) {
+    const keys = [
+      getConnectedImageDedupKey(image),
+      image.originalImageUrl?.trim() ? `url:${image.originalImageUrl.trim()}` : null,
+      image.hostedImageUrl?.trim() ? `url:${image.hostedImageUrl.trim()}` : null,
+      image.imageUrl.trim() ? `url:${image.imageUrl.trim()}` : null,
+      image.id ? `node:${image.id}` : null,
+    ].filter((key): key is string => Boolean(key));
+
+    if (keys.some((key) => seen.has(key))) {
+      continue;
+    }
+
+    for (const key of keys) {
+      seen.add(key);
+    }
+    deduped.push(image);
+  }
+
+  return deduped;
+}
 
 type CanvasImageSource = {
   imageUrl: string;
@@ -764,66 +827,51 @@ async function resolveImageSourceDimensions(source: CanvasImageSource): Promise<
   }
 }
 
-async function createOssUploadTarget(params: {
-  fileName?: string;
-  contentType: string;
-  folder?: string;
-}): Promise<{
-  uploadUrl: string;
-  imageUrl: string;
-  headers?: Record<string, string>;
-}> {
-  const response = await fetch("/api/image-hosting/upload-url", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(params),
-  });
-
-  const json = await readJsonResponse<
-    | {
-        ok: true;
-        result: {
-          uploadUrl: string;
-          imageUrl: string;
-          headers?: Record<string, string>;
-        };
-      }
-    | ApiErrorResponse
-  >(response, "Failed to create image upload URL");
-
-  if (!response.ok || !json.ok) {
-    throw new Error("error" in json ? json.error : "Failed to create image upload URL");
-  }
-
-  return json.result;
-}
-
 async function uploadImageBlobToOss(
   blob: Blob,
   fileName?: string,
   folder = "references",
 ): Promise<string> {
-  const target = await createOssUploadTarget({
-    fileName,
-    contentType: blob.type || "image/png",
-    folder,
-  });
-  const response = await fetch(target.uploadUrl, {
-    method: "PUT",
+  const dataUrl = await blobToDataUrl(blob);
+  const response = await fetch("/api/image-hosting/upload", {
+    method: "POST",
     headers: {
-      "Content-Type": blob.type || "image/png",
-      ...(target.headers ?? {}),
+      "Content-Type": "application/json",
     },
-    body: blob,
+    body: JSON.stringify({
+      dataUrl,
+      fileName,
+      folder,
+      forceOss: true,
+    }),
   });
+  const json = await readJsonResponse<
+    | { ok: true; result: { imageUrl: string } }
+    | ApiErrorResponse
+  >(response, "Failed to upload image to OSS");
 
-  if (!response.ok) {
-    throw new Error(`Failed to upload reference image (${response.status})`);
+  if (!response.ok || !json.ok) {
+    throw new Error("error" in json ? json.error : "Failed to upload image to OSS");
   }
 
-  return target.imageUrl;
+  return json.result.imageUrl;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string" && reader.result.trim()) {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Failed to read image data"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read image data"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function uploadReferenceBlobToOss(
@@ -831,6 +879,35 @@ async function uploadReferenceBlobToOss(
   fileName?: string,
 ): Promise<string> {
   return uploadImageBlobToOss(blob, fileName, "references");
+}
+
+async function readReferenceImageBlob(
+  imageUrl: string,
+  failureContext: string,
+): Promise<Blob> {
+  const url = imageUrl.trim();
+  const shouldReadViaProxy = /^https?:\/\//i.test(url) && !isSameOriginUrl(url);
+  const response = shouldReadViaProxy
+    ? await fetch("/api/image-hosting/read", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ imageUrl: url }),
+      })
+    : await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`${failureContext} (${response.status})`);
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "";
+
+  if (contentType && !contentType.startsWith("image/")) {
+    throw new Error("Reference image URL did not return an image");
+  }
+
+  return response.blob();
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -877,16 +954,14 @@ async function normalizeReferenceImageViaOss(image: {
   }
 
   if (isObjectUrl(url) || isSameOriginUrl(url) || /^https?:\/\//i.test(url)) {
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to read reference image before OSS upload (${response.status})`,
-      );
-    }
-
     return {
-      url: await uploadReferenceBlobToOss(await response.blob(), image.fileName),
+      url: await uploadReferenceBlobToOss(
+        await readReferenceImageBlob(
+          url,
+          "Failed to read reference image before OSS upload",
+        ),
+        image.fileName,
+      ),
       fileName: image.fileName,
     };
   }
@@ -969,21 +1044,10 @@ async function hostReferenceImageForRequest(image: {
   fileName?: string;
 }): Promise<string> {
   const url = image.imageUrl.trim();
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to read reference image before local upload (${response.status})`,
-    );
-  }
-
-  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "";
-
-  if (contentType && !contentType.startsWith("image/")) {
-    throw new Error("Reference image URL did not return an image");
-  }
-
-  const blob = await response.blob();
+  const blob = await readReferenceImageBlob(
+    url,
+    "Failed to read reference image before local upload",
+  );
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
 
@@ -1264,6 +1328,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function isFetchNetworkError(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    /failed to fetch|networkerror|load failed/i.test(error.message)
+  );
+}
+
 function isObjectUrl(value?: string): boolean {
   return typeof value === "string" && value.startsWith("blob:");
 }
@@ -1455,6 +1526,16 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
     }
 
     if (node.type !== "image_generation") {
+      if (node.type === "image") {
+        if (isObjectUrl(node.data.hostedImageUrl)) {
+          urls.add(node.data.hostedImageUrl as string);
+        }
+
+        if (isObjectUrl(node.data.imageUrl)) {
+          urls.add(node.data.imageUrl);
+        }
+      }
+
       continue;
     }
 
@@ -1610,6 +1691,7 @@ async function submitImageGenerationJob(params: {
   outputFormat?: string;
   moderation?: string;
   runningHubChannel?: "official" | "low-cost";
+  runningHubWorkflowId?: string;
   apiKey?: string;
   provider?: ApiProvider;
   historyNodeData?: ImageGenerationNodeData;
@@ -1618,13 +1700,37 @@ async function submitImageGenerationJob(params: {
     fileName?: string;
   }>;
 }): Promise<ImageGenerationRunResult> {
-  const response = await fetch("/api/ai/image", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(params),
-  });
+  let response: Response | undefined;
+  let lastNetworkError: unknown;
+
+  for (let attempt = 1; attempt <= IMAGE_JOB_SUBMIT_RETRY_COUNT; attempt += 1) {
+    try {
+      response = await fetch("/api/ai/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params),
+      });
+      break;
+    } catch (error) {
+      lastNetworkError = error;
+
+      if (!isFetchNetworkError(error) || attempt === IMAGE_JOB_SUBMIT_RETRY_COUNT) {
+        break;
+      }
+
+      await sleep(IMAGE_JOB_SUBMIT_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  if (!response) {
+    throw new Error(
+      isFetchNetworkError(lastNetworkError)
+        ? "图像生成请求发送失败，请检查本地服务或网络连接后重试"
+        : toErrorMessage(lastNetworkError),
+    );
+  }
 
   const json = await readJsonResponse<
     | {
@@ -2192,10 +2298,10 @@ function getImageGenerationReferenceImages(
     return [];
   }
 
-  return [
+  return dedupeConnectedImages([
     ...getInlineReferenceImagesForImageGenerationNode(imageGenerationNode),
     ...getConnectedImagesForTargetNode(nodes, edges, imageGenerationNodeId),
-  ];
+  ]);
 }
 
 function getConnectedTextPromptForTargetNode(
@@ -2245,6 +2351,7 @@ export interface CanvasState {
   saveMessage: string | null;
   undoStack: CanvasHistorySnapshot[];
   redoStack: CanvasHistorySnapshot[];
+  threeViewControllerNodeId: string | null;
 
   addNode: (node: CanvasNode) => void;
   addNodes: (nodes: CanvasNode[]) => void;
@@ -2277,6 +2384,10 @@ export interface CanvasState {
     promptOverride?: string,
     options?: ImageGenerationRunOptions,
   ) => Promise<void>;
+  generateThreeViewImageFromNode: (
+    nodeId: string,
+    cameraAngle: { rotation: number; pitch: number; scale: number },
+  ) => Promise<string>;
   splitImageGenerationNodeToGrid: (
     imageGenerationNodeId: string,
     dimension: SplitGridDimension,
@@ -2361,6 +2472,7 @@ export interface CanvasState {
     sizeBytes?: number;
   }) => Promise<void>;
   listCurrentProjectHistory: () => Promise<ProjectOutputHistoryItem[]>;
+  setThreeViewControllerNodeId: (nodeId: string | null) => void;
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -2387,6 +2499,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   saveMessage: null,
   undoStack: [],
   redoStack: [],
+  threeViewControllerNodeId: null,
 
   addNode: (node) => {
     set((state) => ({
@@ -2499,6 +2612,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       groups: state.groups
         .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((nid) => nid !== id) }))
         .filter((g) => g.nodeIds.length > 0),
+      threeViewControllerNodeId:
+        state.threeViewControllerNodeId === id
+          ? null
+          : state.threeViewControllerNodeId,
       dirty: true,
     }));
   },
@@ -2519,6 +2636,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       groups: state.groups
         .map((g) => ({ ...g, nodeIds: g.nodeIds.filter((nid) => !idSet.has(nid)) }))
         .filter((g) => g.nodeIds.length > 0),
+      threeViewControllerNodeId:
+        state.threeViewControllerNodeId && idSet.has(state.threeViewControllerNodeId)
+          ? null
+          : state.threeViewControllerNodeId,
       dirty: true,
     }));
   },
@@ -2837,6 +2958,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  setThreeViewControllerNodeId: (nodeId) => {
+    set({ threeViewControllerNodeId: nodeId });
+  },
+
   undo: () => {
     set((state) => {
       const previous = state.undoStack[state.undoStack.length - 1];
@@ -2949,6 +3074,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const normalizedPromptOverride = promptOverride?.trim();
       const directPrompt =
         normalizedPromptOverride || latestImageGenerationNode.data.prompt?.trim() || "";
+      const hiddenPrompt = latestImageGenerationNode.data.effectivePromptOverride?.trim() || "";
       const connectedImages = selectPromptReferences(
         getImageGenerationReferenceImages(
           latestState.nodes,
@@ -2964,6 +3090,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const effectivePrompt = [
         connectedTextPrompt,
         cleanDirectPrompt,
+        hiddenPrompt,
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -3071,7 +3198,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const parallelCount = resolveParallelCount(
         latestImageGenerationNode.data.parallelCount,
       );
-      const apiKey = assertStoredApiKey("image", imageProvider);
+      const runningHubWorkflowId =
+        latestImageGenerationNode.data.runningHubWorkflowId?.trim();
+      const apiKey = runningHubWorkflowId
+        ? assertStoredRunningHubWorkflowApiKey()
+        : assertStoredApiKey("image", imageProvider);
       const imageQuality = options?.quality ?? latestImageGenerationNode.data.quality;
       const imageAspectRatio = options?.aspectRatio ?? latestImageGenerationNode.data.aspectRatio;
       const size = resolveImageSize(
@@ -3089,19 +3220,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         outputFormat,
         moderation,
         runningHubChannel: latestImageGenerationNode.data.runningHubChannel,
+        runningHubWorkflowId,
         provider: imageProvider,
         apiKey,
         images: requestImages,
       };
-      const historyDisplayPrompt = directPrompt
-        ? stripImagePromptSectionLabels(directPrompt)
-        : stripImagePromptSectionLabels(effectivePrompt);
+      const historyDisplayPrompt = stripImagePromptSectionLabels(directPrompt);
       const historyNodeData: ImageGenerationNodeData = {
         ...latestImageGenerationNode.data,
         prompt: historyDisplayPrompt,
         aspectRatio: imageAspectRatio,
         quality: imageQuality,
-        effectivePromptOverride: undefined,
+        effectivePromptOverride: hiddenPrompt || undefined,
         referenceImages: referenceImages.map((image, index) => {
           const requestImageUrl = requestImages?.[index]?.url || image.hostedImageUrl || image.imageUrl;
 
@@ -3781,6 +3911,229 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set({ error: message });
       throw error;
     }
+  },
+
+  generateThreeViewImageFromNode: async (nodeId, cameraAngle) => {
+    const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === nodeId);
+
+    if (!sourceNode) {
+      throw new Error("Source node not found");
+    }
+
+    const source = getCanvasImageSource(sourceNode);
+
+    if (!source) {
+      throw new Error("Source image is missing");
+    }
+
+    const sourceDimensions = await resolveImageSourceDimensions(source);
+    const sourceWidth = sourceDimensions.width ?? source.width;
+    const sourceHeight = sourceDimensions.height ?? source.height;
+    const imageProvider: ApiProvider = "runninghub";
+    const model = "runninghub-workflow-3d-view";
+    const prompt = buildThreeViewPrompt(cameraAngle);
+    const referenceImage: ConnectedImagePayload = {
+      id: sourceNode.id,
+      imageUrl: source.hostedImageUrl?.trim() || source.imageUrl,
+      hostedImageUrl: source.hostedImageUrl,
+      fileName: source.fileName,
+      width: sourceWidth,
+      height: sourceHeight,
+      alt: source.alt,
+      previewUrl: source.imageUrl,
+      originalImageUrl: source.imageUrl,
+      sourceType: "image",
+    };
+    const newNodeId = crypto.randomUUID();
+    const nodeTitle = sourceNode.type === "image" ? sourceNode.data.title || "Image" : "3D视角";
+    const sourceDisplay = getCanvasImageNodeDisplayDimensions(
+      sourceNode,
+      sourceWidth,
+      sourceHeight,
+    );
+    const placeholderNode: CanvasNode = {
+      id: newNodeId,
+      type: "image",
+      position: {
+        x: sourceNode.position.x + sourceDisplay.width + SPLIT_OUTPUT_GROUP_GAP,
+        y: sourceNode.position.y,
+      },
+      data: {
+        title: nodeTitle,
+        imageUrl: "",
+        prompt,
+        model,
+        width: sourceWidth,
+        height: sourceHeight,
+        generatedAt: nowIso(),
+        sourceImageNodeId: sourceNode.id,
+        cameraAngle,
+        status: "generating",
+      },
+    };
+    set((currentState) => ({
+      ...createUndoHistoryUpdate(currentState),
+      nodes: [...currentState.nodes, placeholderNode],
+      dirty: true,
+      error: null,
+    }));
+    try {
+      const requestImages = await normalizeReferenceImagesForRequest([referenceImage]);
+      const apiKey = assertStoredRunningHubWorkflowApiKey();
+      const historyNodeData: ImageGenerationNodeData = {
+        title: nodeTitle,
+        prompt,
+        effectivePromptOverride: prompt,
+        provider: imageProvider,
+        model,
+        runningHubWorkflowId: THREE_VIEW_RUNNINGHUB_WORKFLOW_ID,
+        aspectRatio: "auto",
+        quality: "2K",
+        detail: "medium",
+        outputFormat: "png",
+        moderation: "auto",
+        parallelCount: 1,
+        referenceImages: [{
+          id: sourceNode.id,
+          imageUrl: requestImages[0]?.url || referenceImage.imageUrl,
+          hostedImageUrl: requestImages[0]?.url || referenceImage.hostedImageUrl,
+          fileName: referenceImage.fileName,
+          width: sourceWidth,
+          height: sourceHeight,
+        }],
+        cameraAngle,
+        status: "idle",
+      };
+      const result = await submitImageGenerationJob({
+        prompt,
+        model,
+        size: resolveImageSize("2K", "auto", [referenceImage], model, imageProvider),
+        quality: "medium",
+        outputFormat: "png",
+        moderation: "auto",
+        provider: imageProvider,
+        runningHubWorkflowId: THREE_VIEW_RUNNINGHUB_WORKFLOW_ID,
+        apiKey,
+        images: requestImages,
+        historyNodeData,
+      });
+      const primaryImage = result.images[0];
+
+      if (!primaryImage?.imageUrl) {
+        throw new Error("Image generation failed");
+      }
+
+      const generatedAt = nowIso();
+      const persistedSourceUrl = primaryImage.hostedImageUrl?.trim() || primaryImage.imageUrl;
+      let persistedPreviewUrl: string | undefined;
+      let persistedFileName: string | undefined;
+
+      try {
+        const currentProject = get().currentProject;
+
+        if (currentProject) {
+          const persisted = await persistGeneratedOutput(currentProject, {
+            sourceKey: `${newNodeId}:${generatedAt}:${primaryImage.imageUrl}`,
+            imageUrl: persistedSourceUrl,
+            fileName: nodeTitle,
+            generatedAt,
+            nodeData: {
+              ...historyNodeData,
+              generatedImageUrl: primaryImage.imageUrl,
+              generatedHostedImageUrl: primaryImage.hostedImageUrl,
+              generatedImageWidth: primaryImage.width,
+              generatedImageHeight: primaryImage.height,
+              generatedImageFormat: primaryImage.format,
+              generatedImageSizeBytes: primaryImage.sizeBytes,
+              generatedModel: primaryImage.model,
+              generatedAt,
+              generationResults: [{
+                status: "completed",
+                imageUrl: primaryImage.imageUrl,
+                hostedImageUrl: primaryImage.hostedImageUrl,
+                model: primaryImage.model,
+                width: primaryImage.width,
+                height: primaryImage.height,
+                format: primaryImage.format,
+                sizeBytes: primaryImage.sizeBytes,
+                generatedAt,
+              }],
+            },
+            title: nodeTitle,
+            model: primaryImage.model,
+            width: primaryImage.width,
+            height: primaryImage.height,
+            format: primaryImage.format,
+            sizeBytes: primaryImage.sizeBytes,
+          });
+          persistedPreviewUrl = persisted.previewUrl;
+          persistedFileName = persisted.fileName;
+        }
+      } catch (error) {
+        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+      }
+
+      set((currentState) => {
+        const nextNodes = currentState.nodes.map((node) => {
+          if (node.id !== newNodeId || node.type !== "image") {
+            return node;
+          }
+
+          const nextNode: Extract<CanvasNode, { type: "image" }> = {
+            ...node,
+            data: {
+              ...node.data,
+              title: nodeTitle,
+              imageUrl: primaryImage.imageUrl,
+              hostedImageUrl: persistedPreviewUrl || primaryImage.hostedImageUrl,
+              prompt,
+              model: primaryImage.model,
+              width: primaryImage.width,
+              height: primaryImage.height,
+              sizeBytes: primaryImage.sizeBytes,
+              generatedAt,
+              sourceImageNodeId: sourceNode.id,
+              generatedOutputFileName: persistedFileName,
+              cameraAngle,
+              status: "idle",
+              errorMessage: undefined,
+            },
+          };
+
+          return nextNode;
+        });
+
+        return {
+          ...createUndoHistoryUpdate(currentState),
+          nodes: nextNodes,
+          dirty: true,
+          error: null,
+        };
+      });
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        ...createUndoHistoryUpdate(currentState),
+        nodes: currentState.nodes.map((node) =>
+          node.id === newNodeId && node.type === "image"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "error",
+                  errorMessage: message,
+                },
+              }
+            : node,
+        ),
+        dirty: true,
+        error: message,
+      }));
+    }
+
+    return newNodeId;
   },
 
   createPanorama360ScreenshotNode: async (nodeId, capture) => {

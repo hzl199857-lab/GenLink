@@ -52,6 +52,12 @@ export interface ImageGenerationNodeData {
   provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
   runningHubChannel?: "official" | "low-cost";
+  runningHubWorkflowId?: string;
+  cameraAngle?: {
+    rotation: number;
+    pitch: number;
+    scale: number;
+  };
   generatedModel?: string;
   aspectRatio?: string;
   quality?: string;
@@ -106,7 +112,16 @@ export interface ImageNodeData {
   height?: number;
   sizeBytes?: number;
   generatedAt: string;
+  status?: 'idle' | 'generating' | 'error';
+  errorMessage?: string;
   sourcePromptNodeId?: string;
+  sourceImageNodeId?: string;
+  generatedOutputFileName?: string;
+  cameraAngle?: {
+    rotation: number;
+    pitch: number;
+    scale: number;
+  };
 }
 
 export interface UploadedImageNodeData {

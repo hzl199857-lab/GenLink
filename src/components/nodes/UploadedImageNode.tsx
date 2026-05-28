@@ -4,7 +4,7 @@ import React, { useEffect, useRef } from 'react';
 import NextImage from 'next/image';
 import { Position } from 'reactflow';
 import { Image as ImageIcon, Upload } from 'lucide-react';
-import type { UploadedImageNodeData } from '../../types/canvas';
+import type { ImageNodeData, UploadedImageNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 
@@ -16,7 +16,7 @@ export interface UploadedImageCardLayout {
 }
 
 export interface UploadedImageNodeProps {
-  data: UploadedImageNodeData;
+  data: UploadedImageNodeData | ImageNodeData;
   selected?: boolean;
   accessoriesVisible?: boolean;
   onReplace?: (file: File) => void;
@@ -29,6 +29,14 @@ export interface UploadedImageNodeProps {
 const MAX_CARD_WIDTH = 420;
 const MAX_CARD_HEIGHT = 540;
 const MIN_CARD_WIDTH = 300;
+
+function getNodeFileName(data: UploadedImageNodeData | ImageNodeData): string | undefined {
+  return 'fileName' in data ? data.fileName : undefined;
+}
+
+function getNodeDisplayTitle(data: UploadedImageNodeData | ImageNodeData): string | undefined {
+  return data.title || getNodeFileName(data);
+}
 
 export function UploadedImageNode({
   data,
@@ -43,8 +51,8 @@ export function UploadedImageNode({
   const inputRef = useRef<HTMLInputElement>(null);
   const imageWidth = Math.max(data.width || 320, 1);
   const imageHeight = Math.max(data.height || 320, 1);
-  const explicitDisplayWidth = data.displayWidth;
-  const explicitDisplayHeight = data.displayHeight;
+  const explicitDisplayWidth = 'displayWidth' in data ? data.displayWidth : undefined;
+  const explicitDisplayHeight = 'displayHeight' in data ? data.displayHeight : undefined;
   const hasExplicitDisplaySize =
     typeof explicitDisplayWidth === 'number' &&
     explicitDisplayWidth > 0 &&
@@ -82,6 +90,10 @@ export function UploadedImageNode({
       : 'right-3 top-3 rounded-[10px] px-3 py-2 text-[14px]';
   const replaceButtonGapClassName = useTightReplaceButton ? 'gap-1' : useCompactReplaceButton ? 'gap-1.5' : 'gap-2';
   const replaceIconSize = useTightReplaceButton ? 13 : useCompactReplaceButton ? 15 : 16;
+  const canReplace = Boolean(onReplace);
+  const displayTitle = getNodeDisplayTitle(data);
+  const displayAlt = displayTitle || ('prompt' in data ? data.prompt : undefined) || 'Image';
+  const isGenerating = 'status' in data && data.status === 'generating';
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -97,7 +109,7 @@ export function UploadedImageNode({
       <div className="node-visible-title -mt-2 mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
         <ImageIcon size={24} />
         <EditableNodeTitle
-          value={data.title}
+          value={displayTitle}
           fallbackValue="image"
           className="text-[22px] font-medium leading-none"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
@@ -108,6 +120,9 @@ export function UploadedImageNode({
       <div
         className={[
           'node-connectable-card relative overflow-hidden rounded-gl-xl border border-transparent bg-transparent shadow-gl-card cursor-grab transition-all duration-150',
+          isGenerating
+            ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
+            : '',
           selected
             ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
             : 'shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
@@ -122,7 +137,7 @@ export function UploadedImageNode({
         {data.imageUrl ? (
           <NextImage
             src={data.imageUrl}
-            alt={data.fileName || 'Uploaded image'}
+            alt={displayAlt}
             fill
             unoptimized
             sizes={`${cardWidth}px`}
@@ -134,6 +149,8 @@ export function UploadedImageNode({
           </div>
         )}
 
+        {canReplace ? (
+          <>
         <button
           type="button"
           aria-label="替换图片"
@@ -158,6 +175,8 @@ export function UploadedImageNode({
           className="hidden"
           onChange={handleFileChange}
         />
+          </>
+        ) : null}
       </div>
 
       <CardSideHandle

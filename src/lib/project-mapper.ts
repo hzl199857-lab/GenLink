@@ -263,6 +263,22 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
         typeof record.sourcePromptNodeId === "string"
           ? record.sourcePromptNodeId
           : undefined,
+      sourceImageNodeId:
+        typeof record.sourceImageNodeId === "string"
+          ? record.sourceImageNodeId
+          : undefined,
+      generatedOutputFileName:
+        typeof record.generatedOutputFileName === "string"
+          ? record.generatedOutputFileName
+          : undefined,
+      cameraAngle:
+        record.cameraAngle && typeof record.cameraAngle === "object"
+          ? {
+              rotation: normalizeNumber((record.cameraAngle as Record<string, unknown>).rotation, 0),
+              pitch: normalizeNumber((record.cameraAngle as Record<string, unknown>).pitch, 0),
+              scale: normalizeNumber((record.cameraAngle as Record<string, unknown>).scale, 1),
+            }
+          : undefined,
     };
   }
 
@@ -304,6 +320,22 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
     imageUrl: "",
     width: 320,
     height: 320,
+  };
+}
+
+function normalizeUploadedImageNodeDataAsImage(value: unknown): ImageNodeData {
+  const uploaded = normalizeUploadedImageNodeData(value);
+
+  return {
+    title: uploaded.title,
+    imageUrl: uploaded.hostedImageUrl?.trim() || uploaded.imageUrl,
+    hostedImageUrl: uploaded.hostedImageUrl,
+    prompt: uploaded.fileName || uploaded.title || "Image",
+    model: undefined,
+    width: uploaded.width,
+    height: uploaded.height,
+    sizeBytes: uploaded.sizeBytes,
+    generatedAt: new Date(0).toISOString(),
   };
 }
 
@@ -503,9 +535,9 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
     case "uploaded_image":
       return {
         id: record.id,
-        type: "uploaded_image",
+        type: "image",
         position: { x: record.positionX, y: record.positionY },
-        data: normalizeUploadedImageNodeData(parsed),
+        data: normalizeUploadedImageNodeDataAsImage(parsed),
       };
     case "panorama-360":
       return {

@@ -236,8 +236,9 @@ export function Panorama360Node({
     ],
   );
   const generationStatus = data.panorama360Node.panorama.generationStatus ?? 'idle';
+  const isGeneratingPanorama = generationStatus === 'generating';
   const loadState: 'empty' | 'loading' | 'ready' | 'error' =
-    generationStatus === 'generating'
+    isGeneratingPanorama
       ? 'loading'
       : generationStatus === 'error' && !sourceUrl
         ? 'error'
@@ -847,7 +848,9 @@ export function Panorama360Node({
         fullscreen
           ? 'h-full w-full rounded-[14px] border-white/10 shadow-none'
           : 'rounded-gl-xl shadow-gl-card',
-        selected && !fullscreen
+        isGeneratingPanorama && !fullscreen
+          ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
+          : selected && !fullscreen
           ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
           : fullscreen
             ? ''

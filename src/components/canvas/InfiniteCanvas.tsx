@@ -42,6 +42,7 @@ import ReactFlow, {
   SelectionMode,
   type OnConnectStartParams,
   useStore,
+  getViewportForBounds,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -53,6 +54,7 @@ import {
   CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY,
+  CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_API_PROVIDER_STORAGE_KEY,
   CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY,
@@ -68,6 +70,7 @@ import {
   createProjectAtParentDirectory,
   pickProjectParentDirectory,
 } from '@/lib/project-storage';
+import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -88,7 +91,6 @@ import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 import { TextNode } from '../nodes/TextNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
 import { AITextResultNode } from '../nodes/AITextResultNode';
-import { ImageNode } from '../nodes/ImageNode';
 import { Panorama360Node } from '../nodes/Panorama360Node';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
 import { CardSideHandle } from '../nodes/CardSideHandle';
@@ -117,6 +119,8 @@ import {
   type CreateProjectDraft,
 } from '@/components/project/CreateProjectDialog';
 import { DeleteProjectDialog } from '@/components/project/DeleteProjectDialog';
+import { ThreeViewController } from '../nodes/ThreeViewController';
+import type { ThreeViewControllerValue } from '../nodes/ThreeViewController';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
 let notifyImageToolbarAction:
@@ -526,6 +530,130 @@ function resolveUploadedImageCardDimensions(
   };
 }
 
+function resolveImageNodeCardDimensions(
+  data: ImageNodeData,
+): { width: number; height: number } {
+  const imageWidth = Math.max(data.width || 320, 1);
+  const imageHeight = Math.max(data.height || 320, 1);
+  const imageAspectRatio = imageWidth / imageHeight;
+  const fittedWidthByHeight = UPLOADED_IMAGE_MAX_CARD_HEIGHT * imageAspectRatio;
+  const width = Math.min(
+    UPLOADED_IMAGE_MAX_CARD_WIDTH,
+    Math.max(
+      UPLOADED_IMAGE_MIN_CARD_WIDTH,
+      Math.min(imageWidth, fittedWidthByHeight),
+    ),
+  );
+
+  return {
+    width,
+    height: width * (imageHeight / imageWidth),
+  };
+}
+
+function getImageNodeFocusBounds(node: CanvasNode): MultiNodeSelectionBounds {
+  const baseBounds = getEstimatedNodeBounds(node);
+
+  if (node.type === 'image_generation') {
+    const width = Math.max(baseBounds.width, THREE_VIEW_CONTROLLER_WIDTH);
+    return {
+      x: baseBounds.x - Math.max(0, (width - baseBounds.width) / 2),
+      y: baseBounds.y,
+      width,
+      height: baseBounds.height + THREE_VIEW_CONTROLLER_HEIGHT + THREE_VIEW_FOCUS_BOTTOM_PADDING,
+    };
+  }
+
+  if (node.type === 'uploaded_image') {
+    const width = Math.max(baseBounds.width, THREE_VIEW_CONTROLLER_WIDTH);
+
+    return {
+      x: baseBounds.x - Math.max(0, (width - baseBounds.width) / 2),
+      y: baseBounds.y - IMAGE_NODE_TOOLBAR_LIFT,
+      width,
+      height: baseBounds.height + IMAGE_NODE_TOOLBAR_LIFT + THREE_VIEW_CONTROLLER_HEIGHT + THREE_VIEW_FOCUS_BOTTOM_PADDING,
+    };
+  }
+
+  if (node.type === 'image') {
+    const width = Math.max(baseBounds.width, THREE_VIEW_CONTROLLER_WIDTH);
+
+    return {
+      x: baseBounds.x - Math.max(0, (width - baseBounds.width) / 2),
+      y: baseBounds.y - IMAGE_NODE_TOOLBAR_LIFT,
+      width,
+      height: baseBounds.height + IMAGE_NODE_TOOLBAR_LIFT + THREE_VIEW_CONTROLLER_HEIGHT + THREE_VIEW_FOCUS_BOTTOM_PADDING,
+    };
+  }
+
+  return {
+    x: baseBounds.x,
+    y: baseBounds.y,
+    width: Math.max(baseBounds.width, THREE_VIEW_CONTROLLER_WIDTH),
+    height: baseBounds.height + THREE_VIEW_CONTROLLER_HEIGHT + THREE_VIEW_FOCUS_BOTTOM_PADDING,
+  };
+}
+
+function useThreeViewFocusAnimator() {
+  const { setViewport, getViewport } = useReactFlow();
+  const animationFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
+
+  return useCallback(
+    (bounds: { x: number; y: number; width: number; height: number }) => {
+      const flowWidth = window.innerWidth;
+      const flowHeight = window.innerHeight;
+
+      if (!flowWidth || !flowHeight) {
+        return;
+      }
+
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      const target = getViewportForBounds(
+        bounds,
+        flowWidth,
+        flowHeight,
+        CANVAS_MIN_ZOOM,
+        CANVAS_MAX_ZOOM,
+        THREE_VIEW_FOCUS_PADDING,
+      );
+      const startViewport = getViewport();
+      const startTime = performance.now();
+
+      const step = (now: number) => {
+        const progress = Math.min(1, (now - startTime) / THREE_VIEW_FOCUS_ANIMATION_DURATION_MS);
+        const eased = THREE_VIEW_FOCUS_EASE(progress);
+        const nextViewport = {
+          x: startViewport.x + (target.x - startViewport.x) * eased,
+          y: startViewport.y + (target.y - startViewport.y) * eased,
+          zoom: startViewport.zoom + (target.zoom - startViewport.zoom) * eased,
+        };
+
+        void setViewport(nextViewport, { duration: 0 });
+
+        if (progress < 1) {
+          animationFrameRef.current = window.requestAnimationFrame(step);
+        } else {
+          animationFrameRef.current = null;
+        }
+      };
+
+      animationFrameRef.current = window.requestAnimationFrame(step);
+    },
+    [getViewport, setViewport],
+  );
+}
+
 function resolveMiniMapVisibleNodeRect(
   node: CanvasNode | ReactFlowNode,
 ): { x: number; y: number; width: number; height: number; radius: number } {
@@ -589,12 +717,14 @@ function resolveMiniMapVisibleNodeRect(
   }
 
   if (node.type === 'image') {
+    const dimensions = resolveImageNodeCardDimensions(node.data as ImageNodeData);
+
     return {
       x: node.position.x,
-      y: node.position.y,
-      width: IMAGE_NODE_CARD_WIDTH,
-      height: IMAGE_NODE_CARD_HEIGHT,
-      radius: 18,
+      y: node.position.y + 18,
+      width: dimensions.width,
+      height: dimensions.height,
+      radius: 22,
     };
   }
 
@@ -689,16 +819,18 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
       x: node.position.x,
       y: node.position.y - 8,
       width: dimensions.width,
-      height: dimensions.height + 36,
+      height: IMAGE_NODE_ADAPTER_TOP_PADDING + dimensions.height + 36,
     };
   }
 
   if (node.type === 'image') {
+    const dimensions = resolveImageNodeCardDimensions(node.data as ImageNodeData);
+
     return {
       x: node.position.x,
-      y: node.position.y,
-      width: IMAGE_NODE_CARD_WIDTH,
-      height: IMAGE_NODE_CARD_HEIGHT + 116,
+      y: node.position.y - 8,
+      width: dimensions.width,
+      height: IMAGE_NODE_ADAPTER_TOP_PADDING + dimensions.height + 36,
     };
   }
 
@@ -867,7 +999,11 @@ function getCanvasMiniMapLayout(
 }
 
 // --- Adapters ---
-function readImageFile(file: File): Promise<UploadedImageNodeData> {
+type ImportedImageData = ImageNodeData & {
+  fileName?: string;
+};
+
+function readImageFile(file: File): Promise<ImportedImageData> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
@@ -882,8 +1018,11 @@ function readImageFile(file: File): Promise<UploadedImageNodeData> {
       const image = new window.Image();
       image.onload = () => {
         resolve({
+          title: file.name,
           imageUrl,
           fileName: file.name,
+          prompt: file.name,
+          generatedAt: new Date().toISOString(),
           width: image.naturalWidth || 320,
           height: image.naturalHeight || 320,
           sizeBytes: file.size,
@@ -991,19 +1130,31 @@ async function resolveHistoryImageUrls(item: ImageHistoryItem): Promise<{
   };
 }
 
-function createUploadedImageNode(
-  data: UploadedImageNodeData,
+function createImportedImageNode(
+  data: ImageNodeData,
   position: { x: number; y: number },
 ): CanvasNode {
   return {
     id: crypto.randomUUID(),
-    type: 'uploaded_image',
+    type: 'image',
     position,
     data,
   };
 }
 
-function createUploadedImageNodeFromMaterial(
+function toUploadedImageNodeData(data: ImportedImageData): UploadedImageNodeData {
+  return {
+    title: data.title,
+    imageUrl: data.imageUrl,
+    hostedImageUrl: data.hostedImageUrl,
+    fileName: data.fileName,
+    width: data.width || 320,
+    height: data.height || 320,
+    sizeBytes: data.sizeBytes,
+  };
+}
+
+function createImageNodeFromMaterial(
   item: MaterialLibraryItem,
   position: { x: number; y: number },
 ): CanvasNode {
@@ -1011,12 +1162,13 @@ function createUploadedImageNodeFromMaterial(
   const width = item.width || 320;
   const height = item.height || 320;
 
-  return createUploadedImageNode(
+  return createImportedImageNode(
     {
       title: item.name,
       imageUrl,
       hostedImageUrl: imageUrl,
-      fileName: item.fileName || item.outputFileName,
+      prompt: item.name || item.fileName || item.outputFileName || 'Image',
+      generatedAt: item.createdAt || new Date().toISOString(),
       width,
       height,
       sizeBytes: item.sizeBytes,
@@ -1035,7 +1187,7 @@ function createMaterialSourceFromImageGenerationData(
   }
 
   return {
-    defaultName: data.title?.trim() || '图片素材',
+    defaultName: data.title?.trim() || '未命名素材',
     imageUrl: data.generatedOutputFileName ? `output:${data.generatedOutputFileName}` : imageUrl,
     hostedImageUrl: imageUrl,
     outputFileName: data.generatedOutputFileName,
@@ -1056,7 +1208,7 @@ function createMaterialSourceFromImageNodeData(data: ImageNodeData): PendingMate
   }
 
   return {
-    defaultName: data.title?.trim() || '图片素材',
+    defaultName: data.title?.trim() || '未命名素材',
     imageUrl,
     hostedImageUrl: data.hostedImageUrl,
     sourceNodeType: 'image',
@@ -1076,7 +1228,7 @@ function createMaterialSourceFromUploadedImageData(
   }
 
   return {
-    defaultName: data.title?.trim() || data.fileName?.trim() || '图片素材',
+    defaultName: data.title?.trim() || data.fileName?.trim() || '未命名素材',
     imageUrl,
     hostedImageUrl: data.hostedImageUrl,
     fileName: data.fileName,
@@ -1152,16 +1304,40 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
 const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateImage = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
+  const generateThreeViewImage = useCanvasStore((s) => s.generateThreeViewImageFromNode);
   const removeReferenceImage = useCanvasStore(
     (s) => s.removeReferenceImageFromImageGenerationNode,
   );
+  const threeViewControllerNodeId = useCanvasStore((s) => s.threeViewControllerNodeId);
+  const setThreeViewControllerNodeId = useCanvasStore((s) => s.setThreeViewControllerNodeId);
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForImageGenerationNode(id),
   );
+  const animateFocusViewport = useThreeViewFocusAnimator();
   const renderData = data as CanvasNodeRenderData;
   const [promptFocused, setPromptFocused] = useState(false);
   const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+  const focusNodeViewport = () => {
+    const state = useCanvasStore.getState();
+    const node = state.nodes.find((candidate) => candidate.id === id);
+
+    if (!node) {
+      return;
+    }
+
+    const bounds = getImageNodeFocusBounds(node);
+    animateFocusViewport(bounds);
+  };
+  const imageData = data as ImageGenerationNodeData;
+  const cameraAngle = imageData.cameraAngle ?? THREE_VIEW_DEFAULT_ANGLE;
+  const threeViewOpen = threeViewControllerNodeId === id;
+  const controllerLeft = IMAGE_GENERATION_MAX_CARD_EDGE / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
+  const controllerTop =
+    IMAGE_GENERATION_MAX_CARD_EDGE +
+    IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
+    IMAGE_GENERATION_CARD_ACCESSORY_GAP +
+    THREE_VIEW_CONTROLLER_GAP;
 
   useEffect(() => {
     const handleClearNodeUi = () => setPromptFocused(false);
@@ -1171,33 +1347,81 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
   }, []);
 
   return (
-    <ImageGenerationNode
-      id={id}
-      data={data as ImageGenerationNodeData}
-      selected={isActive}
-      dragging={!!dragging}
-      connectedImages={connectedImages}
-      onChange={(next) => updateNodeData<'image_generation'>(id, next)}
-      onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
-      onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
-      onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
-      onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
-      onToolbarAction={(action) => notifyImageToolbarAction?.(action, data as ImageGenerationNodeData)}
-      onOpenLightbox={(next) => notifyImageToolbarAction?.('expand', next)}
-      onImageCardClick={() => notifyCanvasImageInfoRequest?.(id)}
-      onSelectNode={handleSelectNode}
-      onPromptPointerDown={() => {
-        handleSelectNode();
-        notifyPromptBarInteraction?.();
-      }}
-      onPromptFocusWithinChange={(focused) => {
-        if (focused) {
+    <div className="relative">
+      <ImageGenerationNode
+        id={id}
+        data={data as ImageGenerationNodeData}
+        selected={isActive}
+        dragging={!!dragging}
+        connectedImages={connectedImages}
+        onChange={(next) => updateNodeData<'image_generation'>(id, next)}
+        onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
+        onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
+        onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
+        onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
+        onToolbarAction={(action) => {
+          if (action === 'pan') {
+            focusNodeViewport();
+            setThreeViewControllerNodeId(threeViewOpen ? null : id);
+            handleSelectNode();
+            return;
+          }
+
+          notifyImageToolbarAction?.(action, data as ImageGenerationNodeData);
+        }}
+        onOpenLightbox={(next) => notifyImageToolbarAction?.('expand', next)}
+        onImageCardClick={() => notifyCanvasImageInfoRequest?.(id)}
+        onSelectNode={handleSelectNode}
+        onPromptPointerDown={() => {
           handleSelectNode();
-        }
-        setPromptFocused(focused);
-      }}
-      promptFocusRequestId={renderData.canvasFocusRequestId}
-    />
+          notifyPromptBarInteraction?.();
+        }}
+        onPromptFocusWithinChange={(focused) => {
+          if (focused) {
+            handleSelectNode();
+          }
+          setPromptFocused(focused);
+        }}
+        hidePromptBar={threeViewOpen}
+        panActive={threeViewOpen}
+        promptFocusRequestId={renderData.canvasFocusRequestId}
+      />
+      {threeViewOpen ? (
+        <div
+          className="absolute flex justify-center"
+          data-canvas-menu-ignore="true"
+          style={{
+            left: `${controllerLeft}px`,
+            top: `${controllerTop}px`,
+            width: `${THREE_VIEW_CONTROLLER_WIDTH}px`,
+          }}
+        >
+          <ThreeViewController
+            visible
+            value={cameraAngle}
+            imageUrl={imageData.generatedHostedImageUrl || imageData.generatedImageUrl}
+            onChange={(next) => updateNodeData<'image_generation'>(id, { cameraAngle: next })}
+            onGenerate={() => {
+              void generateThreeViewImage(id, cameraAngle)
+                .then((nextNodeId) => {
+                  setThreeViewControllerNodeId(null);
+                  notifyCanvasNodeSelect?.(nextNodeId);
+                })
+                .catch((error) => {
+                  console.error('three view generation failed', error);
+                  const message = error instanceof Error ? error.message : '3D view generation failed';
+                  useCanvasStore.getState().setSaveMessage(message);
+                  window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+                });
+            }}
+            onClose={() => {
+              focusNodeViewport();
+              setThreeViewControllerNodeId(null);
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 });
 
@@ -1241,11 +1465,30 @@ const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data
 
 const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateThreeViewImage = useCanvasStore((s) => s.generateThreeViewImageFromNode);
+  const threeViewControllerNodeId = useCanvasStore((s) => s.threeViewControllerNodeId);
+  const setThreeViewControllerNodeId = useCanvasStore((s) => s.setThreeViewControllerNodeId);
+  const animateFocusViewport = useThreeViewFocusAnimator();
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const imageData = data as ImageNodeData;
   const hasImage = Boolean(imageData.imageUrl?.trim() || imageData.hostedImageUrl?.trim());
+  const cameraAngle = imageData.cameraAngle ?? THREE_VIEW_DEFAULT_ANGLE;
+  const threeViewOpen = threeViewControllerNodeId === id;
+  const cardDimensions = resolveImageNodeCardDimensions(imageData);
+  const controllerLeft = cardDimensions.width / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
+  const controllerTop = 74 + 22 + cardDimensions.height + THREE_VIEW_CONTROLLER_GAP;
+  const focusNodeViewport = () => {
+    const state = useCanvasStore.getState();
+    const node = state.nodes.find((candidate) => candidate.id === id);
 
+    if (!node) {
+      return;
+    }
+
+    const bounds = getImageNodeFocusBounds(node);
+    animateFocusViewport(bounds);
+  };
   const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
     switch (action) {
       case 'organize': {
@@ -1268,6 +1511,11 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
       case 'expand':
         notifyCanvasImageInfoRequest?.(id);
         break;
+      case 'pan':
+    focusNodeViewport();
+    setThreeViewControllerNodeId(threeViewOpen ? null : id);
+      notifyCanvasNodeSelect?.(id);
+      break;
       case 'panorama-360':
         void useCanvasStore.getState().createPanorama360FromImageNode(id)
           .then((nextNodeId) => {
@@ -1275,7 +1523,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
           })
           .catch((error) => {
             console.error('create panorama 360 node failed', error);
-            const message = error instanceof Error ? error.message : '360全景图生成失败';
+            const message = error instanceof Error ? error.message : '360 panorama generation failed';
             useCanvasStore.getState().setSaveMessage(message);
             window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
           });
@@ -1286,65 +1534,165 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
   };
 
   return (
-    <div className="relative group node-connectable-root" style={{ paddingTop: '74px' }}>
-      <ImageGenerationNodeToolbar
-        visible={isActive}
-        top={0}
-        hasGeneratedImage={hasImage}
-        onAction={handleToolbarAction}
-        onOpenLightbox={() => notifyCanvasImageInfoRequest?.(id)}
-      />
-      <CardSideHandle type="target" position={Position.Left} visible={isActive} />
-      <ImageNode
-        id={id}
-        data={data as ImageNodeData}
-        selected={selected}
-        loading={false}
-        onTitleChange={(nextTitle) => updateNodeData<'image'>(id, { title: nextTitle })}
-        onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
-        onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
-      />
-      <CardSideHandle type="source" position={Position.Right} visible={isActive} />
+    <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
+      <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
+        <ImageGenerationNodeToolbar
+          visible={isActive}
+          top={-IMAGE_NODE_TOOLBAR_LIFT}
+          hasGeneratedImage={hasImage}
+          panActive={threeViewOpen}
+          onAction={handleToolbarAction}
+          onOpenLightbox={() => notifyCanvasImageInfoRequest?.(id)}
+        />
+        <UploadedImageNode
+          data={data as ImageNodeData}
+          selected={selected}
+          accessoriesVisible={isActive}
+          onTitleChange={(nextTitle) => updateNodeData<'image'>(id, { title: nextTitle })}
+          onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
+          onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
+        />
+      </div>
+      {threeViewOpen ? (
+        <div
+          className="absolute flex justify-center"
+          data-canvas-menu-ignore="true"
+          style={{
+            left: `${controllerLeft}px`,
+            top: `${controllerTop}px`,
+            width: `${THREE_VIEW_CONTROLLER_WIDTH}px`,
+          }}
+        >
+          <ThreeViewController
+            visible
+            value={cameraAngle}
+            imageUrl={imageData.hostedImageUrl || imageData.imageUrl}
+            onChange={(next) => updateNodeData<'image'>(id, { cameraAngle: next })}
+            onGenerate={() => {
+              void generateThreeViewImage(id, cameraAngle)
+                .then((nextNodeId) => {
+                  setThreeViewControllerNodeId(null);
+                  notifyCanvasNodeSelect?.(nextNodeId);
+                })
+                .catch((error) => {
+                  console.error('three view generation failed', error);
+                  const message = error instanceof Error ? error.message : '3D view generation failed';
+                  useCanvasStore.getState().setSaveMessage(message);
+                  window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+                });
+            }}
+            onClose={() => {
+              focusNodeViewport();
+              setThreeViewControllerNodeId(null);
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 });
 
 const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateThreeViewImage = useCanvasStore((s) => s.generateThreeViewImageFromNode);
+  const threeViewControllerNodeId = useCanvasStore((s) => s.threeViewControllerNodeId);
+  const setThreeViewControllerNodeId = useCanvasStore((s) => s.setThreeViewControllerNodeId);
+  const animateFocusViewport = useThreeViewFocusAnimator();
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const uploadedData = data as UploadedImageNodeData;
   const hasImage = Boolean(uploadedData.imageUrl?.trim());
+  const [cameraAngle, setCameraAngle] = useState<ThreeViewControllerValue>(THREE_VIEW_DEFAULT_ANGLE);
+  const threeViewOpen = threeViewControllerNodeId === id;
+  const cardDimensions = resolveUploadedImageCardDimensions(uploadedData);
+  const controllerLeft = cardDimensions.width / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
+  const controllerTop = 74 + 22 + cardDimensions.height + THREE_VIEW_CONTROLLER_GAP;
   const cardLayoutRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+  const focusNodeViewport = () => {
+    const state = useCanvasStore.getState();
+    const node = state.nodes.find((candidate) => candidate.id === id);
+
+    if (!node) {
+      return;
+    }
+
+    const bounds = getImageNodeFocusBounds(node);
+    animateFocusViewport(bounds);
+  };
 
   const handleReplace = async (file: File) => {
-    const next = await readImageFile(file);
+    const next = toUploadedImageNodeData(await readImageFile(file));
     updateNodeData<'uploaded_image'>(id, next);
   };
 
   const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
+    if (action === 'pan') {
+      focusNodeViewport();
+      setThreeViewControllerNodeId(threeViewOpen ? null : id);
+      notifyCanvasNodeSelect?.(id);
+      return;
+    }
+
     notifyUploadedImageToolbarAction?.(action, id, uploadedData, cardLayoutRef.current);
   };
 
   return (
-    <div className="relative" style={{ paddingTop: '74px' }}>
-      <ImageGenerationNodeToolbar
-        visible={isActive}
-        top={0}
-        hasGeneratedImage={hasImage}
-        onAction={handleToolbarAction}
-        onOpenLightbox={() => handleToolbarAction('expand')}
-      />
-      <UploadedImageNode
-        data={data as UploadedImageNodeData}
-        selected={selected}
-        accessoriesVisible={isActive}
-        onReplace={handleReplace}
-        onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
-        onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
-        onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
-        onCardLayout={(layout) => { cardLayoutRef.current = layout; }}
-      />
+    <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
+      <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
+        <ImageGenerationNodeToolbar
+          visible={isActive}
+          top={-IMAGE_NODE_TOOLBAR_LIFT}
+          hasGeneratedImage={hasImage}
+          panActive={threeViewOpen}
+          onAction={handleToolbarAction}
+          onOpenLightbox={() => handleToolbarAction('expand')}
+        />
+        <UploadedImageNode
+          data={data as UploadedImageNodeData}
+          selected={selected}
+          accessoriesVisible={isActive}
+          onReplace={handleReplace}
+          onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
+          onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
+          onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
+          onCardLayout={(layout) => { cardLayoutRef.current = layout; }}
+        />
+      </div>
+      {threeViewOpen ? (
+        <div
+          className="absolute flex justify-center"
+          data-canvas-menu-ignore="true"
+          style={{
+            left: `${controllerLeft}px`,
+            top: `${controllerTop}px`,
+            width: `${THREE_VIEW_CONTROLLER_WIDTH}px`,
+          }}
+        >
+          <ThreeViewController
+            visible
+            value={cameraAngle}
+            imageUrl={uploadedData.hostedImageUrl || uploadedData.imageUrl}
+            onChange={setCameraAngle}
+            onGenerate={() => {
+              void generateThreeViewImage(id, cameraAngle)
+                .then((nextNodeId) => {
+                  setThreeViewControllerNodeId(null);
+                  notifyCanvasNodeSelect?.(nextNodeId);
+                })
+                .catch((error) => {
+                  console.error('three view generation failed', error);
+                  const message = error instanceof Error ? error.message : '3D view generation failed';
+                  useCanvasStore.getState().setSaveMessage(message);
+                  window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+                });
+            }}
+            onClose={() => {
+              focusNodeViewport();
+              setThreeViewControllerNodeId(null);
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 });
@@ -1395,7 +1743,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
         .then((nextNodeId) => notifyCanvasNodeSelect?.(nextNodeId))
         .catch((error) => {
           console.error('create panorama screenshot node failed', error);
-          const message = error instanceof Error ? error.message : '场景截图生成失败';
+      const message = error instanceof Error ? error.message : '创建截图失败';
           useCanvasStore.getState().setSaveMessage(message);
           window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
         })}
@@ -1425,8 +1773,6 @@ const CANVAS_EDGE_STYLE_STORAGE_KEY = 'genlink.canvasEdgeStyle';
 const CANVAS_EDGE_STYLE_CHANGE_EVENT = 'genlink:canvas-edge-style-change';
 const TEXT_NODE_CARD_WIDTH = 511;
 const TEXT_NODE_CARD_HEIGHT = 289;
-const IMAGE_NODE_CARD_WIDTH = 420;
-const IMAGE_NODE_CARD_HEIGHT = 420 * 3 / 4;
 const IMAGE_GENERATION_MAX_CARD_EDGE = 540;
 const IMAGE_GENERATION_MIN_CARD_EDGE = 220;
 const IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE = 64;
@@ -1434,6 +1780,16 @@ const IMAGE_GENERATION_CARD_ACCESSORY_GAP = 12;
 const UPLOADED_IMAGE_MAX_CARD_WIDTH = 420;
 const UPLOADED_IMAGE_MAX_CARD_HEIGHT = 540;
 const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
+const IMAGE_NODE_ADAPTER_TOP_PADDING = 74;
+const THREE_VIEW_CONTROLLER_WIDTH = 760;
+const THREE_VIEW_CONTROLLER_HEIGHT = 380;
+const THREE_VIEW_CONTROLLER_GAP = 12;
+const IMAGE_NODE_TOOLBAR_LIFT = 56;
+const THREE_VIEW_FOCUS_BOTTOM_PADDING = 32;
+const THREE_VIEW_FOCUS_ANIMATION_DURATION_MS = 680;
+const THREE_VIEW_FOCUS_PADDING = 0.14;
+const THREE_VIEW_FOCUS_EASE = (t: number): number =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 const CANVAS_MINIMAP_WIDTH = 200;
 const CANVAS_MINIMAP_HEIGHT = 150;
 const CANVAS_MINIMAP_PADDING = 14;
@@ -2457,13 +2813,13 @@ const GroupLayoutMenuContext =
   React.createContext<((mode: GroupLayoutMode) => void) | null>(null);
 
 const GROUP_BACKGROUND_COLORS = [
-  { label: '红色', value: '#a85b5b' },
-  { label: '橙色', value: '#a3682a' },
-  { label: '黄色', value: '#9b8f36' },
-  { label: '绿色', value: '#4d9156' },
-  { label: '青色', value: '#43909d' },
-  { label: '蓝色', value: '#3473ad' },
-  { label: '紫色', value: '#8a4aa3' },
+  { label: 'Red', value: '#a85b5b' },
+  { label: 'Orange', value: '#a3682a' },
+  { label: 'Yellow', value: '#9b8f36' },
+  { label: 'Green', value: '#4d9156' },
+  { label: 'Teal', value: '#43909d' },
+  { label: 'Blue', value: '#3473ad' },
+  { label: 'Purple', value: '#8a4aa3' },
 ] as const;
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -2610,7 +2966,7 @@ function GroupFrame({
   const screenH = group.height * viewport.zoom;
 
   const nodeCount = group.nodeIds.length;
-  const defaultName = `分组 ${nodeCount} 个节点`;
+  const defaultName = `分组 · ${nodeCount} 个节点`;
   const frameColorStyle = getGroupFrameColorStyle(group.backgroundColor, selected);
   const showResizeHandles = selected || hovered || resizing;
   const showSourceHandle = selected || hovered;
@@ -2843,7 +3199,7 @@ function GroupFrame({
 
   return (
     <>
-      {/* Frame body — sits below nodes in stacking order (no z-index boost).
+      {/* Frame body sits below nodes in stacking order (no z-index boost).
           Group hit testing runs in pane mouse handlers so this layer does not
           steal clicks from node toolbars or prompt inputs. */}
       <div
@@ -2868,10 +3224,10 @@ function GroupFrame({
           style={frameColorStyle}
         />
 
-        {/* Resize handles — only when selected */}
+        {/* Resize handles only when selected */}
       </div>
 
-      {/* Label — z-[19] above nodes */}
+      {/* Label z-[19] above nodes */}
       {showResizeHandles && handles.map((h) => (
         <div
           key={h}
@@ -2956,7 +3312,7 @@ function GroupFrame({
         </div>
       ) : null}
 
-      {/* Toolbar — z-[19], only when selected */}
+      {/* Toolbar z-[19], only when selected */}
       {selected && (
         <GroupLayoutMenuContext.Provider value={onLayout}>
           <GroupExecutionMenuContext.Provider value={onExecute}>
@@ -2965,7 +3321,7 @@ function GroupFrame({
               className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19] flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
               style={{
                 left: topLeft.x + screenW / 2,
-                top: topLeft.y - 52,
+                top: topLeft.y - 84,
                 transform: 'translateX(-50%)',
               }}
               onPointerDown={(e) => e.stopPropagation()}
@@ -3319,7 +3675,7 @@ function MultiNodeSelectionToolbarButton({
           >
             <GroupExecuteMenuItem
               icon={Grid2x2}
-              label="宫格"
+              label="网格"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('grid');
@@ -3327,7 +3683,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={Columns3}
-              label="水平"
+              label="横向"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('horizontal');
@@ -3335,7 +3691,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={Rows3}
-              label="垂直"
+              label="纵向"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('vertical');
@@ -3363,7 +3719,7 @@ function MultiNodeSelectionToolbarButton({
           >
             <GroupExecuteMenuItem
               icon={Play}
-              label="并行执行"
+              label="并行运行"
               onClick={() => {
                 setExecuteMenuOpen(false);
                 groupExecute?.('parallel');
@@ -3371,7 +3727,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={ListOrdered}
-              label="顺序执行"
+              label="顺序运行"
               onClick={() => {
                 setExecuteMenuOpen(false);
                 groupExecute?.('sequence');
@@ -3541,11 +3897,11 @@ function MultiNodeSelectionOverlay({
         <MultiNodeSelectionToolbarButton icon={Group} compact />
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={FolderPlus}>
-          保存到素材
+           加入素材库
         </MultiNodeSelectionToolbarButton>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Copy}>
-          创建副本
+           复制
         </MultiNodeSelectionToolbarButton>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Plus} compact />
@@ -3756,7 +4112,7 @@ function CanvasViewportControls({
               className="canvas-zoom-icon-button"
               onClick={onSmartReset}
               title={resetLabel}
-              aria-label="重置"
+              aria-label="重置视图"
             >
               <Expand size={15} />
             </button>
@@ -3786,7 +4142,7 @@ type CropRect = { x: number; y: number; width: number; height: number };
 type CropAspectRatio = null | number;
 
 const CROP_ASPECT_RATIOS: Array<{ label: string; value: CropAspectRatio }> = [
-  { label: '原图比例', value: null },
+  { label: '自由裁剪', value: null },
   { label: '1 : 1', value: 1 },
   { label: '4 : 3', value: 4 / 3 },
   { label: '3 : 4', value: 3 / 4 },
@@ -3913,7 +4269,7 @@ function CropOverlay({
     }
 
     if (aspectRatio !== null && drag.handle !== 'move') {
-      // normAspect = targetPixelRatio * (imgH / imgW)，使归一化坐标下宽高比正确
+      // normAspect = targetPixelRatio * (imgH / imgW), keeping normalized coordinates proportional.
       const normAspect = aspectRatio * (data.imageNaturalHeight / data.imageNaturalWidth);
       if (drag.handle === 'n' || drag.handle === 's') {
         next.width = next.height * normAspect;
@@ -3934,8 +4290,8 @@ function CropOverlay({
       setCropRect({ x: 0, y: 0, width: 1, height: 1 });
       return;
     }
-    // 始终以整张图为基准，取能放下该比例的最大尺寸，居中
-    // normAspect = targetPixelRatio * (imgH / imgW)，使归一化坐标下宽高比正确
+    // Use the full image as the baseline and center the largest rect that fits the selected ratio.
+    // normAspect = targetPixelRatio * (imgH / imgW), keeping normalized coordinates proportional.
     const normAspect = value * (data.imageNaturalHeight / data.imageNaturalWidth);
     let w = 1;
     let h = w / normAspect;
@@ -3961,27 +4317,27 @@ function CropOverlay({
 
   return (
     <>
-      {/* 遮罩：用8块矩形精确覆盖裁剪框以外的区域，裁剪框内部完全不遮挡 */}
+          {/* Crop overlay mask */}
       <div className="fixed inset-0 z-[80] pointer-events-none">
-        {/* 图片上方（屏幕顶部到图片顶部） */}
+        {/* Top mask */}
         <div className="absolute bg-black/55" style={{ left: 0, top: 0, right: 0, height: screenY }} />
-        {/* 图片下方（图片底部到屏幕底部） */}
+        {/* Bottom mask */}
         <div className="absolute bg-black/55" style={{ left: 0, top: screenY + screenH, right: 0, bottom: 0 }} />
-        {/* 图片左侧（屏幕左边到图片左边，仅图片高度范围） */}
+        {/* Left mask */}
         <div className="absolute bg-black/55" style={{ left: 0, top: screenY, width: screenX, height: screenH }} />
-        {/* 图片右侧（图片右边到屏幕右边，仅图片高度范围） */}
+        {/* Right mask */}
         <div className="absolute bg-black/55" style={{ left: screenX + screenW, top: screenY, right: 0, height: screenH }} />
-        {/* 图片内：裁剪框上方 */}
+        {/* Top crop mask */}
         <div className="absolute bg-black/55" style={{ left: screenX, top: screenY, width: screenW, height: cropRect.y * screenH }} />
-        {/* 图片内：裁剪框下方 */}
+        {/* Bottom crop mask */}
         <div className="absolute bg-black/55" style={{ left: screenX, top: screenY + (cropRect.y + cropRect.height) * screenH, width: screenW, height: (1 - cropRect.y - cropRect.height) * screenH }} />
-        {/* 图片内：裁剪框左侧 */}
+        {/* Left crop mask */}
         <div className="absolute bg-black/55" style={{ left: screenX, top: cropScreenY, width: cropRect.x * screenW, height: cropScreenH }} />
-        {/* 图片内：裁剪框右侧 */}
+        {/* Right crop mask */}
         <div className="absolute bg-black/55" style={{ left: cropScreenX + cropScreenW, top: cropScreenY, width: (1 - cropRect.x - cropRect.width) * screenW, height: cropScreenH }} />
       </div>
 
-      {/* 裁剪框 */}
+      {/* Crop box */}
       <div
         className="fixed z-[81]"
         style={{ left: screenX, top: screenY, width: screenW, height: screenH }}
@@ -3999,17 +4355,17 @@ function CropOverlay({
           }}
           onPointerDown={(e) => handlePointerDown(e, 'move')}
         >
-          {/* 三等分网格线 */}
+          {/* 娑撳鐡戦崚鍡欑秹閺嶈偐鍤?*/}
           <div className="absolute inset-0 pointer-events-none" style={{ borderRight: '1px solid rgba(255,255,255,0.25)', borderLeft: '1px solid rgba(255,255,255,0.25)', backgroundImage: 'linear-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)', backgroundSize: `100% ${cropScreenH / 3}px`, backgroundPosition: `0 ${cropScreenH / 3}px` }} />
 
-          {/* 四角 L 形角标 */}
+          {/* Corner markers */}
           <div className="absolute -top-px -left-px h-5 w-5 border-t-2 border-l-2 border-white rounded-tl pointer-events-none" />
           <div className="absolute -top-px -right-px h-5 w-5 border-t-2 border-r-2 border-white rounded-tr pointer-events-none" />
           <div className="absolute -bottom-px -left-px h-5 w-5 border-b-2 border-l-2 border-white rounded-bl pointer-events-none" />
           <div className="absolute -bottom-px -right-px h-5 w-5 border-b-2 border-r-2 border-white rounded-br pointer-events-none" />
         </div>
 
-        {/* 拖拽手柄 */}
+        {/* Resize handles */}
         {handlePositions.map(({ handle, style }) => (
           <div
             key={handle}
@@ -4028,13 +4384,13 @@ function CropOverlay({
         ))}
       </div>
 
-      {/* 底部工具栏 */}
+      {/* 鎼存洟鍎村銉ュ徔閺?*/}
       <div className="fixed bottom-0 left-0 right-0 z-[82] flex items-center justify-center gap-3 py-5 pointer-events-none">
         <div className="flex items-center gap-3 pointer-events-auto">
           <button
             type="button"
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 backdrop-blur-md transition-colors hover:bg-white/16 hover:text-white"
-            aria-label="取消"
+            aria-label="关闭"
             onClick={onClose}
           >
             <X size={18} strokeWidth={2.2} />
@@ -4073,7 +4429,7 @@ function CropOverlay({
                     {option.label}
                   </button>
                 ))}
-                {/* 自定义选项 */}
+                {/* 閼奉亜鐣炬稊澶愨偓澶愩€?*/}
                 {!customMode ? (
                   <button
                     type="button"
@@ -4083,7 +4439,7 @@ function CropOverlay({
                     ].join(' ')}
                     onClick={() => { setCustomMode(true); setAspectRatio(null); }}
                   >
-                    自定义...
+                    閼奉亜鐣炬稊?..
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5 px-2 py-2">
@@ -4382,10 +4738,10 @@ function EmptyCanvasWelcome({
       <div className="flex flex-wrap items-center justify-center gap-3 text-center">
         <span className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/12 bg-white/[0.08] px-4 text-[14px] font-semibold text-gl-text-primary shadow-[0_12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl">
           <MousePointer2 size={16} className="text-gl-text-secondary" />
-          双击
+          空画布
         </span>
         <span className="text-[18px] font-medium text-gl-text-secondary">
-          画布自由生成
+          从这里开始创建
         </span>
       </div>
 
@@ -4398,7 +4754,7 @@ function EmptyCanvasWelcome({
           className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
         >
           <Type size={15} strokeWidth={2} />
-          生文本
+          文本
         </button>
         <button
           type="button"
@@ -4408,7 +4764,7 @@ function EmptyCanvasWelcome({
           className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
         >
           <ImageIcon size={15} strokeWidth={2} />
-          生图像
+          图片生成
         </button>
       </div>
     </div>
@@ -4642,7 +4998,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [paneSelectionDragging, setPaneSelectionDragging] = useState(false);
   const [selectionInProgress, setSelectionInProgress] = useState(false);
 
-  const { fitBounds, fitView, getViewport, project, setViewport } = useReactFlow();
+  const { fitView, getViewport, project, setViewport } = useReactFlow();
 
   const showProjectMessage = useCallback((message: string) => {
     setSaveMessage(message);
@@ -4651,51 +5007,62 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }, 2200);
   }, [setSaveMessage]);
 
+  const animateFocusToBounds = useCallback((bounds: { x: number; y: number; width: number; height: number }, padding: number) => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    if (!width || !height) {
+      return;
+    }
+
+    const target = getViewportForBounds(bounds, width, height, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM, padding);
+    const start = getViewport();
+    const startTime = performance.now();
+
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startTime) / THREE_VIEW_FOCUS_ANIMATION_DURATION_MS);
+      const eased = THREE_VIEW_FOCUS_EASE(progress);
+      void setViewport({
+        x: start.x + (target.x - start.x) * eased,
+        y: start.y + (target.y - start.y) * eased,
+        zoom: start.zoom + (target.zoom - start.zoom) * eased,
+      }, { duration: 0 });
+
+      if (progress < 1) {
+        window.requestAnimationFrame(step);
+      }
+    };
+
+    window.requestAnimationFrame(step);
+  }, [getViewport, setViewport]);
+
   const focusSingleNodeViewport = useCallback((nodeId: string) => {
     smartResetFocusedSelectionRef.current = true;
-    void fitView({
-      duration: 220,
-      maxZoom: CANVAS_MAX_ZOOM,
-      nodes: [{ id: nodeId }],
-      padding: 0.32,
-    });
-  }, [fitView]);
+    const node = useCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) {
+      return;
+    }
+    animateFocusToBounds(getEstimatedNodeBounds(node), 0.32);
+  }, [animateFocusToBounds]);
 
   const handleSmartResetViewport = useCallback(() => {
-    const selectedGroup = selectedGroupId
-      ? storeGroups.find((group) => group.id === selectedGroupId) ?? null
-      : null;
+    const nodeId =
+      activeNodeId ??
+      (selectedNodeIdsRef.current.size === 1 ? Array.from(selectedNodeIdsRef.current)[0] ?? null : null);
 
-    if (smartResetFocusedSelectionRef.current || (!selectedGroup && selectedNodeIdsRef.current.size === 0)) {
+    if (smartResetFocusedSelectionRef.current) {
       smartResetFocusedSelectionRef.current = false;
       void fitView({ duration: 220, padding: 0.18 });
       return;
     }
 
-    if (selectedGroup) {
-      smartResetFocusedSelectionRef.current = true;
-      void fitBounds(
-        {
-          x: selectedGroup.x,
-          y: selectedGroup.y,
-          width: selectedGroup.width,
-          height: selectedGroup.height,
-        },
-        { duration: 220, padding: 0.28 },
-      );
+    if (nodeId) {
+      focusSingleNodeViewport(nodeId);
       return;
     }
 
-    const selectedNodes = Array.from(selectedNodeIdsRef.current, (id) => ({ id }));
-
-    smartResetFocusedSelectionRef.current = true;
-    void fitView({
-      duration: 220,
-      maxZoom: CANVAS_MAX_ZOOM,
-      nodes: selectedNodes,
-      padding: 0.32,
-    });
-  }, [fitBounds, fitView, selectedGroupId, storeGroups]);
+    void fitView({ duration: 220, padding: 0.18 });
+  }, [activeNodeId, focusSingleNodeViewport, fitView]);
 
   const updateHoveredGroupFromPointer = useCallback((event: {
     target?: EventTarget | null;
@@ -4896,7 +5263,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
             setEdgeDeleteButtonPosition(null);
           })
           .catch((error) => {
-            setSaveMessage(error instanceof Error ? error.message : '360全景图生成失败');
+            setSaveMessage(error instanceof Error ? error.message : '360 panorama generation failed');
             window.setTimeout(() => setSaveMessage(null), 2200);
           });
         return;
@@ -5034,7 +5401,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
             setEdgeDeleteButtonPosition(null);
           })
           .catch((error) => {
-            setSaveMessage(error instanceof Error ? error.message : '360全景图生成失败');
+            setSaveMessage(error instanceof Error ? error.message : '360 panorama generation failed');
             window.setTimeout(() => setSaveMessage(null), 2200);
           });
         return;
@@ -5122,7 +5489,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         }
 
         const imageData = await readImageFile(file);
-        const sourceNode = createUploadedImageNode(imageData, {
+        const sourceNode = createImportedImageNode(imageData, {
           x: targetNode.position.x - 480,
           y: targetNode.position.y,
         });
@@ -5139,7 +5506,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         setActiveNodeId(nodeId);
         clearEdgeSelection();
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : '上传全景图失败');
+        setSaveMessage(error instanceof Error ? error.message : '创建图片节点失败');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     };
@@ -5571,7 +5938,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
     const nextNodes = imageDataList.map((data, index) =>
-      createUploadedImageNode(
+      createImportedImageNode(
         data,
         getImageImportPosition(basePosition, index),
       ),
@@ -5982,7 +6349,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       },
       storeNodes,
     );
-    const node = createUploadedImageNodeFromMaterial(item, position);
+    const node = createImageNodeFromMaterial(item, position);
 
     addNodes([node]);
     setSelectedNodeIds(new Set([node.id]));
@@ -6182,7 +6549,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
 
     if (runnableNodes.length === 0) {
-      showProjectMessage('组内没有可执行节点');
+      showProjectMessage('分组内没有可执行节点');
       return;
     }
 
@@ -6200,7 +6567,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         const failedCount = results.filter((result) => result.status === 'rejected').length;
 
         if (failedCount > 0) {
-          showProjectMessage(`${failedCount} 个节点执行失败`);
+          showProjectMessage(`${failedCount} 个节点运行失败`);
         }
         return;
       }
@@ -6216,7 +6583,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       }
 
       if (failedCount > 0) {
-        showProjectMessage(`${failedCount} 个节点执行失败`);
+        showProjectMessage(`${failedCount} 个节点运行失败`);
       }
     })();
   }, [
@@ -6236,20 +6603,20 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const zipItems = getGroupZipItems(group, state.nodes);
 
     if (zipItems.length === 0) {
-      showProjectMessage('组内没有可下载的图片');
+      showProjectMessage('分组内没有可下载图片');
       return;
     }
 
     const zipFileName = group.name?.trim() || `group-${group.id.slice(0, 8)}`;
-    showProjectMessage('正在打包图片...');
+    showProjectMessage('正在打包下载...');
 
     void import('@/lib/image-zip-download')
       .then(({ downloadImagesAsZip }) => downloadImagesAsZip(zipItems, zipFileName))
       .then((count) => {
-        showProjectMessage(`已打包下载 ${count} 张图片`);
+        showProjectMessage(`已下载 ${count} 张图片`);
       })
       .catch((error) => {
-        showProjectMessage(error instanceof Error ? error.message : '批量下载失败');
+        showProjectMessage(error instanceof Error ? error.message : '下载失败');
       });
   }, [showProjectMessage]);
 
@@ -6267,7 +6634,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const sources = getGroupConnectionSourcesFromDom(group);
 
     if (sources.length === 0) {
-      showProjectMessage('组内没有可连接的节点');
+      showProjectMessage('分组内没有可连接的源节点');
       return;
     }
 
@@ -6442,7 +6809,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     try {
       resolvedImage = await resolveHistoryImageUrls(item);
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '历史图片加载失败');
+      showProjectMessage(error instanceof Error ? error.message : '载入历史图片失败');
       return;
     }
 
@@ -6579,6 +6946,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     window.localStorage.setItem(CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen);
     window.localStorage.setItem(CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY, values.imageApiKeys.runninghub);
     window.localStorage.setItem(CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY, values.imageApiKeys.grsai);
+    window.localStorage.setItem(CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY, values.runningHubWorkflowApiKey);
     setApiSettings(values);
   }, []);
 
@@ -6648,7 +7016,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const changed = layoutGroupNodes(groupId, mode);
 
     if (!changed) {
-      showProjectMessage('组内节点不足，无法整理布局');
+      showProjectMessage('分组内没有可布局的节点');
     }
   }, [showProjectMessage]);
 
@@ -6691,7 +7059,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       await renameProject(project, nextName);
       showProjectMessage('重命名成功');
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '重命名失败');
+      showProjectMessage(error instanceof Error ? error.message : '下载失败');
     }
   }, [renameProject, showProjectMessage]);
 
@@ -6713,7 +7081,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         parentDirectoryLabel: getProjectDirectoryLabel(parentHandle),
       }));
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '选择目录失败');
+      showProjectMessage(error instanceof Error ? error.message : '下载失败');
     }
   }, [showProjectMessage]);
 
@@ -6739,7 +7107,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       });
       showProjectMessage('创建成功');
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '创建项目失败');
+      showProjectMessage(error instanceof Error ? error.message : '下载失败');
     } finally {
       setProjectDialogBusy(false);
     }
@@ -6771,7 +7139,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       showProjectMessage('删除成功');
       onBackToLibrary?.();
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '删除项目失败');
+      showProjectMessage(error instanceof Error ? error.message : '下载失败');
     }
   }, [deleteProject, onBackToLibrary, showProjectMessage]);
 
@@ -7051,3 +7419,5 @@ export function InfiniteCanvas({ onBackToLibrary }: InnerCanvasProps) {
     </ReactFlowProvider>
   );
 }
+
+

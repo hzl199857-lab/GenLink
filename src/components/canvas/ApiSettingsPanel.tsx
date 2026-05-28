@@ -18,6 +18,7 @@ export interface ApiSettingsPanelProps {
 
 type ProviderDraft = {
   apiKeys: Record<ApiProvider, string>;
+  runningHubWorkflowApiKey: string;
 };
 
 const PROVIDERS: Array<{
@@ -83,7 +84,10 @@ function createDraftFromSettings(settings: StoredApiSettings): ProviderDraft {
       '';
   }
 
-  return { apiKeys };
+  return {
+    apiKeys,
+    runningHubWorkflowApiKey: settings.runningHubWorkflowApiKey?.trim() || '',
+  };
 }
 
 function createSettingsFromDraft(
@@ -104,6 +108,7 @@ function createSettingsFromDraft(
     imageProvider: previousSettings.imageProvider,
     textApiKeys: apiKeys,
     imageApiKeys: apiKeys,
+    runningHubWorkflowApiKey: draft.runningHubWorkflowApiKey.trim(),
   };
 }
 
@@ -131,10 +136,18 @@ export function ApiSettingsPanel({
 
   const handleApiKeyChange = (provider: ApiProvider, value: string) => {
     setDraft((current) => ({
+      ...current,
       apiKeys: {
         ...current.apiKeys,
         [provider]: value,
       },
+    }));
+  };
+
+  const handleRunningHubWorkflowApiKeyChange = (value: string) => {
+    setDraft((current) => ({
+      ...current,
+      runningHubWorkflowApiKey: value,
     }));
   };
 
@@ -193,6 +206,8 @@ export function ApiSettingsPanel({
               {PROVIDERS.map((provider) => {
                 const isRevealed = revealed[provider.key];
                 const apiKeyValue = draft.apiKeys[provider.key] ?? '';
+                const runningHubWorkflowApiKeyValue =
+                  draft.runningHubWorkflowApiKey ?? '';
 
                 return (
                   <div
@@ -248,6 +263,42 @@ export function ApiSettingsPanel({
                         </div>
                       </div>
                     </div>
+
+                    {provider.key === 'runninghub' ? (
+                      <div className="border-t border-[#222222] px-5 pb-4 pt-4">
+                        <label className="mb-2 block text-[12px] text-[#888888]">
+                          RunningHub 工作流 API Key
+                        </label>
+
+                        <div className="flex items-center rounded border border-[#222222] bg-[#050505] px-3.5 transition-colors focus-within:border-[#333333]">
+                          <input
+                            type={isRevealed ? 'text' : 'password'}
+                            value={runningHubWorkflowApiKeyValue}
+                            onChange={(event) =>
+                              handleRunningHubWorkflowApiKeyChange(event.target.value)
+                            }
+                            placeholder="请输入 RunningHub 工作流 API Key"
+                            className="h-10 w-full bg-transparent text-[13px] text-white outline-none placeholder:text-[#555555]"
+                          />
+                          <div className="group/tooltip relative">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRevealed((current) => ({
+                                  ...current,
+                                  [provider.key]: !current[provider.key],
+                                }))
+                              }
+                              aria-label={isRevealed ? '闅愯棌' : '鏄剧ず'}
+                              className="ml-2 flex h-7 w-7 items-center justify-center rounded-sm text-[#666666] transition-colors hover:bg-white/5 hover:text-[#cccccc]"
+                            >
+                              {isRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                            <Tooltip label={isRevealed ? '闅愯棌' : '鏄剧ず'} side="top" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

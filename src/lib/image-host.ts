@@ -26,6 +26,10 @@ const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase() ?? '';
 const IMAGE_HOST_TIMING_LOG_PREFIX = '[GenLink image host timing]';
 
+type SaveImageOptions = {
+  forceOss?: boolean;
+};
+
 function logImageHostTiming(
   stage: string,
   startedAt: number,
@@ -184,6 +188,7 @@ async function saveImageBytes(
   mimeType: string,
   fileName?: string,
   folder = 'generated',
+  options: SaveImageOptions = {},
 ): Promise<string> {
   if (bytes.byteLength === 0) {
     throw new VibeApiError(400, 'Image data is empty');
@@ -193,7 +198,14 @@ async function saveImageBytes(
     throw new VibeApiError(400, 'Image is too large to save');
   }
 
-  if (isAliyunOssConfigured() && (IS_SERVERLESS || REFERENCE_IMAGE_UPLOAD_MODE === 'oss')) {
+  if (options.forceOss && !isAliyunOssConfigured()) {
+    throw new VibeApiError(500, 'Aliyun OSS is not configured');
+  }
+
+  if (
+    isAliyunOssConfigured() &&
+    (options.forceOss || IS_SERVERLESS || REFERENCE_IMAGE_UPLOAD_MODE === 'oss')
+  ) {
     const target = createAliyunOssUploadTarget({
       contentType: mimeType,
       fileName,
@@ -238,12 +250,13 @@ export async function saveImageDataUrl(
   dataUrl: string,
   fileName?: string,
   folder?: string,
+  options?: SaveImageOptions,
 ): Promise<string> {
   const startedAt = Date.now();
   const { mimeType, base64 } = parseDataUrl(dataUrl);
   const bytes = Buffer.from(base64, 'base64');
 
-  const imageUrl = await saveImageBytes(bytes, mimeType, fileName, folder);
+  const imageUrl = await saveImageBytes(bytes, mimeType, fileName, folder, options);
   logImageHostTiming('saveImageDataUrl', startedAt, {
     bytes: bytes.byteLength,
     mimeType,
@@ -256,6 +269,7 @@ export async function saveRemoteImageUrl(
   imageUrl: string,
   fileName?: string,
   folder?: string,
+  options?: SaveImageOptions,
 ): Promise<string> {
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -286,7 +300,7 @@ export async function saveRemoteImageUrl(
     const bytes = Buffer.from(await response.arrayBuffer());
 
     const saveStartedAt = Date.now();
-    const hostedImageUrl = await saveImageBytes(bytes, mimeType, fileName, folder);
+    const hostedImageUrl = await saveImageBytes(bytes, mimeType, fileName, folder, options);
     logImageHostTiming('saveRemoteImageUrl.save', saveStartedAt, {
       bytes: bytes.byteLength,
       mimeType,

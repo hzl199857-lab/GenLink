@@ -13,6 +13,7 @@ import {
   Download,
   Expand,
   Upload,
+  X,
 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
@@ -33,6 +34,8 @@ export interface ImageGenerationNodeToolbarProps {
   visible: boolean;
   top: number;
   hasGeneratedImage: boolean;
+  panActive?: boolean;
+  belowContent?: React.ReactNode;
   transformOrigin?: string;
   onUpload?: () => void;
   onOpenLightbox?: () => void;
@@ -65,10 +68,12 @@ function ToolbarIconButton({
   title,
   icon: Icon,
   onClick,
+  activeDanger = false,
 }: {
   title: string;
   icon: ToolbarActionConfig['icon'];
   onClick?: () => void;
+  activeDanger?: boolean;
 }) {
   return (
     <div className="group/tooltip relative">
@@ -79,7 +84,12 @@ function ToolbarIconButton({
           e.stopPropagation();
           onClick?.();
         }}
-        className="nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
+        className={[
+          'nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill transition-colors',
+          activeDanger
+            ? 'bg-red-500/12 text-red-400 hover:bg-red-500/18 hover:text-red-300'
+            : 'text-gl-text-secondary hover:bg-gl-panel-hover hover:text-gl-text-primary',
+        ].join(' ')}
         aria-label={title}
       >
         <Icon size={16} strokeWidth={1.9} />
@@ -93,6 +103,8 @@ export function ImageGenerationNodeToolbar({
   visible,
   top,
   hasGeneratedImage,
+  panActive = false,
+  belowContent,
   transformOrigin = 'bottom center',
   onUpload,
   onOpenLightbox,
@@ -215,6 +227,16 @@ export function ImageGenerationNodeToolbar({
                   </div>
                 ) : null}
               </div>
+            ) : action.id === 'pan' ? (
+              <ToolbarIconButton
+                key={action.id}
+                title={panActive ? '退出3D视角' : action.title}
+                icon={panActive ? X : action.icon}
+                activeDanger={panActive}
+                onClick={() => {
+                  onAction?.(action.id);
+                }}
+              />
             ) : (
               <ToolbarIconButton
                 key={action.id}
@@ -263,6 +285,11 @@ export function ImageGenerationNodeToolbar({
           <Tooltip label="上传参考图" side="top" />
         </div>
       )}
+      {belowContent ? (
+        <div className="mt-2 flex justify-center" onPointerDown={(e) => e.stopPropagation()}>
+          {belowContent}
+        </div>
+      ) : null}
     </div>
   );
 }

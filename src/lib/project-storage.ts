@@ -292,7 +292,6 @@ export function stripEmbeddedImageDataFromNodeData(
 ): ImageGenerationNodeData {
   const next: ImageGenerationNodeData = {
     ...nodeData,
-    effectivePromptOverride: undefined,
     generatedOutputFileName:
       generatedOutputFileName ?? nodeData.generatedOutputFileName,
   };
@@ -1222,6 +1221,17 @@ function isObjectUrl(value?: string): boolean {
 }
 
 function resolveSourceKeyFromNode(node: CanvasNode): string | null {
+  if (node.type === "image") {
+    const generatedAt = node.data.generatedAt?.trim();
+    const imageUrl = node.data.hostedImageUrl?.trim() || node.data.imageUrl?.trim();
+
+    if (!generatedAt || !imageUrl) {
+      return null;
+    }
+
+    return `${node.id}:${generatedAt}:${imageUrl}`;
+  }
+
   if (node.type === "panorama-360") {
     const data = node.data.panorama360Node.panorama;
     const generatedAt = data.generatedAt?.trim();
@@ -1354,6 +1364,22 @@ function withResolvedUploadedImagePreviewUrl(
   };
 }
 
+function withResolvedImagePreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "image" }>,
+): Extract<CanvasNode, { type: "image" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      imageUrl: previewUrl,
+      hostedImageUrl: previewUrl,
+      generatedOutputFileName: fileName,
+    },
+  };
+}
+
 export async function hydrateProjectSnapshotPreviewUrls(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
@@ -1405,6 +1431,9 @@ export async function hydrateProjectSnapshotPreviewUrls(
         : node.type === "panorama-360"
           ? node.data.panorama360Node.panorama.generatedOutputFileName?.trim() ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
+          : node.type === "image"
+            ? node.data.generatedOutputFileName?.trim() ||
+              (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
           : node.type === "uploaded_image"
             ? resolveUploadedImageOutputFileName(node)
           : undefined;
@@ -1431,6 +1460,10 @@ export async function hydrateProjectSnapshotPreviewUrls(
           ...node,
           data: withResolvedPreviewUrl(previewUrl, fileName, node.data),
         };
+      }
+
+      if (node.type === "image") {
+        return withResolvedImagePreviewUrl(previewUrl, fileName, node);
       }
 
       if (node.type === "uploaded_image") {

@@ -65,6 +65,8 @@ export interface ImageGenerationNodeProps {
   onSelectNode?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
+  hidePromptBar?: boolean;
+  panActive?: boolean;
   promptFocusRequestId?: number;
 }
 
@@ -270,6 +272,8 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   onSelectNode,
   onPromptPointerDown,
   onPromptFocusWithinChange,
+  hidePromptBar,
+  panActive,
   promptFocusRequestId,
 }: ImageGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
@@ -406,8 +410,9 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     });
   };
 
-  const uiVisible = selected && !dragging && !suppressTransientUi && !galleryOpen;
-  const showAccessories = uiVisible;
+  const toolbarVisible = selected && !dragging && !suppressTransientUi && !galleryOpen;
+  const promptBarVisible = toolbarVisible && !hidePromptBar;
+  const showAccessories = toolbarVisible;
   const isGenerating = data.status === 'generating';
   const displayResults = getDisplayResults(data);
   const resultCount = displayResults.length;
@@ -500,9 +505,10 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         </div>
 
         <ImageGenerationNodeToolbar
-          visible={uiVisible}
+          visible={toolbarVisible}
           top={toolbarTop}
           hasGeneratedImage={hasGeneratedImage}
+          panActive={panActive}
           onUpload={onUpload}
           onAction={onToolbarAction}
           onOpenLightbox={() => onOpenLightbox?.(data)}
@@ -668,9 +674,9 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
       </div>
 
       <ImageGenerationPromptBar
-        key={uiVisible ? 'visible' : 'hidden'}
+        key={promptBarVisible ? 'visible' : 'hidden'}
         nodeId={id}
-        visible={uiVisible}
+        visible={promptBarVisible}
         prompt={data.prompt || ''}
         provider={data.provider || readStoredSelectedApiProvider('image')}
         model={data.model}
