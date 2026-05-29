@@ -59,6 +59,9 @@ CLAUDE.md
 
 # local caches
 .eslintcache
+.graphify_*.json
+.graphify_uncached.txt
+graphify-out/
 
 # generated local images
 /img/
