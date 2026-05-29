@@ -122,6 +122,8 @@ import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLib
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { downloadImageGenerationResult } from '@/lib/image-download';
+import { createVideoClipJob, pollVideoClipJob } from '@/lib/video/clip-client';
+import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 import {
   CreateProjectDialog,
@@ -2058,28 +2060,501 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
   );
 });
 
-const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected }: NodeProps) {
+const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const createProcessedVideoNode = useCanvasStore((s) => s.createVideoNodeFromProcessedResult);
+  const createImageNodeFromVideoFrame = useCanvasStore((s) => s.createImageNodeFromVideoFrame);
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const videoData = data as VideoNodeData;
   const hasVideo = Boolean(videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim());
   const cardDimensions = resolveUploadedVideoCardDimensions(videoData);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [clipOpen, setClipOpen] = useState(false);
+  const [clipStart, setClipStart] = useState(0);
+  const [clipEnd, setClipEnd] = useState(() => Math.min(3, videoData.durationSeconds || 3));
+  const [clipBusy, setClipBusy] = useState(false);
+  const [clipMessage, setClipMessage] = useState<string | null>(null);
+  const [clipThumbs, setClipThumbs] = useState<string[]>([]);
+  const [clipVideoDuration, setClipVideoDuration] = useState(videoData.durationSeconds || 0);
+  const clipTrackRef = useRef<HTMLDivElement | null>(null);
+  const clipDragRef = useRef<{
+    mode: 'left' | 'right' | 'move' | null;
+    pointerOffsetSec: number;
+  } | null>(null);
+  const clipDuration = Math.max(clipVideoDuration || videoData.durationSeconds || clipEnd || 0, 0);
+  const clipStartPct = clipDuration > 0 ? Math.max(0, Math.min(100, (clipStart / clipDuration) * 100)) : 0;
+  const clipEndPct = clipDuration > 0 ? Math.max(0, Math.min(100, (clipEnd / clipDuration) * 100)) : 0;
+  const clipWidthPct = Math.max(0, clipEndPct - clipStartPct);
 
   const handleReplace = async (file: File) => {
     const next = await readVideoFile(file);
     updateNodeData<'video'>(id, next);
   };
 
+  const handleOpenClip = () => {
+    const duration = videoRef.current?.duration && Number.isFinite(videoRef.current.duration)
+      ? videoRef.current.duration
+      : videoData.durationSeconds || 3;
+    const currentTime = videoRef.current?.currentTime || 0;
+    const length = Math.min(3, duration);
+    const start = Math.min(Math.max(0, currentTime), Math.max(0, duration - length));
+
+    setClipStart(Number(start.toFixed(2)));
+    setClipEnd(Number((start + length).toFixed(2)));
+    setClipMessage(null);
+    setClipThumbs([]);
+    setClipVideoDuration(duration);
+    setClipOpen(true);
+  };
+
+  useEffect(() => {
+    if (!clipOpen) {
+      return;
+    }
+
+    const sourceUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl.trim();
+
+    if (!sourceUrl) {
+      return;
+    }
+
+    let cancelled = false;
+    const tempVideo = document.createElement('video');
+    tempVideo.muted = true;
+    tempVideo.playsInline = true;
+    tempVideo.preload = 'auto';
+    tempVideo.crossOrigin = 'anonymous';
+
+    const waitForEvent = (eventName: string, timeoutMs: number) =>
+      new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          cleanup();
+          reject(new Error('timeout'));
+        }, timeoutMs);
+        const cleanup = () => {
+          window.clearTimeout(timer);
+          tempVideo.removeEventListener(eventName, handleEvent);
+          tempVideo.removeEventListener('error', handleError);
+        };
+        const handleEvent = () => {
+          cleanup();
+          resolve();
+        };
+        const handleError = () => {
+          cleanup();
+          reject(new Error('video load failed'));
+        };
+
+        tempVideo.addEventListener(eventName, handleEvent, { once: true });
+        tempVideo.addEventListener('error', handleError, { once: true });
+      });
+
+    const renderThumbs = async () => {
+      try {
+        tempVideo.src = sourceUrl;
+        await waitForEvent('loadedmetadata', 1800);
+
+        const duration = Number.isFinite(tempVideo.duration) && tempVideo.duration > 0
+          ? tempVideo.duration
+          : clipDuration;
+
+        if (!duration || cancelled) {
+          return;
+        }
+
+        const canvas = document.createElement('canvas');
+        const height = 44;
+        const aspect = Math.max(tempVideo.videoWidth || 16, 1) / Math.max(tempVideo.videoHeight || 9, 1);
+        canvas.width = Math.max(1, Math.round(height * aspect));
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+
+        if (!context) {
+          return;
+        }
+
+        const nextThumbs: string[] = [];
+
+        for (let index = 0; index < 10; index += 1) {
+          if (cancelled) return;
+          tempVideo.currentTime = Math.min(Math.max(0, ((index + 0.5) / 10) * duration), Math.max(0, duration - 0.05));
+          await waitForEvent('seeked', 700).catch(() => undefined);
+          context.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+          nextThumbs.push(canvas.toDataURL('image/jpeg', 0.72));
+        }
+
+        if (!cancelled) {
+          setClipThumbs(nextThumbs);
+        }
+      } catch {
+        if (!cancelled) {
+          setClipThumbs([]);
+        }
+      } finally {
+        tempVideo.removeAttribute('src');
+        tempVideo.load();
+      }
+    };
+
+    void renderThumbs();
+
+    return () => {
+      cancelled = true;
+      tempVideo.removeAttribute('src');
+      tempVideo.load();
+    };
+  }, [clipDuration, clipOpen, videoData.hostedVideoUrl, videoData.videoUrl]);
+
+  const applyClipDrag = useCallback((clientX: number) => {
+    const track = clipTrackRef.current;
+    const drag = clipDragRef.current;
+
+    if (!track || !drag || clipDuration <= 0) {
+      return;
+    }
+
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const posSec = ratio * clipDuration;
+    const minRange = Math.min(0.1, clipDuration);
+
+    if (drag.mode === 'left') {
+      const nextStart = Math.min(Math.max(0, posSec), clipEnd - minRange);
+      setClipStart(Number(nextStart.toFixed(2)));
+      if (videoRef.current) videoRef.current.currentTime = nextStart;
+      return;
+    }
+
+    if (drag.mode === 'right') {
+      const nextEnd = Math.max(Math.min(clipDuration, posSec), clipStart + minRange);
+      setClipEnd(Number(nextEnd.toFixed(2)));
+      return;
+    }
+
+    const length = Math.max(minRange, clipEnd - clipStart);
+    const nextStart = Math.max(0, Math.min(clipDuration - length, posSec - drag.pointerOffsetSec));
+    setClipStart(Number(nextStart.toFixed(2)));
+    setClipEnd(Number((nextStart + length).toFixed(2)));
+    if (videoRef.current) videoRef.current.currentTime = nextStart;
+  }, [clipDuration, clipEnd, clipStart]);
+
+  const handleClipTrackPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (clipDuration <= 0 || clipBusy) {
+      return;
+    }
+
+    const track = clipTrackRef.current;
+
+    if (!track) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const rect = track.getBoundingClientRect();
+    const startX = rect.left + (clipStart / clipDuration) * rect.width;
+    const endX = rect.left + (clipEnd / clipDuration) * rect.width;
+    const x = event.clientX;
+    const edgePx = 20;
+    const ratio = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
+    const posSec = ratio * clipDuration;
+
+    if (Math.abs(x - startX) <= edgePx) {
+      clipDragRef.current = { mode: 'left', pointerOffsetSec: 0 };
+    } else if (Math.abs(x - endX) <= edgePx) {
+      clipDragRef.current = { mode: 'right', pointerOffsetSec: 0 };
+    } else if (x > startX && x < endX) {
+      clipDragRef.current = { mode: 'move', pointerOffsetSec: posSec - clipStart };
+    } else {
+      const length = Math.max(0.1, Math.min(clipEnd - clipStart, clipDuration));
+      const nextStart = Math.max(0, Math.min(clipDuration - length, posSec - length / 2));
+      setClipStart(Number(nextStart.toFixed(2)));
+      setClipEnd(Number((nextStart + length).toFixed(2)));
+      if (videoRef.current) videoRef.current.currentTime = nextStart;
+      clipDragRef.current = { mode: 'move', pointerOffsetSec: length / 2 };
+    }
+
+    applyClipDrag(event.clientX);
+
+    const handleMove = (moveEvent: PointerEvent) => applyClipDrag(moveEvent.clientX);
+    const handleUp = () => {
+      clipDragRef.current = null;
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp, true);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp, true);
+  };
+
+  useEffect(() => {
+    if (!clipOpen || clipDuration <= 0) {
+      return;
+    }
+
+    const moveSelection = (direction: number, frames: number) => {
+      const length = Math.max(0.1, clipEnd - clipStart);
+      const delta = (frames / 30) * direction;
+      const nextStart = Math.max(0, Math.min(clipDuration - length, clipStart + delta));
+      setClipStart(Number(nextStart.toFixed(2)));
+      setClipEnd(Number((nextStart + length).toFixed(2)));
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.currentTime = nextStart;
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setClipOpen(false);
+        return;
+      }
+
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        moveSelection(event.key === 'ArrowRight' ? 1 : -1, event.shiftKey ? 10 : 1);
+      }
+
+      if (event.key === ' ' || event.code === 'Space') {
+        event.preventDefault();
+        const video = videoRef.current;
+
+        if (!video) return;
+
+        if (video.paused) {
+          if (video.currentTime < clipStart || video.currentTime >= clipEnd) {
+            video.currentTime = clipStart;
+          }
+          void video.play();
+        } else {
+          video.pause();
+        }
+      }
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      const target = event.target as Node | null;
+
+      if (!clipTrackRef.current?.contains(target)) {
+        return;
+      }
+
+      event.preventDefault();
+      moveSelection(event.deltaY > 0 ? 1 : -1, event.shiftKey ? 10 : 1);
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('wheel', handleWheel);
+    };
+  }, [clipDuration, clipEnd, clipOpen, clipStart]);
+
+  useEffect(() => {
+    if (!clipOpen) {
+      return;
+    }
+
+    let raf = 0;
+    const tick = () => {
+      const video = videoRef.current;
+
+      if (video && !video.paused && video.currentTime > clipEnd) {
+        video.currentTime = clipStart;
+      }
+
+      raf = window.requestAnimationFrame(tick);
+    };
+
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [clipEnd, clipOpen, clipStart]);
+
+  const runCut = async () => {
+    if (!(clipEnd > clipStart)) {
+      setClipMessage('结束时间必须大于开始时间');
+      return;
+    }
+
+    setClipBusy(true);
+    setClipMessage('正在准备视频源...');
+
+    try {
+      const sourceUrl = await ensureVideoProcessingSourceUrl(videoData);
+      setClipMessage('正在创建裁剪任务...');
+      const jobId = await createVideoClipJob({
+        kind: 'cut',
+        sourceUrl,
+        start: clipStart,
+        end: clipEnd,
+        fps: 24,
+      });
+      const done = await pollVideoClipJob(jobId, (status) => {
+        if (status.ok) {
+          setClipMessage(`处理中 ${Math.round((status.progress || 0) * 100)}%`);
+        }
+      });
+      const segment = done.segments?.[0];
+
+      if (!segment?.url) {
+        throw new Error('裁剪任务没有返回视频结果');
+      }
+
+      const nextNodeId = await createProcessedVideoNode({
+        sourceNodeId: id,
+        title: `剪辑自 ${videoData.title || videoData.fileName || '视频'}`,
+        resultUrl: segment.url,
+        durationSeconds: segment.duration ?? clipEnd - clipStart,
+        width: segment.width ?? videoData.width,
+        height: segment.height ?? videoData.height,
+        sizeBytes: segment.sizeBytes,
+        mimeType: segment.mimeType,
+        position: {
+          x: xPos + cardDimensions.width + 48,
+          y: yPos,
+        },
+      });
+
+      setClipMessage('裁剪完成');
+      setClipOpen(false);
+      notifyCanvasNodeSelect?.(nextNodeId);
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : '裁剪失败');
+    } finally {
+      setClipBusy(false);
+    }
+  };
+
+  const runSmartClip = async () => {
+    setClipBusy(true);
+    setClipMessage('正在准备视频源...');
+
+    try {
+      const sourceUrl = await ensureVideoProcessingSourceUrl(videoData);
+      setClipMessage('正在创建智能剪辑任务...');
+      const jobId = await createVideoClipJob({
+        kind: 'smart_clip',
+        sourceUrl,
+        options: { mode: 'stable', maxSegments: 20, fps: 24 },
+      });
+      const done = await pollVideoClipJob(jobId, (status) => {
+        if (status.ok) {
+          setClipMessage(`智能剪辑 ${status.doneCount ?? 0}/${status.total ?? '?'} ${Math.round((status.progress || 0) * 100)}%`);
+        }
+      });
+      const segments = done.segments?.filter((segment) => segment.url) ?? [];
+
+      if (!segments.length) {
+        throw new Error('未检测到可生成的剪辑片段');
+      }
+
+      const nextNodeIds: string[] = [];
+
+      for (const [index, segment] of segments.entries()) {
+        const nextNodeId = await createProcessedVideoNode({
+          sourceNodeId: id,
+          title: `智能剪辑 ${index + 1}`,
+          resultUrl: segment.url,
+          durationSeconds: segment.duration,
+          width: segment.width ?? videoData.width,
+          height: segment.height ?? videoData.height,
+          sizeBytes: segment.sizeBytes,
+          mimeType: segment.mimeType,
+          position: {
+            x: xPos + cardDimensions.width + 48,
+            y: yPos + index * 40,
+          },
+        });
+        nextNodeIds.push(nextNodeId);
+      }
+
+      setClipMessage('智能剪辑完成');
+      setClipOpen(false);
+      if (nextNodeIds[0]) notifyCanvasNodeSelect?.(nextNodeIds[0]);
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : '智能剪辑失败');
+    } finally {
+      setClipBusy(false);
+    }
+  };
+
+  const extractFrame = async () => {
+    const video = videoRef.current;
+
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setClipMessage('视频尚未加载完成');
+      setClipOpen(true);
+      return;
+    }
+
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        throw new Error('Canvas 不可用');
+      }
+
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/png');
+      const nextNodeId = await createImageNodeFromVideoFrame({
+        sourceNodeId: id,
+        dataUrl,
+        width: canvas.width,
+        height: canvas.height,
+        title: '视频帧',
+        position: {
+          x: xPos + cardDimensions.width + 48,
+          y: yPos,
+        },
+      });
+
+      notifyCanvasNodeSelect?.(nextNodeId);
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : '提取视频帧失败，可能是视频源不允许浏览器截帧');
+      setClipOpen(true);
+    }
+  };
+
   return (
     <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
       <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
         <ImageGenerationNodeToolbar
-          visible={isActive}
+          visible={isActive && !clipOpen}
           top={-IMAGE_NODE_TOOLBAR_LIFT}
           hasGeneratedImage={hasVideo}
-          placeholderOnly
+          placeholderOnly={false}
+          onAction={(action) => {
+            if (action === 'crop') {
+              handleOpenClip();
+            } else if (action === 'download') {
+              const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl.trim();
+              if (videoUrl) {
+                const a = document.createElement('a');
+                a.href = videoUrl;
+                a.download = videoData.title || videoData.fileName || 'video';
+                a.click();
+              }
+            }
+          }}
         />
+        {isActive && !clipOpen ? (
+          <button
+            type="button"
+            className="nodrag nopan absolute right-3 top-[-54px] z-30 rounded-gl-pill border border-white/10 bg-gl-panel/95 px-3 py-2 text-[13px] font-medium text-gl-text-primary shadow-gl-toolbar backdrop-blur-md transition-colors hover:bg-gl-panel-hover"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => void extractFrame()}
+          >
+            提取帧
+          </button>
+        ) : null}
         <UploadedVideoNode
           data={videoData}
           selected={selected}
@@ -2087,7 +2562,117 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected }: 
           onReplace={handleReplace}
           onTitleChange={(nextTitle) => updateNodeData<'video'>(id, { title: nextTitle })}
           onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+          videoRef={videoRef}
+          controlsVisible={!clipOpen}
+          onLoadedMetadata={(duration) => {
+            if (duration > 0) {
+              setClipVideoDuration(duration);
+            }
+          }}
         />
+        {clipOpen ? (
+          <div
+            data-canvas-menu-ignore="true"
+            className="nodrag nopan absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2"
+            style={{
+              top: `${cardDimensions.height + 72}px`,
+              width: `${Math.min(Math.max((cardDimensions.width + 60) * 0.67, 280), 430)}px`,
+              maxWidth: 'calc(100vw - 64px)',
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex w-full items-center justify-center gap-1">
+              <button
+                type="button"
+                aria-label="取消裁剪"
+                disabled={clipBusy}
+                onClick={() => setClipOpen(false)}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#1b1d21]/95 text-gl-text-secondary shadow-[0_10px_24px_rgba(0,0,0,0.34)] transition hover:text-white disabled:opacity-50"
+              >
+                <X size={8} strokeWidth={2.4} />
+              </button>
+
+              <div
+                ref={clipTrackRef}
+                onPointerDown={handleClipTrackPointerDown}
+                className="relative h-6 min-w-0 flex-1 cursor-grab overflow-hidden rounded-[6px] border border-white/15 bg-[#16181c] shadow-[0_10px_28px_rgba(0,0,0,0.38)] active:cursor-grabbing"
+              >
+                <div className="absolute inset-0 opacity-70">
+                  <div className="flex h-full">
+                    {Array.from({ length: 10 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="h-full flex-1 border-r border-black/40 bg-[linear-gradient(135deg,rgba(255,255,255,.18),rgba(255,255,255,.03))]"
+                        style={clipThumbs[index] ? {
+                          backgroundImage: `url(${clipThumbs[index]})`,
+                          backgroundPosition: 'center',
+                          backgroundSize: 'cover',
+                        } : undefined}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div
+                  className="absolute inset-y-0 border-x-2 border-white bg-white/10 shadow-[0_0_0_9999px_rgba(0,0,0,.45)]"
+                  style={{ left: `${clipStartPct}%`, width: `${clipWidthPct}%` }}
+                />
+                <div
+                  className="absolute top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.45)]"
+                  style={{ left: `${clipStartPct}%` }}
+                />
+                <div
+                  className="absolute top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.45)]"
+                  style={{ left: `${clipEndPct}%` }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2a2d32]/95 px-1.5 py-0.5 text-[6px] font-semibold text-white shadow-[0_4px_12px_rgba(0,0,0,.34)]"
+                  style={{ left: `${clipStartPct + clipWidthPct / 2}%` }}
+                >
+                  {Math.max(0, clipEnd - clipStart).toFixed(2)}s
+                </div>
+              </div>
+
+              <button
+                type="button"
+                aria-label="确认裁剪"
+                disabled={clipBusy || !(clipEnd > clipStart)}
+                onClick={() => void runCut()}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-[0_10px_24px_rgba(255,255,255,0.2)] transition hover:bg-white/90 disabled:opacity-50"
+              >
+                <Check size={8} strokeWidth={2.6} />
+              </button>
+            </div>
+
+            <div className="flex w-full items-center justify-between gap-1.5">
+              <div />
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={clipBusy}
+                  onClick={() => void extractFrame()}
+                  className="rounded-full border border-white/10 bg-[#17191d]/95 px-1.5 py-0.5 text-[8px] font-semibold text-white shadow-[0_8px_20px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
+                >
+                  提取帧
+                </button>
+                <button
+                  type="button"
+                  disabled={clipBusy}
+                  onClick={() => void runSmartClip()}
+                  className="rounded-full border border-white/10 bg-[#17191d]/95 px-1.5 py-0.5 text-[8px] font-semibold text-white shadow-[0_8px_20px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
+                >
+                  智能剪辑
+                </button>
+              </div>
+            </div>
+
+            {clipMessage ? (
+              <div className="max-w-full rounded-full bg-[#17191d]/95 px-3 py-1 text-center text-[12px] text-gl-text-secondary shadow-[0_8px_20px_rgba(0,0,0,.28)]">
+                {clipMessage}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

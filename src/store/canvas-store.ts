@@ -1816,6 +1816,17 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
     }
 
     if (node.type !== "image_generation") {
+      if (node.type === "video" && node.data.outputFileName?.trim()) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            videoUrl: `output:${node.data.outputFileName}`,
+            hostedVideoUrl: undefined,
+          },
+        };
+      }
+
       if (node.type === "uploaded_image" && node.data.outputFileName?.trim()) {
         return {
           ...node,
@@ -1875,6 +1886,16 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
     }
 
     if (node.type !== "image_generation") {
+      if (node.type === "video") {
+        if (isObjectUrl(node.data.hostedVideoUrl)) {
+          urls.add(node.data.hostedVideoUrl as string);
+        }
+
+        if (isObjectUrl(node.data.videoUrl)) {
+          urls.add(node.data.videoUrl);
+        }
+      }
+
       if (node.type === "image") {
         if (isObjectUrl(node.data.hostedImageUrl)) {
           urls.add(node.data.hostedImageUrl as string);
@@ -2895,6 +2916,25 @@ export interface CanvasState {
     nodeId: string,
     cropRect: { x: number; y: number; width: number; height: number },
   ) => Promise<void>;
+  createVideoNodeFromProcessedResult: (params: {
+    sourceNodeId: string;
+    title: string;
+    resultUrl: string;
+    durationSeconds?: number;
+    width?: number;
+    height?: number;
+    sizeBytes?: number;
+    mimeType?: string;
+    position?: { x: number; y: number };
+  }) => Promise<string>;
+  createImageNodeFromVideoFrame: (params: {
+    sourceNodeId: string;
+    dataUrl: string;
+    width: number;
+    height: number;
+    title?: string;
+    position?: { x: number; y: number };
+  }) => Promise<string>;
   createPanorama360ScreenshotNode: (
     nodeId: string,
     capture: {
@@ -2965,7 +3005,7 @@ export interface CanvasState {
     kind?: "image" | "video";
     fileName?: string;
     generatedAt: string;
-    nodeData: ImageGenerationNodeData | VideoGenerationNodeData;
+    nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoNodeData;
     title?: string;
     model?: string;
     width?: number;
@@ -4960,6 +5000,177 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  createVideoNodeFromProcessedResult: async (params) => {
+    const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === params.sourceNodeId);
+
+    if (!sourceNode) {
+      throw new Error("Source video node not found");
+    }
+
+    const generatedAt = nowIso();
+    const nextNodeId = crypto.randomUUID();
+    const title = params.title.trim() || "剪辑视频";
+    const width = params.width || 320;
+    const height = params.height || 180;
+    const nextPosition = params.position ?? {
+      x: sourceNode.position.x + 468,
+      y: sourceNode.position.y,
+    };
+    const nodeData: VideoNodeData = {
+      title,
+      videoUrl: params.resultUrl,
+      hostedVideoUrl: params.resultUrl,
+      fileName: title,
+      width,
+      height,
+      sizeBytes: params.sizeBytes,
+      durationSeconds: params.durationSeconds,
+      mimeType: params.mimeType || "video/mp4",
+    };
+    let persistedPreviewUrl: string | undefined;
+    let persistedFileName: string | undefined;
+
+    try {
+      if (state.currentProject) {
+        const persisted = await persistGeneratedOutput(state.currentProject, {
+          sourceKey: `${nextNodeId}:video:${params.resultUrl}`,
+          imageUrl: params.resultUrl,
+          kind: "video",
+          fileName: title,
+          generatedAt,
+          nodeData,
+          title,
+          width,
+          height,
+          format: "mp4",
+          sizeBytes: params.sizeBytes,
+        });
+
+        persistedPreviewUrl = persisted.previewUrl;
+        persistedFileName = persisted.fileName;
+      }
+    } catch (error) {
+      get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+    }
+
+    const nextNode: CanvasNode = {
+      id: nextNodeId,
+      type: "video",
+      position: nextPosition,
+      data: {
+        ...nodeData,
+        videoUrl: persistedPreviewUrl || params.resultUrl,
+        hostedVideoUrl: persistedPreviewUrl || params.resultUrl,
+        fileName: persistedFileName || nodeData.fileName,
+        outputFileName: persistedFileName,
+      },
+    };
+
+    set((currentState) => ({
+      ...createUndoHistoryUpdate(currentState),
+      nodes: [...currentState.nodes, nextNode],
+      currentProjectPreviewUrls: persistedPreviewUrl
+        ? [...currentState.currentProjectPreviewUrls, persistedPreviewUrl]
+        : currentState.currentProjectPreviewUrls,
+      dirty: true,
+      error: null,
+    }));
+
+    return nextNodeId;
+  },
+
+  createImageNodeFromVideoFrame: async (params) => {
+    const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === params.sourceNodeId);
+
+    if (!sourceNode) {
+      throw new Error("Source video node not found");
+    }
+
+    const generatedAt = nowIso();
+    const nextNodeId = crypto.randomUUID();
+    const title = params.title?.trim() || "视频帧";
+    const position = params.position ?? {
+      x: sourceNode.position.x + 468,
+      y: sourceNode.position.y + 44,
+    };
+    const historyNodeData: ImageGenerationNodeData = {
+      title,
+      prompt: "视频帧提取",
+      model: "video-frame-capture",
+      generatedImageUrl: params.dataUrl,
+      generatedImageWidth: params.width,
+      generatedImageHeight: params.height,
+      generatedImageFormat: "PNG",
+      generatedAt,
+      generationResults: [{
+        status: "completed",
+        imageUrl: params.dataUrl,
+        model: "video-frame-capture",
+        width: params.width,
+        height: params.height,
+        format: "PNG",
+        generatedAt,
+      }],
+      status: "idle",
+    };
+    let persistedPreviewUrl: string | undefined;
+    let persistedFileName: string | undefined;
+
+    try {
+      if (state.currentProject) {
+        const persisted = await persistGeneratedOutput(state.currentProject, {
+          sourceKey: `${nextNodeId}:${generatedAt}:${params.dataUrl}`,
+          imageUrl: params.dataUrl,
+          fileName: title,
+          generatedAt,
+          nodeData: historyNodeData,
+          title,
+          model: historyNodeData.model,
+          width: params.width,
+          height: params.height,
+          format: "PNG",
+        });
+
+        persistedPreviewUrl = persisted.previewUrl;
+        persistedFileName = persisted.fileName;
+      }
+    } catch (error) {
+      get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+    }
+
+    const nextNode: CanvasNode = {
+      id: nextNodeId,
+      type: "image",
+      position,
+      data: {
+        title,
+        imageUrl: persistedPreviewUrl || params.dataUrl,
+        hostedImageUrl: persistedPreviewUrl,
+        prompt: "视频帧提取",
+        model: "video-frame-capture",
+        width: params.width,
+        height: params.height,
+        generatedAt,
+        generatedOutputFileName: persistedFileName,
+        status: "idle",
+      },
+    };
+
+    set((currentState) => ({
+      ...createUndoHistoryUpdate(currentState),
+      nodes: [...currentState.nodes, nextNode],
+      currentProjectPreviewUrls: persistedPreviewUrl
+        ? [...currentState.currentProjectPreviewUrls, persistedPreviewUrl]
+        : currentState.currentProjectPreviewUrls,
+      dirty: true,
+      error: null,
+    }));
+
+    return nextNodeId;
+  },
+
   generateThreeViewImageFromNode: async (nodeId, cameraAngle) => {
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === nodeId);
@@ -5951,27 +6162,46 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     set((currentState) => {
       if (params.kind === "video") {
-        const nodeData = params.nodeData as VideoGenerationNodeData;
+        const nodeData = params.nodeData as VideoGenerationNodeData | VideoNodeData;
         const nodes = currentState.nodes.map((node) => {
-          if (node.type !== "video_generation") {
-            return node;
+          if (node.type === "video_generation") {
+            const sourceKey = `${node.id}:${params.generatedAt}:${nodeData.videoUrl ?? ""}`;
+
+            if (sourceKey !== params.sourceKey) {
+              return node;
+            }
+
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                videoUrl: persisted.previewUrl,
+                hostedVideoUrl: persisted.previewUrl,
+                generatedOutputFileName: persisted.fileName,
+              },
+            };
           }
 
-          const sourceKey = `${node.id}:${params.generatedAt}:${nodeData.videoUrl ?? ""}`;
+          if (node.type === "video") {
+            const sourceNodeId = params.sourceKey.split(":")[0];
 
-          if (sourceKey !== params.sourceKey) {
-            return node;
+            if (node.id !== sourceNodeId) {
+              return node;
+            }
+
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                videoUrl: persisted.previewUrl,
+                hostedVideoUrl: persisted.previewUrl,
+                fileName: node.data.fileName ?? persisted.fileName,
+                outputFileName: persisted.fileName,
+              },
+            };
           }
 
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              videoUrl: persisted.previewUrl,
-              hostedVideoUrl: persisted.previewUrl,
-              generatedOutputFileName: persisted.fileName,
-            },
-          };
+          return node;
         });
 
         return {

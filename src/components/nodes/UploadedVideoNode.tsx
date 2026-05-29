@@ -14,6 +14,9 @@ export interface UploadedVideoNodeProps {
   onReplace?: (file: File) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onSelectNode?: () => void;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
+  controlsVisible?: boolean;
+  onLoadedMetadata?: (durationSeconds: number) => void;
 }
 
 const MAX_CARD_WIDTH = 420;
@@ -56,6 +59,9 @@ export function UploadedVideoNode({
   onReplace,
   onTitleChange,
   onSelectNode,
+  videoRef,
+  controlsVisible = true,
+  onLoadedMetadata,
 }: UploadedVideoNodeProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const cardDimensions = resolveUploadedVideoCardDimensions(data);
@@ -110,12 +116,20 @@ export function UploadedVideoNode({
       >
         {videoUrl ? (
           <video
+            ref={videoRef}
+            crossOrigin="anonymous"
             src={videoUrl}
             poster={data.previewUrl}
             className="absolute inset-0 h-full w-full object-cover"
-            controls
+            controls={controlsVisible}
             playsInline
             preload="metadata"
+            onLoadedMetadata={(event) => {
+              const duration = event.currentTarget.duration;
+              if (Number.isFinite(duration) && duration > 0) {
+                onLoadedMetadata?.(duration);
+              }
+            }}
             onPointerDown={(event) => event.stopPropagation()}
           />
         ) : (

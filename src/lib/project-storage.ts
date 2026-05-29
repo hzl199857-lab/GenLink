@@ -7,6 +7,7 @@ import type {
   MaterialLibraryItem,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
+  VideoNodeData,
   VideoGenerationNodeData,
 } from "@/types/canvas";
 import { buildProjectSnapshot } from "@/lib/project-snapshot";
@@ -42,7 +43,7 @@ type OutputHistoryManifestItem = {
   width?: number;
   height?: number;
   format?: string;
-  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData;
+  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData | VideoNodeData;
 };
 
 function isImageHistoryManifestItem(
@@ -53,7 +54,7 @@ function isImageHistoryManifestItem(
 
 function isVideoHistoryManifestItem(
   item: OutputHistoryManifestItem | undefined,
-): item is OutputHistoryManifestItem & { kind: "video"; nodeData?: VideoGenerationNodeData } {
+): item is OutputHistoryManifestItem & { kind: "video"; nodeData?: VideoGenerationNodeData | VideoNodeData } {
   return item?.kind === "video";
 }
 
@@ -91,7 +92,7 @@ export interface PersistProjectOutputParams {
   kind?: "image" | "video";
   fileName?: string;
   generatedAt: string;
-  nodeData: ImageGenerationNodeData | VideoGenerationNodeData;
+  nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoNodeData;
   title?: string;
   model?: string;
   width?: number;
@@ -1274,6 +1275,21 @@ function resolveSourceKeyFromNode(node: CanvasNode): string | null {
     return `${node.id}:${generatedAt}:${videoUrl}`;
   }
 
+  if (node.type === "video") {
+    const outputFileName = node.data.outputFileName?.trim();
+    const videoUrl = node.data.hostedVideoUrl?.trim() || node.data.videoUrl?.trim();
+
+    if (outputFileName) {
+      return `${node.id}:output:${outputFileName}`;
+    }
+
+    if (!videoUrl) {
+      return null;
+    }
+
+    return `${node.id}:video:${videoUrl}`;
+  }
+
   if (node.type !== "image_generation") {
     return null;
   }
@@ -1354,6 +1370,23 @@ function withResolvedVideoPreviewUrl(
   };
 }
 
+function withResolvedVideoNodePreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "video" }>,
+): Extract<CanvasNode, { type: "video" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      videoUrl: previewUrl,
+      hostedVideoUrl: previewUrl,
+      fileName: node.data.fileName ?? fileName,
+      outputFileName: fileName,
+    },
+  };
+}
+
 function withResolvedPanoramaPreviewUrl(
   previewUrl: string,
   fileName: string,
@@ -1391,6 +1424,24 @@ function resolveUploadedImageOutputFileName(
   }
 
   return null;
+}
+
+function resolveVideoOutputFileName(
+  node: Extract<CanvasNode, { type: "video" }>,
+): string | null {
+  const fileName = node.data.outputFileName?.trim();
+
+  if (!fileName) {
+    return null;
+  }
+
+  const videoUrl = node.data.videoUrl.trim();
+
+  if (!videoUrl || videoUrl === `output:${fileName}`) {
+    return fileName;
+  }
+
+  return fileName;
 }
 
 function withResolvedUploadedImagePreviewUrl(
@@ -1495,6 +1546,10 @@ export async function hydrateProjectSnapshotPreviewUrls(
           ? node.data.generatedOutputFileName?.trim() ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined) ||
             latestVideoFileNameByNodeId.get(node.id)
+        : node.type === "video"
+          ? resolveVideoOutputFileName(node) ||
+            (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined) ||
+            latestVideoFileNameByNodeId.get(node.id)
         : node.type === "panorama-360"
           ? node.data.panorama360Node.panorama.generatedOutputFileName?.trim() ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
@@ -1531,6 +1586,10 @@ export async function hydrateProjectSnapshotPreviewUrls(
 
       if (node.type === "video_generation") {
         return withResolvedVideoPreviewUrl(previewUrl, fileName, node);
+      }
+
+      if (node.type === "video") {
+        return withResolvedVideoNodePreviewUrl(previewUrl, fileName, node);
       }
 
       if (node.type === "image") {
