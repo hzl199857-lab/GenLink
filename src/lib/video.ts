@@ -48,6 +48,12 @@ export interface VideoGenerationResult {
   usage?: unknown;
 }
 
+export interface VideoTaskSubmission {
+  taskId: string;
+  model: string;
+  officialFormat: boolean;
+}
+
 type SeedanceCreateResponse = {
   id?: string;
   task_id?: string;
@@ -68,6 +74,10 @@ type SeedanceTaskResponse = {
   };
   data?: {
     output?: string;
+    content?: {
+      video_url?: string;
+      [key: string]: unknown;
+    };
     last_frame_url?: string;
     ratio?: string;
     resolution?: string;
@@ -208,18 +218,35 @@ function buildOfficialContent(params: GenerateVideoParams): Array<Record<string,
 }
 
 function buildOfficialPrompt(params: GenerateVideoParams): string {
-  const suffixes: string[] = [];
+  return params.prompt.trim();
+}
 
-  if (params.ratio) suffixes.push(`--ratio ${params.ratio}`);
-  if (params.resolution) suffixes.push(`--resolution ${params.resolution}`);
-  if (params.duration) suffixes.push(`--duration ${params.duration}`);
-  if (typeof params.seed === 'number') suffixes.push(`--seed ${params.seed}`);
-  if (params.camerafixed) suffixes.push('--camerafixed true');
-  if (params.watermark) suffixes.push('--watermark true');
-  if (params.returnLastFrame) suffixes.push('--return_last_frame true');
-  if (params.generateAudio) suffixes.push('--generate_audio true');
+function appendOptionalSeed(
+  body: Record<string, unknown>,
+  seed?: number,
+): Record<string, unknown> {
+  if (typeof seed === 'number' && Number.isFinite(seed)) {
+    body.seed = seed;
+  }
 
-  return [params.prompt.trim(), ...suffixes].filter(Boolean).join(' ');
+  return body;
+}
+
+function buildOfficialBody(params: GenerateVideoParams): Record<string, unknown> {
+  return appendOptionalSeed(
+    {
+      model: params.model || DEFAULT_SEEDANCE_MODEL,
+      content: buildOfficialContent(params),
+      duration: params.duration ?? 5,
+      ratio: params.ratio ?? '16:9',
+      resolution: params.resolution ?? '720p',
+      watermark: params.watermark ?? false,
+      camerafixed: params.camerafixed ?? false,
+      return_last_frame: params.returnLastFrame ?? false,
+      generate_audio: params.generateAudio ?? false,
+    },
+    params.seed,
+  );
 }
 
 function buildUnifiedBody(params: GenerateVideoParams): Record<string, unknown> {
@@ -240,11 +267,7 @@ function buildUnifiedBody(params: GenerateVideoParams): Record<string, unknown> 
     body.images = images;
   }
 
-  if (typeof params.seed === 'number' && Number.isFinite(params.seed)) {
-    body.seed = params.seed;
-  }
-
-  return body;
+  return appendOptionalSeed(body, params.seed);
 }
 
 function shouldUseOfficialFormat(params: GenerateVideoParams): boolean {
@@ -294,6 +317,7 @@ function toVideoResult(
 ): VideoGenerationResult {
   const videoUrl =
     task.content?.video_url?.trim() ||
+    task.data?.content?.video_url?.trim() ||
     task.data?.output?.trim() ||
     '';
 
@@ -316,14 +340,11 @@ function toVideoResult(
 
 export async function submitComflyVideoTask(
   params: GenerateVideoParams,
-): Promise<{ taskId: string; model: string; officialFormat: boolean }> {
+): Promise<VideoTaskSubmission> {
   const model = params.model || DEFAULT_SEEDANCE_MODEL;
   const officialFormat = shouldUseOfficialFormat(params);
   const body = officialFormat
-    ? {
-        model,
-        content: buildOfficialContent({ ...params, model }),
-      }
+    ? buildOfficialBody({ ...params, model })
     : buildUnifiedBody({ ...params, model });
   const response = await requestJson<SeedanceCreateResponse>(
     officialFormat

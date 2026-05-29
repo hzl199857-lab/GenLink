@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 
-import { generateVideo, type GenerateVideoParams } from "@/lib/video";
+import {
+  getComflyVideoTaskResult,
+  submitComflyVideoTask,
+  type GenerateVideoParams,
+} from "@/lib/video";
 import { VibeApiError } from "@/lib/vibe";
 import type { VideoGenerationMode } from "@/types/canvas";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 interface VideoRequestBody {
+  action?: unknown;
   apiKey?: unknown;
+  taskId?: unknown;
+  officialFormat?: unknown;
   model?: unknown;
   mode?: unknown;
   prompt?: unknown;
@@ -22,6 +30,10 @@ interface VideoRequestBody {
   images?: unknown;
   videos?: unknown;
   audio?: unknown;
+}
+
+function parseAction(value: unknown): "submit" | "status" {
+  return value === "status" ? "status" : "submit";
 }
 
 function parseMode(value: unknown): VideoGenerationMode {
@@ -85,6 +97,14 @@ function parseNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function parseDuration(value: unknown): number | undefined {
+  const parsed = parseNumber(value);
+
+  return typeof parsed === "number" && parsed >= 4 && parsed <= 15
+    ? Math.round(parsed)
+    : undefined;
+}
+
 function toParams(body: VideoRequestBody): GenerateVideoParams {
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
@@ -122,7 +142,7 @@ function toParams(body: VideoRequestBody): GenerateVideoParams {
       : undefined,
     ratio: typeof body.ratio === "string" ? body.ratio : undefined,
     resolution: typeof body.resolution === "string" ? body.resolution : undefined,
-    duration: parseNumber(body.duration),
+    duration: parseDuration(body.duration),
     seed: parseNumber(body.seed),
     camerafixed: body.camerafixed === true,
     watermark: body.watermark === true,
@@ -137,11 +157,42 @@ function toParams(body: VideoRequestBody): GenerateVideoParams {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as VideoRequestBody;
-    const result = await generateVideo(toParams(body));
+    const action = parseAction(body.action);
+
+    if (action === "status") {
+      const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+      const taskId = typeof body.taskId === "string" ? body.taskId.trim() : "";
+      const model = typeof body.model === "string" && body.model.trim()
+        ? body.model.trim()
+        : undefined;
+
+      if (!apiKey) {
+        throw new VibeApiError(401, "Comfly API key is required");
+      }
+
+      if (!taskId) {
+        throw new VibeApiError(400, "Task id is required");
+      }
+
+      const result = await getComflyVideoTaskResult({
+        apiKey,
+        taskId,
+        model: model || "doubao-seedance-2-0-260128",
+        officialFormat: body.officialFormat !== false,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        ...result,
+      });
+    }
+
+    const result = await submitComflyVideoTask(toParams(body));
 
     return NextResponse.json({
       ok: true,
-      result,
+      status: "submitted",
+      task: result,
     });
   } catch (error) {
     if (error instanceof VibeApiError) {

@@ -90,6 +90,26 @@ type VideoGenerationResponse =
   | ApiErrorResponse
   | {
       ok: true;
+      status: "submitted";
+      task: {
+        taskId: string;
+        model: string;
+        officialFormat: boolean;
+      };
+    }
+  | {
+      ok: true;
+      status: "pending";
+      progress?: string;
+    }
+  | {
+      ok: true;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: true;
+      status: "completed";
       result: {
         taskId: string;
         model: string;
@@ -126,6 +146,8 @@ const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const IMAGE_JOB_SUBMIT_RETRY_COUNT = 3;
 const IMAGE_JOB_SUBMIT_RETRY_DELAY_MS = 800;
+const VIDEO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
+const VIDEO_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase();
 const SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES =
@@ -978,6 +1000,13 @@ async function uploadImageBlobToOss(
   folder = "references",
 ): Promise<string> {
   const contentType = blob.type || "image/png";
+  console.info("[GenLink] reference image upload step", {
+    step: "create-upload-url",
+    folder,
+    fileName,
+    contentType,
+    sizeBytes: blob.size,
+  });
   const targetResponse = await fetch("/api/image-hosting/upload-url", {
     method: "POST",
     headers: {
@@ -1007,6 +1036,14 @@ async function uploadImageBlobToOss(
     );
   }
 
+  console.info("[GenLink] reference image upload step", {
+    step: "put-oss",
+    folder,
+    fileName,
+    contentType,
+    sizeBytes: blob.size,
+    imageUrl: targetJson.result.imageUrl,
+  });
   const uploadResponse = await fetch(targetJson.result.uploadUrl, {
     method: "PUT",
     headers: targetJson.result.headers,
@@ -1017,6 +1054,14 @@ async function uploadImageBlobToOss(
     throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
   }
 
+  console.info("[GenLink] reference image upload step", {
+    step: "put-oss-complete",
+    folder,
+    fileName,
+    contentType,
+    sizeBytes: blob.size,
+    imageUrl: targetJson.result.imageUrl,
+  });
   return targetJson.result.imageUrl;
 }
 
@@ -1033,6 +1078,11 @@ async function readReferenceImageBlob(
 ): Promise<Blob> {
   const url = imageUrl.trim();
   const shouldReadViaProxy = /^https?:\/\//i.test(url) && !isSameOriginUrl(url);
+  console.info("[GenLink] reference image upload step", {
+    step: "read-reference-image",
+    viaProxy: shouldReadViaProxy,
+    urlType: getReferenceImageDebugLabel(url),
+  });
   const response = shouldReadViaProxy
     ? await fetch("/api/image-hosting/read", {
         method: "POST",
@@ -1053,7 +1103,17 @@ async function readReferenceImageBlob(
     throw new Error("Reference image URL did not return an image");
   }
 
-  return response.blob();
+  const blob = await response.blob();
+
+  console.info("[GenLink] reference image upload step", {
+    step: "read-reference-image-complete",
+    viaProxy: shouldReadViaProxy,
+    urlType: getReferenceImageDebugLabel(url),
+    contentType: blob.type || contentType,
+    sizeBytes: blob.size,
+  });
+
+  return blob;
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -1125,6 +1185,22 @@ async function normalizeReferenceImagesViaOss(
   const requestImages: Array<{ url: string; fileName?: string }> = [];
   const seenRequestUrls = new Set<string>();
 
+  console.info("[GenLink] reference image upload step", {
+    step: "normalize-start",
+    count: images.length,
+    items: images.map((image, index) => ({
+      index: index + 1,
+      id: image.id,
+      sourceType: image.sourceType,
+      urlType: getReferenceImageDebugLabel(
+        image.hostedImageUrl?.trim() ||
+          image.originalImageUrl?.trim() ||
+          image.imageUrl.trim(),
+      ),
+      fileName: image.fileName,
+    })),
+  });
+
   for (const image of images) {
     const cacheKey =
       image.hostedImageUrl?.trim() ||
@@ -1139,7 +1215,20 @@ async function normalizeReferenceImagesViaOss(
 
     uploadCache.set(cacheKey, normalizedPromise);
 
-    const normalized = await normalizedPromise;
+    let normalized: { url: string; fileName?: string };
+
+    try {
+      normalized = await normalizedPromise;
+    } catch (error) {
+      console.error("[GenLink] reference image upload failed", {
+        id: image.id,
+        sourceType: image.sourceType,
+        urlType: getReferenceImageDebugLabel(cacheKey),
+        fileName: image.fileName,
+        error,
+      });
+      throw error;
+    }
     const requestUrl = normalized.url.trim();
 
     if (!requestUrl || seenRequestUrls.has(requestUrl)) {
@@ -1149,6 +1238,16 @@ async function normalizeReferenceImagesViaOss(
     seenRequestUrls.add(requestUrl);
     requestImages.push(normalized);
   }
+
+  console.info("[GenLink] reference image upload step", {
+    step: "normalize-complete",
+    count: requestImages.length,
+    items: requestImages.map((image, index) => ({
+      index: index + 1,
+      urlType: getReferenceImageDebugLabel(image.url),
+      fileName: image.fileName,
+    })),
+  });
 
   return requestImages;
 }
@@ -1513,6 +1612,65 @@ async function readJsonResponse<T>(
   } catch {
     throw new Error(toResponseTextErrorMessage(text, fallbackError));
   }
+}
+
+async function requestVideoTaskStatus(params: {
+  apiKey: string;
+  taskId: string;
+  model: string;
+  officialFormat: boolean;
+}): Promise<VideoGenerationResponse> {
+  const response = await fetch("/api/ai/video", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "status",
+      apiKey: params.apiKey,
+      taskId: params.taskId,
+      model: params.model,
+      officialFormat: params.officialFormat,
+    }),
+  });
+  const json = await readJsonResponse<VideoGenerationResponse>(
+    response,
+    "Video generation status request failed",
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? "Video generation status request failed" : json.error);
+  }
+
+  return json;
+}
+
+async function waitForVideoTaskResult(params: {
+  apiKey: string;
+  taskId: string;
+  model: string;
+  officialFormat: boolean;
+  onProgress?: (progress?: string) => void;
+}): Promise<Extract<VideoGenerationResponse, { status: "completed" }>["result"]> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < VIDEO_JOB_POLL_TIMEOUT_MS) {
+    const json = await requestVideoTaskStatus(params);
+
+    if (json.ok && json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.ok && json.status === "error") {
+      throw new Error(json.error || "Video generation failed");
+    }
+
+    if (json.ok && json.status === "pending") {
+      params.onProgress?.(json.progress);
+    }
+
+    await sleep(VIDEO_JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Video generation timed out");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -4078,6 +4236,57 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error(json.ok ? "Video generation failed" : json.error);
       }
 
+      if (json.status !== "submitted") {
+        throw new Error("Video generation request did not return a task id");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoGenerationNodeId && node.type === "video_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: json.task.taskId,
+                  generatedModel: json.task.model,
+                  progress: "0%",
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const result = await waitForVideoTaskResult({
+        apiKey,
+        taskId: json.task.taskId,
+        model: json.task.model,
+        officialFormat: json.task.officialFormat,
+        onProgress: (progress) => {
+          if (!progress) {
+            return;
+          }
+
+          set((currentState) => ({
+            dirty: true,
+            nodes: currentState.nodes.map((node) =>
+              node.id === videoGenerationNodeId && node.type === "video_generation"
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      progress,
+                    },
+                  }
+                : node,
+            ),
+          }));
+        },
+      });
+
       const generatedAt = nowIso();
 
       set((currentState) => ({
@@ -4089,12 +4298,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 ...node,
                 data: {
                   ...node.data,
-                  taskId: json.result.taskId,
+                  taskId: result.taskId,
                   progress: "100%",
-                  videoUrl: json.result.videoUrl,
-                  hostedVideoUrl: json.result.videoUrl,
-                  lastFrameUrl: json.result.lastFrameUrl,
-                  generatedModel: json.result.model,
+                  videoUrl: result.videoUrl,
+                  hostedVideoUrl: result.videoUrl,
+                  lastFrameUrl: result.lastFrameUrl,
+                  generatedModel: result.model,
                   generatedAt,
                   status: "idle",
                   errorMessage: undefined,
@@ -4105,24 +4314,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
 
       void get().persistProjectOutput({
-        sourceKey: `${videoGenerationNodeId}:${generatedAt}:${json.result.videoUrl}`,
-        imageUrl: json.result.videoUrl,
+        sourceKey: `${videoGenerationNodeId}:${generatedAt}:${result.videoUrl}`,
+        imageUrl: result.videoUrl,
         kind: "video",
         fileName: `${latestVideoGenerationNode.data.title || "video"}.mp4`,
         generatedAt,
         nodeData: {
           ...latestVideoGenerationNode.data,
-          taskId: json.result.taskId,
-          videoUrl: json.result.videoUrl,
-          hostedVideoUrl: json.result.videoUrl,
-          lastFrameUrl: json.result.lastFrameUrl,
-          generatedModel: json.result.model,
+          taskId: result.taskId,
+          videoUrl: result.videoUrl,
+          hostedVideoUrl: result.videoUrl,
+          lastFrameUrl: result.lastFrameUrl,
+          generatedModel: result.model,
           generatedAt,
           status: "idle",
           errorMessage: undefined,
         },
         title: latestVideoGenerationNode.data.title,
-        model: json.result.model,
+        model: result.model,
         format: "mp4",
       }).catch((error) => {
         get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
