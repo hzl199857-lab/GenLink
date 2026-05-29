@@ -3969,18 +3969,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         connectedVideos,
       );
       const inlineImages = (latestVideoGenerationNode.data.referenceImages ?? [])
-        .map((image) => ({
-          url: image.hostedUrl?.trim() || image.url.trim(),
-          fileName: image.fileName,
-        }))
-        .filter((image) => image.url);
-      const requestImages = [
-        ...connectedImages.map((image) => ({
-          url: image.hostedImageUrl?.trim() || image.imageUrl.trim(),
-          fileName: image.fileName,
-        })),
+        .flatMap<ConnectedImagePayload>((image, index) => {
+          const imageUrl = image.hostedUrl?.trim() || image.url.trim();
+
+          if (!imageUrl) {
+            return [];
+          }
+
+          return [{
+            id: image.id || `${videoGenerationNodeId}-image-reference-${index}`,
+            imageUrl,
+            previewUrl: image.previewUrl?.trim() || imageUrl,
+            originalImageUrl: image.url.trim() || imageUrl,
+            hostedImageUrl: image.hostedUrl?.trim() || undefined,
+            fileName: image.fileName,
+            alt: image.fileName?.trim() || `Reference image ${index + 1}`,
+            sourceType: "inline_reference",
+            width: image.width,
+            height: image.height,
+          }];
+        });
+      const requestImages = await normalizeReferenceImagesViaOss([
+        ...connectedImages,
         ...inlineImages,
-      ].filter((image) => image.url);
+      ]);
       const inlineVideos = (latestVideoGenerationNode.data.referenceVideos ?? [])
         .map((video) => ({
           url: video.hostedUrl?.trim() || video.url.trim(),
@@ -4057,7 +4069,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           audio: requestAudio,
         }),
       });
-      const json = (await response.json()) as VideoGenerationResponse;
+      const json = await readJsonResponse<VideoGenerationResponse>(
+        response,
+        "Video generation request failed",
+      );
 
       if (!response.ok || !json.ok) {
         throw new Error(json.ok ? "Video generation failed" : json.error);
