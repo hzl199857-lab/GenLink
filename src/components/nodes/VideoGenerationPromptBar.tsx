@@ -8,6 +8,10 @@ import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
+  ReferenceImageHoverPreviewPortal,
+  useReferenceImageHoverPreview,
+} from './ReferenceImageHoverPreview';
+import {
   getApiProviderLabel,
   persistSelectedModel,
   readStoredApiKey,
@@ -59,6 +63,7 @@ export interface VideoGenerationPromptBarProps {
     videoUrl: string;
     previewUrl?: string;
     alt: string;
+    fileName?: string;
     width?: number;
     height?: number;
     durationSeconds?: number;
@@ -428,6 +433,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
     width: number;
     height: number;
   } | null>(null);
+  const referenceImagePreview = useReferenceImageHoverPreview();
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeRatioMenuRef = useRef<HTMLDivElement | null>(null);
   const outputMenuRef = useRef<HTMLDivElement | null>(null);
@@ -575,9 +581,14 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                         onPointerEnter={(event) => {
                           if (reference.type === 'video') {
                             showVideoPreview(reference.item, event.currentTarget);
+                            return;
                           }
+                          referenceImagePreview.showPreview(reference.item, event.currentTarget);
                         }}
-                        onPointerLeave={hideVideoPreview}
+                        onPointerLeave={() => {
+                          hideVideoPreview();
+                          referenceImagePreview.hidePreview();
+                        }}
                       >
                         {reference.type === 'image' ? (
                           <>
@@ -631,6 +642,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
             <PromptMentionInput
               value={prompt}
               connectedImages={acceptsReferenceImages ? connectedImages : []}
+              connectedVideos={acceptsReferenceImages ? connectedVideos : []}
               focusRequestId={focusRequestId}
               onChange={onPromptChange}
               onFocus={() => onFocusWithinChange?.(true)}
@@ -946,6 +958,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
               document.body,
             )
           : null}
+        <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
       </div>
     </NodeToolbar>
   );

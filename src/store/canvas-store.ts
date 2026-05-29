@@ -7,6 +7,7 @@ import {
   stripImagePromptSectionLabels,
 } from "@/lib/image-prompt";
 import {
+  createReferenceMentionToken,
   parseReferenceMentions,
   reconcileReferenceMentionTokens,
   selectMentionedReferences,
@@ -44,6 +45,7 @@ import type {
   ProjectSnapshot,
   TextNodeData,
   UploadedImageNodeData,
+  VideoNodeData,
   VideoGenerationMediaReference,
   VideoGenerationNodeData,
 } from "@/types/canvas";
@@ -131,6 +133,9 @@ const SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES =
 const SPLIT_OUTPUT_GROUP_GAP = 48;
 const SPLIT_OUTPUT_TILE_GAP = 12;
 const UPLOADED_IMAGE_NODE_HEADER_HEIGHT = 40;
+const UPLOADED_IMAGE_MAX_CARD_WIDTH = 420;
+const UPLOADED_IMAGE_MAX_CARD_HEIGHT = 540;
+const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
 const CANVAS_HISTORY_LIMIT = 100;
 const CANVAS_HISTORY_COALESCE_MS = 700;
 const SAVE_MESSAGE_AUTO_CLEAR_MS = 3_000;
@@ -450,7 +455,7 @@ type ConnectedVideoPayload = {
   hostedVideoUrl?: string;
   fileName?: string;
   alt: string;
-  sourceType: "video_generation" | "inline_reference";
+  sourceType: "video_generation" | "video" | "inline_reference";
   width?: number;
   height?: number;
   durationSeconds?: number;
@@ -679,6 +684,66 @@ function selectPromptReferences<T extends { id: string }>(
   return selected.length > 0 ? selected : references;
 }
 
+function stripVideoReferenceMentionTokens(
+  value: string | undefined,
+  images: Array<{ id: string }> = [],
+  videos: Array<{ id: string }> = [],
+): string {
+  const imageOrderById = new Map(
+    images.map((image, index) => [image.id, index + 1]),
+  );
+  const videoOrderById = new Map(
+    videos.map((video, index) => [video.id, index + 1]),
+  );
+  const mentions = parseReferenceMentions(value);
+  const fallbackImageOrder = new Map<string, number>();
+  const fallbackVideoOrder = new Map<string, number>();
+  let nextValue = value ?? "";
+
+  for (const mention of mentions) {
+    const imageIndex = imageOrderById.get(mention.nodeId);
+    let label: string;
+
+    if (imageIndex) {
+      label = `\u53c2\u8003\u56fe${imageIndex}`;
+    } else {
+      const videoIndex = videoOrderById.get(mention.nodeId);
+
+      if (videoIndex) {
+        label = `\u53c2\u8003\u89c6\u9891${videoIndex}`;
+      } else {
+        const mentionLabel = mention.label.trim();
+        const isVideo = mentionLabel.startsWith("\u89c6\u9891");
+
+        if (isVideo) {
+          const fallbackIndex =
+            fallbackVideoOrder.get(mention.nodeId) ??
+            fallbackVideoOrder.size + 1;
+          fallbackVideoOrder.set(mention.nodeId, fallbackIndex);
+          label = `\u53c2\u8003\u89c6\u9891${fallbackIndex}`;
+        } else {
+          const fallbackIndex =
+            fallbackImageOrder.get(mention.nodeId) ??
+            fallbackImageOrder.size + 1;
+          fallbackImageOrder.set(mention.nodeId, fallbackIndex);
+          label = `\u53c2\u8003\u56fe${fallbackIndex}`;
+        }
+      }
+    }
+
+    nextValue = nextValue.replace(
+      createReferenceMentionToken(mention.nodeId, mention.label),
+      label,
+    );
+  }
+
+  return nextValue
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function createTextNodeData(): TextNodeData {
   const provider = readStoredSelectedApiProvider("text");
 
@@ -710,6 +775,15 @@ function createImageGenerationNodeData(): ImageGenerationNodeData {
     moderation: "auto",
     parallelCount: 1,
     status: "idle",
+  };
+}
+
+function createVideoNodeData(): VideoNodeData {
+  return {
+    title: "Video",
+    videoUrl: "",
+    width: 320,
+    height: 180,
   };
 }
 
@@ -1231,6 +1305,28 @@ function getImageGenerationPreviewDimensions(
   };
 }
 
+function getUploadedImageDisplayDimensions(
+  sourceWidth: number,
+  sourceHeight: number,
+): { width: number; height: number } {
+  const imageWidth = Math.max(sourceWidth || 320, 1);
+  const imageHeight = Math.max(sourceHeight || 320, 1);
+  const imageAspectRatio = imageWidth / imageHeight;
+  const fittedWidthByHeight = UPLOADED_IMAGE_MAX_CARD_HEIGHT * imageAspectRatio;
+  const width = Math.min(
+    UPLOADED_IMAGE_MAX_CARD_WIDTH,
+    Math.max(
+      UPLOADED_IMAGE_MIN_CARD_WIDTH,
+      Math.min(imageWidth, fittedWidthByHeight),
+    ),
+  );
+
+  return {
+    width,
+    height: width * (imageHeight / imageWidth),
+  };
+}
+
 function getSplitDisplaySizeMatchingPreview(
   sourceWidth: number,
   sourceHeight: number,
@@ -1287,6 +1383,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createVideoGenerationNodeData(),
+      };
+    case "video":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createVideoNodeData(),
       };
     case "image":
       return {
@@ -2104,6 +2207,12 @@ function setTextNodeStatus(
   );
 }
 
+function isRemoteRequestUrl(value?: string): boolean {
+  const trimmed = value?.trim() || "";
+
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith("/api/");
+}
+
 function getConnectedImagesForTargetNode(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -2210,7 +2319,36 @@ function getConnectedVideosForTargetNode(
   return connectedSourceIds.reduce<ConnectedVideoPayload[]>((acc, sourceId) => {
     const sourceNode = nodes.find((node) => node.id === sourceId);
 
-    if (!sourceNode || sourceNode.type !== "video_generation") {
+    if (!sourceNode) {
+      return acc;
+    }
+
+    if (sourceNode.type === "video") {
+      const videoUrl =
+        sourceNode.data.hostedVideoUrl?.trim() ||
+        sourceNode.data.videoUrl?.trim() ||
+        "";
+
+      if (!videoUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: sourceNode.id,
+        videoUrl,
+        hostedVideoUrl: sourceNode.data.hostedVideoUrl?.trim() || undefined,
+        previewUrl: sourceNode.data.previewUrl,
+        fileName: sourceNode.data.fileName,
+        alt: sourceNode.data.fileName?.trim() || sourceNode.data.title?.trim() || "Connected video",
+        sourceType: "video",
+        width: sourceNode.data.width,
+        height: sourceNode.data.height,
+        durationSeconds: sourceNode.data.durationSeconds,
+      });
+      return acc;
+    }
+
+    if (sourceNode.type !== "video_generation") {
       return acc;
     }
 
@@ -2854,10 +2992,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => {
       const sourceNode = state.nodes.find((node) => node.id === edge.source);
       const connectsVideoReference =
-        sourceNode?.type === "video_generation" &&
+        (sourceNode?.type === "video_generation" || sourceNode?.type === "video") &&
         Boolean(
-          sourceNode.data.hostedVideoUrl?.trim() ||
-            sourceNode.data.videoUrl?.trim(),
+          sourceNode.type === "video_generation"
+            ? sourceNode.data.hostedVideoUrl?.trim() ||
+                sourceNode.data.videoUrl?.trim()
+            : sourceNode.data.hostedVideoUrl?.trim() ||
+                sourceNode.data.videoUrl?.trim(),
         );
 
       return {
@@ -3797,19 +3938,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Video generation node not found");
       }
 
-      const prompt =
+      const rawPrompt =
         promptOverride?.trim() ||
         latestVideoGenerationNode.data.prompt?.trim() ||
         "";
 
-      if (!prompt) {
+      if (!rawPrompt) {
         throw new Error("Prompt is required");
       }
 
-      const connectedImages = getConnectedImagesForTargetNode(
-        latestState.nodes,
-        latestState.edges,
-        videoGenerationNodeId,
+      const connectedImages = selectPromptReferences(
+        getConnectedImagesForTargetNode(
+          latestState.nodes,
+          latestState.edges,
+          videoGenerationNodeId,
+        ),
+        rawPrompt,
+      );
+      const connectedVideos = selectPromptReferences(
+        getConnectedVideosForTargetNode(
+          latestState.nodes,
+          latestState.edges,
+          videoGenerationNodeId,
+        ),
+        rawPrompt,
+      );
+      const prompt = stripVideoReferenceMentionTokens(
+        rawPrompt,
+        connectedImages,
+        connectedVideos,
       );
       const inlineImages = (latestVideoGenerationNode.data.referenceImages ?? [])
         .map((image) => ({
@@ -3824,12 +3981,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         })),
         ...inlineImages,
       ].filter((image) => image.url);
-      const requestVideos = (latestVideoGenerationNode.data.referenceVideos ?? [])
+      const inlineVideos = (latestVideoGenerationNode.data.referenceVideos ?? [])
         .map((video) => ({
           url: video.hostedUrl?.trim() || video.url.trim(),
           fileName: video.fileName,
         }))
-        .filter((video) => video.url);
+        .filter((video) => isRemoteRequestUrl(video.url));
+      const requestVideos = [
+        ...connectedVideos.map((video) => ({
+          url: video.hostedVideoUrl?.trim() || video.videoUrl.trim(),
+          fileName: video.fileName,
+        })),
+        ...inlineVideos,
+      ].filter((video) => isRemoteRequestUrl(video.url));
       const requestAudio = (latestVideoGenerationNode.data.referenceAudio ?? [])
         .map((audio) => ({
           url: audio.hostedUrl?.trim() || audio.url.trim(),
@@ -4362,6 +4526,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const positionX = sourceNode.position.x + (sourceNode.data.displayWidth || sourceNode.data.width) + SPLIT_OUTPUT_GROUP_GAP;
       const positionY = sourceNode.position.y;
       const baseTitle = sanitizeSplitNodeTitle(sourceNode.data.title);
+      const displaySize = getUploadedImageDisplayDimensions(sw, sh);
 
       const nextNode: CanvasNode = {
         id: crypto.randomUUID(),
@@ -4372,8 +4537,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           imageUrl,
           width: sw,
           height: sh,
-          displayWidth: sw,
-          displayHeight: sh,
+          displayWidth: displaySize.width,
+          displayHeight: displaySize.height,
         },
       };
 
@@ -4542,6 +4707,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const positionX = sourceNode.position.x + sourceDisplay.width + SPLIT_OUTPUT_GROUP_GAP;
       const positionY = sourceNode.position.y;
       const baseTitle = sanitizeSplitNodeTitle(sourceNode.data.title);
+      const displaySize = getUploadedImageDisplayDimensions(sw, sh);
 
       const nextNode: CanvasNode = {
         id: crypto.randomUUID(),
@@ -4552,8 +4718,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           imageUrl,
           width: sw,
           height: sh,
-          displayWidth: sw,
-          displayHeight: sh,
+          displayWidth: displaySize.width,
+          displayHeight: displaySize.height,
         },
       };
 

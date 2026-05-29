@@ -31,6 +31,21 @@ function isVideoOssConfigured(): boolean {
   );
 }
 
+function getMissingVideoOssConfigKeys(): string[] {
+  const missing: string[] = [];
+
+  if (!ALIYUN_VIDEO_OSS_BUCKET) missing.push('ALIYUN_VIDEO_OSS_BUCKET');
+  if (!ALIYUN_VIDEO_OSS_REGION) missing.push('ALIYUN_VIDEO_OSS_REGION');
+  if (!ALIYUN_VIDEO_OSS_ACCESS_KEY_ID && !process.env.ALIYUN_OSS_ACCESS_KEY_ID?.trim()) {
+    missing.push('ALIYUN_VIDEO_OSS_ACCESS_KEY_ID or ALIYUN_OSS_ACCESS_KEY_ID');
+  }
+  if (!ALIYUN_VIDEO_OSS_ACCESS_KEY_SECRET && !process.env.ALIYUN_OSS_ACCESS_KEY_SECRET?.trim()) {
+    missing.push('ALIYUN_VIDEO_OSS_ACCESS_KEY_SECRET or ALIYUN_OSS_ACCESS_KEY_SECRET');
+  }
+
+  return missing;
+}
+
 function normalizeObjectFolder(folder?: string): string {
   const normalized = folder
     ?.trim()
@@ -110,7 +125,11 @@ export function createAliyunMediaUploadTarget(params: {
   objectKey: string;
 } {
   if (!isVideoOssConfigured()) {
-    throw new VibeApiError(500, 'Aliyun video OSS is not configured');
+    const missing = getMissingVideoOssConfigKeys();
+    throw new VibeApiError(
+      500,
+      `Aliyun video OSS is not configured${missing.length ? `: ${missing.join(', ')}` : ''}`,
+    );
   }
 
   const contentType = params.contentType.trim() || 'application/octet-stream';

@@ -41,6 +41,7 @@ export interface VideoGenerationNodeProps {
     videoUrl: string;
     previewUrl?: string;
     alt: string;
+    fileName?: string;
     width?: number;
     height?: number;
     durationSeconds?: number;

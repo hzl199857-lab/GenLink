@@ -10,6 +10,7 @@ import type {
   ProjectSnapshot,
   TextNodeData,
   UploadedImageNodeData,
+  VideoNodeData,
   VideoGenerationMediaReference,
   VideoGenerationMode,
   VideoGenerationNodeData,
@@ -48,6 +49,7 @@ function isNodeType(value: string): value is NodeType {
     value === "text" ||
     value === "image_generation" ||
     value === "video_generation" ||
+    value === "video" ||
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image" ||
@@ -461,6 +463,43 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
   };
 }
 
+function normalizeVideoNodeData(value: unknown): VideoNodeData {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    return {
+      title: typeof record.title === "string" ? record.title : undefined,
+      videoUrl: typeof record.videoUrl === "string" ? record.videoUrl : "",
+      hostedVideoUrl:
+        typeof record.hostedVideoUrl === "string"
+          ? record.hostedVideoUrl
+          : undefined,
+      previewUrl: typeof record.previewUrl === "string" ? record.previewUrl : undefined,
+      fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+      outputFileName:
+        typeof record.outputFileName === "string" ? record.outputFileName : undefined,
+      width: typeof record.width === "number" ? record.width : 320,
+      height: typeof record.height === "number" ? record.height : 180,
+      displayWidth:
+        typeof record.displayWidth === "number" ? record.displayWidth : undefined,
+      displayHeight:
+        typeof record.displayHeight === "number" ? record.displayHeight : undefined,
+      sizeBytes:
+        typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+      durationSeconds:
+        typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+      mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+    };
+  }
+
+  return {
+    title: "video",
+    videoUrl: "",
+    width: 320,
+    height: 180,
+  };
+}
+
 function normalizeUploadedImageNodeDataAsImage(value: unknown): ImageNodeData {
   const uploaded = normalizeUploadedImageNodeData(value);
 
@@ -662,6 +701,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "video_generation",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeVideoGenerationNodeData(parsed),
+      };
+    case "video":
+      return {
+        id: record.id,
+        type: "video",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeVideoNodeData(parsed),
       };
     case "ai_text_result":
       return {

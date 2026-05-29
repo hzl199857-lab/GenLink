@@ -85,6 +85,7 @@ import type {
   Panorama360NodeData,
   Panorama360ViewState,
   UploadedImageNodeData,
+  VideoNodeData,
   VideoGenerationNodeData,
 } from '@/types/canvas';
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
@@ -98,6 +99,10 @@ import {
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { Panorama360Node } from '../nodes/Panorama360Node';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
+import {
+  UploadedVideoNode,
+  resolveUploadedVideoCardDimensions,
+} from '../nodes/UploadedVideoNode';
 import { CardSideHandle } from '../nodes/CardSideHandle';
 import {
   ImageGenerationInfoPopover,
@@ -610,6 +615,15 @@ function getImageNodeFocusBounds(node: CanvasNode): MultiNodeSelectionBounds {
     };
   }
 
+  if (node.type === 'video') {
+    return {
+      x: baseBounds.x,
+      y: baseBounds.y - IMAGE_NODE_TOOLBAR_LIFT,
+      width: baseBounds.width,
+      height: baseBounds.height + IMAGE_NODE_TOOLBAR_LIFT,
+    };
+  }
+
   if (node.type === 'image') {
     const width = Math.max(baseBounds.width, THREE_VIEW_CONTROLLER_WIDTH);
 
@@ -751,6 +765,18 @@ function resolveMiniMapVisibleNodeRect(
     };
   }
 
+  if (node.type === 'video') {
+    const dimensions = resolveUploadedVideoCardDimensions(node.data as VideoNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: dimensions.width,
+      height: dimensions.height,
+      radius: 22,
+    };
+  }
+
   if (node.type === 'panorama-360') {
     return {
       x: node.position.x,
@@ -859,6 +885,17 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
 
   if (node.type === 'uploaded_image') {
     const dimensions = resolveUploadedImageCardDimensions(node.data as UploadedImageNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: dimensions.width,
+      height: IMAGE_NODE_ADAPTER_TOP_PADDING + dimensions.height + 36,
+    };
+  }
+
+  if (node.type === 'video') {
+    const dimensions = resolveUploadedVideoCardDimensions(node.data as VideoNodeData);
 
     return {
       x: node.position.x,
@@ -1048,6 +1085,8 @@ type ImportedImageData = ImageNodeData & {
   fileName?: string;
 };
 
+type ImportedVideoData = VideoNodeData;
+
 function readImageFile(file: File): Promise<ImportedImageData> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1156,6 +1195,24 @@ function captureVideoFirstFrame(file: File): Promise<{
     video.addEventListener('error', fail, { once: true });
     video.load();
   });
+}
+
+async function readVideoFile(file: File): Promise<ImportedVideoData> {
+  const videoFrame = await captureVideoFirstFrame(file).catch(() => null);
+  const uploaded = await uploadMediaFileToOss(file);
+
+  return {
+    title: file.name,
+    videoUrl: uploaded.url,
+    hostedVideoUrl: uploaded.url,
+    previewUrl: videoFrame?.previewUrl,
+    fileName: uploaded.fileName,
+    width: videoFrame?.width ?? 320,
+    height: videoFrame?.height ?? 180,
+    sizeBytes: uploaded.sizeBytes,
+    durationSeconds: videoFrame?.durationSeconds,
+    mimeType: uploaded.mimeType,
+  };
 }
 
 function isBrowserObjectUrl(value?: string): boolean {
@@ -1314,6 +1371,18 @@ function createImportedImageNode(
   return {
     id: crypto.randomUUID(),
     type: 'image',
+    position,
+    data,
+  };
+}
+
+function createImportedVideoNode(
+  data: VideoNodeData,
+  position: { x: number; y: number },
+): CanvasNode {
+  return {
+    id: crypto.randomUUID(),
+    type: 'video',
     position,
     data,
   };
@@ -1809,6 +1878,21 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
     }
   };
 
+  const handleReplace = async (file: File) => {
+    const next = await readImageFile(file);
+    updateNodeData<'image'>(id, {
+      title: next.title,
+      imageUrl: next.imageUrl,
+      hostedImageUrl: next.hostedImageUrl,
+      prompt: next.prompt,
+      width: next.width,
+      height: next.height,
+      sizeBytes: next.sizeBytes,
+      generatedAt: next.generatedAt,
+      generatedOutputFileName: undefined,
+    });
+  };
+
   return (
     <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
       <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
@@ -1824,6 +1908,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
           data={data as ImageNodeData}
           selected={selected}
           accessoriesVisible={isActive}
+          onReplace={handleReplace}
           onTitleChange={(nextTitle) => updateNodeData<'image'>(id, { title: nextTitle })}
           onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
           onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
@@ -1973,6 +2058,41 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
   );
 });
 
+const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
+  const videoData = data as VideoNodeData;
+  const hasVideo = Boolean(videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim());
+  const cardDimensions = resolveUploadedVideoCardDimensions(videoData);
+
+  const handleReplace = async (file: File) => {
+    const next = await readVideoFile(file);
+    updateNodeData<'video'>(id, next);
+  };
+
+  return (
+    <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
+      <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
+        <ImageGenerationNodeToolbar
+          visible={isActive}
+          top={-IMAGE_NODE_TOOLBAR_LIFT}
+          hasGeneratedImage={hasVideo}
+          placeholderOnly
+        />
+        <UploadedVideoNode
+          data={videoData}
+          selected={selected}
+          accessoriesVisible={isActive}
+          onReplace={handleReplace}
+          onTitleChange={(nextTitle) => updateNodeData<'video'>(id, { title: nextTitle })}
+          onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+        />
+      </div>
+    </div>
+  );
+});
+
 const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const createPanorama360ScreenshotNode = useCanvasStore((s) => s.createPanorama360ScreenshotNode);
@@ -2032,6 +2152,7 @@ const nodeTypes = {
   text: TextNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
   video_generation: VideoGenerationNodeAdapter,
+  video: VideoNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
@@ -6289,6 +6410,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const addUploadedImages = useCallback(async (
     files: File[],
     basePosition: { x: number; y: number },
+    options?: { select?: boolean },
   ) => {
     const imageFiles = files.filter((file) => file.type.startsWith('image/'));
 
@@ -6307,9 +6429,40 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     addNodes(nextNodes);
 
-    setSelectedNodeIds(nextNodeIds);
-    setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
-    clearEdgeSelection();
+    if (options?.select !== false) {
+      setSelectedNodeIds(nextNodeIds);
+      setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
+      clearEdgeSelection();
+    }
+  }, [addNodes, clearEdgeSelection]);
+
+  const addUploadedVideos = useCallback(async (
+    files: File[],
+    basePosition: { x: number; y: number },
+    options?: { select?: boolean },
+  ) => {
+    const videoFiles = files.filter((file) => file.type.startsWith('video/'));
+
+    if (videoFiles.length === 0) {
+      return;
+    }
+
+    const videoDataList = await Promise.all(videoFiles.map((file) => readVideoFile(file)));
+    const nextNodes = videoDataList.map((data, index) =>
+      createImportedVideoNode(
+        data,
+        getImageImportPosition(basePosition, index),
+      ),
+    );
+    const nextNodeIds = new Set(nextNodes.map((node) => node.id));
+
+    addNodes(nextNodes);
+
+    if (options?.select !== false) {
+      setSelectedNodeIds(nextNodeIds);
+      setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
+      clearEdgeSelection();
+    }
   }, [addNodes, clearEdgeSelection]);
 
   useEffect(() => {
@@ -6719,14 +6872,36 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         addReferenceImagesToImageGenerationNode(referenceUploadNodeId, imageDataList);
       })();
     } else if (files.length > 0 && position) {
-      void addUploadedImages(files, position);
+      const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+      const videoFiles = files.filter((file) => file.type.startsWith('video/'));
+
+      void (async () => {
+        if (imageFiles.length > 0) {
+          await addUploadedImages(imageFiles, position, { select: videoFiles.length === 0 });
+        }
+
+        if (videoFiles.length === 0) {
+          return;
+        }
+
+        const videoPosition = imageFiles.length > 0
+          ? {
+              x: position.x,
+              y: position.y + Math.ceil(imageFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y),
+            }
+          : position;
+        await addUploadedVideos(videoFiles, videoPosition);
+      })().catch((error) => {
+        setSaveMessage(error instanceof Error ? error.message : '上传媒体失败');
+        window.setTimeout(() => setSaveMessage(null), 2200);
+      });
     }
 
     event.target.value = '';
     uploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
     videoReferenceUploadNodeIdRef.current = null;
-  }, [addReferenceImagesToImageGenerationNode, addReferenceMediaToVideoGenerationNode, addUploadedImages, setSaveMessage]);
+  }, [addReferenceImagesToImageGenerationNode, addReferenceMediaToVideoGenerationNode, addUploadedImages, addUploadedVideos, setSaveMessage]);
 
   const handleSelectMaterial = useCallback((
     item: MaterialLibraryItem,
@@ -6755,7 +6930,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clearEdgeSelection();
   }, [addNodes, clearEdgeSelection, project, storeNodes]);
 
-  const handleImageDrop = useCallback((event: React.DragEvent) => {
+  const handleMediaDrop = useCallback((event: React.DragEvent) => {
     const materialId = event.dataTransfer.getData('application/x-genlink-material-id');
 
     if (materialId) {
@@ -6776,20 +6951,40 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
-    const files = Array.from(event.dataTransfer.files).filter((item) => item.type.startsWith('image/'));
+    const files = Array.from(event.dataTransfer.files);
+    const imageFiles = files.filter((item) => item.type.startsWith('image/'));
+    const videoFiles = files.filter((item) => item.type.startsWith('video/'));
 
-    if (files.length === 0) {
+    if (imageFiles.length === 0 && videoFiles.length === 0) {
       return;
     }
 
     event.preventDefault();
     setAddMenu(null);
     setImageInfoPopover(null);
-    void addUploadedImages(
-      files,
-      project({ x: event.clientX, y: event.clientY }),
-    );
-  }, [addUploadedImages, handleSelectMaterial, materials, project]);
+    const position = project({ x: event.clientX, y: event.clientY });
+
+    void (async () => {
+      if (imageFiles.length > 0) {
+        await addUploadedImages(imageFiles, position, { select: videoFiles.length === 0 });
+      }
+
+      if (videoFiles.length === 0) {
+        return;
+      }
+
+      const videoPosition = imageFiles.length > 0
+        ? {
+            x: position.x,
+            y: position.y + Math.ceil(imageFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y),
+          }
+        : position;
+      await addUploadedVideos(videoFiles, videoPosition);
+    })().catch((error) => {
+      setSaveMessage(error instanceof Error ? error.message : '上传媒体失败');
+      window.setTimeout(() => setSaveMessage(null), 2200);
+    });
+  }, [addUploadedImages, addUploadedVideos, handleSelectMaterial, materials, project, setSaveMessage]);
 
   const openAddMenuAtScreen = useCallback((screen: { x: number; y: number }) => {
     if (closeAddMenuTimeoutRef.current) {
@@ -7629,7 +7824,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           type: getReactFlowEdgeType(edgeStyle),
         }}
         fitView
-        onDrop={handleImageDrop}
+        onDrop={handleMediaDrop}
         onDragOver={(event) => {
           if (
             event.dataTransfer.types.includes('application/x-genlink-material-id') ||

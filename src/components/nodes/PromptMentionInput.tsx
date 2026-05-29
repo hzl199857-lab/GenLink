@@ -10,6 +10,7 @@ import React, {
   useState,
 } from 'react';
 import NextImage from 'next/image';
+import { Play } from 'lucide-react';
 import {
   createReferenceMentionToken,
   parseReferenceMentions,
@@ -23,8 +24,23 @@ export type PromptMentionImage = {
   alt: string;
 };
 
-type MentionOption = PromptMentionImage & {
+export type PromptMentionVideo = {
+  id: string;
+  videoUrl: string;
+  previewUrl?: string;
+  alt: string;
+  fileName?: string;
+};
+
+type MentionOption = {
+  id: string;
+  type: 'image' | 'video';
   label: string;
+  detail?: string;
+  previewUrl?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  alt: string;
 };
 
 type MentionTrigger = {
@@ -39,6 +55,7 @@ type MentionTrigger = {
 export interface PromptMentionInputProps {
   value: string;
   connectedImages?: PromptMentionImage[];
+  connectedVideos?: PromptMentionVideo[];
   placeholder?: string;
   className?: string;
   style?: CSSProperties;
@@ -51,6 +68,10 @@ export interface PromptMentionInputProps {
 
 function getMentionLabel(image: PromptMentionImage, index: number): string {
   return `\u56fe\u7247${index + 1}`;
+}
+
+function getVideoMentionLabel(_video: PromptMentionVideo, index: number): string {
+  return `\u89c6\u9891${index + 1}`;
 }
 
 function createPillElement(nodeId: string, label: string): HTMLSpanElement {
@@ -223,6 +244,7 @@ function setCaretAtEnd(editor: HTMLDivElement) {
 export const PromptMentionInput = memo(function PromptMentionInput({
   value,
   connectedImages = [],
+  connectedVideos = [],
   placeholder,
   className,
   style,
@@ -240,12 +262,26 @@ export const PromptMentionInput = memo(function PromptMentionInput({
   const [activeIndex, setActiveIndex] = useState(0);
 
   const mentionOptions = useMemo<MentionOption[]>(
-    () =>
-      connectedImages.map((image, index) => ({
-        ...image,
+    () => [
+      ...connectedImages.map((image, index) => ({
+        id: image.id,
+        type: 'image' as const,
         label: getMentionLabel(image, index),
+        previewUrl: image.previewUrl,
+        imageUrl: image.imageUrl,
+        alt: image.alt,
       })),
-    [connectedImages],
+      ...connectedVideos.map((video, index) => ({
+        id: video.id,
+        type: 'video' as const,
+        label: getVideoMentionLabel(video, index),
+        detail: video.fileName || video.alt,
+        previewUrl: video.previewUrl,
+        videoUrl: video.videoUrl,
+        alt: video.alt,
+      })),
+    ],
+    [connectedImages, connectedVideos],
   );
 
   const filteredOptions = useMemo(() => {
@@ -260,7 +296,8 @@ export const PromptMentionInput = memo(function PromptMentionInput({
     }
 
     return mentionOptions.filter((option) =>
-      option.label.toLowerCase().includes(query),
+      option.label.toLowerCase().includes(query) ||
+      option.detail?.toLowerCase().includes(query),
     );
   }, [mentionOptions, trigger]);
 
@@ -525,24 +562,51 @@ export const PromptMentionInput = memo(function PromptMentionInput({
                   }}
                 >
                   <span className="ref-thumb-wrap">
-                    <NextImage
-                      src={option.previewUrl || option.imageUrl}
-                      alt={option.alt || option.label}
-                      fill
-                      unoptimized
-                      sizes="34px"
-                      className="object-cover"
-                    />
+                    {option.type === 'video' ? (
+                      <>
+                        {option.previewUrl ? (
+                          <NextImage
+                            src={option.previewUrl}
+                            alt={option.alt || option.label}
+                            fill
+                            unoptimized
+                            sizes="34px"
+                            className="object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-full w-full items-center justify-center bg-black/40 text-white/80">
+                            <Play size={14} fill="currentColor" strokeWidth={0} />
+                          </span>
+                        )}
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
+                          <Play size={12} fill="currentColor" strokeWidth={0} />
+                        </span>
+                      </>
+                    ) : (
+                      <NextImage
+                        src={option.previewUrl || option.imageUrl || ''}
+                        alt={option.alt || option.label}
+                        fill
+                        unoptimized
+                        sizes="34px"
+                        className="object-cover"
+                      />
+                    )}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-left">
-                    {option.label}
+                  <span className="flex min-w-0 flex-1 flex-col text-left">
+                    <span className="truncate">{option.label}</span>
+                    {option.detail ? (
+                      <span className="truncate text-[11px] leading-4 text-gl-text-muted">
+                        {option.detail}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               );
             })
           ) : (
             <div className="px-3 py-2 text-[12px] text-gl-text-muted">
-              No reference images
+              No references
             </div>
           )}
         </div>

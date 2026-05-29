@@ -1,13 +1,16 @@
 'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
 import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, X } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
+import {
+  ReferenceImageHoverPreviewPortal,
+  useReferenceImageHoverPreview,
+} from './ReferenceImageHoverPreview';
 import type { ImageGenerationRunOptions } from '@/types/canvas';
 import {
   getApiProviderLabel,
@@ -18,8 +21,6 @@ import {
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
-const REFERENCE_PREVIEW_MAX_EDGE = 176;
-const REFERENCE_PREVIEW_GAP = 10;
 type ImageModelOption = {
   id: string;
   label: string;
@@ -465,29 +466,6 @@ function getRunningHubChannelLabel(channel?: RunningHubChannel): string {
   return RUNNING_HUB_CHANNEL_OPTIONS.find((option) => option.id === resolvedChannel)?.label ?? '官方稳定版';
 }
 
-function getReferencePreviewDimensions(width?: number, height?: number) {
-  if (!width || !height || width <= 0 || height <= 0) {
-    return {
-      width: REFERENCE_PREVIEW_MAX_EDGE,
-      height: REFERENCE_PREVIEW_MAX_EDGE,
-    };
-  }
-
-  const aspectRatio = width / height;
-
-  if (aspectRatio >= 1) {
-    return {
-      width: REFERENCE_PREVIEW_MAX_EDGE,
-      height: Math.round(REFERENCE_PREVIEW_MAX_EDGE / aspectRatio),
-    };
-  }
-
-  return {
-    width: Math.round(REFERENCE_PREVIEW_MAX_EDGE * aspectRatio),
-    height: REFERENCE_PREVIEW_MAX_EDGE,
-  };
-}
-
 function RatioIcon({
   ratio,
   active = false,
@@ -572,15 +550,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
   const [parallelMenuOpen, setParallelMenuOpen] = useState(false);
-  const [hoveredReferencePreview, setHoveredReferencePreview] = useState<{
-    id: string;
-    imageUrl: string;
-    alt: string;
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
+  const referenceImagePreview = useReferenceImageHoverPreview();
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const formatMenuRef = useRef<HTMLDivElement | null>(null);
@@ -673,37 +643,6 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
       runningHubChannel: nextProvider === 'runninghub' ? nextRunningHubChannel : undefined,
     });
     setModelMenuOpen(false);
-  };
-
-  const showReferencePreview = (
-    image: NonNullable<ImageGenerationPromptBarProps['connectedImages']>[number],
-    target: HTMLElement,
-  ) => {
-    const rect = target.getBoundingClientRect();
-    const previewDimensions = getReferencePreviewDimensions(image.width, image.height);
-    const viewportWidth = window.innerWidth || previewDimensions.width;
-    const left = Math.min(
-      Math.max(8, rect.left + rect.width / 2 - previewDimensions.width / 2),
-      Math.max(8, viewportWidth - previewDimensions.width - 8),
-    );
-    const top = Math.max(
-      8,
-      rect.top - previewDimensions.height - REFERENCE_PREVIEW_GAP,
-    );
-
-    setHoveredReferencePreview({
-      id: image.id,
-      imageUrl: image.previewUrl || image.imageUrl,
-      alt: image.alt,
-      left,
-      top,
-      width: previewDimensions.width,
-      height: previewDimensions.height,
-    });
-  };
-
-  const hideReferencePreview = () => {
-    setHoveredReferencePreview(null);
   };
 
   const handlePromptPresetClick = (preset: ImagePromptPreset) => {
@@ -805,9 +744,9 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                     <div
                       className="relative h-full w-full overflow-hidden rounded-[12px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
                       onPointerEnter={(event) =>
-                        showReferencePreview(image, event.currentTarget)
+                        referenceImagePreview.showPreview(image, event.currentTarget)
                       }
-                      onPointerLeave={hideReferencePreview}
+                      onPointerLeave={referenceImagePreview.hidePreview}
                     >
                       <NextImage
                         src={image.previewUrl || image.imageUrl}
@@ -826,7 +765,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         type="button"
                         aria-label="Remove reference image"
                         className="absolute right-0 top-0 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/35 bg-[#1b1d21] text-white opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.35)] transition hover:bg-white hover:text-[#1b1d21] focus-visible:opacity-100 group-hover/reference-thumb:opacity-100"
-                        onPointerEnter={hideReferencePreview}
+                        onPointerEnter={referenceImagePreview.hidePreview}
                         onPointerDown={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
@@ -834,7 +773,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          hideReferencePreview();
+                          referenceImagePreview.hidePreview();
                           onRemoveReference(image.id);
                         }}
                       >
@@ -1364,31 +1303,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
           </div>
         </div>
 
-        {hoveredReferencePreview
-          ? createPortal(
-              <div
-                className="fixed z-[100] overflow-hidden rounded-[14px] shadow-[0_18px_42px_rgba(0,0,0,0.48)] pointer-events-none"
-                style={{
-                  left: hoveredReferencePreview.left,
-                  top: hoveredReferencePreview.top,
-                  width: hoveredReferencePreview.width,
-                  height: hoveredReferencePreview.height,
-                }}
-              >
-                <div className="relative h-full w-full overflow-hidden rounded-[14px]">
-                  <NextImage
-                    src={hoveredReferencePreview.imageUrl}
-                    alt={hoveredReferencePreview.alt || 'Reference preview'}
-                    fill
-                    unoptimized
-                    sizes={`${hoveredReferencePreview.width}px`}
-                    className="object-cover"
-                  />
-                </div>
-              </div>,
-              document.body,
-            )
-          : null}
+        <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
       </div>
     </NodeToolbar>
   );

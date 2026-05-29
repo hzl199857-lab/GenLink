@@ -4,6 +4,7 @@ export type NodeType =
   | "text"
   | "image_generation"
   | "video_generation"
+  | "video"
   | "ai_text_result"
   | "image"
   | "uploaded_image"
@@ -188,6 +189,22 @@ export interface UploadedImageNodeData {
   sizeBytes?: number;
 }
 
+export interface VideoNodeData {
+  title?: string;
+  videoUrl: string;
+  hostedVideoUrl?: string;
+  previewUrl?: string;
+  fileName?: string;
+  outputFileName?: string;
+  width: number;
+  height: number;
+  displayWidth?: number;
+  displayHeight?: number;
+  sizeBytes?: number;
+  durationSeconds?: number;
+  mimeType?: string;
+}
+
 export interface Panorama360ViewState {
   yaw: number;
   pitch: number;
@@ -230,6 +247,7 @@ export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "video_generation"; data: VideoGenerationNodeData }
+  | { type: "video"; data: VideoNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData }
@@ -239,6 +257,7 @@ export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
+  | BaseCanvasNode<"video", VideoNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>

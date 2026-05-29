@@ -37,6 +37,7 @@ export interface ImageGenerationNodeToolbarProps {
   panActive?: boolean;
   belowContent?: React.ReactNode;
   transformOrigin?: string;
+  placeholderOnly?: boolean;
   onUpload?: () => void;
   onOpenLightbox?: () => void;
   onAction?: (action: ImageGenerationToolbarAction) => void;
@@ -106,6 +107,7 @@ export function ImageGenerationNodeToolbar({
   panActive = false,
   belowContent,
   transformOrigin = 'bottom center',
+  placeholderOnly = false,
   onUpload,
   onOpenLightbox,
   onAction,
@@ -148,9 +150,9 @@ export function ImageGenerationNodeToolbar({
           className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <ToolbarIconButton title="裁剪" icon={Crop} onClick={() => onAction?.('crop')} />
+          <ToolbarIconButton title="裁剪" icon={Crop} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
           {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
-            action.id === 'variations' ? (
+            action.id === 'variations' && !placeholderOnly ? (
               <div
                 key={action.id}
                 ref={splitMenuRef}
@@ -232,9 +234,11 @@ export function ImageGenerationNodeToolbar({
                 key={action.id}
                 title={panActive ? '退出3D视角' : action.title}
                 icon={panActive ? X : action.icon}
-                activeDanger={panActive}
+                activeDanger={!placeholderOnly && panActive}
                 onClick={() => {
-                  onAction?.(action.id);
+                  if (!placeholderOnly) {
+                    onAction?.(action.id);
+                  }
                 }}
               />
             ) : (
@@ -242,7 +246,7 @@ export function ImageGenerationNodeToolbar({
                 key={action.id}
                 title={action.title}
                 icon={action.icon}
-                onClick={() => {
+                onClick={placeholderOnly ? undefined : () => {
                   if (action.id === 'expand') {
                     onOpenLightbox?.();
                     return;
@@ -259,7 +263,7 @@ export function ImageGenerationNodeToolbar({
               key={action.id}
               title={action.title}
               icon={action.icon}
-              onClick={() => {
+              onClick={placeholderOnly ? undefined : () => {
                 if (action.id === 'expand') {
                   onOpenLightbox?.();
                   return;
