@@ -10,21 +10,57 @@ import {
 import { Plus } from 'lucide-react';
 
 const HANDLE_SIZE = 10;
-const HANDLE_BADGE_SIZE = 22;
-const HANDLE_BADGE_GAP = HANDLE_BADGE_SIZE;
-const SIDE_ZONE_WIDTH = 56;
+const HANDLE_BADGE_SIZE = 32;
+const HANDLE_BADGE_HALF = HANDLE_BADGE_SIZE / 2;
+const SIDE_PLUS_GAP = 36;
+const SIDE_PLUS_THRESHOLD = 70;
+const SIDE_PLUS_MAGNET_MAX = 45;
+const SIDE_ZONE_WIDTH = SIDE_PLUS_THRESHOLD + SIDE_PLUS_GAP + HANDLE_BADGE_HALF;
+const SIDE_PLUS_POINTER_BLOCKER_SELECTOR = [
+  '[data-ui-stop="1"]',
+  '[data-canvas-menu-ignore="true"]',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable="true"]',
+  '.node-floating-toolbar',
+  '.image-generation-node-toolbar',
+  '.text-node-floating-toolbar',
+  '.react-flow__controls',
+  '.react-flow__minimap',
+].join(',');
 
 const HANDLE_HITBOX_BASE =
   '!z-30 !pointer-events-auto !w-[10px] !-translate-y-1/2 !rounded-full !border-0 !bg-transparent transition-[top,left] duration-300 ease-out cursor-crosshair nodrag nopan';
 
 const HANDLE_BADGE_BASE =
-  'pointer-events-none absolute z-40 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-full border border-gl-stroke-medium bg-gl-panel text-gl-text-tertiary transition-[top,left,opacity,color,box-shadow,border-color] duration-300 ease-out nodrag nopan';
+  'card-side-plus-btn pointer-events-auto absolute z-40 flex h-8 w-8 items-center justify-center rounded-full border text-gl-text-tertiary nodrag nopan';
 
 const SIDE_ZONE_BASE =
-  'pointer-events-auto absolute z-20 cursor-crosshair transition-[top,left,height] duration-300 ease-out nodrag nopan';
+  'absolute z-20 cursor-crosshair transition-[top,left,height] duration-300 ease-out nodrag nopan';
 
 let activeConnectionCleanup: (() => void) | null = null;
 const BLANK_CONNECTION_DROP_EVENT = 'genlink:connection-blank-drop';
+
+type SidePlusState = {
+  visible: boolean;
+  magnet: boolean;
+  left: number;
+  top: number;
+};
+
+function isSidePlusPointerBlocked(target: EventTarget | null, root: HTMLElement | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (root?.contains(target)) {
+    return false;
+  }
+
+  return Boolean(target.closest(SIDE_PLUS_POINTER_BLOCKER_SELECTOR));
+}
 
 export interface CardSideHandleProps {
   type: HandleType;
@@ -50,6 +86,15 @@ export function CardSideHandle({
   const nodeId = useNodeId();
   const store = useStoreApi();
   const cleanupRef = useRef<(() => void) | null>(null);
+  const [isConnectingFromPlus, setIsConnectingFromPlus] = useState(false);
+  const [sidePlusState, setSidePlusState] = useState<SidePlusState>({
+    visible: false,
+    magnet: false,
+    left: position === Position.Left
+      ? cardLeftOffset - SIDE_PLUS_GAP - HANDLE_BADGE_HALF
+      : cardLeftOffset + cardWidth + SIDE_PLUS_GAP - HANDLE_BADGE_HALF,
+    top: 0,
+  });
   const shouldMeasureCardBounds = cardWidth <= 0;
   const [measuredCardBounds, setMeasuredCardBounds] = useState({
     left: cardLeftOffset,
@@ -65,12 +110,10 @@ export function CardSideHandle({
   const handleLeft = position === Position.Left
     ? resolvedCardLeft - HANDLE_SIZE / 2
     : cardRightEdge - HANDLE_SIZE / 2;
-  const badgeLeft = position === Position.Left
-    ? resolvedCardLeft - HANDLE_BADGE_SIZE - HANDLE_BADGE_GAP
-    : cardRightEdge + HANDLE_BADGE_GAP;
   const zoneLeft = position === Position.Left
-    ? resolvedCardLeft - SIDE_ZONE_WIDTH + HANDLE_SIZE / 2
-    : cardRightEdge - HANDLE_SIZE / 2;
+    ? resolvedCardLeft - SIDE_ZONE_WIDTH
+    : cardRightEdge;
+  const shouldShowSidePlus = visible || sidePlusState.visible || isConnectingFromPlus;
 
   useEffect(() => () => {
     cleanupRef.current?.();
@@ -112,8 +155,127 @@ export function CardSideHandle({
     };
   }, [shouldMeasureCardBounds]);
 
-  const startZoneConnection = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+  useEffect(() => {
+    if (disabled || (!visible && !isConnectingFromPlus)) {
+      return;
+    }
+
+    const containerElement = rootRef.current?.parentElement;
+    const cardElement = containerElement?.querySelector<HTMLElement>('.node-connectable-card');
+
+    if (!containerElement || !cardElement) {
+      return;
+    }
+
+    const edgeLocalX = position === Position.Left
+      ? cardElement.offsetLeft
+      : cardElement.offsetLeft + cardElement.offsetWidth;
+    const anchorLocalX = edgeLocalX + (position === Position.Left ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP);
+    const anchorLocalY = cardElement.offsetTop + cardElement.offsetHeight / 2;
+
+    setSidePlusState((current) => ({
+      ...current,
+      visible: true,
+      magnet: false,
+      left: anchorLocalX - HANDLE_BADGE_HALF,
+      top: anchorLocalY - HANDLE_BADGE_HALF,
+    }));
+  }, [disabled, isConnectingFromPlus, position, visible, resolvedCardLeft, resolvedCardWidth]);
+
+  useEffect(() => {
+    if (disabled) {
+      return;
+    }
+
+    const updateSidePlusPosition = (event: MouseEvent) => {
+      const overlayElement = rootRef.current;
+      const containerElement = overlayElement?.parentElement;
+      const cardElement = containerElement?.querySelector<HTMLElement>('.node-connectable-card');
+
+      if (!overlayElement || !containerElement || !cardElement) {
+        return;
+      }
+
+      if (isSidePlusPointerBlocked(event.target, overlayElement)) {
+        setSidePlusState((current) => (
+          current.visible || current.magnet
+            ? { ...current, visible: false, magnet: false }
+            : current
+        ));
+        return;
+      }
+
+      const zoom = store.getState().transform?.[2] || 1;
+      const containerRect = containerElement.getBoundingClientRect();
+      const cardRect = cardElement.getBoundingClientRect();
+      const edgeScreenX = position === Position.Left ? cardRect.left : cardRect.right;
+      const anchorScreenX = edgeScreenX + (position === Position.Left ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP) * zoom;
+      const anchorScreenY = cardRect.top + cardRect.height / 2;
+      const dx = event.clientX - anchorScreenX;
+      const dy = event.clientY - anchorScreenY;
+      const distance = Math.hypot(dx, dy);
+      const threshold = SIDE_PLUS_THRESHOLD * zoom;
+      const magnetMax = SIDE_PLUS_MAGNET_MAX * zoom;
+      const shouldMagnet = distance < threshold;
+      const shouldReveal = shouldMagnet || visible || isConnectingFromPlus;
+
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (shouldMagnet && !isConnectingFromPlus) {
+        const offset = Math.min(distance, magnetMax) / zoom;
+        const angle = Math.atan2(dy, dx);
+
+        offsetX = Math.cos(angle) * offset;
+        offsetY = Math.sin(angle) * offset;
+
+        if (position === Position.Left) {
+          offsetX = Math.min(offsetX, SIDE_PLUS_GAP);
+        } else {
+          offsetX = Math.max(offsetX, -SIDE_PLUS_GAP);
+        }
+      }
+
+      const anchorLocalX = (
+        anchorScreenX - containerRect.left
+      ) / zoom;
+      const anchorLocalY = (
+        anchorScreenY - containerRect.top
+      ) / zoom;
+      const nextState: SidePlusState = {
+        visible: shouldReveal,
+        magnet: shouldMagnet && !isConnectingFromPlus,
+        left: anchorLocalX + offsetX - HANDLE_BADGE_HALF,
+        top: anchorLocalY + offsetY - HANDLE_BADGE_HALF,
+      };
+
+      setSidePlusState((current) => {
+        if (
+          current.visible === nextState.visible &&
+          current.magnet === nextState.magnet &&
+          Math.abs(current.left - nextState.left) < 0.5 &&
+          Math.abs(current.top - nextState.top) < 0.5
+        ) {
+          return current;
+        }
+
+        return nextState;
+      });
+    };
+
+    document.addEventListener('mousemove', updateSidePlusPosition);
+
+    return () => {
+      document.removeEventListener('mousemove', updateSidePlusPosition);
+    };
+  }, [disabled, isConnectingFromPlus, position, store, visible]);
+
+  const startZoneConnection = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0 || !nodeId) {
+      return;
+    }
+
+    if (!shouldShowSidePlus || isSidePlusPointerBlocked(event.target, rootRef.current)) {
       return;
     }
 
@@ -131,6 +293,8 @@ export function CardSideHandle({
     if (!handleElement || !domNode) {
       return;
     }
+
+    setIsConnectingFromPlus(true);
 
     const doc = handleElement.ownerDocument;
     const containerBounds = domNode.getBoundingClientRect();
@@ -344,6 +508,7 @@ export function CardSideHandle({
       window.removeEventListener('blur', handleWindowBlur);
       resetTargetHandleHighlight();
       cancelConnection();
+      setIsConnectingFromPlus(false);
       cleanupRef.current = null;
       if (activeConnectionCleanup === cleanup) {
         activeConnectionCleanup = null;
@@ -463,7 +628,7 @@ export function CardSideHandle({
     window.addEventListener('blur', handleWindowBlur);
     cleanupRef.current = cleanup;
     activeConnectionCleanup = cleanup;
-  }, [handleDomId, nodeId, store, type]);
+  }, [handleDomId, nodeId, shouldShowSidePlus, store, type]);
 
   if (disabled) {
     return null;
@@ -481,7 +646,7 @@ export function CardSideHandle({
         className={[
           'card-side-handle',
           HANDLE_HITBOX_BASE,
-          visible ? '!opacity-100' : '!opacity-0 group-hover:!opacity-100',
+          shouldShowSidePlus ? '!opacity-100' : '!opacity-0',
         ].join(' ')}
         style={{
           top: handleTop,
@@ -498,6 +663,7 @@ export function CardSideHandle({
           top: cardTopOffset,
           width: SIDE_ZONE_WIDTH,
           height: `calc(100% - ${cardTopOffset}px)`,
+          pointerEvents: shouldShowSidePlus ? 'auto' : 'none',
         }}
         onMouseDown={startZoneConnection}
       />
@@ -506,12 +672,15 @@ export function CardSideHandle({
         className={[
           'card-side-handle-badge',
           HANDLE_BADGE_BASE,
-          visible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          shouldShowSidePlus ? 'opacity-100' : 'opacity-0',
+          sidePlusState.magnet ? 'card-side-plus-btn--magnet' : '',
+          isConnectingFromPlus ? 'card-side-plus-btn--active' : '',
         ].join(' ')}
         style={{
-          top: handleTop,
-          left: `${badgeLeft}px`,
+          top: `${sidePlusState.top}px`,
+          left: `${sidePlusState.left}px`,
         }}
+        onMouseDown={startZoneConnection}
       >
         <Plus size={12} className="pointer-events-none" />
       </span>

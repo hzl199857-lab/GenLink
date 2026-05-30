@@ -397,14 +397,45 @@ body {
   border: 1.5px solid rgba(122, 162, 255, 0.6);
 }
 
+.card-side-plus-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transform: scale(1);
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 0.14s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.card-side-plus-btn--magnet {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+  transition: none;
+}
+
+.card-side-plus-btn:hover,
+.card-side-plus-btn--active,
 .card-side-handle.react-flow__handle-connecting ~ .card-side-handle-badge,
 .card-side-handle.react-flow__handle-valid ~ .card-side-handle-badge {
   opacity: 1;
   color: rgba(255, 255, 255, 0.98);
-  border-color: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.42);
+  transform: scale(1.12);
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 0 16px rgba(122, 162, 255, 0.18);
+    0 4px 18px rgba(255, 255, 255, 0.2);
+}
+
+.card-side-plus-btn:active {
+  transform: scale(0.95);
 }
 
 .node-connectable-root:has(.card-side-handle.react-flow__handle-connecting) .node-connectable-card,
