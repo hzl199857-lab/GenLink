@@ -645,6 +645,29 @@ function getImageNodeFocusBounds(node: CanvasNode): MultiNodeSelectionBounds {
   };
 }
 
+function getVideoClipFocusBounds(node: CanvasNode): MultiNodeSelectionBounds {
+  const baseBounds = getEstimatedNodeBounds(node);
+
+  if (node.type !== 'video') {
+    return getImageNodeFocusBounds(node);
+  }
+
+  const data = node.data as VideoNodeData;
+  const dimensions = resolveUploadedVideoCardDimensions(data);
+  const clipControlsBottom =
+    IMAGE_NODE_ADAPTER_TOP_PADDING +
+    dimensions.height +
+    VIDEO_CLIP_CONTROLS_TOP_OFFSET +
+    VIDEO_CLIP_CONTROLS_FOCUS_HEIGHT;
+
+  return {
+    x: baseBounds.x,
+    y: baseBounds.y - IMAGE_NODE_TOOLBAR_LIFT,
+    width: Math.max(baseBounds.width, VIDEO_CLIP_CONTROLS_MIN_FOCUS_WIDTH),
+    height: IMAGE_NODE_TOOLBAR_LIFT + Math.max(baseBounds.height, clipControlsBottom),
+  };
+}
+
 function useThreeViewFocusAnimator() {
   const { setViewport, getViewport } = useReactFlow();
   const animationFrameRef = useRef<number | null>(null);
@@ -2064,6 +2087,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const createProcessedVideoNode = useCanvasStore((s) => s.createVideoNodeFromProcessedResult);
   const createImageNodeFromVideoFrame = useCanvasStore((s) => s.createImageNodeFromVideoFrame);
+  const animateFocusViewport = useThreeViewFocusAnimator();
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const videoData = data as VideoNodeData;
@@ -2090,6 +2114,18 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
   const handleReplace = async (file: File) => {
     const next = await readVideoFile(file);
     updateNodeData<'video'>(id, next);
+  };
+
+  const focusNodeViewport = () => {
+    const state = useCanvasStore.getState();
+    const node = state.nodes.find((candidate) => candidate.id === id);
+
+    if (!node) {
+      return;
+    }
+
+    const bounds = getVideoClipFocusBounds(node);
+    animateFocusViewport(bounds);
   };
 
   const handleOpenClip = () => {
@@ -2440,7 +2476,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       const jobId = await createVideoClipJob({
         kind: 'smart_clip',
         sourceUrl,
-        options: { mode: 'stable', maxSegments: 20, fps: 24 },
+        options: { mode: 'balanced', maxSegments: 20, fps: 24 },
       });
       const done = await pollVideoClipJob(jobId, (status) => {
         if (status.ok) {
@@ -2533,6 +2569,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
           placeholderOnly={false}
           onAction={(action) => {
             if (action === 'crop') {
+              focusNodeViewport();
               handleOpenClip();
             } else if (action === 'download') {
               const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl.trim();
@@ -2545,16 +2582,6 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
             }
           }}
         />
-        {isActive && !clipOpen ? (
-          <button
-            type="button"
-            className="nodrag nopan absolute right-3 top-[-54px] z-30 rounded-gl-pill border border-white/10 bg-gl-panel/95 px-3 py-2 text-[13px] font-medium text-gl-text-primary shadow-gl-toolbar backdrop-blur-md transition-colors hover:bg-gl-panel-hover"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => void extractFrame()}
-          >
-            提取帧
-          </button>
-        ) : null}
         <UploadedVideoNode
           data={videoData}
           selected={selected}
@@ -2575,7 +2602,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
             data-canvas-menu-ignore="true"
             className="nodrag nopan absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2"
             style={{
-              top: `${cardDimensions.height + 72}px`,
+              top: `${cardDimensions.height + VIDEO_CLIP_CONTROLS_TOP_OFFSET}px`,
               width: `${Math.min(Math.max((cardDimensions.width + 60) * 0.67, 280), 430)}px`,
               maxWidth: 'calc(100vw - 64px)',
             }}
@@ -2773,6 +2800,9 @@ const THREE_VIEW_FOCUS_ANIMATION_DURATION_MS = 680;
 const THREE_VIEW_FOCUS_PADDING = 0.14;
 const THREE_VIEW_FOCUS_EASE = (t: number): number =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const VIDEO_CLIP_CONTROLS_TOP_OFFSET = 72;
+const VIDEO_CLIP_CONTROLS_FOCUS_HEIGHT = 96;
+const VIDEO_CLIP_CONTROLS_MIN_FOCUS_WIDTH = 430;
 const CANVAS_MINIMAP_WIDTH = 200;
 const CANVAS_MINIMAP_HEIGHT = 150;
 const CANVAS_MINIMAP_PADDING = 14;

@@ -3,7 +3,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useViewport } from 'reactflow';
 import {
-  Crop,
   ChevronRight,
   Grid3x3,
   Orbit,
@@ -13,6 +12,7 @@ import {
   Download,
   Expand,
   Upload,
+  Scissors,
   X,
 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -150,7 +150,7 @@ export function ImageGenerationNodeToolbar({
           className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <ToolbarIconButton title="裁剪" icon={Crop} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
+          <ToolbarIconButton title="视频裁剪" icon={Scissors} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
           {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
             action.id === 'variations' && !placeholderOnly ? (
               <div
