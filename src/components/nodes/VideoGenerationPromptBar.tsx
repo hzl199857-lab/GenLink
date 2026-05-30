@@ -78,6 +78,7 @@ export interface VideoGenerationPromptBarProps {
   onGenerateAudioChange?: (next: boolean) => void;
   onRun?: (promptOverride?: string) => void;
   onUpload?: () => void;
+  onQuickReferenceConnect?: () => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
   focusRequestId?: number;
@@ -418,6 +419,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   onGenerateAudioChange,
   onRun,
   onUpload,
+  onQuickReferenceConnect,
   onPointerDownWithin,
   onFocusWithinChange,
   focusRequestId,
@@ -566,7 +568,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                 acceptsReferenceImages ? 'translate-y-0' : '-translate-y-1',
               ].join(' ')}
             >
-              <ToolSquareButton title="上传参考素材" onClick={onUpload}>
+              <ToolSquareButton title="快捷连接参考素材" onClick={onQuickReferenceConnect ?? onUpload}>
                 <ReferenceImageIcon />
               </ToolSquareButton>
 

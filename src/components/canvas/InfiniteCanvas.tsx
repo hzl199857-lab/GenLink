@@ -165,6 +165,9 @@ let notifyImageGenerationReferenceUpload:
 let notifyVideoGenerationReferenceUpload:
   | ((nodeId: string) => void)
   | null = null;
+let notifyQuickReferenceConnectRequest:
+  | ((mode: QuickReferenceConnectMode) => void)
+  | null = null;
 let notifyPanorama360NavigationActiveChange:
   | ((nodeId: string, active: boolean) => void)
   | null = null;
@@ -1697,6 +1700,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
         onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
         onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
+        onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({ targetNodeId: id, targetType: 'image_generation' })}
         onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
         onToolbarAction={(action) => {
           if (action === 'pan') {
@@ -1907,6 +1911,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       onTitleChange={(nextTitle) => updateNodeData<'video_generation'>(id, { title: nextTitle })}
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
+      onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({ targetNodeId: id, targetType: 'video_generation' })}
       onToolbarAction={handleToolbarAction}
       onFrameCapture={(position, video) => void extractGeneratedVideoFrame(position, video)}
       onSelectNode={handleVideoCardClick}
@@ -3089,10 +3094,67 @@ type GroupConnectionPreview = {
   target: { x: number; y: number };
 };
 
+type QuickReferenceConnectMode = {
+  targetNodeId: string;
+  targetType: 'image_generation' | 'video_generation';
+};
+
 type ConnectedCopyBuffer = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
 };
+
+function canNodeProvideImageReference(node: CanvasNode): boolean {
+  if (node.type === 'uploaded_image') {
+    return Boolean(node.data.imageUrl.trim());
+  }
+
+  if (node.type === 'image') {
+    return Boolean(node.data.imageUrl.trim());
+  }
+
+  if (node.type === 'image_generation') {
+    return Boolean(
+      node.data.generatedHostedImageUrl?.trim() ||
+      node.data.generatedImageUrl?.trim(),
+    );
+  }
+
+  return false;
+}
+
+function canNodeProvideVideoReference(node: CanvasNode): boolean {
+  if (node.type === 'video') {
+    return Boolean(
+      node.data.hostedVideoUrl?.trim() ||
+      node.data.videoUrl?.trim(),
+    );
+  }
+
+  if (node.type === 'video_generation') {
+    return Boolean(
+      node.data.hostedVideoUrl?.trim() ||
+      node.data.videoUrl?.trim(),
+    );
+  }
+
+  return false;
+}
+
+function canNodeProvideQuickReference(
+  node: CanvasNode,
+  mode: QuickReferenceConnectMode,
+): boolean {
+  if (node.id === mode.targetNodeId) {
+    return false;
+  }
+
+  if (mode.targetType === 'image_generation') {
+    return canNodeProvideImageReference(node);
+  }
+
+  return canNodeProvideImageReference(node) || canNodeProvideVideoReference(node);
+}
 
 function cloneNodeData<T>(data: T): T {
   return typeof structuredClone === 'function'
@@ -5661,7 +5723,7 @@ function CropOverlay({
                     {option.label}
                   </button>
                 ))}
-                {/* 閼奉亜鐣炬稊澶愨偓澶愩€?*/}
+                {/* Custom aspect ratio */}
                 {!customMode ? (
                   <button
                     type="button"
@@ -5671,7 +5733,7 @@ function CropOverlay({
                     ].join(' ')}
                     onClick={() => { setCustomMode(true); setAspectRatio(null); }}
                   >
-                    閼奉亜鐣炬稊?..
+                    自定义比例...
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5 px-2 py-2">
@@ -6067,6 +6129,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   const [groupConnectionPreview, setGroupConnectionPreview] = useState<GroupConnectionPreview | null>(null);
+  const [quickReferenceConnect, setQuickReferenceConnect] = useState<QuickReferenceConnectMode | null>(null);
   const draggingNodeIdRef = useRef<string | null>(null);
   const [edgeDeleteButtonPosition, setEdgeDeleteButtonPosition] = useState<{
     x: number;
@@ -6110,6 +6173,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     selectedNodeIdsRef.current = selectedNodeIds;
   }, [selectedNodeIds]);
 
+  useEffect(() => {
+    if (
+      quickReferenceConnect &&
+      !storeNodes.some(
+        (node) => node.id === quickReferenceConnect.targetNodeId && node.type === quickReferenceConnect.targetType,
+      )
+    ) {
+      setQuickReferenceConnect(null);
+    }
+  }, [quickReferenceConnect, storeNodes]);
+
   const handleToggleEdgeStyle = useCallback(() => {
     setStoredCanvasEdgeStyle(edgeStyle === 'straight' ? 'curve' : 'straight');
   }, [edgeStyle]);
@@ -6119,6 +6193,16 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       id: n.id,
       type: n.type,
       position: n.position,
+      className: quickReferenceConnect
+        ? [
+            'gl-quick-reference-node',
+            n.id === quickReferenceConnect.targetNodeId
+              ? 'gl-quick-reference-target'
+              : canNodeProvideQuickReference(n, quickReferenceConnect)
+                ? 'gl-quick-reference-connectable'
+                : 'gl-quick-reference-muted',
+          ].join(' ')
+        : undefined,
       data: {
         ...n.data,
         canvasNodeActive: activeNodeId === n.id,
@@ -6154,7 +6238,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     return nodes;
-  }, [activeNodeId, connectionMenu, nodeFocusRequest, storeNodes, selectedNodeIds]);
+  }, [activeNodeId, connectionMenu, nodeFocusRequest, quickReferenceConnect, storeNodes, selectedNodeIds]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
     const edgeType = getReactFlowEdgeType(edgeStyle);
@@ -6300,6 +6384,37 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     void fitView({ duration: 220, padding: 0.18 });
   }, [activeNodeId, focusSingleNodeViewport, fitView]);
+
+  const clearEdgeSelection = useCallback(() => {
+    setSelectedEdgeId(null);
+    setEdgeDeleteButtonPosition(null);
+  }, []);
+
+  const clearConnectionMenu = useCallback(() => {
+    setConnectionMenu(null);
+  }, [setConnectionMenu]);
+
+  const startQuickReferenceConnect = useCallback((mode: QuickReferenceConnectMode) => {
+    setQuickReferenceConnect(mode);
+    setAddMenu(null);
+    clearConnectionMenu();
+    setImageInfoPopover(null);
+    setImageLightbox(null);
+    clearEdgeSelection();
+    showProjectMessage('请选择一个可作为参考素材的上游节点');
+  }, [clearConnectionMenu, clearEdgeSelection, showProjectMessage]);
+
+  const stopQuickReferenceConnect = useCallback(() => {
+    setQuickReferenceConnect(null);
+  }, []);
+
+  useEffect(() => {
+    notifyQuickReferenceConnectRequest = startQuickReferenceConnect;
+
+    return () => {
+      notifyQuickReferenceConnectRequest = null;
+    };
+  }, [startQuickReferenceConnect]);
 
   const updateHoveredGroupFromPointer = useCallback((event: {
     target?: EventTarget | null;
@@ -6788,11 +6903,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     };
   }, []);
 
-  const clearEdgeSelection = useCallback(() => {
-    setSelectedEdgeId(null);
-    setEdgeDeleteButtonPosition(null);
-  }, []);
-
   useEffect(() => {
     notifyPanorama360UploadRequest = (nodeId, file) => {
       void (async () => {
@@ -6910,10 +7020,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     };
   }, [selectSingleNode, storeNodes]);
 
-  const clearConnectionMenu = useCallback(() => {
-    setConnectionMenu(null);
-  }, [setConnectionMenu]);
-
   useEffect(() => {
     const handleBlankConnectionDrop = (event: Event) => {
       const detail = (event as CustomEvent<BlankConnectionDropEventDetail>).detail;
@@ -6967,10 +7073,95 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
   }, [deleteNodes, selectedNodeIds]);
 
+  const handleQuickReferenceMouseDownCapture = useCallback((event: React.MouseEvent) => {
+    if (!quickReferenceConnect || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const nodeElement = target?.closest('.react-flow__node');
+    const nodeId = nodeElement?.getAttribute('data-id');
+
+    if (!nodeId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
+
+    if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
+      showProjectMessage('这个节点不能作为当前节点的参考素材');
+      return;
+    }
+
+    const alreadyConnected = storeEdges.some(
+      (edge) => edge.source === sourceNode.id && edge.target === quickReferenceConnect.targetNodeId,
+    );
+
+    if (alreadyConnected) {
+      showProjectMessage('参考连接已存在');
+    } else {
+      addEdgeStore({
+        id: crypto.randomUUID(),
+        source: sourceNode.id,
+        target: quickReferenceConnect.targetNodeId,
+      });
+      showProjectMessage('已连接为参考素材');
+    }
+
+    setQuickReferenceConnect(null);
+    clearEdgeSelection();
+    setSelectedGroupId(null);
+    selectSingleNode(quickReferenceConnect.targetNodeId);
+  }, [
+    addEdgeStore,
+    clearEdgeSelection,
+    quickReferenceConnect,
+    selectSingleNode,
+    showProjectMessage,
+    storeEdges,
+    storeNodes,
+  ]);
+
   const handleNodeClick = useCallback((
     event: React.MouseEvent,
     node: ReactFlowNode,
   ) => {
+    if (quickReferenceConnect) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const sourceNode = storeNodes.find((candidate) => candidate.id === node.id);
+
+      if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
+        showProjectMessage('这个节点不能作为当前节点的参考素材');
+        return;
+      }
+
+      const alreadyConnected = storeEdges.some(
+        (edge) => edge.source === sourceNode.id && edge.target === quickReferenceConnect.targetNodeId,
+      );
+
+      if (alreadyConnected) {
+        showProjectMessage('参考连接已存在');
+      } else {
+        addEdgeStore({
+          id: crypto.randomUUID(),
+          source: sourceNode.id,
+          target: quickReferenceConnect.targetNodeId,
+        });
+        showProjectMessage('已连接为参考素材');
+      }
+
+      setQuickReferenceConnect(null);
+      clearEdgeSelection();
+      setSelectedGroupId(null);
+      selectSingleNode(quickReferenceConnect.targetNodeId);
+      return;
+    }
+
     clearEdgeSelection();
     setSelectedGroupId(null);
 
@@ -6990,7 +7181,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     selectSingleNode(node.id);
-  }, [clearEdgeSelection, selectSingleNode]);
+    }, [addEdgeStore, clearEdgeSelection, quickReferenceConnect, selectSingleNode, showProjectMessage, storeEdges, storeNodes]);
 
   const handleNodeDoubleClick = useCallback((
     event: React.MouseEvent,
@@ -7065,6 +7256,19 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [selectGroup]);
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
+    if (quickReferenceConnect) {
+      if (event.button === 2) {
+        event.preventDefault();
+        event.stopPropagation();
+        stopQuickReferenceConnect();
+      }
+
+      panePointerStartRef.current = null;
+      setPaneSelectionDragging(false);
+      setSelectionInProgress(false);
+      return;
+    }
+
     const target = event.target;
     const internalTarget = target instanceof Element && Boolean(
       target.closest(
@@ -7104,7 +7308,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       y: event.clientY,
     };
     setPaneSelectionDragging(false);
-  }, [project, selectGroup, storeGroups]);
+  }, [project, quickReferenceConnect, selectGroup, stopQuickReferenceConnect, storeGroups]);
 
   const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
     updateHoveredGroupFromPointer(event);
@@ -7301,6 +7505,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && quickReferenceConnect) {
+        event.preventDefault();
+        stopQuickReferenceConnect();
+        return;
+      }
+
       if (isTypingTarget(event.target)) {
         return;
       }
@@ -7366,9 +7576,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     handleDeleteSelectedNodes,
     handlePasteNodesWithUpstream,
     handleSmartResetViewport,
+    quickReferenceConnect,
     redo,
     selectedEdgeId,
     selectedNodeIds,
+    stopQuickReferenceConnect,
     undo,
   ]);
 
@@ -7513,6 +7725,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clientX?: number;
     clientY?: number;
   }) => {
+    if (quickReferenceConnect) {
+      return;
+    }
+
     if (skipNextPaneClickClearRef.current) {
       skipNextPaneClickClearRef.current = false;
       return;
@@ -7550,7 +7766,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
     setSelectedGroupId(null);
     clearEdgeSelection();
-  }, [clearConnectionMenu, clearEdgeSelection, isInteractiveCanvasTarget, project, selectGroup, storeGroups]);
+  }, [clearConnectionMenu, clearEdgeSelection, isInteractiveCanvasTarget, project, quickReferenceConnect, selectGroup, storeGroups]);
 
   const handleViewportMove = useCallback((event?: { target?: EventTarget | null }) => {
     if (isInteractiveCanvasTarget(event?.target ?? null)) {
@@ -8634,6 +8850,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onPaneMouseMove={handlePaneMouseMove}
         onPaneMouseLeave={handlePaneMouseLeave}
         onMouseDown={handlePaneMouseDown}
+        onMouseDownCapture={handleQuickReferenceMouseDownCapture}
         onMouseMove={handlePaneMouseMove}
         onMouseUp={handlePaneMouseUp}
         onDoubleClick={handlePaneDoubleClick}
@@ -8641,7 +8858,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         zoomOnDoubleClick={false}
         minZoom={CANVAS_MIN_ZOOM}
         maxZoom={CANVAS_MAX_ZOOM}
-        className={paneSelectionDragging ? 'gl-pane-selection-dragging' : undefined}
+        className={[
+          paneSelectionDragging ? 'gl-pane-selection-dragging' : '',
+          quickReferenceConnect ? 'gl-quick-reference-mode' : '',
+        ].filter(Boolean).join(' ') || undefined}
         nodeDragThreshold={1}
         deleteKeyCode={null}
         panOnDrag={[1]}

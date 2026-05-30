@@ -66,6 +66,42 @@ body {
   box-shadow: none !important;
 }
 
+.gl-quick-reference-mode {
+  cursor: crosshair;
+}
+
+.gl-quick-reference-mode .react-flow__pane,
+.gl-quick-reference-mode .react-flow__node {
+  cursor: crosshair;
+}
+
+.gl-quick-reference-node {
+  transition: opacity 160ms ease, filter 160ms ease;
+}
+
+.gl-quick-reference-muted {
+  opacity: 0.28;
+  filter: grayscale(0.55);
+}
+
+.gl-quick-reference-target {
+  opacity: 0.72;
+}
+
+.gl-quick-reference-connectable {
+  opacity: 1;
+}
+
+.gl-quick-reference-connectable:hover .node-connectable-card {
+  animation: gl-reference-card-pulse 1.15s ease-in-out infinite;
+  border-color: rgba(255, 255, 255, 0.92) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.24),
+    0 0 22px rgba(255, 255, 255, 0.30),
+    0 0 46px rgba(255, 255, 255, 0.16),
+    0 18px 44px rgba(0, 0, 0, 0.42) !important;
+}
+
 .react-flow__edge-path {
   stroke: rgba(190, 205, 225, 0.3);
   stroke-width: 1.4;
@@ -84,6 +120,25 @@ body {
 .edge-delete-button {
   animation: edge-delete-button-pop 140ms cubic-bezier(0.2, 0.9, 0.2, 1);
   transform-origin: center;
+}
+
+@keyframes gl-reference-card-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.14),
+      0 0 16px rgba(255, 255, 255, 0.18),
+      0 0 34px rgba(255, 255, 255, 0.10),
+      0 18px 44px rgba(0, 0, 0, 0.42);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.32),
+      0 0 28px rgba(255, 255, 255, 0.38),
+      0 0 58px rgba(255, 255, 255, 0.18),
+      0 18px 44px rgba(0, 0, 0, 0.42);
+  }
 }
 
 .image-result-gallery-card {

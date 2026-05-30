@@ -12,6 +12,7 @@ import {
   Download,
   Expand,
   Upload,
+  CropIcon,
   Scissors,
   X,
   Camera,
@@ -155,6 +156,9 @@ export function ImageGenerationNodeToolbar({
 
   if (!visible) return null;
 
+  const cropButtonTitle = videoFrameCapture ? '视频裁剪' : '裁剪';
+  const CropButtonIcon = videoFrameCapture ? Scissors : CropIcon;
+
   return (
     <div
       data-canvas-menu-ignore="true"
@@ -170,7 +174,7 @@ export function ImageGenerationNodeToolbar({
           className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <ToolbarIconButton title="视频裁剪" icon={Scissors} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
+          <ToolbarIconButton title={cropButtonTitle} icon={CropButtonIcon} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
           {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
             action.id === 'variations' && videoFrameCapture ? (
               <div

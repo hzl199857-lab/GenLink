@@ -311,6 +311,7 @@ export interface ImageGenerationPromptBarProps {
   onParallelCountChange?: (next: 1 | 2 | 4) => void;
   onRun?: (promptOverride?: string, options?: ImageGenerationRunOptions) => void;
   onAddReference?: () => void;
+  onQuickReferenceConnect?: () => void;
   onRemoveReference?: (referenceImageId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
@@ -533,6 +534,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   onParallelCountChange,
   onRun,
   onAddReference,
+  onQuickReferenceConnect,
   onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
@@ -730,7 +732,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
 
         <div className="flex min-h-[104px] flex-col">
           <div className="mb-4 flex items-center gap-2">
-            <ToolSquareButton title="参考图" onClick={onAddReference}>
+            <ToolSquareButton title="快捷连接参考图" onClick={onQuickReferenceConnect ?? onAddReference}>
               <ReferenceImageIcon />
             </ToolSquareButton>
 

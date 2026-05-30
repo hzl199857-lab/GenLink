@@ -57,6 +57,7 @@ export interface ImageGenerationNodeProps {
   onChange?: (next: ImageGenerationNodeData) => void;
   onRun?: (promptOverride?: string, options?: ImageGenerationRunOptions) => void;
   onUpload?: () => void;
+  onQuickReferenceConnect?: () => void;
   onRemoveReference?: (referenceImageId: string) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onToolbarAction?: (action: ImageGenerationToolbarAction) => void;
@@ -264,6 +265,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   onChange,
   onRun,
   onUpload,
+  onQuickReferenceConnect,
   onRemoveReference,
   onTitleChange,
   onToolbarAction,
@@ -704,6 +706,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         onParallelCountChange={handleParallelCountChange}
         onRun={onRun}
         onAddReference={onUpload}
+        onQuickReferenceConnect={onQuickReferenceConnect}
         onRemoveReference={onRemoveReference}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={onPromptFocusWithinChange}
