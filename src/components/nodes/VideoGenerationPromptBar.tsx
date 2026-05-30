@@ -18,6 +18,7 @@ import {
   type ApiProvider,
 } from '@/store/canvas-store';
 import type { VideoGenerationMode } from '@/types/canvas';
+import { VideoPlayer } from './VideoPlayer';
 
 const VIDEO_MODEL_OPTIONS = [
   { id: 'doubao-seedance-2-0-260128', label: 'seedance 2.0' },
@@ -177,7 +178,7 @@ function getModeLabel(mode: VideoGenerationMode): string {
   return VIDEO_MODE_OPTIONS.find((option) => option.id === mode)?.label ?? '全能参考';
 }
 
-function getVideoModelLabel(model: string): string {
+export function getVideoModelLabel(model: string): string {
   return VIDEO_MODEL_OPTIONS.find((option) => option.id === model)?.label ?? model;
 }
 
@@ -383,14 +384,14 @@ function ReferenceVideoThumbnail({
   }
 
   return (
-    <video
-      ref={fallbackVideoRef}
+    <VideoPlayer
+      videoRef={fallbackVideoRef}
       src={videoUrl}
       muted
-      playsInline
+      controlsVisible={false}
       preload="auto"
-      className="h-full w-full object-cover"
-      aria-label={alt}
+      className="h-full w-full"
+      ariaLabel={alt}
     />
   );
 }
@@ -945,14 +946,13 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                   height: hoveredVideoPreview.height,
                 }}
               >
-                <video
+                <VideoPlayer
                   key={hoveredVideoPreview.id}
                   src={hoveredVideoPreview.videoUrl}
                   autoPlay
                   muted
                   loop
-                  playsInline
-                  className="h-full w-full object-cover"
+                  controlsVisible={false}
                 />
               </div>,
               document.body,

@@ -9,6 +9,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { VideoGenerationPromptBar } from './VideoGenerationPromptBar';
 import { useCanvasStore } from '@/store/canvas-store';
 import type { VideoGenerationMode, VideoGenerationNodeData } from '@/types/canvas';
+import { VideoPlayer } from './VideoPlayer';
 
 const MAX_CARD_EDGE = 540;
 const MIN_CARD_EDGE = 220;
@@ -161,9 +162,11 @@ function VideoToolbar({
 function GeneratedVideo({
   src,
   poster,
+  durationSeconds,
 }: {
   src: string;
   poster?: string;
+  durationSeconds?: number;
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -176,12 +179,11 @@ function GeneratedVideo({
   }
 
   return (
-    <video
+    <VideoPlayer
       src={src}
       poster={poster}
-      controls
-      playsInline
-      className="h-full w-full object-cover"
+      durationSeconds={durationSeconds}
+      className="absolute inset-0"
       onError={() => setFailed(true)}
     />
   );
@@ -330,7 +332,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
             }}
           >
             {videoUrl ? (
-              <GeneratedVideo src={videoUrl} poster={data.lastFrameUrl} />
+              <GeneratedVideo src={videoUrl} poster={data.lastFrameUrl} durationSeconds={data.duration} />
             ) : data.status === 'error' && data.errorMessage ? (
               <div className="max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
                 {data.errorMessage}

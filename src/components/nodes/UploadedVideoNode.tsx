@@ -6,6 +6,7 @@ import { Upload, Video } from 'lucide-react';
 import type { VideoNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
+import { VideoPlayer } from './VideoPlayer';
 
 export interface UploadedVideoNodeProps {
   data: VideoNodeData;
@@ -115,22 +116,13 @@ export function UploadedVideoNode({
         }}
       >
         {videoUrl ? (
-          <video
-            ref={videoRef}
-            crossOrigin="anonymous"
+          <VideoPlayer
             src={videoUrl}
             poster={data.previewUrl}
-            className="absolute inset-0 h-full w-full object-cover"
-            controls={controlsVisible}
-            playsInline
-            preload="metadata"
-            onLoadedMetadata={(event) => {
-              const duration = event.currentTarget.duration;
-              if (Number.isFinite(duration) && duration > 0) {
-                onLoadedMetadata?.(duration);
-              }
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
+            videoRef={videoRef}
+            controlsVisible={controlsVisible}
+            durationSeconds={data.durationSeconds}
+            onLoadedMetadata={onLoadedMetadata}
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-gl-text-muted">
@@ -166,6 +158,7 @@ export function UploadedVideoNode({
             />
           </>
         ) : null}
+
       </div>
 
       <CardSideHandle

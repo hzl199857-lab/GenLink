@@ -96,6 +96,7 @@ import {
   VideoGenerationNode,
   type VideoGenerationToolbarAction,
 } from '../nodes/VideoGenerationNode';
+import { getVideoModelLabel } from '../nodes/VideoGenerationPromptBar';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { Panorama360Node } from '../nodes/Panorama360Node';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
@@ -337,6 +338,63 @@ function inferImageFormatFromUrl(url?: string): string {
   return '-';
 }
 
+function inferVideoFormatFromData(data: VideoNodeData): string {
+  const mimeType = data.mimeType?.trim();
+
+  if (mimeType) {
+    const subtype = mimeType.split('/')[1]?.split(';')[0]?.trim();
+
+    if (subtype) {
+      return subtype.toUpperCase();
+    }
+  }
+
+  const url = data.hostedVideoUrl?.trim() || data.videoUrl?.trim() || data.fileName?.trim();
+
+  if (!url) {
+    return '-';
+  }
+
+  const pathname = url.split('?')[0] ?? '';
+  const extensionMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
+
+  return extensionMatch?.[1] ? extensionMatch[1].toUpperCase() : '-';
+}
+
+function toVideoInfoPopoverData(data: VideoNodeData): ImageGenerationInfoPopoverData {
+  return {
+    title: '视频信息',
+    model: '-',
+    format: inferVideoFormatFromData(data),
+    size: formatImageSize(data.sizeBytes),
+    resolution: formatImageResolution(data.width, data.height),
+    createdTime: undefined,
+  };
+}
+
+function toVideoGenerationInfoPopoverData(data: VideoGenerationNodeData): ImageGenerationInfoPopoverData | null {
+  const videoUrl = data.hostedVideoUrl?.trim() || data.videoUrl?.trim();
+
+  if (!videoUrl) {
+    return null;
+  }
+
+  return {
+    title: '视频信息',
+    model: getVideoModelLabel(data.generatedModel?.trim() || data.model?.trim() || '-'),
+    format: inferVideoFormatFromData({
+      videoUrl,
+      width: 0,
+      height: 0,
+      fileName: data.generatedOutputFileName,
+      mimeType: 'video/mp4',
+    }),
+    size: '-',
+    resolution: data.resolution?.trim() || '-',
+    createdTime: formatGeneratedAt(data.generatedAt) || undefined,
+  };
+}
+
 function toImageNodeInfoPopoverData(
   data: ImageNodeData,
 ): ImageGenerationInfoPopoverData {
@@ -453,11 +511,19 @@ async function toResolvedCanvasNodeInfoPopoverData(
     return toResolvedUploadedImageInfoPopoverData(node.data as UploadedImageNodeData);
   }
 
+  if (node.type === 'video') {
+    return toVideoInfoPopoverData(node.data as VideoNodeData);
+  }
+
+  if (node.type === 'video_generation') {
+    return toVideoGenerationInfoPopoverData(node.data as VideoGenerationNodeData);
+  }
+
   return null;
 }
 
-function isCanvasImageNodeType(type: string): type is CanvasNode['type'] {
-  return type === 'image_generation' || type === 'image' || type === 'uploaded_image';
+function isCanvasMediaInfoNodeType(type: string): type is CanvasNode['type'] {
+  return type === 'image_generation' || type === 'image' || type === 'uploaded_image' || type === 'video' || type === 'video_generation';
 }
 
 function parseCanvasAspectRatio(value?: string): number | null {
@@ -1710,6 +1776,14 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
   const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
   const videoData = data as VideoGenerationNodeData;
+  const handleVideoCardClick = () => {
+    if (videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim()) {
+      notifyCanvasImageInfoRequest?.(id);
+      return;
+    }
+
+    handleSelectNode();
+  };
   const cardDimensions = resolveAspectDrivenCardDimensions(videoData.ratio);
   const handleToolbarAction = (action: VideoGenerationToolbarAction) => {
     const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim() || '';
@@ -1756,7 +1830,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
       onToolbarAction={handleToolbarAction}
-      onSelectNode={handleSelectNode}
+      onSelectNode={handleVideoCardClick}
       onPromptPointerDown={() => {
         handleSelectNode();
         notifyPromptBarInteraction?.();
@@ -2588,7 +2662,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
           accessoriesVisible={isActive}
           onReplace={handleReplace}
           onTitleChange={(nextTitle) => updateNodeData<'video'>(id, { title: nextTitle })}
-          onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+          onSelectNode={() => notifyCanvasImageInfoRequest?.(id)}
           videoRef={videoRef}
           controlsVisible={!clipOpen}
           onLoadedMetadata={(duration) => {
@@ -6669,7 +6743,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     notifyCanvasImageInfoRequest = (nodeId) => {
       const node = storeNodes.find((item) => item.id === nodeId);
 
-      if (!node || !isCanvasImageNodeType(node.type)) {
+      if (!node || !isCanvasMediaInfoNodeType(node.type)) {
         return;
       }
 

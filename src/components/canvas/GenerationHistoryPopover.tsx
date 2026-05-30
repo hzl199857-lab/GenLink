@@ -5,6 +5,7 @@ import NextImage from 'next/image';
 import { Maximize2, Play } from 'lucide-react';
 import type { ImageHistoryItem, ProjectOutputHistoryItem } from '@/types/canvas';
 import { useCanvasStore } from '@/store/canvas-store';
+import { VideoPlayer } from '../nodes/VideoPlayer';
 
 type HistoryTab = 'images' | 'videos';
 
@@ -254,12 +255,11 @@ export function GenerationHistoryPopover({
                         className="group relative h-[92px] overflow-hidden rounded-md bg-black/30 text-left outline-none ring-1 ring-white/0 transition hover:scale-[1.015] hover:ring-white/36 focus-visible:ring-white/70"
                         title={item.fileName}
                       >
-                        <video
+                        <VideoPlayer
                           src={item.previewUrl}
                           muted
-                          playsInline
+                          controlsVisible={false}
                           preload="metadata"
-                          className="h-full w-full object-cover"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/5 to-transparent opacity-90" />
                         <div className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white/86 shadow-[0_6px_16px_rgba(0,0,0,0.35)]">

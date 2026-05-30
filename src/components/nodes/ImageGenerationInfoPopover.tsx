@@ -5,10 +5,12 @@ import { X } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 export interface ImageGenerationInfoPopoverData {
+  title?: string;
   model: string;
   format: string;
   size: string;
   resolution: string;
+  frameRate?: string;
   createdTime?: string;
 }
 
@@ -49,7 +51,7 @@ export function ImageGenerationInfoPopover({
       <div className="pointer-events-auto w-[220px] rounded-[12px] border border-white/10 bg-[#111214]/96 p-2.5 shadow-[0_14px_36px_rgba(0,0,0,0.45)] backdrop-blur-xl">
         <div className="mb-2 flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-[12px] font-medium text-white/95">图片信息</div>
+            <div className="truncate text-[12px] font-medium text-white/95">{data.title || '图片信息'}</div>
           </div>
           <div className="group/tooltip relative">
             <button
@@ -69,6 +71,7 @@ export function ImageGenerationInfoPopover({
           <InfoRow label="格式" value={data.format} />
           <InfoRow label="大小" value={data.size} />
           <InfoRow label="分辨率" value={data.resolution} />
+          {data.frameRate ? <InfoRow label="帧率" value={data.frameRate} /> : null}
           {data.createdTime ? <InfoRow label="创建时间" value={data.createdTime} /> : null}
         </div>
       </div>
