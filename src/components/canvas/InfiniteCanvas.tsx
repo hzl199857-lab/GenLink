@@ -18,6 +18,8 @@ import {
   Rows3,
   X,
   Check,
+  Camera,
+  Box,
   CropIcon,
   Play,
   Download,
@@ -2332,13 +2334,20 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     if (drag.mode === 'left') {
       const nextStart = Math.min(Math.max(0, posSec), clipEnd - minRange);
       setClipStart(Number(nextStart.toFixed(2)));
-      if (videoRef.current) videoRef.current.currentTime = nextStart;
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.currentTime = nextStart;
+      }
       return;
     }
 
     if (drag.mode === 'right') {
       const nextEnd = Math.max(Math.min(clipDuration, posSec), clipStart + minRange);
       setClipEnd(Number(nextEnd.toFixed(2)));
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.currentTime = nextEnd;
+      }
       return;
     }
 
@@ -2346,7 +2355,10 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     const nextStart = Math.max(0, Math.min(clipDuration - length, posSec - drag.pointerOffsetSec));
     setClipStart(Number(nextStart.toFixed(2)));
     setClipEnd(Number((nextStart + length).toFixed(2)));
-    if (videoRef.current) videoRef.current.currentTime = nextStart;
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = nextStart;
+    }
   }, [clipDuration, clipEnd, clipStart]);
 
   const handleClipTrackPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -2747,22 +2759,24 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
             <div className="flex w-full items-center justify-between gap-1.5">
               <div />
 
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={clipBusy}
-                  onClick={() => void extractFrame()}
-                  className="rounded-full border border-white/10 bg-[#17191d]/95 px-1.5 py-0.5 text-[8px] font-semibold text-white shadow-[0_8px_20px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
-                >
-                  提取帧
-                </button>
+              <div className="flex items-center gap-0.5">
                 <button
                   type="button"
                   disabled={clipBusy}
                   onClick={() => void runSmartClip()}
-                  className="rounded-full border border-white/10 bg-[#17191d]/95 px-1.5 py-0.5 text-[8px] font-semibold text-white shadow-[0_8px_20px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
+                  className="flex h-4 items-center justify-center gap-0.5 rounded-full border border-white/10 bg-[#24262b]/95 px-1.5 py-0 text-[6px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
                 >
+                  <Box size={7} strokeWidth={1.9} className="text-white/86" />
                   智能剪辑
+                </button>
+                <button
+                  type="button"
+                  aria-label="提取帧"
+                  disabled={clipBusy}
+                  onClick={() => void extractFrame()}
+                  className="flex h-4 w-4 items-center justify-center rounded-full border border-white/10 bg-[#24262b]/95 p-0 text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
+                >
+                  <Camera size={8} strokeWidth={1.8} />
                 </button>
               </div>
             </div>

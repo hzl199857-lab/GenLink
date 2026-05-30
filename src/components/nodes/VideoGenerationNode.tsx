@@ -2,14 +2,17 @@
 
 import React, { memo, useEffect, useState } from 'react';
 import { Position, useUpdateNodeInternals } from 'reactflow';
-import { Download, Expand, FolderPlus, Link, Upload, Video } from 'lucide-react';
+import { Video } from 'lucide-react';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
-import { Tooltip } from '@/components/ui/Tooltip';
 import { VideoGenerationPromptBar } from './VideoGenerationPromptBar';
 import { useCanvasStore } from '@/store/canvas-store';
 import type { VideoGenerationMode, VideoGenerationNodeData } from '@/types/canvas';
 import { VideoPlayer } from './VideoPlayer';
+import {
+  ImageGenerationNodeToolbar,
+  type ImageGenerationToolbarAction,
+} from './ImageGenerationNodeToolbar';
 
 const MAX_CARD_EDGE = 540;
 const MIN_CARD_EDGE = 220;
@@ -56,107 +59,6 @@ export interface VideoGenerationNodeProps {
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
   promptFocusRequestId?: number;
-}
-
-function ToolbarIconButton({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="group/tooltip relative">
-      <button
-        type="button"
-        className="nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
-        aria-label={title}
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onClick?.();
-        }}
-      >
-        {children}
-      </button>
-      <Tooltip label={title} side="top" />
-    </div>
-  );
-}
-
-function UploadToolbarButton({
-  title,
-  onClick,
-}: {
-  title: string;
-  onClick?: () => void;
-}) {
-  return (
-    <div className="group/tooltip relative">
-      <button
-        type="button"
-        className="flex h-[40px] items-center gap-2 rounded-gl-pill border border-white/10 bg-gl-panel/95 px-4 text-[15px] font-medium text-gl-text-primary shadow-gl-toolbar backdrop-blur-md transition-colors hover:bg-gl-panel-hover"
-        aria-label={title}
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onClick?.();
-        }}
-      >
-        <Upload size={15} />
-        <span>上传</span>
-      </button>
-      <Tooltip label={title} side="top" />
-    </div>
-  );
-}
-
-function VideoToolbar({
-  visible,
-  top,
-  hasVideo,
-  onAction,
-}: {
-  visible: boolean;
-  top: number;
-  hasVideo: boolean;
-  onAction?: (action: VideoGenerationToolbarAction) => void;
-}) {
-  if (!visible) {
-    return null;
-  }
-
-  return (
-    <div
-      data-canvas-menu-ignore="true"
-      className="absolute left-1/2 z-20 -translate-x-1/2"
-      style={{ top }}
-    >
-      {hasVideo ? (
-        <div
-          className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <ToolbarIconButton title="下载" onClick={() => onAction?.('download')}>
-            <Download size={16} strokeWidth={1.9} />
-          </ToolbarIconButton>
-          <ToolbarIconButton title="复制链接" onClick={() => onAction?.('copy-link')}>
-            <Link size={16} strokeWidth={1.9} />
-          </ToolbarIconButton>
-          <ToolbarIconButton title="加入素材库" onClick={() => onAction?.('organize')}>
-            <FolderPlus size={16} strokeWidth={1.9} />
-          </ToolbarIconButton>
-          <ToolbarIconButton title="放大查看" onClick={() => onAction?.('expand')}>
-            <Expand size={16} strokeWidth={1.9} />
-          </ToolbarIconButton>
-        </div>
-      ) : (
-        <UploadToolbarButton title="上传参考素材" onClick={() => onAction?.('upload')} />
-      )}
-    </div>
-  );
 }
 
 function GeneratedVideo({
@@ -268,6 +170,12 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
     });
   };
 
+  const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
+    if (action === 'download' || action === 'organize' || action === 'expand') {
+      onToolbarAction?.(action);
+    }
+  };
+
   return (
     <div className="relative group node-connectable-root" style={{ width: `${MAX_CARD_EDGE}px` }}>
       <div
@@ -294,17 +202,14 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
           />
         </div>
 
-        <VideoToolbar
+        <ImageGenerationNodeToolbar
           visible={toolbarVisible}
           top={toolbarTop}
-          hasVideo={hasVideo}
-          onAction={(action) => {
-            if (action === 'upload') {
-              onUpload?.();
-              return;
-            }
-            onToolbarAction?.(action);
-          }}
+          hasGeneratedImage={hasVideo}
+          placeholderOnly={!hasVideo}
+          onUpload={onUpload}
+          onAction={handleToolbarAction}
+          onOpenLightbox={() => onToolbarAction?.('expand')}
         />
 
         <div
