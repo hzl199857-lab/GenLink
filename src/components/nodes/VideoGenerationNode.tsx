@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { memo, useEffect, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { Position, useUpdateNodeInternals } from 'reactflow';
 import { Video } from 'lucide-react';
 import { CardSideHandle } from './CardSideHandle';
@@ -25,7 +25,10 @@ export type VideoGenerationToolbarAction =
   | 'download'
   | 'copy-link'
   | 'organize'
-  | 'expand';
+  | 'expand'
+  | 'extract-current-frame'
+  | 'extract-first-frame'
+  | 'extract-last-frame';
 
 export interface VideoGenerationNodeProps {
   id?: string;
@@ -55,6 +58,10 @@ export interface VideoGenerationNodeProps {
   onUpload?: () => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onToolbarAction?: (action: VideoGenerationToolbarAction) => void;
+  onFrameCapture?: (
+    position: 'current' | 'first' | 'last',
+    video: HTMLVideoElement,
+  ) => void;
   onSelectNode?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
@@ -64,10 +71,12 @@ export interface VideoGenerationNodeProps {
 function GeneratedVideo({
   src,
   poster,
+  videoRef,
   durationSeconds,
 }: {
   src: string;
   poster?: string;
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
   durationSeconds?: number;
 }) {
   const [failed, setFailed] = useState(false);
@@ -84,6 +93,7 @@ function GeneratedVideo({
     <VideoPlayer
       src={src}
       poster={poster}
+      videoRef={videoRef}
       durationSeconds={durationSeconds}
       className="absolute inset-0"
       onError={() => setFailed(true)}
@@ -104,12 +114,14 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   onUpload,
   onTitleChange,
   onToolbarAction,
+  onFrameCapture,
   onSelectNode,
   onPromptPointerDown,
   onPromptFocusWithinChange,
   promptFocusRequestId,
 }: VideoGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const deleteIncomingEdges = useCanvasStore((state) => state.deleteIncomingEdges);
   const deleteIncomingVideoEdges = useCanvasStore((state) => state.deleteIncomingVideoEdges);
   const toolbarVisible = selected && !dragging;
@@ -171,6 +183,28 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   };
 
   const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
+    if (
+      action === 'extract-current-frame' ||
+      action === 'extract-first-frame' ||
+      action === 'extract-last-frame'
+    ) {
+      const video = videoRef.current;
+
+      if (!video) {
+        return;
+      }
+
+      onFrameCapture?.(
+        action === 'extract-first-frame'
+          ? 'first'
+          : action === 'extract-last-frame'
+            ? 'last'
+            : 'current',
+        video,
+      );
+      return;
+    }
+
     if (action === 'download' || action === 'organize' || action === 'expand') {
       onToolbarAction?.(action);
     }
@@ -207,6 +241,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
           top={toolbarTop}
           hasGeneratedImage={hasVideo}
           placeholderOnly={!hasVideo}
+          videoFrameCapture
           onUpload={onUpload}
           onAction={handleToolbarAction}
           onOpenLightbox={() => onToolbarAction?.('expand')}
@@ -237,7 +272,12 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
             }}
           >
             {videoUrl ? (
-              <GeneratedVideo src={videoUrl} poster={data.lastFrameUrl} durationSeconds={data.duration} />
+              <GeneratedVideo
+                src={videoUrl}
+                poster={data.lastFrameUrl}
+                videoRef={videoRef}
+                durationSeconds={data.duration}
+              />
             ) : data.status === 'error' && data.errorMessage ? (
               <div className="max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
                 {data.errorMessage}

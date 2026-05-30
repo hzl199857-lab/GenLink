@@ -1764,9 +1764,10 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
   );
 });
 
-const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
+const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id, data, selected, dragging, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateVideo = useCanvasStore((s) => s.generateVideoFromVideoGenerationNode);
+  const createImageNodeFromVideoFrame = useCanvasStore((s) => s.createImageNodeFromVideoFrame);
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForVideoGenerationNode(id),
   );
@@ -1787,6 +1788,81 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
     handleSelectNode();
   };
   const cardDimensions = resolveAspectDrivenCardDimensions(videoData.ratio);
+  const extractGeneratedVideoFrame = async (
+    position: 'current' | 'first' | 'last',
+    video: HTMLVideoElement,
+  ) => {
+    if (!video.videoWidth || !video.videoHeight) {
+      useCanvasStore.getState().setSaveMessage('视频尚未加载完成');
+      window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+      return;
+    }
+
+    try {
+      const originalTime = video.currentTime;
+      const duration = Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : videoData.duration || 0;
+      const targetTime = position === 'first'
+        ? 0
+        : position === 'last'
+          ? Math.max(0, duration - 0.05)
+          : originalTime;
+
+      if (Number.isFinite(targetTime) && Math.abs(video.currentTime - targetTime) > 0.01) {
+        await new Promise<void>((resolve) => {
+          const handleSeeked = () => {
+            window.clearTimeout(timer);
+            resolve();
+          };
+          const timer = window.setTimeout(() => {
+            video.removeEventListener('seeked', handleSeeked);
+            resolve();
+          }, 900);
+
+          video.addEventListener('seeked', handleSeeked, { once: true });
+          video.currentTime = targetTime;
+        });
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        throw new Error('Canvas is not available');
+      }
+
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frameTitle = position === 'first'
+        ? '首帧'
+        : position === 'last'
+          ? '尾帧'
+          : '当前帧';
+      const nextNodeId = await createImageNodeFromVideoFrame({
+        sourceNodeId: id,
+        dataUrl: canvas.toDataURL('image/png'),
+        width: canvas.width,
+        height: canvas.height,
+        title: frameTitle,
+        position: {
+          x: xPos + cardDimensions.width + 48,
+          y: yPos,
+        },
+      });
+
+      if (position !== 'current' && Number.isFinite(originalTime)) {
+        video.currentTime = originalTime;
+      }
+
+      notifyCanvasNodeSelect?.(nextNodeId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '提取视频帧失败';
+      useCanvasStore.getState().setSaveMessage(message);
+      window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+    }
+  };
   const handleToolbarAction = (action: VideoGenerationToolbarAction) => {
     const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim() || '';
 
@@ -1832,6 +1908,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
       onToolbarAction={handleToolbarAction}
+      onFrameCapture={(position, video) => void extractGeneratedVideoFrame(position, video)}
       onSelectNode={handleVideoCardClick}
       onPromptPointerDown={() => {
         handleSelectNode();
