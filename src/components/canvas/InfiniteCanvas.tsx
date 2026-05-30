@@ -2186,6 +2186,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
   const clipStartPct = clipDuration > 0 ? Math.max(0, Math.min(100, (clipStart / clipDuration) * 100)) : 0;
   const clipEndPct = clipDuration > 0 ? Math.max(0, Math.min(100, (clipEnd / clipDuration) * 100)) : 0;
   const clipWidthPct = Math.max(0, clipEndPct - clipStartPct);
+  const clipControlsOpen = clipOpen && isActive;
 
   const handleReplace = async (file: File) => {
     const next = await readVideoFile(file);
@@ -2221,7 +2222,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
   };
 
   useEffect(() => {
-    if (!clipOpen) {
+    if (!clipControlsOpen) {
       return;
     }
 
@@ -2316,7 +2317,18 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       tempVideo.removeAttribute('src');
       tempVideo.load();
     };
-  }, [clipDuration, clipOpen, videoData.hostedVideoUrl, videoData.videoUrl]);
+  }, [clipControlsOpen, clipDuration, videoData.hostedVideoUrl, videoData.videoUrl]);
+
+  useEffect(() => {
+    const handleClearNodeUi = () => {
+      setClipOpen(false);
+      setClipMessage(null);
+      videoRef.current?.pause();
+    };
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
 
   const applyClipDrag = useCallback((clientX: number) => {
     const track = clipTrackRef.current;
@@ -2412,7 +2424,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
   };
 
   useEffect(() => {
-    if (!clipOpen || clipDuration <= 0) {
+    if (!clipControlsOpen || clipDuration <= 0) {
       return;
     }
 
@@ -2475,10 +2487,10 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       window.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('wheel', handleWheel);
     };
-  }, [clipDuration, clipEnd, clipOpen, clipStart]);
+  }, [clipControlsOpen, clipDuration, clipEnd, clipStart]);
 
   useEffect(() => {
-    if (!clipOpen) {
+    if (!clipControlsOpen) {
       return;
     }
 
@@ -2495,7 +2507,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
     raf = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(raf);
-  }, [clipEnd, clipOpen, clipStart]);
+  }, [clipControlsOpen, clipEnd, clipStart]);
 
   const runCut = async () => {
     if (!(clipEnd > clipStart)) {
@@ -2605,7 +2617,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     }
   };
 
-  const extractFrame = async () => {
+  const extractFrame = async (position: 'current' | 'first' | 'last' = 'current') => {
     const video = videoRef.current;
 
     if (!video || !video.videoWidth || !video.videoHeight) {
@@ -2615,6 +2627,32 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     }
 
     try {
+      const originalTime = video.currentTime;
+      const duration = Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : clipDuration;
+      const targetTime = position === 'first'
+        ? 0
+        : position === 'last'
+          ? Math.max(0, duration - 0.05)
+          : originalTime;
+
+      if (Number.isFinite(targetTime) && Math.abs(video.currentTime - targetTime) > 0.01) {
+        await new Promise<void>((resolve) => {
+          const handleSeeked = () => {
+            window.clearTimeout(timer);
+            resolve();
+          };
+          const timer = window.setTimeout(() => {
+            video.removeEventListener('seeked', handleSeeked);
+            resolve();
+          }, 900);
+
+          video.addEventListener('seeked', handleSeeked, { once: true });
+          video.currentTime = targetTime;
+        });
+      }
+
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -2626,17 +2664,26 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/png');
+      const frameTitle = position === 'first'
+        ? '首帧'
+        : position === 'last'
+          ? '尾帧'
+          : '当前帧';
       const nextNodeId = await createImageNodeFromVideoFrame({
         sourceNodeId: id,
         dataUrl,
         width: canvas.width,
         height: canvas.height,
-        title: '视频帧',
+        title: frameTitle,
         position: {
           x: xPos + cardDimensions.width + 48,
           y: yPos,
         },
       });
+
+      if (position !== 'current' && Number.isFinite(originalTime)) {
+        video.currentTime = originalTime;
+      }
 
       notifyCanvasNodeSelect?.(nextNodeId);
     } catch (error) {
@@ -2653,10 +2700,17 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
           top={-IMAGE_NODE_TOOLBAR_LIFT}
           hasGeneratedImage={hasVideo}
           placeholderOnly={false}
+          videoFrameCapture
           onAction={(action) => {
             if (action === 'crop') {
               focusNodeViewport();
               handleOpenClip();
+            } else if (action === 'extract-current-frame') {
+              void extractFrame('current');
+            } else if (action === 'extract-first-frame') {
+              void extractFrame('first');
+            } else if (action === 'extract-last-frame') {
+              void extractFrame('last');
             } else if (action === 'download') {
               const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl.trim();
               if (videoUrl) {
@@ -2676,20 +2730,20 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
           onTitleChange={(nextTitle) => updateNodeData<'video'>(id, { title: nextTitle })}
           onSelectNode={() => notifyCanvasImageInfoRequest?.(id)}
           videoRef={videoRef}
-          controlsVisible={!clipOpen}
+          controlsVisible={!clipControlsOpen}
           onLoadedMetadata={(duration) => {
             if (duration > 0) {
               setClipVideoDuration(duration);
             }
           }}
         />
-        {clipOpen ? (
+        {clipControlsOpen ? (
           <div
             data-canvas-menu-ignore="true"
             className="nodrag nopan absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2"
             style={{
               top: `${cardDimensions.height + VIDEO_CLIP_CONTROLS_TOP_OFFSET}px`,
-              width: `${Math.min(Math.max((cardDimensions.width + 60) * 0.67, 280), 430)}px`,
+              width: `${Math.min(Math.max((cardDimensions.width + 60) * 0.78, 340), 520)}px`,
               maxWidth: 'calc(100vw - 64px)',
             }}
             onPointerDown={(event) => event.stopPropagation()}
@@ -2700,15 +2754,15 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                 aria-label="取消裁剪"
                 disabled={clipBusy}
                 onClick={() => setClipOpen(false)}
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#1b1d21]/95 text-gl-text-secondary shadow-[0_10px_24px_rgba(0,0,0,0.34)] transition hover:text-white disabled:opacity-50"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1b1d21]/95 text-gl-text-secondary shadow-[0_10px_24px_rgba(0,0,0,0.34)] transition hover:text-white disabled:opacity-50"
               >
-                <X size={8} strokeWidth={2.4} />
+                <X size={12} strokeWidth={2.4} />
               </button>
 
               <div
                 ref={clipTrackRef}
                 onPointerDown={handleClipTrackPointerDown}
-                className="relative h-6 min-w-0 flex-1 cursor-grab overflow-hidden rounded-[6px] border border-white/15 bg-[#16181c] shadow-[0_10px_28px_rgba(0,0,0,0.38)] active:cursor-grabbing"
+                className="relative h-8 min-w-0 flex-1 cursor-grab overflow-hidden rounded-[7px] border border-white/15 bg-[#16181c] shadow-[0_10px_28px_rgba(0,0,0,0.38)] active:cursor-grabbing"
               >
                 <div className="absolute inset-0 opacity-70">
                   <div className="flex h-full">
@@ -2730,15 +2784,15 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                   style={{ left: `${clipStartPct}%`, width: `${clipWidthPct}%` }}
                 />
                 <div
-                  className="absolute top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.45)]"
+                  className="absolute top-1/2 h-7 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.45)]"
                   style={{ left: `${clipStartPct}%` }}
                 />
                 <div
-                  className="absolute top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.45)]"
+                  className="absolute top-1/2 h-7 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.45)]"
                   style={{ left: `${clipEndPct}%` }}
                 />
                 <div
-                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2a2d32]/95 px-1.5 py-0.5 text-[6px] font-semibold text-white shadow-[0_4px_12px_rgba(0,0,0,.34)]"
+                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2a2d32]/95 px-2 py-1 text-[9px] font-semibold text-white shadow-[0_4px_12px_rgba(0,0,0,.34)]"
                   style={{ left: `${clipStartPct + clipWidthPct / 2}%` }}
                 >
                   {Math.max(0, clipEnd - clipStart).toFixed(2)}s
@@ -2750,23 +2804,23 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                 aria-label="确认裁剪"
                 disabled={clipBusy || !(clipEnd > clipStart)}
                 onClick={() => void runCut()}
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-[0_10px_24px_rgba(255,255,255,0.2)] transition hover:bg-white/90 disabled:opacity-50"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-[0_10px_24px_rgba(255,255,255,0.2)] transition hover:bg-white/90 disabled:opacity-50"
               >
-                <Check size={8} strokeWidth={2.6} />
+                <Check size={12} strokeWidth={2.6} />
               </button>
             </div>
 
             <div className="flex w-full items-center justify-between gap-1.5">
               <div />
 
-              <div className="flex items-center gap-0.5">
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   disabled={clipBusy}
                   onClick={() => void runSmartClip()}
-                  className="flex h-4 items-center justify-center gap-0.5 rounded-full border border-white/10 bg-[#24262b]/95 px-1.5 py-0 text-[6px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
+                  className="flex h-6 items-center justify-center gap-1 rounded-full border border-white/10 bg-[#24262b]/95 px-2.5 py-0 text-[9px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
                 >
-                  <Box size={7} strokeWidth={1.9} className="text-white/86" />
+                  <Box size={11} strokeWidth={1.9} className="text-white/86" />
                   智能剪辑
                 </button>
                 <button
@@ -2774,9 +2828,9 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                   aria-label="提取帧"
                   disabled={clipBusy}
                   onClick={() => void extractFrame()}
-                  className="flex h-4 w-4 items-center justify-center rounded-full border border-white/10 bg-[#24262b]/95 p-0 text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
+                  className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-[#24262b]/95 p-0 text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
                 >
-                  <Camera size={8} strokeWidth={1.8} />
+                  <Camera size={12} strokeWidth={1.8} />
                 </button>
               </div>
             </div>

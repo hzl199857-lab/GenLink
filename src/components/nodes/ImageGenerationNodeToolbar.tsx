@@ -14,6 +14,7 @@ import {
   Upload,
   Scissors,
   X,
+  Camera,
 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
@@ -23,6 +24,9 @@ export type ImageGenerationToolbarAction =
   | 'split-2x2-crop'
   | 'split-3x3-crop'
   | 'split-5x5-crop'
+  | 'extract-current-frame'
+  | 'extract-first-frame'
+  | 'extract-last-frame'
   | 'panorama-360'
   | 'pan'
   | 'more'
@@ -38,6 +42,7 @@ export interface ImageGenerationNodeToolbarProps {
   belowContent?: React.ReactNode;
   transformOrigin?: string;
   placeholderOnly?: boolean;
+  videoFrameCapture?: boolean;
   onUpload?: () => void;
   onOpenLightbox?: () => void;
   onAction?: (action: ImageGenerationToolbarAction) => void;
@@ -63,6 +68,12 @@ const SPLIT_GRID_OPTIONS = [
   { id: '2x2', title: '4 宫格裁剪 2x2', action: 'split-2x2-crop' as const },
   { id: '3x3', title: '9 宫格裁剪 3x3', action: 'split-3x3-crop' as const },
   { id: '5x5', title: '25 宫格裁剪 5x5', action: 'split-5x5-crop' as const },
+] as const;
+
+const VIDEO_FRAME_OPTIONS = [
+  { id: 'current', title: '截取当前帧', action: 'extract-current-frame' as const },
+  { id: 'first', title: '截取首帧', action: 'extract-first-frame' as const },
+  { id: 'last', title: '截取尾帧', action: 'extract-last-frame' as const },
 ] as const;
 
 function ToolbarIconButton({
@@ -108,30 +119,39 @@ export function ImageGenerationNodeToolbar({
   belowContent,
   transformOrigin = 'bottom center',
   placeholderOnly = false,
+  videoFrameCapture = false,
   onUpload,
   onOpenLightbox,
   onAction,
 }: ImageGenerationNodeToolbarProps) {
   const { zoom } = useViewport();
   const [splitMenuOpen, setSplitMenuOpen] = useState(false);
+  const [frameMenuOpen, setFrameMenuOpen] = useState(false);
   const [activeGridMenu, setActiveGridMenu] = useState<string | null>(null);
   const splitMenuRef = useRef<HTMLDivElement | null>(null);
+  const frameMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!splitMenuOpen) {
+    if (!splitMenuOpen && !frameMenuOpen) {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!splitMenuRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+
+      if (splitMenuOpen && !splitMenuRef.current?.contains(target)) {
         setSplitMenuOpen(false);
         setActiveGridMenu(null);
+      }
+
+      if (frameMenuOpen && !frameMenuRef.current?.contains(target)) {
+        setFrameMenuOpen(false);
       }
     };
 
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
-  }, [splitMenuOpen]);
+  }, [frameMenuOpen, splitMenuOpen]);
 
   if (!visible) return null;
 
@@ -152,7 +172,44 @@ export function ImageGenerationNodeToolbar({
         >
           <ToolbarIconButton title="视频裁剪" icon={Scissors} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
           {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
-            action.id === 'variations' && !placeholderOnly ? (
+            action.id === 'variations' && videoFrameCapture ? (
+              <div
+                key={action.id}
+                ref={frameMenuRef}
+                className="relative"
+              >
+                <ToolbarIconButton
+                  title="截帧"
+                  icon={Camera}
+                  onClick={placeholderOnly ? undefined : () => {
+                    setSplitMenuOpen(false);
+                    setActiveGridMenu(null);
+                    setFrameMenuOpen((open) => !open);
+                  }}
+                />
+
+                {frameMenuOpen && !placeholderOnly ? (
+                  <div
+                    className="absolute left-1/2 top-[calc(100%+10px)] z-30 w-[184px] -translate-x-1/2 rounded-[14px] border border-white/10 bg-[#2f2f30]/95 p-1.5 shadow-[0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    {VIDEO_FRAME_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="flex min-h-[36px] w-full items-center rounded-[10px] px-3 py-2 text-left text-[13px] font-semibold text-white transition-colors hover:bg-white/[0.08]"
+                        onClick={() => {
+                          onAction?.(option.action);
+                          setFrameMenuOpen(false);
+                        }}
+                      >
+                        {option.title}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : action.id === 'variations' && !placeholderOnly ? (
               <div
                 key={action.id}
                 ref={splitMenuRef}
