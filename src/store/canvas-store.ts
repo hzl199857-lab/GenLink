@@ -1784,6 +1784,28 @@ async function uploadGeneratedResultToOss(
   return uploadImageBlobToOss(await response.blob(), fileName, "generated");
 }
 
+function shouldFallbackUploadGeneratedResultToOss(
+  result: ImageGenerationResultItem & { status: "completed"; imageUrl: string },
+): boolean {
+  const hostedUrl = result.hostedImageUrl?.trim();
+  const sourceUrl = hostedUrl || result.imageUrl.trim();
+
+  if (!sourceUrl || isAliyunOssUrl(sourceUrl)) {
+    return false;
+  }
+
+  if (hostedUrl && /^https?:\/\//i.test(hostedUrl)) {
+    return false;
+  }
+
+  return (
+    sourceUrl.startsWith("data:") ||
+    isObjectUrl(sourceUrl) ||
+    isSameOriginUrl(sourceUrl) ||
+    !/^https?:\/\//i.test(sourceUrl)
+  );
+}
+
 function sanitizeImageGenerationNodeDataForPersistence(
   data: ImageGenerationNodeData,
 ): ImageGenerationNodeData {
@@ -3952,7 +3974,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
             if (imageProvider === "grsai") {
               hostedImageUrl = result.hostedImageUrl?.trim();
-            } else if (shouldUploadReferenceImagesToOss) {
+            } else if (
+              shouldUploadReferenceImagesToOss &&
+              shouldFallbackUploadGeneratedResultToOss(result)
+            ) {
               try {
                 hostedImageUrl = await uploadGeneratedResultToOss(
                   result,

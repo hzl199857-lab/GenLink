@@ -676,16 +676,29 @@ async function cacheRemoteImageJobResult(
   await persistImageHistoryItems(jobId, cachedResult);
 }
 
+function isAliyunOssUrl(value: string): boolean {
+  try {
+    return /\.aliyuncs\.com$/i.test(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function cacheRemoteImages(
   jobId: string,
   result: ImageJobResult,
 ): Promise<ImageJobResult> {
   const startedAt = Date.now();
   const remoteImages = result.images.filter(
-    (image) =>
-      /^https?:\/\//i.test(image.hostedImageUrl || image.imageUrl) &&
-      !image.hostedImageUrl?.startsWith("/api/") &&
-      !/\.aliyuncs\.com$/i.test(new URL(image.hostedImageUrl || image.imageUrl).hostname),
+    (image) => {
+      const remoteUrl = image.hostedImageUrl || image.imageUrl;
+
+      return (
+        /^https?:\/\//i.test(remoteUrl) &&
+        !remoteUrl.startsWith("/api/") &&
+        !isAliyunOssUrl(remoteUrl)
+      );
+    },
   );
 
   if (remoteImages.length === 0) {
@@ -699,7 +712,11 @@ async function cacheRemoteImages(
     result.images.map(async (image, index) => {
       const remoteUrl = image.hostedImageUrl || image.imageUrl;
 
-      if (!/^https?:\/\//i.test(remoteUrl) || image.hostedImageUrl?.startsWith("/api/")) {
+      if (
+        !/^https?:\/\//i.test(remoteUrl) ||
+        remoteUrl.startsWith("/api/") ||
+        isAliyunOssUrl(remoteUrl)
+      ) {
         return image;
       }
 
