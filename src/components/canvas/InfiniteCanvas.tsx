@@ -45,6 +45,7 @@ import ReactFlow, {
   type OnConnectStartParams,
   useStore,
   getViewportForBounds,
+  applyNodeChanges,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -6180,7 +6181,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         (node) => node.id === quickReferenceConnect.targetNodeId && node.type === quickReferenceConnect.targetType,
       )
     ) {
-      setQuickReferenceConnect(null);
+      const timeout = window.setTimeout(() => {
+        setQuickReferenceConnect(null);
+      }, 0);
+
+      return () => window.clearTimeout(timeout);
     }
   }, [quickReferenceConnect, storeNodes]);
 
@@ -6188,7 +6193,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setStoredCanvasEdgeStyle(edgeStyle === 'straight' ? 'curve' : 'straight');
   }, [edgeStyle]);
 
-  const rfNodes = useMemo<ReactFlowNode[]>(() => {
+  const derivedRfNodes = useMemo<ReactFlowNode[]>(() => {
     const nodes: ReactFlowNode[] = storeNodes.map((n) => ({
       id: n.id,
       type: n.type,
@@ -6239,6 +6244,19 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     return nodes;
   }, [activeNodeId, connectionMenu, nodeFocusRequest, quickReferenceConnect, storeNodes, selectedNodeIds]);
+  const [rfNodes, setRfNodes] = useState<ReactFlowNode[]>(derivedRfNodes);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (draggingNodeIdRef.current) {
+        return;
+      }
+
+      setRfNodes(derivedRfNodes);
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [derivedRfNodes]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
     const edgeType = getReactFlowEdgeType(edgeStyle);
@@ -7616,9 +7634,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [addUploadedImages, clearConnectionMenu, clearEdgeSelection, handlePasteNodes, project]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setRfNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
+
     changes.forEach((change) => {
       if (change.type === 'position') {
-        if (change.position) {
+        if (change.position && change.dragging !== true) {
           updateNodePosition(change.id, change.position);
         }
 
@@ -8858,6 +8878,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         zoomOnDoubleClick={false}
         minZoom={CANVAS_MIN_ZOOM}
         maxZoom={CANVAS_MAX_ZOOM}
+        onlyRenderVisibleElements
         className={[
           paneSelectionDragging ? 'gl-pane-selection-dragging' : '',
           quickReferenceConnect ? 'gl-quick-reference-mode' : '',
