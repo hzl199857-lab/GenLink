@@ -6066,6 +6066,70 @@ function EmptyCanvasWelcome({
   );
 }
 
+function areNodeDataShallowEqual(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): boolean {
+  const leftKeys = Object.keys(left);
+
+  if (leftKeys.length !== Object.keys(right).length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areReactFlowNodesShallowEqual(
+  left: ReactFlowNode,
+  right: ReactFlowNode,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.type === right.type &&
+    left.position.x === right.position.x &&
+    left.position.y === right.position.y &&
+    left.className === right.className &&
+    left.selected === right.selected &&
+    left.dragHandle === right.dragHandle &&
+    left.selectable === right.selectable &&
+    left.draggable === right.draggable &&
+    left.focusable === right.focusable &&
+    left.style === right.style &&
+    areNodeDataShallowEqual(
+      left.data as Record<string, unknown>,
+      right.data as Record<string, unknown>,
+    )
+  );
+}
+
+function mergeStableReactFlowNodes(
+  previousNodes: ReactFlowNode[],
+  nextNodes: ReactFlowNode[],
+): ReactFlowNode[] {
+  const previousNodesById = new Map(previousNodes.map((node) => [node.id, node]));
+  let changed = previousNodes.length !== nextNodes.length;
+  const mergedNodes = nextNodes.map((nextNode, index) => {
+    const previousNode = previousNodesById.get(nextNode.id);
+    const node = previousNode && areReactFlowNodesShallowEqual(previousNode, nextNode)
+      ? previousNode
+      : nextNode;
+
+    if (node !== previousNodes[index]) {
+      changed = true;
+    }
+
+    return node;
+  });
+
+  return changed ? mergedNodes : previousNodes;
+}
+
 interface InnerCanvasProps {
   onBackToLibrary?: () => void;
 }
@@ -6252,7 +6316,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         return;
       }
 
-      setRfNodes(derivedRfNodes);
+      setRfNodes((currentNodes) => mergeStableReactFlowNodes(currentNodes, derivedRfNodes));
     }, 0);
 
     return () => window.clearTimeout(timeout);

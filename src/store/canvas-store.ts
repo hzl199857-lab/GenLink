@@ -2419,12 +2419,17 @@ function getConnectedImagesForTargetNode(
   edges: CanvasEdge[],
   targetNodeId: string,
 ): ConnectedImagePayload[] {
-  const connectedSourceIds = edges
-    .filter((edge) => edge.target === targetNodeId)
-    .map((edge) => edge.source);
+  const lookup = getCanvasConnectionLookup(nodes, edges);
+  const cached = lookup.connectedImagesByTargetId.get(targetNodeId);
 
-  return connectedSourceIds.reduce<ConnectedImagePayload[]>((acc, sourceId) => {
-    const sourceNode = nodes.find((node) => node.id === sourceId);
+  if (cached) {
+    return cached;
+  }
+
+  const connectedSourceIds = lookup.sourceIdsByTargetId.get(targetNodeId) ?? [];
+
+  const connectedImages = connectedSourceIds.reduce<ConnectedImagePayload[]>((acc, sourceId) => {
+    const sourceNode = lookup.nodeById.get(sourceId);
 
     if (!sourceNode) {
       return acc;
@@ -2506,6 +2511,8 @@ function getConnectedImagesForTargetNode(
 
     return acc;
   }, []);
+  lookup.connectedImagesByTargetId.set(targetNodeId, connectedImages);
+  return connectedImages;
 }
 
 function getConnectedVideosForTargetNode(
@@ -2513,12 +2520,17 @@ function getConnectedVideosForTargetNode(
   edges: CanvasEdge[],
   targetNodeId: string,
 ): ConnectedVideoPayload[] {
-  const connectedSourceIds = edges
-    .filter((edge) => edge.target === targetNodeId)
-    .map((edge) => edge.source);
+  const lookup = getCanvasConnectionLookup(nodes, edges);
+  const cached = lookup.connectedVideosByTargetId.get(targetNodeId);
 
-  return connectedSourceIds.reduce<ConnectedVideoPayload[]>((acc, sourceId) => {
-    const sourceNode = nodes.find((node) => node.id === sourceId);
+  if (cached) {
+    return cached;
+  }
+
+  const connectedSourceIds = lookup.sourceIdsByTargetId.get(targetNodeId) ?? [];
+
+  const connectedVideos = connectedSourceIds.reduce<ConnectedVideoPayload[]>((acc, sourceId) => {
+    const sourceNode = lookup.nodeById.get(sourceId);
 
     if (!sourceNode) {
       return acc;
@@ -2579,6 +2591,8 @@ function getConnectedVideosForTargetNode(
     });
     return acc;
   }, []);
+  lookup.connectedVideosByTargetId.set(targetNodeId, connectedVideos);
+  return connectedVideos;
 }
 
 function getInlineReferenceImagesForImageGenerationNode(
@@ -2642,12 +2656,10 @@ function getVideoGenerationReferenceVideos(
   edges: CanvasEdge[],
   videoGenerationNodeId: string,
 ): ConnectedVideoPayload[] {
-  const videoGenerationNode = nodes.find(
-    (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
-      node.id === videoGenerationNodeId && node.type === "video_generation",
-  );
+  const lookup = getCanvasConnectionLookup(nodes, edges);
+  const videoGenerationNode = lookup.nodeById.get(videoGenerationNodeId);
 
-  if (!videoGenerationNode) {
+  if (videoGenerationNode?.type !== "video_generation") {
     return [];
   }
 
@@ -2687,6 +2699,59 @@ function getGeneratedImageReferenceForImageGenerationNode(
       height: node.data.generatedImageHeight,
     },
   ];
+}
+
+function getImageGenerationReferenceImages(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  imageGenerationNodeId: string,
+): ConnectedImagePayload[] {
+  const lookup = getCanvasConnectionLookup(nodes, edges);
+  const imageGenerationNode = lookup.nodeById.get(imageGenerationNodeId);
+
+  if (imageGenerationNode?.type !== "image_generation") {
+    return [];
+  }
+
+  return dedupeConnectedImages([
+    ...getInlineReferenceImagesForImageGenerationNode(imageGenerationNode),
+    ...getConnectedImagesForTargetNode(nodes, edges, imageGenerationNodeId),
+  ]);
+}
+
+function getConnectedTextPromptForTargetNode(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  targetNodeId: string,
+): string {
+  const lookup = getCanvasConnectionLookup(nodes, edges);
+  const cached = lookup.connectedTextPromptByTargetId.get(targetNodeId);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const connectedSourceIds = lookup.sourceIdsByTargetId.get(targetNodeId) ?? [];
+  const promptSections = connectedSourceIds.reduce<string[]>((acc, sourceId) => {
+    const sourceNode = lookup.nodeById.get(sourceId);
+
+    if (!sourceNode || sourceNode.type !== "text") {
+      return acc;
+    }
+
+    const text = sourceNode.data.text?.trim();
+
+    if (!text) {
+      return acc;
+    }
+
+    acc.push(text);
+    return acc;
+  }, []);
+  const textPrompt = promptSections.join("\n\n");
+
+  lookup.connectedTextPromptByTargetId.set(targetNodeId, textPrompt);
+  return textPrompt;
 }
 
 function getCanvasImageSource(node: CanvasNode): CanvasImageSource | null {
@@ -2743,6 +2808,58 @@ function getCanvasImageSource(node: CanvasNode): CanvasImageSource | null {
   }
 
   return null;
+}
+
+type CanvasConnectionLookup = {
+  nodeById: Map<string, CanvasNode>;
+  sourceIdsByTargetId: Map<string, string[]>;
+  connectedImagesByTargetId: Map<string, ConnectedImagePayload[]>;
+  connectedVideosByTargetId: Map<string, ConnectedVideoPayload[]>;
+  connectedTextPromptByTargetId: Map<string, string>;
+};
+
+let canvasConnectionLookupCache:
+  | {
+      nodes: CanvasNode[];
+      edges: CanvasEdge[];
+      lookup: CanvasConnectionLookup;
+    }
+  | null = null;
+
+function getCanvasConnectionLookup(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+): CanvasConnectionLookup {
+  if (
+    canvasConnectionLookupCache?.nodes === nodes &&
+    canvasConnectionLookupCache.edges === edges
+  ) {
+    return canvasConnectionLookupCache.lookup;
+  }
+
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const sourceIdsByTargetId = new Map<string, string[]>();
+
+  for (const edge of edges) {
+    const sourceIds = sourceIdsByTargetId.get(edge.target);
+
+    if (sourceIds) {
+      sourceIds.push(edge.source);
+    } else {
+      sourceIdsByTargetId.set(edge.target, [edge.source]);
+    }
+  }
+
+  const lookup: CanvasConnectionLookup = {
+    nodeById,
+    sourceIdsByTargetId,
+    connectedImagesByTargetId: new Map(),
+    connectedVideosByTargetId: new Map(),
+    connectedTextPromptByTargetId: new Map(),
+  };
+
+  canvasConnectionLookupCache = { nodes, edges, lookup };
+  return lookup;
 }
 
 function appendImageGenerationNodeResults(
@@ -2802,55 +2919,6 @@ function appendImageGenerationNodeResults(
       },
     };
   });
-}
-
-function getImageGenerationReferenceImages(
-  nodes: CanvasNode[],
-  edges: CanvasEdge[],
-  imageGenerationNodeId: string,
-): ConnectedImagePayload[] {
-  const imageGenerationNode = nodes.find(
-    (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
-      node.id === imageGenerationNodeId && node.type === "image_generation",
-  );
-
-  if (!imageGenerationNode) {
-    return [];
-  }
-
-  return dedupeConnectedImages([
-    ...getInlineReferenceImagesForImageGenerationNode(imageGenerationNode),
-    ...getConnectedImagesForTargetNode(nodes, edges, imageGenerationNodeId),
-  ]);
-}
-
-function getConnectedTextPromptForTargetNode(
-  nodes: CanvasNode[],
-  edges: CanvasEdge[],
-  targetNodeId: string,
-): string {
-  const connectedSourceIds = edges
-    .filter((edge) => edge.target === targetNodeId)
-    .map((edge) => edge.source);
-
-  const promptSections = connectedSourceIds.reduce<string[]>((acc, sourceId) => {
-    const sourceNode = nodes.find((node) => node.id === sourceId);
-
-    if (!sourceNode || sourceNode.type !== "text") {
-      return acc;
-    }
-
-    const text = sourceNode.data.text?.trim();
-
-    if (!text) {
-      return acc;
-    }
-
-    acc.push(text);
-    return acc;
-  }, []);
-
-  return promptSections.join("\n\n");
 }
 
 export interface CanvasState {
