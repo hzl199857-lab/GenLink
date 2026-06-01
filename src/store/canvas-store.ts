@@ -3385,7 +3385,7 @@ export interface CanvasState {
     kind?: "image" | "video";
     fileName?: string;
     generatedAt: string;
-    nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoNodeData;
+    nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
     title?: string;
     model?: string;
     width?: number;
@@ -6824,6 +6824,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 videoUrl: persisted.previewUrl,
                 hostedVideoUrl: persisted.previewUrl,
                 generatedOutputFileName: persisted.fileName,
+                sizeBytes: params.sizeBytes ?? persisted.sizeBytes,
               },
             };
           }

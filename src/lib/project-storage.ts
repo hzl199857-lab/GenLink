@@ -9,6 +9,7 @@ import type {
   ProjectSnapshot,
   VideoNodeData,
   VideoGenerationNodeData,
+  VideoUpscaleNodeData,
 } from "@/types/canvas";
 import { buildProjectSnapshot } from "@/lib/project-snapshot";
 
@@ -43,7 +44,7 @@ type OutputHistoryManifestItem = {
   width?: number;
   height?: number;
   format?: string;
-  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData | VideoNodeData;
+  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
 };
 
 function isImageHistoryManifestItem(
@@ -54,7 +55,7 @@ function isImageHistoryManifestItem(
 
 function isVideoHistoryManifestItem(
   item: OutputHistoryManifestItem | undefined,
-): item is OutputHistoryManifestItem & { kind: "video"; nodeData?: VideoGenerationNodeData | VideoNodeData } {
+): item is OutputHistoryManifestItem & { kind: "video"; nodeData?: VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData } {
   return item?.kind === "video";
 }
 
@@ -92,7 +93,7 @@ export interface PersistProjectOutputParams {
   kind?: "image" | "video";
   fileName?: string;
   generatedAt: string;
-  nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoNodeData;
+  nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
   title?: string;
   model?: string;
   width?: number;
@@ -104,6 +105,7 @@ export interface PersistProjectOutputParams {
 export interface PersistProjectOutputResult {
   fileName: string;
   previewUrl: string;
+  sizeBytes: number;
 }
 
 function toProjectLibraryItem(
@@ -1218,6 +1220,7 @@ export async function persistGeneratedOutput(
   return {
     fileName,
     previewUrl: URL.createObjectURL(savedFile),
+    sizeBytes: params.sizeBytes ?? blob.size,
   };
 }
 

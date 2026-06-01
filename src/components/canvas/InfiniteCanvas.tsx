@@ -423,7 +423,7 @@ function toVideoUpscaleInfoPopoverData(
       fileName: data.generatedOutputFileName,
       mimeType: 'video/mp4',
     }),
-    size: '-',
+    size: formatImageSize(data.sizeBytes),
     resolution: formatImageResolution(data.width, data.height) !== '-'
       ? formatImageResolution(data.width, data.height)
       : formatVideoResolutionFromPreset(
@@ -4228,10 +4228,15 @@ function getGroupZipItems(group: NodeGroup, nodes: CanvasNode[]): ZipImageDownlo
 
 type MultiNodeSelectionOverlayProps = {
   nodes: CanvasNode[];
+  flowNodes: ReactFlowNode[];
   selectedNodeIds: Set<string>;
   groups: NodeGroup[];
   visible: boolean;
   onGroup: (nodeIds: string[]) => void;
+  onSelectionFramePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onSelectionFramePointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onSelectionFramePointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onSelectionFramePointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void;
 };
 
 type GroupOverlayProps = {
@@ -5012,50 +5017,6 @@ function GroupBackgroundColorMenuItem({
   );
 }
 
-function getNodeElementBoundsInFlowPane(nodeId: string): MultiNodeSelectionBounds | null {
-  const element = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
-  const wrapper = document.querySelector<HTMLElement>('.react-flow');
-
-  if (!element || !wrapper) {
-    return null;
-  }
-
-  const visibleElements = Array.from(
-    element.querySelectorAll<HTMLElement>(
-      '.node-visible-title, .node-connectable-card',
-    ),
-  ).filter((item) => {
-    const rect = item.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
-  });
-  const visibleRects = visibleElements.length > 0
-    ? visibleElements.map((item) => item.getBoundingClientRect())
-    : [element.getBoundingClientRect()];
-  const wrapperRect = wrapper.getBoundingClientRect();
-  let left = Infinity;
-  let top = Infinity;
-  let right = -Infinity;
-  let bottom = -Infinity;
-
-  for (const rect of visibleRects) {
-    left = Math.min(left, rect.left);
-    top = Math.min(top, rect.top);
-    right = Math.max(right, rect.right);
-    bottom = Math.max(bottom, rect.bottom);
-  }
-
-  if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom)) {
-    return null;
-  }
-
-  return {
-    x: left - wrapperRect.left,
-    y: top - wrapperRect.top,
-    width: Math.max(1, right - left),
-    height: Math.max(1, bottom - top),
-  };
-}
-
 function MultiNodeSelectionToolbarButton({
   children,
   icon: Icon,
@@ -5220,16 +5181,27 @@ function GroupExecuteMenuItem({
 
 function MultiNodeSelectionOverlay({
   nodes,
+  flowNodes,
   selectedNodeIds,
   groups,
   visible,
   onGroup,
+  onSelectionFramePointerDown,
+  onSelectionFramePointerMove,
+  onSelectionFramePointerUp,
+  onSelectionFramePointerCancel,
 }: MultiNodeSelectionOverlayProps) {
   const viewport = useViewport();
   const [bounds, setBounds] = useState<MultiNodeSelectionBounds | null>(null);
   const selectedNodes = useMemo(
-    () => nodes.filter((node) => selectedNodeIds.has(node.id)),
-    [nodes, selectedNodeIds],
+    () => {
+      const flowNodesById = new Map(flowNodes.map((node) => [node.id, node]));
+
+      return nodes
+        .filter((node) => selectedNodeIds.has(node.id))
+        .map((node) => flowNodesById.get(node.id) ?? node);
+    },
+    [flowNodes, nodes, selectedNodeIds],
   );
   const selectedNodeIdsKey = useMemo(
     () => selectedNodes.map((node) => node.id).sort().join('|'),
@@ -5248,12 +5220,6 @@ function MultiNodeSelectionOverlay({
     let animationFrame = 0;
     const updateBounds = () => {
       const rects = selectedNodes.map((node) => {
-        const elementBounds = getNodeElementBoundsInFlowPane(node.id);
-
-        if (elementBounds) {
-          return elementBounds;
-        }
-
         const estimatedBounds = getEstimatedNodeBounds(node);
 
         return {
@@ -5329,10 +5295,9 @@ function MultiNodeSelectionOverlay({
         height: `${paddedBounds.height}px`,
       }}
     >
-      <div className="gl-multi-node-selection-frame absolute inset-0" />
       <div
         data-canvas-menu-ignore="true"
-        className="pointer-events-auto absolute left-1/2 z-20 flex -translate-x-1/2 items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+        className="pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
         style={{
           top: `${-MULTI_NODE_SELECTION_TOOLBAR_GAP}px`,
           transform: 'translate(-50%, -100%)',
@@ -5360,6 +5325,19 @@ function MultiNodeSelectionOverlay({
         </MultiNodeSelectionToolbarButton>
         <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
       </div>
+      <div
+        data-canvas-menu-ignore="true"
+        className="pointer-events-auto absolute inset-0 z-10 cursor-move"
+        onPointerDown={onSelectionFramePointerDown}
+        onPointerMove={onSelectionFramePointerMove}
+        onPointerUp={onSelectionFramePointerUp}
+        onPointerCancel={onSelectionFramePointerCancel}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      />
+      <div className="pointer-events-none gl-multi-node-selection-frame absolute inset-0" />
     </div>
   );
 }
@@ -6548,6 +6526,12 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const selectionDragActiveRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const paneGroupDragRef = useRef<{ groupId: string; lastX: number; lastY: number; moved: boolean } | null>(null);
+  const multiSelectionFrameDragRef = useRef<{
+    pointerId: number;
+    lastX: number;
+    lastY: number;
+    moved: boolean;
+  } | null>(null);
   const smartResetFocusedSelectionRef = useRef(false);
   const [paneSelectionDragging, setPaneSelectionDragging] = useState(false);
   const [selectionInProgress, setSelectionInProgress] = useState(false);
@@ -7488,6 +7472,145 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     });
   }, [selectGroup]);
 
+  const moveSelectedFlowNodes = useCallback((dx: number, dy: number, dragging: boolean) => {
+    const selectedIds = selectedNodeIdsRef.current;
+
+    if (selectedIds.size <= 1) {
+      return;
+    }
+
+    setRfNodes((currentNodes) => {
+      const changes: NodeChange[] = [];
+
+      for (const node of currentNodes) {
+        if (!selectedIds.has(node.id)) {
+          continue;
+        }
+
+        const position = {
+          x: node.position.x + dx,
+          y: node.position.y + dy,
+        };
+
+        changes.push({
+          id: node.id,
+          type: 'position',
+          position,
+          positionAbsolute: position,
+          dragging,
+        });
+      }
+
+      return changes.length > 0 ? applyNodeChanges(changes, currentNodes) : currentNodes;
+    });
+  }, []);
+
+  const syncSelectedFlowNodePositions = useCallback(() => {
+    const selectedIds = selectedNodeIdsRef.current;
+
+    if (selectedIds.size <= 1) {
+      return;
+    }
+
+    setRfNodes((currentNodes) => {
+      for (const node of currentNodes) {
+        if (!selectedIds.has(node.id)) {
+          continue;
+        }
+
+        updateNodePosition(node.id, node.position);
+        syncNodeGroupMembership(node.id, node.position);
+      }
+
+      return currentNodes;
+    });
+
+    draggingNodeIdRef.current = null;
+  }, [updateNodePosition]);
+
+  const handleSelectionFramePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || selectedNodeIdsRef.current.size <= 1) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    multiSelectionFrameDragRef.current = {
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      moved: false,
+    };
+    draggingNodeIdRef.current = Array.from(selectedNodeIdsRef.current)[0] ?? null;
+    skipNextPaneClickClearRef.current = true;
+    clearEdgeSelection();
+    setSelectedGroupId(null);
+  }, [clearEdgeSelection]);
+
+  const handleSelectionFramePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = multiSelectionFrameDragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const screenDx = event.clientX - drag.lastX;
+    const screenDy = event.clientY - drag.lastY;
+
+    if (screenDx === 0 && screenDy === 0) {
+      return;
+    }
+
+    const { zoom } = getViewport();
+    multiSelectionFrameDragRef.current = {
+      pointerId: drag.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      moved: true,
+    };
+    moveSelectedFlowNodes(screenDx / zoom, screenDy / zoom, true);
+  }, [getViewport, moveSelectedFlowNodes]);
+
+  const handleSelectionFramePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = multiSelectionFrameDragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    multiSelectionFrameDragRef.current = null;
+
+    if (drag.moved) {
+      syncSelectedFlowNodePositions();
+    } else {
+      draggingNodeIdRef.current = null;
+    }
+
+    window.setTimeout(() => {
+      skipNextPaneClickClearRef.current = false;
+    }, 0);
+  }, [syncSelectedFlowNodePositions]);
+
+  const handleSelectionFramePointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = multiSelectionFrameDragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    multiSelectionFrameDragRef.current = null;
+    draggingNodeIdRef.current = null;
+    window.setTimeout(() => {
+      skipNextPaneClickClearRef.current = false;
+    }, 0);
+  }, []);
+
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
     if (quickReferenceConnect) {
       if (event.button === 2) {
@@ -7860,7 +7983,15 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         if (change.dragging === true) {
           draggingNodeIdRef.current = change.id;
         } else if (change.dragging === false) {
-          draggingNodeIdRef.current = null;
+          const stillDragging = changes.some((candidate) =>
+            candidate !== change &&
+            candidate.type === 'position' &&
+            candidate.dragging === true,
+          );
+
+          if (!stillDragging) {
+            draggingNodeIdRef.current = null;
+          }
           syncNodeGroupMembership(change.id, change.position);
         }
       } else if (change.type === 'select') {
@@ -9143,10 +9274,15 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         />
         <MultiNodeSelectionOverlay
           nodes={storeNodes}
+          flowNodes={rfNodes}
           selectedNodeIds={selectedNodeIds}
           groups={storeGroups}
           visible={!selectionInProgress && !paneSelectionDragging}
           onGroup={handleGroup}
+          onSelectionFramePointerDown={handleSelectionFramePointerDown}
+          onSelectionFramePointerMove={handleSelectionFramePointerMove}
+          onSelectionFramePointerUp={handleSelectionFramePointerUp}
+          onSelectionFramePointerCancel={handleSelectionFramePointerCancel}
         />
         <GroupOverlay
           groups={storeGroups}

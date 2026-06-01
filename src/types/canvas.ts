@@ -157,6 +157,7 @@ export interface VideoUpscaleNodeData {
   hostedVideoUrl?: string;
   width?: number;
   height?: number;
+  sizeBytes?: number;
   generatedOutputFileName?: string;
   generatedAt?: string;
   status?: "idle" | "generating" | "error";

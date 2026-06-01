@@ -86,6 +86,8 @@ function normalizeVideoUpscaleNodeData(value: unknown): VideoUpscaleNodeData {
         typeof record.hostedVideoUrl === "string" ? record.hostedVideoUrl : undefined,
       width: typeof record.width === "number" ? record.width : undefined,
       height: typeof record.height === "number" ? record.height : undefined,
+      sizeBytes:
+        typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
       generatedOutputFileName:
         typeof record.generatedOutputFileName === "string"
           ? record.generatedOutputFileName
