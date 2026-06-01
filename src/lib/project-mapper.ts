@@ -14,6 +14,7 @@ import type {
   VideoGenerationMediaReference,
   VideoGenerationMode,
   VideoGenerationNodeData,
+  VideoUpscaleNodeData,
 } from "@/types/canvas";
 
 interface DbProjectRecord {
@@ -49,12 +50,64 @@ function isNodeType(value: string): value is NodeType {
     value === "text" ||
     value === "image_generation" ||
     value === "video_generation" ||
+    value === "video_upscale" ||
     value === "video" ||
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image" ||
     value === "panorama-360"
   );
+}
+
+function normalizeVideoUpscaleNodeData(value: unknown): VideoUpscaleNodeData {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    return {
+      title: typeof record.title === "string" ? record.title : "视频超清",
+      targetResolution:
+        record.targetResolution === "720p" ||
+        record.targetResolution === "1080p" ||
+        record.targetResolution === "4k"
+          ? record.targetResolution
+          : "1080p",
+      targetFps:
+        record.targetFps === "60"
+          ? "60"
+          : "30",
+      instanceType:
+        record.instanceType === "plus"
+          ? "plus"
+          : "default",
+      taskId: typeof record.taskId === "string" ? record.taskId : undefined,
+      progress: typeof record.progress === "string" ? record.progress : undefined,
+      videoUrl: typeof record.videoUrl === "string" ? record.videoUrl : undefined,
+      hostedVideoUrl:
+        typeof record.hostedVideoUrl === "string" ? record.hostedVideoUrl : undefined,
+      width: typeof record.width === "number" ? record.width : undefined,
+      height: typeof record.height === "number" ? record.height : undefined,
+      generatedOutputFileName:
+        typeof record.generatedOutputFileName === "string"
+          ? record.generatedOutputFileName
+          : undefined,
+      generatedAt:
+        typeof record.generatedAt === "string" ? record.generatedAt : undefined,
+      status:
+        record.status === "generating" || record.status === "error"
+          ? record.status
+          : "idle",
+      errorMessage:
+        typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+    };
+  }
+
+  return {
+    title: "视频超清",
+    targetResolution: "1080p",
+    targetFps: "30",
+    instanceType: "default",
+    status: "idle",
+  };
 }
 
 function normalizeVideoGenerationMode(value: unknown): VideoGenerationMode {
@@ -701,6 +754,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "video_generation",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeVideoGenerationNodeData(parsed),
+      };
+    case "video_upscale":
+      return {
+        id: record.id,
+        type: "video_upscale",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeVideoUpscaleNodeData(parsed),
       };
     case "video":
       return {

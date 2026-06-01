@@ -28,6 +28,7 @@ export type ImageGenerationToolbarAction =
   | 'extract-current-frame'
   | 'extract-first-frame'
   | 'extract-last-frame'
+  | 'video-upscale'
   | 'panorama-360'
   | 'pan'
   | 'more'
@@ -54,6 +55,42 @@ type ToolbarActionConfig = {
   title: string;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
 };
+
+function HdIcon({
+  size = 16,
+  className,
+}: {
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+}) {
+  const width = Math.round(size * 1.45);
+  const height = Math.round(size * 0.95);
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox="0 0 36 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <text
+        x="18"
+        y="17"
+        textAnchor="middle"
+        fill="currentColor"
+        fontSize="14"
+        fontWeight="800"
+        letterSpacing="0"
+        fontFamily="Arial, Helvetica, sans-serif"
+      >
+        HD
+      </text>
+    </svg>
+  );
+}
 
 const GENERATED_IMAGE_ACTIONS: ToolbarActionConfig[] = [
   { id: 'variations', title: '分割', icon: Grid3x3 },
@@ -158,6 +195,13 @@ export function ImageGenerationNodeToolbar({
 
   const cropButtonTitle = videoFrameCapture ? '视频裁剪' : '裁剪';
   const CropButtonIcon = videoFrameCapture ? Scissors : CropIcon;
+  const generatedActions = videoFrameCapture
+    ? GENERATED_IMAGE_ACTIONS.map((action) =>
+        action.id === 'panorama-360'
+          ? { ...action, id: 'video-upscale' as const, title: '视频超清', icon: HdIcon }
+          : action,
+      )
+    : GENERATED_IMAGE_ACTIONS;
 
   return (
     <div
@@ -175,7 +219,7 @@ export function ImageGenerationNodeToolbar({
           onPointerDown={(e) => e.stopPropagation()}
         >
           <ToolbarIconButton title={cropButtonTitle} icon={CropButtonIcon} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
-          {GENERATED_IMAGE_ACTIONS.slice(0, 4).map((action) => (
+          {generatedActions.slice(0, 4).map((action) => (
             action.id === 'variations' && videoFrameCapture ? (
               <div
                 key={action.id}
@@ -319,7 +363,7 @@ export function ImageGenerationNodeToolbar({
             )
           ))}
           <div className="mx-1 h-5 w-px bg-white/10" />
-          {GENERATED_IMAGE_ACTIONS.slice(4).map((action) => (
+          {generatedActions.slice(4).map((action) => (
             <ToolbarIconButton
               key={action.id}
               title={action.title}

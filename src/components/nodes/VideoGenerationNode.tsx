@@ -28,7 +28,8 @@ export type VideoGenerationToolbarAction =
   | 'expand'
   | 'extract-current-frame'
   | 'extract-first-frame'
-  | 'extract-last-frame';
+  | 'extract-last-frame'
+  | 'video-upscale';
 
 export interface VideoGenerationNodeProps {
   id?: string;
@@ -208,6 +209,10 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
     }
 
     if (action === 'download' || action === 'organize' || action === 'expand') {
+      onToolbarAction?.(action);
+    }
+
+    if (action === 'video-upscale') {
       onToolbarAction?.(action);
     }
   };

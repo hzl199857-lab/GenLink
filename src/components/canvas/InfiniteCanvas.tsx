@@ -90,6 +90,7 @@ import type {
   UploadedImageNodeData,
   VideoNodeData,
   VideoGenerationNodeData,
+  VideoUpscaleNodeData,
 } from '@/types/canvas';
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
@@ -99,6 +100,7 @@ import {
   VideoGenerationNode,
   type VideoGenerationToolbarAction,
 } from '../nodes/VideoGenerationNode';
+import { VideoUpscaleNode } from '../nodes/VideoUpscaleNode';
 import { getVideoModelLabel } from '../nodes/VideoGenerationPromptBar';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { Panorama360Node } from '../nodes/Panorama360Node';
@@ -199,7 +201,7 @@ function formatImageResolution(width?: number, height?: number): string {
     return '-';
   }
 
-  return `${width} x ${height}`;
+  return `${Math.round(width)}*${Math.round(height)}`;
 }
 
 function inferImageSizeBytesFromUrl(url?: string): number | undefined {
@@ -396,7 +398,40 @@ function toVideoGenerationInfoPopoverData(data: VideoGenerationNodeData): ImageG
       mimeType: 'video/mp4',
     }),
     size: '-',
-    resolution: data.resolution?.trim() || '-',
+    resolution: formatVideoResolutionFromPreset(data.resolution, data.ratio),
+    createdTime: formatGeneratedAt(data.generatedAt) || undefined,
+  };
+}
+
+function toVideoUpscaleInfoPopoverData(
+  data: VideoUpscaleNodeData,
+  sourceVideo?: { width?: number; height?: number } | null,
+): ImageGenerationInfoPopoverData | null {
+  const videoUrl = data.hostedVideoUrl?.trim() || data.videoUrl?.trim();
+
+  if (!videoUrl) {
+    return null;
+  }
+
+  return {
+    title: '视频信息',
+    model: 'RunningHub 视频超清',
+    format: inferVideoFormatFromData({
+      videoUrl,
+      width: 0,
+      height: 0,
+      fileName: data.generatedOutputFileName,
+      mimeType: 'video/mp4',
+    }),
+    size: '-',
+    resolution: formatImageResolution(data.width, data.height) !== '-'
+      ? formatImageResolution(data.width, data.height)
+      : formatVideoResolutionFromPreset(
+          data.targetResolution,
+          sourceVideo?.width && sourceVideo.height
+            ? `${sourceVideo.width}:${sourceVideo.height}`
+            : undefined,
+        ),
     createdTime: formatGeneratedAt(data.generatedAt) || undefined,
   };
 }
@@ -525,11 +560,20 @@ async function toResolvedCanvasNodeInfoPopoverData(
     return toVideoGenerationInfoPopoverData(node.data as VideoGenerationNodeData);
   }
 
+  if (node.type === 'video_upscale') {
+    const data = node.data as VideoUpscaleNodeData;
+    const sourceVideo = useCanvasStore
+      .getState()
+      .getConnectedVideoForVideoUpscaleNode(node.id);
+
+    return toVideoUpscaleInfoPopoverData(data, sourceVideo);
+  }
+
   return null;
 }
 
 function isCanvasMediaInfoNodeType(type: string): type is CanvasNode['type'] {
-  return type === 'image_generation' || type === 'image' || type === 'uploaded_image' || type === 'video' || type === 'video_generation';
+  return type === 'image_generation' || type === 'image' || type === 'uploaded_image' || type === 'video' || type === 'video_generation' || type === 'video_upscale';
 }
 
 function parseCanvasAspectRatio(value?: string): number | null {
@@ -551,6 +595,40 @@ function parseCanvasAspectRatio(value?: string): number | null {
   }
 
   return width / height;
+}
+
+function parseVideoResolutionPreset(value?: string): number | null {
+  switch (value) {
+    case '480p':
+      return 480;
+    case '720p':
+      return 720;
+    case '1080p':
+      return 1080;
+    case '4k':
+      return 2160;
+    default:
+      return null;
+  }
+}
+
+function formatVideoResolutionFromPreset(
+  resolution?: string,
+  aspectRatioValue?: string,
+): string {
+  const base = parseVideoResolutionPreset(resolution);
+
+  if (!base) {
+    return '-';
+  }
+
+  const aspectRatio = parseCanvasAspectRatio(aspectRatioValue) ?? 16 / 9;
+
+  if (aspectRatio >= 1) {
+    return formatImageResolution(base * aspectRatio, base);
+  }
+
+  return formatImageResolution(base, base / aspectRatio);
 }
 
 function resolveAspectDrivenCardDimensions(
@@ -575,6 +653,22 @@ function resolveAspectDrivenCardDimensions(
   );
 
   return { width, height };
+}
+
+function resolveVideoUpscaleCardDimensions(
+  sourceVideo?: {
+    width?: number;
+    height?: number;
+  } | null,
+): { width: number; height: number } {
+  const width = sourceVideo?.width;
+  const height = sourceVideo?.height;
+
+  if (!width || !height || width <= 0 || height <= 0) {
+    return resolveAspectDrivenCardDimensions('16:9');
+  }
+
+  return resolveAspectDrivenCardDimensions(`${width}:${height}`);
 }
 
 function resolveImageGenerationCardDimensions(
@@ -1772,6 +1866,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
 const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id, data, selected, dragging, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateVideo = useCanvasStore((s) => s.generateVideoFromVideoGenerationNode);
+  const createVideoUpscaleNode = useCanvasStore((s) => s.createVideoUpscaleNodeFromSource);
   const createImageNodeFromVideoFrame = useCanvasStore((s) => s.createImageNodeFromVideoFrame);
   const connectedImages = useCanvasStore((s) =>
     s.getConnectedImagesForVideoGenerationNode(id),
@@ -1887,6 +1982,17 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
         }
         break;
       }
+      case 'video-upscale': {
+        if (!videoUrl) {
+          useCanvasStore.getState().setSaveMessage('当前视频生成节点还没有可超清的视频');
+          window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
+          break;
+        }
+
+        const nextNodeId = createVideoUpscaleNode(id);
+        notifyCanvasNodeSelect?.(nextNodeId);
+        break;
+      }
       default:
         break;
     }
@@ -1927,6 +2033,40 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
         setPromptFocused(focused);
       }}
       promptFocusRequestId={renderData.canvasFocusRequestId}
+    />
+  );
+});
+
+const VideoUpscaleNodeAdapter = memo(function VideoUpscaleNodeAdapter({ id, data, selected, dragging }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const runVideoUpscale = useCanvasStore((s) => s.runVideoUpscaleFromNode);
+  const sourceVideo = useCanvasStore((s) => s.getConnectedVideoForVideoUpscaleNode(id));
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive && !dragging;
+  const videoData = data as VideoUpscaleNodeData;
+  const cardDimensions = resolveVideoUpscaleCardDimensions(sourceVideo);
+
+  const handleSelectNode = () => {
+    if (videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim()) {
+      notifyCanvasImageInfoRequest?.(id);
+      return;
+    }
+
+    notifyCanvasNodeSelect?.(id);
+  };
+
+  return (
+    <VideoUpscaleNode
+      id={id}
+      data={videoData}
+      cardDimensions={cardDimensions}
+      selected={isActive}
+      dragging={!!dragging}
+      sourceVideoAvailable={Boolean(sourceVideo)}
+      onChange={(next) => updateNodeData<'video_upscale'>(id, next)}
+      onTitleChange={(nextTitle) => updateNodeData<'video_upscale'>(id, { title: nextTitle })}
+      onRun={() => runVideoUpscale(id)}
+      onSelectNode={handleSelectNode}
     />
   );
 });
@@ -2245,6 +2385,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
 const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const createProcessedVideoNode = useCanvasStore((s) => s.createVideoNodeFromProcessedResult);
+  const createVideoUpscaleNode = useCanvasStore((s) => s.createVideoUpscaleNodeFromSource);
   const createImageNodeFromVideoFrame = useCanvasStore((s) => s.createImageNodeFromVideoFrame);
   const animateFocusViewport = useThreeViewFocusAnimator();
   const renderData = data as CanvasNodeRenderData;
@@ -2794,6 +2935,15 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
               void extractFrame('first');
             } else if (action === 'extract-last-frame') {
               void extractFrame('last');
+            } else if (action === 'video-upscale') {
+              if (!hasVideo) {
+                setClipMessage('当前视频节点没有可超清的视频');
+                setClipOpen(true);
+                return;
+              }
+
+              const nextNodeId = createVideoUpscaleNode(id);
+              notifyCanvasNodeSelect?.(nextNodeId);
             } else if (action === 'download') {
               const videoUrl = videoData.hostedVideoUrl?.trim() || videoData.videoUrl.trim();
               if (videoUrl) {
@@ -2989,6 +3139,7 @@ const nodeTypes = {
   text: TextNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
   video_generation: VideoGenerationNodeAdapter,
+  video_upscale: VideoUpscaleNodeAdapter,
   video: VideoNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
@@ -6283,7 +6434,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       dragHandle:
         n.type === 'text'
           ? '.text-node-drag-handle'
-          : n.type === 'image_generation' || n.type === 'video_generation'
+          : n.type === 'image_generation' || n.type === 'video_generation' || n.type === 'video_upscale'
             ? '.image-generation-node-drag-handle'
           : undefined,
     }));

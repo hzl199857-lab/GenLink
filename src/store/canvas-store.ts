@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { create } from "zustand";
 
@@ -48,6 +48,7 @@ import type {
   VideoNodeData,
   VideoGenerationMediaReference,
   VideoGenerationNodeData,
+  VideoUpscaleNodeData,
 } from "@/types/canvas";
 
 type ApiErrorResponse = {
@@ -122,6 +123,35 @@ type VideoGenerationResponse =
       };
     };
 
+type VideoUpscaleResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      status: "submitted";
+      task: {
+        taskId: string;
+      };
+    }
+  | {
+      ok: true;
+      status: "pending";
+      progress?: string;
+    }
+  | {
+      ok: true;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: true;
+      status: "completed";
+      result: {
+        taskId: string;
+        videoUrl: string;
+        outputType?: string;
+      };
+    };
+
 type ImageGenerationRunResult = {
   model: string;
   images: Array<{
@@ -139,6 +169,7 @@ type SplitGridDimension = 2 | 3 | 5;
 
 const inFlightImageGenerationNodeIds = new Set<string>();
 const inFlightVideoGenerationNodeIds = new Set<string>();
+const inFlightVideoUpscaleNodeIds = new Set<string>();
 const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
 const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
@@ -169,7 +200,7 @@ designed for VR viewing with perfect spherical continuity.
 The space features consistent architectural/landscape logic, 
 with {lighting_desc} lighting that creates {color_tone} tones throughout. 
 Textures, perspectives, and environmental elements wrap continuously 
-around the full 360 degrees—left and right edges match flawlessly, 
+around the full 360 degrees鈥攍eft and right edges match flawlessly, 
 horizon line flows without breaks, no visible seams or stitch lines.
 
 Photorealistic, ultra-detailed, cinematic composition, 
@@ -213,7 +244,7 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   comfly: "Comfly",
   runninghub: "RunningHub",
   grsai: "Grsai",
-  zhenzhen: "真真 AI 工坊",
+  zhenzhen: "鐪熺湡 AI 宸ュ潑",
 };
 
 export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
@@ -418,7 +449,7 @@ function assertStoredRunningHubWorkflowApiKey(): string {
   const apiKey = readStoredRunningHubWorkflowApiKey();
 
   if (!apiKey) {
-    throw new Error("Please configure the RunningHub workflow API Key in API settings first.");
+    throw new Error("请先在 API 设置中配置 RunningHub 工作流 API Key");
   }
 
   return apiKey;
@@ -477,7 +508,7 @@ type ConnectedVideoPayload = {
   hostedVideoUrl?: string;
   fileName?: string;
   alt: string;
-  sourceType: "video_generation" | "video" | "inline_reference";
+  sourceType: "video_generation" | "video_upscale" | "video" | "inline_reference";
   width?: number;
   height?: number;
   durationSeconds?: number;
@@ -827,6 +858,26 @@ function createVideoGenerationNodeData(): VideoGenerationNodeData {
   };
 }
 
+function createVideoUpscaleNodeData(): VideoUpscaleNodeData {
+  return {
+    title: "视频超清",
+    targetResolution: "1080p",
+    targetFps: "30",
+    instanceType: "default",
+    status: "idle",
+  };
+}
+
+function normalizeVideoUpscaleTitle(value?: string): string {
+  const trimmed = value?.trim();
+
+  if (!trimmed || /瑙嗛|瓒呮|鐞|璧/.test(trimmed)) {
+    return "视频超清";
+  }
+
+  return trimmed;
+}
+
 function createAITextResultNodeData(): AITextResultNodeData {
   return {
     title: "AI Text Result",
@@ -913,6 +964,70 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
     image.decoding = "async";
     image.crossOrigin = "anonymous";
     image.src = src;
+  });
+}
+
+function readVideoMetadataFromUrl(src: string): Promise<{
+  width: number;
+  height: number;
+  durationSeconds?: number;
+}> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      video.removeAttribute("src");
+      video.load();
+      reject(new Error("Video metadata timed out"));
+    }, 10_000);
+
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("error", handleError);
+    };
+    const handleLoadedMetadata = () => {
+      if (settled) {
+        return;
+      }
+
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      if (!width || !height) {
+        handleError();
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve({
+        width,
+        height,
+        durationSeconds: Number.isFinite(video.duration) ? video.duration : undefined,
+      });
+    };
+    const handleError = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      reject(new Error("Failed to read video metadata"));
+    };
+
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("error", handleError);
+    video.src = src;
   });
 }
 
@@ -1063,6 +1178,54 @@ async function uploadImageBlobToOss(
     imageUrl: targetJson.result.imageUrl,
   });
   return targetJson.result.imageUrl;
+}
+
+async function uploadVideoBlobToOss(
+  blob: Blob,
+  fileName?: string,
+  folder = "processing/videos",
+): Promise<string> {
+  const contentType = blob.type || "video/mp4";
+  const targetResponse = await fetch("/api/media-hosting/upload-url", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fileName,
+      folder,
+      contentType,
+    }),
+  });
+  const targetJson = await readJsonResponse<
+    | {
+        ok: true;
+        result: {
+          uploadUrl: string;
+          mediaUrl: string;
+          headers: Record<string, string>;
+        };
+      }
+    | ApiErrorResponse
+  >(targetResponse, "Failed to create video upload URL");
+
+  if (!targetResponse.ok || !targetJson.ok) {
+    throw new Error(
+      "error" in targetJson ? targetJson.error : "Failed to create video upload URL",
+    );
+  }
+
+  const uploadResponse = await fetch(targetJson.result.uploadUrl, {
+    method: "PUT",
+    headers: targetJson.result.headers,
+    body: blob,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Failed to upload video to OSS (${uploadResponse.status})`);
+  }
+
+  return targetJson.result.mediaUrl;
 }
 
 async function uploadReferenceBlobToOss(
@@ -1483,6 +1646,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         position,
         data: createVideoGenerationNodeData(),
       };
+    case "video_upscale":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createVideoUpscaleNodeData(),
+      };
     case "video":
       return {
         id: crypto.randomUUID(),
@@ -1671,6 +1841,59 @@ async function waitForVideoTaskResult(params: {
   }
 
   throw new Error("Video generation timed out");
+}
+
+async function requestVideoUpscaleTaskStatus(params: {
+  apiKey: string;
+  taskId: string;
+}): Promise<VideoUpscaleResponse> {
+  const response = await fetch("/api/ai/video-upscale", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "status",
+      apiKey: params.apiKey,
+      taskId: params.taskId,
+    }),
+  });
+  const json = await readJsonResponse<VideoUpscaleResponse>(
+    response,
+    "Video upscale status request failed",
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? "Video upscale status request failed" : json.error);
+  }
+
+  return json;
+}
+
+async function waitForVideoUpscaleTaskResult(params: {
+  apiKey: string;
+  taskId: string;
+  onProgress?: (progress?: string) => void;
+}): Promise<Extract<VideoUpscaleResponse, { status: "completed" }>["result"]> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < VIDEO_JOB_POLL_TIMEOUT_MS) {
+    const json = await requestVideoUpscaleTaskStatus(params);
+
+    if (json.ok && json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.ok && json.status === "error") {
+      throw new Error(json.error || "Video upscale failed");
+    }
+
+    if (json.ok && json.status === "pending") {
+      params.onProgress?.(json.progress);
+    }
+
+    await sleep(VIDEO_JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Video upscale timed out");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -2414,6 +2637,47 @@ function isRemoteRequestUrl(value?: string): boolean {
   return /^https?:\/\//i.test(trimmed) || trimmed.startsWith("/api/");
 }
 
+function getConnectedSourceVideoForVideoUpscaleNode(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  targetNodeId: string,
+): ConnectedVideoPayload | null {
+  return getConnectedVideosForTargetNode(nodes, edges, targetNodeId)[0] ?? null;
+}
+
+async function normalizeVideoForProcessing(video: ConnectedVideoPayload): Promise<{
+  url: string;
+  fileName?: string;
+}> {
+  const sourceUrl = video.hostedVideoUrl?.trim() || video.videoUrl.trim();
+
+  if (!sourceUrl) {
+    throw new Error("Source video is missing");
+  }
+
+  if (/^https:\/\//i.test(sourceUrl)) {
+    return {
+      url: sourceUrl,
+      fileName: video.fileName,
+    };
+  }
+
+  const response = await fetch(sourceUrl);
+
+  if (!response.ok) {
+    throw new Error("Failed to read source video for upscale");
+  }
+
+  return {
+    url: await uploadVideoBlobToOss(
+      await response.blob(),
+      video.fileName || "video.mp4",
+      "processing/videos",
+    ),
+    fileName: video.fileName,
+  };
+}
+
 function getConnectedImagesForTargetNode(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -2557,6 +2821,29 @@ function getConnectedVideosForTargetNode(
         width: sourceNode.data.width,
         height: sourceNode.data.height,
         durationSeconds: sourceNode.data.durationSeconds,
+      });
+      return acc;
+    }
+
+    if (sourceNode.type === "video_upscale") {
+      const videoUrl =
+        sourceNode.data.hostedVideoUrl?.trim() ||
+        sourceNode.data.videoUrl?.trim() ||
+        "";
+
+      if (!videoUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: sourceNode.id,
+        videoUrl,
+        hostedVideoUrl: sourceNode.data.hostedVideoUrl?.trim() || undefined,
+        fileName: sourceNode.data.generatedOutputFileName,
+        alt: sourceNode.data.title?.trim() || "Upscaled video",
+        sourceType: "video_upscale",
+        width: sourceNode.data.width,
+        height: sourceNode.data.height,
       });
       return acc;
     }
@@ -2978,6 +3265,9 @@ export interface CanvasState {
     videoGenerationNodeId: string,
     promptOverride?: string,
   ) => Promise<void>;
+  createVideoUpscaleNodeFromSource: (sourceNodeId: string) => string;
+  runVideoUpscaleFromNode: (videoUpscaleNodeId: string) => Promise<void>;
+  getConnectedVideoForVideoUpscaleNode: (videoUpscaleNodeId: string) => ConnectedVideoPayload | null;
   generateThreeViewImageFromNode: (
     nodeId: string,
     cameraAngle: { rotation: number; pitch: number; scale: number },
@@ -4493,6 +4783,269 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  createVideoUpscaleNodeFromSource: (sourceNodeId) => {
+    const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === sourceNodeId);
+
+    if (
+      !sourceNode ||
+      (sourceNode.type !== "video" &&
+        sourceNode.type !== "video_generation" &&
+        sourceNode.type !== "video_upscale")
+    ) {
+      throw new Error("Source video node not found");
+    }
+
+    const nextNode: CanvasNode = {
+      id: crypto.randomUUID(),
+      type: "video_upscale",
+      position: {
+        x: sourceNode.position.x + 600,
+        y: sourceNode.position.y,
+      },
+      data: createVideoUpscaleNodeData(),
+    };
+    const nextEdge: CanvasEdge = {
+      id: crypto.randomUUID(),
+      source: sourceNode.id,
+      target: nextNode.id,
+    };
+
+    set((currentState) => ({
+      ...createUndoHistoryUpdate(currentState),
+      nodes: [...currentState.nodes, nextNode],
+      edges: [...currentState.edges, nextEdge],
+      dirty: true,
+      error: null,
+    }));
+
+    return nextNode.id;
+  },
+
+  runVideoUpscaleFromNode: async (videoUpscaleNodeId) => {
+    const state = get();
+    const videoUpscaleNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "video_upscale" }> =>
+        node.id === videoUpscaleNodeId && node.type === "video_upscale",
+    );
+
+    if (!videoUpscaleNode) {
+      throw new Error("Video upscale node not found");
+    }
+
+    if (videoUpscaleNode.data.status === "generating") {
+      return;
+    }
+
+    if (inFlightVideoUpscaleNodeIds.has(videoUpscaleNodeId)) {
+      return;
+    }
+
+    inFlightVideoUpscaleNodeIds.add(videoUpscaleNodeId);
+
+    try {
+      const latestState = get();
+      const latestVideoUpscaleNode = latestState.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "video_upscale" }> =>
+          node.id === videoUpscaleNodeId && node.type === "video_upscale",
+      );
+
+      if (!latestVideoUpscaleNode) {
+        throw new Error("Video upscale node not found");
+      }
+
+      const sourceVideo = getConnectedSourceVideoForVideoUpscaleNode(
+        latestState.nodes,
+        latestState.edges,
+        videoUpscaleNodeId,
+      );
+
+      if (!sourceVideo) {
+        throw new Error("Video upscale requires an upstream video");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoUpscaleNodeId && node.type === "video_upscale"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: undefined,
+                  progress: undefined,
+                  videoUrl: undefined,
+                  hostedVideoUrl: undefined,
+                  generatedAt: undefined,
+                  generatedOutputFileName: undefined,
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const requestVideo = await normalizeVideoForProcessing(sourceVideo);
+      const apiKey = assertStoredRunningHubWorkflowApiKey();
+      const response = await fetch("/api/ai/video-upscale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey,
+          videoUrl: requestVideo.url,
+          fileName: requestVideo.fileName,
+          targetResolution: latestVideoUpscaleNode.data.targetResolution || "1080p",
+          targetFps: latestVideoUpscaleNode.data.targetFps || "30",
+          instanceType: latestVideoUpscaleNode.data.instanceType || "default",
+        }),
+      });
+      const json = await readJsonResponse<VideoUpscaleResponse>(
+        response,
+        "Video upscale request failed",
+      );
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.ok ? "Video upscale failed" : json.error);
+      }
+
+      if (json.status !== "submitted") {
+        throw new Error("Video upscale request did not return a task id");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoUpscaleNodeId && node.type === "video_upscale"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: json.task.taskId,
+                  progress: "0%",
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const result = await waitForVideoUpscaleTaskResult({
+        apiKey,
+        taskId: json.task.taskId,
+        onProgress: (progress) => {
+          if (!progress) {
+            return;
+          }
+
+          set((currentState) => ({
+            dirty: true,
+            nodes: currentState.nodes.map((node) =>
+              node.id === videoUpscaleNodeId && node.type === "video_upscale"
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      progress,
+                    },
+                  }
+                : node,
+            ),
+          }));
+        },
+      });
+      const generatedAt = nowIso();
+      const videoUpscaleTitle = normalizeVideoUpscaleTitle(latestVideoUpscaleNode.data.title);
+      const outputFileName = `${videoUpscaleTitle}.mp4`;
+      const videoMetadata = await readVideoMetadataFromUrl(result.videoUrl).catch(() => null);
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoUpscaleNodeId && node.type === "video_upscale"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: result.taskId,
+                  progress: "100%",
+                  videoUrl: result.videoUrl,
+                  hostedVideoUrl: result.videoUrl,
+                  width: videoMetadata?.width,
+                  height: videoMetadata?.height,
+                  generatedAt,
+                  generatedOutputFileName: outputFileName,
+                  status: "idle",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      void get().persistProjectOutput({
+        sourceKey: `${videoUpscaleNodeId}:${generatedAt}:${result.videoUrl}`,
+        imageUrl: result.videoUrl,
+        kind: "video",
+        fileName: outputFileName,
+        generatedAt,
+        nodeData: {
+          ...latestVideoUpscaleNode.data,
+          taskId: result.taskId,
+          videoUrl: result.videoUrl,
+          hostedVideoUrl: result.videoUrl,
+          width: videoMetadata?.width,
+          height: videoMetadata?.height,
+          generatedAt,
+          generatedOutputFileName: outputFileName,
+          status: "idle",
+          errorMessage: undefined,
+        },
+        title: videoUpscaleTitle,
+        model: "runninghub-video-upscale",
+        width: videoMetadata?.width,
+        height: videoMetadata?.height,
+        format: "mp4",
+      }).catch((error) => {
+        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+      });
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        error: message,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === videoUpscaleNodeId && node.type === "video_upscale"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "error",
+                  errorMessage: message,
+                },
+              }
+            : node,
+        ),
+      }));
+    } finally {
+      inFlightVideoUpscaleNodeIds.delete(videoUpscaleNodeId);
+    }
+  },
+
+  getConnectedVideoForVideoUpscaleNode: (videoUpscaleNodeId) => {
+    const state = get();
+    return getConnectedSourceVideoForVideoUpscaleNode(
+      state.nodes,
+      state.edges,
+      videoUpscaleNodeId,
+    );
+  },
+
   splitImageGenerationNodeToGrid: async (imageGenerationNodeId, dimension) => {
     const state = get();
     const imageGenerationNode = state.nodes.find(
@@ -5103,7 +5656,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const generatedAt = nowIso();
     const nextNodeId = crypto.randomUUID();
-    const title = params.title.trim() || "剪辑视频";
+    const title = params.title.trim() || "鍓緫瑙嗛";
     const width = params.width || 320;
     const height = params.height || 180;
     const nextPosition = params.position ?? {
@@ -5297,7 +5850,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       sourceType: "image",
     };
     const newNodeId = crypto.randomUUID();
-    const nodeTitle = sourceNode.type === "image" ? sourceNode.data.title || "Image" : "3D视角";
+    const nodeTitle = sourceNode.type === "image" ? sourceNode.data.title || "Image" : "3D瑙嗚";
     const sourceDisplay = getCanvasImageNodeDisplayDimensions(
       sourceNode,
       sourceWidth,
@@ -6255,9 +6808,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     set((currentState) => {
       if (params.kind === "video") {
-        const nodeData = params.nodeData as VideoGenerationNodeData | VideoNodeData;
+        const nodeData = params.nodeData as VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
         const nodes = currentState.nodes.map((node) => {
-          if (node.type === "video_generation") {
+          if (node.type === "video_generation" || node.type === "video_upscale") {
             const sourceKey = `${node.id}:${params.generatedAt}:${nodeData.videoUrl ?? ""}`;
 
             if (sourceKey !== params.sourceKey) {

@@ -4,6 +4,7 @@ export type NodeType =
   | "text"
   | "image_generation"
   | "video_generation"
+  | "video_upscale"
   | "video"
   | "ai_text_result"
   | "image"
@@ -145,6 +146,23 @@ export interface VideoGenerationNodeData {
   errorMessage?: string;
 }
 
+export interface VideoUpscaleNodeData {
+  title?: string;
+  targetResolution?: "720p" | "1080p" | "4k";
+  targetFps?: "30" | "60";
+  instanceType?: "default" | "plus";
+  taskId?: string;
+  progress?: string;
+  videoUrl?: string;
+  hostedVideoUrl?: string;
+  width?: number;
+  height?: number;
+  generatedOutputFileName?: string;
+  generatedAt?: string;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
+}
+
 export interface AITextResultNodeData {
   title?: string;
   content: string;
@@ -247,6 +265,7 @@ export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "video_generation"; data: VideoGenerationNodeData }
+  | { type: "video_upscale"; data: VideoUpscaleNodeData }
   | { type: "video"; data: VideoNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
@@ -257,6 +276,7 @@ export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
+  | BaseCanvasNode<"video_upscale", VideoUpscaleNodeData>
   | BaseCanvasNode<"video", VideoNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
@@ -364,5 +384,5 @@ export type ProjectOutputHistoryItem =
     })
   | (BaseProjectOutputHistoryItem & {
       kind: "video";
-      nodeData?: VideoGenerationNodeData;
+      nodeData?: VideoGenerationNodeData | VideoUpscaleNodeData;
     });
