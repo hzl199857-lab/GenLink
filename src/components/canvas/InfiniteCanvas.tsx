@@ -1096,6 +1096,24 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     };
   }
 
+  if (node.type === 'video_upscale') {
+    const sourceVideo = useCanvasStore
+      .getState()
+      .getConnectedVideoForVideoUpscaleNode(node.id);
+    const dimensions = resolveVideoUpscaleCardDimensions(sourceVideo);
+
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: Math.max(VIDEO_UPSCALE_NODE_WIDTH, VIDEO_UPSCALE_PANEL_WIDTH, dimensions.width),
+      height:
+        VIDEO_UPSCALE_TITLE_HEIGHT +
+        dimensions.height +
+        VIDEO_UPSCALE_PANEL_TOP_GAP +
+        VIDEO_UPSCALE_PANEL_HEIGHT,
+    };
+  }
+
   if (node.type === 'image') {
     const dimensions = resolveImageNodeCardDimensions(node.data as ImageNodeData);
 
@@ -3196,6 +3214,11 @@ const GROUP_SOURCE_HANDLE_ZONE_BASE =
   'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
 const GROUP_LAYOUT_GAP_X = 48;
 const GROUP_LAYOUT_GAP_Y = 48;
+const VIDEO_UPSCALE_NODE_WIDTH = 540;
+const VIDEO_UPSCALE_PANEL_WIDTH = 448;
+const VIDEO_UPSCALE_PANEL_TOP_GAP = 24;
+const VIDEO_UPSCALE_PANEL_HEIGHT = 144;
+const VIDEO_UPSCALE_TITLE_HEIGHT = 34;
 const HISTORY_NODE_WIDTH = 540;
 const HISTORY_NODE_HEIGHT = 740;
 const HISTORY_NODE_GAP = 72;
@@ -4241,6 +4264,7 @@ type MultiNodeSelectionOverlayProps = {
 
 type GroupOverlayProps = {
   groups: NodeGroup[];
+  groupOffsets: Map<string, { x: number; y: number }>;
   selectedGroupId: string | null;
   hoveredGroupId: string | null;
   onStartGroupConnection: (group: NodeGroup, event: React.MouseEvent<HTMLElement>) => void;
@@ -4248,7 +4272,9 @@ type GroupOverlayProps = {
   onDeleteGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string, name: string | undefined) => void;
   onUpdateGroupBackgroundColor: (groupId: string, backgroundColor: string | undefined) => void;
-  onMoveGroup: (groupId: string, dx: number, dy: number) => void;
+  onGroupDragStart: (groupId: string) => void;
+  onGroupDrag: (groupId: string, dx: number, dy: number) => void;
+  onGroupDragEnd: (groupId: string, moved: boolean) => void;
   onResizeGroup: (groupId: string, bounds: { x: number; y: number; width: number; height: number }) => void;
   onExecuteGroup: (groupId: string, mode: GroupExecutionMode) => void;
   onLayoutGroup: (groupId: string, mode: GroupLayoutMode) => void;
@@ -4309,6 +4335,7 @@ function getGroupFrameColorStyle(
 
 function GroupOverlay({
   groups,
+  groupOffsets,
   selectedGroupId,
   hoveredGroupId,
   onStartGroupConnection,
@@ -4316,7 +4343,9 @@ function GroupOverlay({
   onDeleteGroup,
   onRenameGroup,
   onUpdateGroupBackgroundColor,
-  onMoveGroup,
+  onGroupDragStart,
+  onGroupDrag,
+  onGroupDragEnd,
   onResizeGroup,
   onExecuteGroup,
   onLayoutGroup,
@@ -4330,27 +4359,37 @@ function GroupOverlay({
 
   return (
     <>
-      {groups.map((group) => (
-        <GroupFrame
-          key={group.id}
-          group={group}
-          viewport={viewport}
-          selected={selectedGroupId === group.id}
-          hovered={hoveredGroupId === group.id}
-          onStartConnection={(event) => onStartGroupConnection(group, event)}
-          onSelect={() => onSelectGroup(group.id)}
-          onDelete={() => onDeleteGroup(group.id)}
-          onRename={(name) => onRenameGroup(group.id, name)}
-          onUpdateBackgroundColor={(backgroundColor) =>
-            onUpdateGroupBackgroundColor(group.id, backgroundColor)
-          }
-          onMove={(dx, dy) => onMoveGroup(group.id, dx, dy)}
-          onResize={(bounds) => onResizeGroup(group.id, bounds)}
-          onExecute={(mode) => onExecuteGroup(group.id, mode)}
-          onLayout={(mode) => onLayoutGroup(group.id, mode)}
-          onDownload={() => onDownloadGroup(group.id)}
-        />
-      ))}
+      {groups.map((group) => {
+        const offset = groupOffsets.get(group.id) ?? { x: 0, y: 0 };
+
+        return (
+          <GroupFrame
+            key={group.id}
+            group={{
+              ...group,
+              x: group.x + offset.x,
+              y: group.y + offset.y,
+            }}
+            viewport={viewport}
+            selected={selectedGroupId === group.id}
+            hovered={hoveredGroupId === group.id}
+            onStartConnection={(event) => onStartGroupConnection(group, event)}
+            onSelect={() => onSelectGroup(group.id)}
+            onDelete={() => onDeleteGroup(group.id)}
+            onRename={(name) => onRenameGroup(group.id, name)}
+            onUpdateBackgroundColor={(backgroundColor) =>
+              onUpdateGroupBackgroundColor(group.id, backgroundColor)
+            }
+            onDragStart={() => onGroupDragStart(group.id)}
+            onDrag={(dx, dy) => onGroupDrag(group.id, dx, dy)}
+            onDragEnd={(moved) => onGroupDragEnd(group.id, moved)}
+            onResize={(bounds) => onResizeGroup(group.id, bounds)}
+            onExecute={(mode) => onExecuteGroup(group.id, mode)}
+            onLayout={(mode) => onLayoutGroup(group.id, mode)}
+            onDownload={() => onDownloadGroup(group.id)}
+          />
+        );
+      })}
     </>
   );
 }
@@ -4365,7 +4404,9 @@ type GroupFrameProps = {
   onDelete: () => void;
   onRename: (name: string | undefined) => void;
   onUpdateBackgroundColor: (backgroundColor: string | undefined) => void;
-  onMove: (dx: number, dy: number) => void;
+  onDragStart: () => void;
+  onDrag: (dx: number, dy: number) => void;
+  onDragEnd: (moved: boolean) => void;
   onResize: (bounds: { x: number; y: number; width: number; height: number }) => void;
   onExecute: (mode: GroupExecutionMode) => void;
   onLayout: (mode: GroupLayoutMode) => void;
@@ -4394,13 +4435,15 @@ function GroupFrame({
   onDelete,
   onRename,
   onUpdateBackgroundColor,
-  onMove,
+  onDragStart,
+  onDrag,
+  onDragEnd,
   onResize,
   onExecute,
   onLayout,
   onDownload,
 }: GroupFrameProps) {
-  const dragRef = useRef<{ startX: number; startY: number } | null>(null);
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; moved: boolean } | null>(null);
   const [resizing, setResizing] = useState(false);
   const resizeRef = useRef<{
     handle: string;
@@ -4432,7 +4475,13 @@ function GroupFrame({
     event.stopPropagation();
     event.preventDefault();
     onSelect();
-    dragRef.current = { startX: event.clientX, startY: event.clientY };
+    onDragStart();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   };
 
@@ -4442,15 +4491,22 @@ function GroupFrame({
     event.preventDefault();
     const dx = (event.clientX - dragRef.current.startX) / viewport.zoom;
     const dy = (event.clientY - dragRef.current.startY) / viewport.zoom;
-    dragRef.current = { startX: event.clientX, startY: event.clientY };
-    onMove(dx, dy);
+    dragRef.current = {
+      pointerId: dragRef.current.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: dragRef.current.moved || dx !== 0 || dy !== 0,
+    };
+    onDrag(dx, dy);
   };
 
   const handlePointerUp = (event: React.PointerEvent) => {
     if (!dragRef.current) return;
     event.stopPropagation();
     event.preventDefault();
+    const moved = dragRef.current.moved;
     dragRef.current = null;
+    onDragEnd(moved);
     (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
   };
 
@@ -6322,6 +6378,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
+  const [groupDragOffsets, setGroupDragOffsets] = useState<Map<string, { x: number; y: number }>>(() => new Map());
   const [groupConnectionPreview, setGroupConnectionPreview] = useState<GroupConnectionPreview | null>(null);
   const [quickReferenceConnect, setQuickReferenceConnect] = useState<QuickReferenceConnectMode | null>(null);
   const draggingNodeIdRef = useRef<string | null>(null);
@@ -7528,6 +7585,91 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     draggingNodeIdRef.current = null;
   }, [updateNodePosition]);
 
+  const moveGroupFlowNodes = useCallback((groupId: string, dx: number, dy: number) => {
+    const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
+
+    if (!group) {
+      return;
+    }
+
+    const groupNodeIds = new Set(group.nodeIds);
+    setRfNodes((currentNodes) => {
+      const changes: NodeChange[] = [];
+
+      for (const node of currentNodes) {
+        if (!groupNodeIds.has(node.id)) {
+          continue;
+        }
+
+        const position = {
+          x: node.position.x + dx,
+          y: node.position.y + dy,
+        };
+
+        changes.push({
+          id: node.id,
+          type: 'position',
+          position,
+          positionAbsolute: position,
+          dragging: true,
+        });
+      }
+
+      return changes.length > 0 ? applyNodeChanges(changes, currentNodes) : currentNodes;
+    });
+  }, []);
+
+  const handleGroupDragStart = useCallback((groupId: string) => {
+    const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
+
+    draggingNodeIdRef.current = group?.nodeIds[0] ?? null;
+    setGroupDragOffsets((current) => {
+      if (current.has(groupId)) {
+        return current;
+      }
+
+      const next = new Map(current);
+      next.set(groupId, { x: 0, y: 0 });
+      return next;
+    });
+  }, []);
+
+  const handleGroupDrag = useCallback((groupId: string, dx: number, dy: number) => {
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+
+    setGroupDragOffsets((current) => {
+      const currentOffset = current.get(groupId) ?? { x: 0, y: 0 };
+      const next = new Map(current);
+      next.set(groupId, {
+        x: currentOffset.x + dx,
+        y: currentOffset.y + dy,
+      });
+      return next;
+    });
+    moveGroupFlowNodes(groupId, dx, dy);
+  }, [moveGroupFlowNodes]);
+
+  const handleGroupDragEnd = useCallback((groupId: string, moved: boolean) => {
+    const offset = groupDragOffsets.get(groupId);
+    setGroupDragOffsets((current) => {
+      if (!current.has(groupId)) {
+        return current;
+      }
+
+      const next = new Map(current);
+      next.delete(groupId);
+      return next;
+    });
+
+    if (moved && offset && (offset.x !== 0 || offset.y !== 0)) {
+      moveGroup(groupId, offset.x, offset.y);
+    }
+
+    draggingNodeIdRef.current = null;
+  }, [groupDragOffsets, moveGroup]);
+
   const handleSelectionFramePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || selectedNodeIdsRef.current.size <= 1) {
       return;
@@ -7655,6 +7797,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       selectionDragActiveRef.current = false;
       setPaneSelectionDragging(false);
       setSelectionInProgress(false);
+      handleGroupDragStart(group.id);
       selectGroup(group.id);
       return;
     }
@@ -7664,7 +7807,14 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       y: event.clientY,
     };
     setPaneSelectionDragging(false);
-  }, [project, quickReferenceConnect, selectGroup, stopQuickReferenceConnect, storeGroups]);
+  }, [
+    handleGroupDragStart,
+    project,
+    quickReferenceConnect,
+    selectGroup,
+    stopQuickReferenceConnect,
+    storeGroups,
+  ]);
 
   const handlePaneMouseMove = useCallback((event: React.MouseEvent) => {
     updateHoveredGroupFromPointer(event);
@@ -7686,7 +7836,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           lastY: event.clientY,
           moved: true,
         };
-        moveGroup(groupDrag.groupId, dx / zoom, dy / zoom);
+        handleGroupDrag(groupDrag.groupId, dx / zoom, dy / zoom);
       }
 
       setPaneSelectionDragging(false);
@@ -7706,13 +7856,15 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     if (dx > 3 || dy > 3) {
       setPaneSelectionDragging(true);
     }
-  }, [getViewport, moveGroup, updateHoveredGroupFromPointer]);
+  }, [getViewport, handleGroupDrag, updateHoveredGroupFromPointer]);
 
   const handlePaneMouseUp = useCallback((event?: React.MouseEvent) => {
     if (paneGroupDragRef.current) {
       event?.preventDefault();
       event?.stopPropagation();
+      const { groupId, moved } = paneGroupDragRef.current;
       paneGroupDragRef.current = null;
+      handleGroupDragEnd(groupId, moved);
       window.setTimeout(() => {
         skipNextPaneClickClearRef.current = false;
       }, 0);
@@ -7721,7 +7873,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     panePointerStartRef.current = null;
     setPaneSelectionDragging(false);
     setSelectionInProgress(false);
-  }, []);
+  }, [handleGroupDragEnd]);
 
   const handlePaneMouseLeave = useCallback((event: React.MouseEvent) => {
     setHoveredGroupId(null);
@@ -9286,6 +9438,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         />
         <GroupOverlay
           groups={storeGroups}
+          groupOffsets={groupDragOffsets}
           selectedGroupId={selectedGroupId}
           hoveredGroupId={hoveredGroupId}
           onStartGroupConnection={handleStartGroupConnection}
@@ -9293,7 +9446,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           onDeleteGroup={deleteGroup}
           onRenameGroup={renameGroup}
           onUpdateGroupBackgroundColor={updateGroupBackgroundColor}
-          onMoveGroup={moveGroup}
+          onGroupDragStart={handleGroupDragStart}
+          onGroupDrag={handleGroupDrag}
+          onGroupDragEnd={handleGroupDragEnd}
           onResizeGroup={handleResizeGroup}
           onExecuteGroup={handleExecuteGroup}
           onLayoutGroup={handleLayoutGroup}
