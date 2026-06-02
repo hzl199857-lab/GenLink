@@ -4708,7 +4708,9 @@ function GroupFrame({
     const moved = dragRef.current.moved;
     dragRef.current = null;
     onDragEnd(moved);
-    (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    if ((event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId)) {
+      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    }
   };
 
   const startResize = useCallback((handle: string, clientX: number, clientY: number) => {
@@ -6580,6 +6582,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   const [groupDragOffsets, setGroupDragOffsets] = useState<Map<string, { x: number; y: number }>>(() => new Map());
+  const groupDragActive = groupDragOffsets.size > 0;
   const [groupConnectionPreview, setGroupConnectionPreview] = useState<GroupConnectionPreview | null>(null);
   const [quickReferenceConnect, setQuickReferenceConnect] = useState<QuickReferenceConnectMode | null>(null);
   const draggingNodeIdRef = useRef<string | null>(null);
@@ -6785,6 +6788,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const selectionDragActiveRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const paneGroupDragRef = useRef<{ groupId: string; lastX: number; lastY: number; moved: boolean } | null>(null);
+  const activeGroupDragIdRef = useRef<string | null>(null);
   const suppressSelectionWhileGroupDraggingRef = useRef(false);
   const multiSelectionFrameDragRef = useRef<{
     pointerId: number;
@@ -6916,6 +6920,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clientX: number;
     clientY: number;
   }) => {
+    if (activeGroupDragIdRef.current) {
+      return;
+    }
+
     const target = event.target;
 
     if (target instanceof Element) {
@@ -7839,6 +7847,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const handleGroupDragStart = useCallback((groupId: string) => {
     const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
 
+    activeGroupDragIdRef.current = groupId;
     suppressSelectionWhileGroupDraggingRef.current = true;
     draggingNodeIdRef.current = group?.nodeIds[0] ?? null;
     setGroupDragOffsets((current) => {
@@ -7885,6 +7894,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       moveGroup(groupId, offset.x, offset.y);
     }
 
+    activeGroupDragIdRef.current = null;
     draggingNodeIdRef.current = null;
     window.setTimeout(() => {
       suppressSelectionWhileGroupDraggingRef.current = false;
@@ -8349,6 +8359,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     changes.forEach((change) => {
       if (change.type === 'position') {
+        if (activeGroupDragIdRef.current) {
+          return;
+        }
+
         if (change.position && change.dragging !== true) {
           updateNodePosition(change.id, change.position);
         }
@@ -8411,6 +8425,10 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     node: ReactFlowNode,
     draggedNodes: ReactFlowNode[],
   ) => {
+    if (activeGroupDragIdRef.current) {
+      return;
+    }
+
     const nodesToSync = draggedNodes.length > 0 ? draggedNodes : [node];
 
     for (const draggedNode of nodesToSync) {
@@ -9816,7 +9834,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           flowNodes={rfNodes}
           selectedNodeIds={selectedNodeIds}
           groups={storeGroups}
-          visible={!selectionInProgress && !paneSelectionDragging}
+          visible={!selectedGroupId && !groupDragActive && !selectionInProgress && !paneSelectionDragging}
           onGroup={handleGroup}
           onSelectionFramePointerDown={handleSelectionFramePointerDown}
           onSelectionFramePointerMove={handleSelectionFramePointerMove}
