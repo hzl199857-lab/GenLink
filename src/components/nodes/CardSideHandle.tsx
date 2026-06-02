@@ -6,6 +6,7 @@ import {
   type HandleType,
   useNodeId,
   useStoreApi,
+  useUpdateNodeInternals,
 } from 'reactflow';
 import { Plus } from 'lucide-react';
 
@@ -85,6 +86,7 @@ export function CardSideHandle({
   const handleDomId = useId();
   const nodeId = useNodeId();
   const store = useStoreApi();
+  const updateNodeInternals = useUpdateNodeInternals();
   const cleanupRef = useRef<(() => void) | null>(null);
   const [isConnectingFromPlus, setIsConnectingFromPlus] = useState(false);
   const [sidePlusState, setSidePlusState] = useState<SidePlusState>({
@@ -118,6 +120,27 @@ export function CardSideHandle({
   useEffect(() => () => {
     cleanupRef.current?.();
   }, []);
+
+  useEffect(() => {
+    if (!nodeId || disabled) {
+      return;
+    }
+
+    let secondFrameId: number | null = null;
+    const firstFrameId = window.requestAnimationFrame(() => {
+      updateNodeInternals(nodeId);
+      secondFrameId = window.requestAnimationFrame(() => {
+        updateNodeInternals(nodeId);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      if (secondFrameId !== null) {
+        window.cancelAnimationFrame(secondFrameId);
+      }
+    };
+  }, [disabled, handleLeft, handleTop, nodeId, updateNodeInternals]);
 
   useEffect(() => {
     if (!shouldMeasureCardBounds) {

@@ -25,12 +25,14 @@ import {
   Download,
   ListOrdered,
   Ungroup,
+  Bot,
 } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
   Background,
   Panel,
   useReactFlow,
+  useUpdateNodeInternals,
   useViewport,
   NodeChange,
   EdgeChange,
@@ -92,6 +94,12 @@ import type {
   VideoGenerationNodeData,
   VideoUpscaleNodeData,
 } from '@/types/canvas';
+import type {
+  AgentActionNodeRef,
+  AgentExecutionPlan,
+  AgentTaskAttachment,
+  CanvasAgentAction,
+} from '@/types/agent';
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
 import { TextNode } from '../nodes/TextNode';
@@ -122,6 +130,7 @@ import {
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasHeader } from './CanvasHeader';
+import { CanvasAgentPanel } from './CanvasAgentPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLibraryDialog';
@@ -131,6 +140,7 @@ import { downloadImageGenerationResult } from '@/lib/image-download';
 import { createVideoClipJob, pollVideoClipJob } from '@/lib/video/clip-client';
 import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
+import { validateCanvasAgentActions } from '@/lib/agent-actions';
 import {
   CreateProjectDialog,
   getProjectDirectoryLabel,
@@ -1180,6 +1190,31 @@ function getBoundsForRects(rects: MultiNodeSelectionBounds[]): MultiNodeSelectio
   };
 }
 
+function getBoundsForNodes(nodes: CanvasNode[], padding = 56): MultiNodeSelectionBounds | null {
+  const bounds = getBoundsForRects(nodes.map((node) => getEstimatedNodeBounds(node)));
+
+  if (!bounds) {
+    return null;
+  }
+
+  return {
+    x: bounds.x - padding,
+    y: bounds.y - padding,
+    width: bounds.width + padding * 2,
+    height: bounds.height + padding * 2,
+  };
+}
+
+function getAgentGroupName(plan: AgentExecutionPlan, generationCount: number): string {
+  const title = plan.title?.trim() || 'Agent 批量生成';
+
+  if (generationCount > 1 && !/批量|组/.test(title)) {
+    return `${title}批量生成`;
+  }
+
+  return title;
+}
+
 function getCanvasMiniMapBounds(rects: CanvasMiniMapRect[]): CanvasMiniMapBounds | null {
   if (!rects.length) {
     return null;
@@ -1630,6 +1665,172 @@ function createImageNodeFromMaterial(
     },
     position,
   );
+}
+
+function resolveAgentCreatedNodeId(
+  ref: AgentActionNodeRef,
+  createdNodeIds: Map<string, string>,
+): string | null {
+  if (ref.kind === 'existing') {
+    return ref.nodeId;
+  }
+
+  return createdNodeIds.get(ref.clientActionId) ?? null;
+}
+
+function createAgentSourceImageNodes(params: {
+  attachments: AgentTaskAttachment[];
+  startPosition: { x: number; y: number };
+}): { nodes: Array<Extract<CanvasNode, { type: 'uploaded_image' }>>; nodeIdsByAttachmentId: Record<string, string> } {
+  const nodes: Array<Extract<CanvasNode, { type: 'uploaded_image' }>> = [];
+  const nodeIdsByAttachmentId: Record<string, string> = {};
+
+  params.attachments.forEach((attachment, index) => {
+    if (attachment.sourceNodeId) {
+      nodeIdsByAttachmentId[attachment.id] = attachment.sourceNodeId;
+      return;
+    }
+
+    const nodeId = crypto.randomUUID();
+    const node: Extract<CanvasNode, { type: 'uploaded_image' }> = {
+      id: nodeId,
+      type: 'uploaded_image',
+      position: {
+        x: params.startPosition.x,
+        y: params.startPosition.y + index * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + 48),
+      },
+      data: {
+        title: attachment.name || `图片${index + 1}`,
+        imageUrl: attachment.imageUrl,
+        fileName: attachment.name,
+        width: attachment.width || 320,
+        height: attachment.height || 320,
+        sizeBytes: attachment.sizeBytes,
+      },
+    };
+
+    nodeIdsByAttachmentId[attachment.id] = nodeId;
+    nodes.push(node);
+  });
+
+  return { nodes, nodeIdsByAttachmentId };
+}
+
+function createAgentGenerationNodesAndEdges(params: {
+  actions: CanvasAgentAction[];
+  startPosition: { x: number; y: number };
+}): { nodes: CanvasNode[]; edges: CanvasEdge[]; focusNodeId: string | null; imageGenerationNodeIds: string[] } {
+  const textActionIds = new Set(
+    params.actions.flatMap((action) => (
+      action.type === 'create_text_node' ? [action.clientActionId] : []
+    )),
+  );
+  const generationActionIdsUsingTextInput = new Set<string>();
+
+  for (const action of params.actions) {
+    if (
+      action.type === 'connect_nodes' &&
+      action.sourceRef.kind === 'created' &&
+      action.targetRef.kind === 'created' &&
+      textActionIds.has(action.sourceRef.clientActionId)
+    ) {
+      generationActionIdsUsingTextInput.add(action.targetRef.clientActionId);
+    }
+  }
+  const createdNodeIds = new Map<string, string>();
+  const nodes: CanvasNode[] = [];
+  const edges: CanvasEdge[] = [];
+  let generationIndex = 0;
+  let textIndex = 0;
+  let focusNodeId: string | null = null;
+  const imageGenerationNodeIds: string[] = [];
+
+  for (const action of params.actions) {
+    if (action.type === 'create_text_node') {
+      const nodeId = crypto.randomUUID();
+      const position = action.position ?? {
+        x: params.startPosition.x - 680,
+        y: params.startPosition.y + textIndex * 440,
+      };
+      const node: Extract<CanvasNode, { type: 'text' }> = {
+        id: nodeId,
+        type: 'text',
+        position,
+        data: {
+          title: action.title || 'Agent Prompt',
+          text: action.text,
+          status: 'idle',
+        },
+      };
+
+      textIndex += 1;
+      createdNodeIds.set(action.clientActionId, nodeId);
+      nodes.push(node);
+      continue;
+    }
+
+    if (action.type === 'create_image_generation_node') {
+      const nodeId = crypto.randomUUID();
+      const position = action.position ?? {
+        x: params.startPosition.x,
+        y: params.startPosition.y + generationIndex * 440,
+      };
+      const provider = action.options?.provider;
+      const node: Extract<CanvasNode, { type: 'image_generation' }> = {
+        id: nodeId,
+        type: 'image_generation',
+        position,
+        data: {
+          title: 'Agent Image',
+          prompt: generationActionIdsUsingTextInput.has(action.clientActionId) ? '' : action.prompt,
+          provider:
+            provider === 'vibe' ||
+            provider === 'fucheers' ||
+            provider === 'comfly' ||
+            provider === 'zhenzhen' ||
+            provider === 'runninghub' ||
+            provider === 'grsai'
+              ? provider
+              : undefined,
+          model: action.options?.model,
+          runningHubChannel: action.options?.runningHubChannel,
+          aspectRatio: action.options?.aspectRatio ?? 'auto',
+          quality: action.options?.quality ?? '1K',
+          detail: 'medium',
+          outputFormat: 'png',
+          moderation: 'auto',
+          parallelCount: 1,
+          status: 'idle',
+        },
+      };
+
+      generationIndex += 1;
+      createdNodeIds.set(action.clientActionId, nodeId);
+      focusNodeId = nodeId;
+      imageGenerationNodeIds.push(nodeId);
+      nodes.push(node);
+      continue;
+    }
+
+    if (action.type === 'connect_nodes') {
+      const source = resolveAgentCreatedNodeId(action.sourceRef, createdNodeIds);
+      const target = resolveAgentCreatedNodeId(action.targetRef, createdNodeIds);
+
+      if (!source || !target) {
+        continue;
+      }
+
+      edges.push({
+        id: crypto.randomUUID(),
+        source,
+        target,
+        sourceHandle: action.sourceHandle,
+        targetHandle: action.targetHandle,
+      });
+    }
+  }
+
+  return { nodes, edges, focusNodeId, imageGenerationNodeIds };
 }
 
 function createMaterialSourceFromImageGenerationData(
@@ -6399,6 +6600,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [materialLibraryAnchor, setMaterialLibraryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [pendingMaterialSource, setPendingMaterialSource] = useState<PendingMaterialSource | null>(null);
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
@@ -6583,6 +6785,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const selectionDragActiveRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const paneGroupDragRef = useRef<{ groupId: string; lastX: number; lastY: number; moved: boolean } | null>(null);
+  const suppressSelectionWhileGroupDraggingRef = useRef(false);
   const multiSelectionFrameDragRef = useRef<{
     pointerId: number;
     lastX: number;
@@ -6594,6 +6797,24 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [selectionInProgress, setSelectionInProgress] = useState(false);
 
   const { fitView, getViewport, project, setViewport } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  const refreshNodeInternalsAfterRender = useCallback((nodeIds: string[]) => {
+    const uniqueNodeIds = Array.from(new Set(nodeIds.filter(Boolean)));
+
+    if (uniqueNodeIds.length === 0) {
+      return;
+    }
+
+    const firstFrame = window.requestAnimationFrame(() => {
+      updateNodeInternals(uniqueNodeIds);
+      window.requestAnimationFrame(() => {
+        updateNodeInternals(uniqueNodeIds);
+      });
+    });
+
+    return () => window.cancelAnimationFrame(firstFrame);
+  }, [updateNodeInternals]);
 
   const showProjectMessage = useCallback((message: string) => {
     setSaveMessage(message);
@@ -7472,7 +7693,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [focusSingleNodeViewport, selectSingleNode]);
 
   const handleSelectionChange = useCallback(({ nodes }: { nodes: ReactFlowNode[] }) => {
-    if (paneGroupDragRef.current) {
+    if (paneGroupDragRef.current || suppressSelectionWhileGroupDraggingRef.current) {
       return;
     }
 
@@ -7494,7 +7715,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [clearEdgeSelection]);
 
   const handleSelectionStart = useCallback(() => {
-    if (paneGroupDragRef.current) {
+    if (paneGroupDragRef.current || suppressSelectionWhileGroupDraggingRef.current) {
       selectionDragActiveRef.current = false;
       setSelectionInProgress(false);
       setPaneSelectionDragging(false);
@@ -7513,7 +7734,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setPaneSelectionDragging(false);
     setSelectionInProgress(false);
 
-    if (paneGroupDragRef.current) {
+    if (paneGroupDragRef.current || suppressSelectionWhileGroupDraggingRef.current) {
       return;
     }
 
@@ -7569,21 +7790,17 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return;
     }
 
-    setRfNodes((currentNodes) => {
-      for (const node of currentNodes) {
-        if (!selectedIds.has(node.id)) {
-          continue;
-        }
-
-        updateNodePosition(node.id, node.position);
-        syncNodeGroupMembership(node.id, node.position);
+    for (const node of rfNodes) {
+      if (!selectedIds.has(node.id)) {
+        continue;
       }
 
-      return currentNodes;
-    });
+      updateNodePosition(node.id, node.position);
+      syncNodeGroupMembership(node.id, node.position);
+    }
 
     draggingNodeIdRef.current = null;
-  }, [updateNodePosition]);
+  }, [rfNodes, updateNodePosition]);
 
   const moveGroupFlowNodes = useCallback((groupId: string, dx: number, dy: number) => {
     const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
@@ -7622,6 +7839,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const handleGroupDragStart = useCallback((groupId: string) => {
     const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
 
+    suppressSelectionWhileGroupDraggingRef.current = true;
     draggingNodeIdRef.current = group?.nodeIds[0] ?? null;
     setGroupDragOffsets((current) => {
       if (current.has(groupId)) {
@@ -7668,6 +7886,9 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     draggingNodeIdRef.current = null;
+    window.setTimeout(() => {
+      suppressSelectionWhileGroupDraggingRef.current = false;
+    }, 80);
   }, [groupDragOffsets, moveGroup]);
 
   const handleSelectionFramePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -8617,6 +8838,172 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     clearConnectionMenu();
   }, [addNodeAtCenter, clearConnectionMenu, focusCreatedNode, project]);
 
+  const handleCreateAgentSourceNodes = useCallback((attachments: AgentTaskAttachment[]) => {
+    const result = createAgentSourceImageNodes({
+      attachments,
+      startPosition: project({
+        x: window.innerWidth / 2 - UPLOADED_IMAGE_MAX_CARD_WIDTH / 2,
+        y: window.innerHeight / 2 - 220,
+      }),
+    });
+
+    if (result.nodes.length > 0) {
+      addNodes(result.nodes);
+      refreshNodeInternalsAfterRender(result.nodes.map((node) => node.id));
+      const firstNodeId = result.nodes[0]?.id;
+
+      if (firstNodeId) {
+        setSelectedNodeIds(new Set([firstNodeId]));
+        setActiveNodeId(firstNodeId);
+      }
+
+      clearEdgeSelection();
+      setAddMenu(null);
+      clearConnectionMenu();
+      showProjectMessage('Agent 已创建图像节点，正在准备执行计划');
+    }
+
+    return result.nodeIdsByAttachmentId;
+  }, [
+    addNodes,
+    clearConnectionMenu,
+    clearEdgeSelection,
+    project,
+    refreshNodeInternalsAfterRender,
+    showProjectMessage,
+  ]);
+
+  const handleConfirmAgentPlan = useCallback((payload: {
+    actions: CanvasAgentAction[];
+    attachments: AgentTaskAttachment[];
+    plan: AgentExecutionPlan;
+  }) => {
+    const validation = validateCanvasAgentActions(payload.actions, payload.attachments);
+
+    if (!validation.ok) {
+      showProjectMessage(validation.error);
+      return { ok: false };
+    }
+
+    const startPosition = project({
+      x: window.innerWidth / 2 + UPLOADED_IMAGE_MAX_CARD_WIDTH / 2 + 180,
+      y: window.innerHeight / 2 - 180,
+    });
+    const result = createAgentGenerationNodesAndEdges({
+      actions: payload.actions,
+      startPosition,
+    });
+
+    if (result.nodes.length === 0) {
+      showProjectMessage('Agent 没有可执行的画布动作');
+      return { ok: false };
+    }
+
+    addNodes(result.nodes);
+
+    for (const edge of result.edges) {
+      addEdgeStore(edge);
+    }
+
+    refreshNodeInternalsAfterRender(result.nodes.map((node) => node.id));
+
+    const focusNodeId = result.focusNodeId ?? result.nodes[result.nodes.length - 1]?.id ?? null;
+    const imageGenerationNodeIds = result.imageGenerationNodeIds;
+    const shouldCreateGroup = imageGenerationNodeIds.length > 1;
+    const sourceNodeIds = payload.attachments.flatMap((attachment) =>
+      attachment.sourceNodeId ? [attachment.sourceNodeId] : [],
+    );
+    const existingSourceNodes = sourceNodeIds
+      .map((nodeId) => useCanvasStore.getState().nodes.find((node) => node.id === nodeId))
+      .filter((node): node is CanvasNode => Boolean(node));
+    const agentGroupNodes = [...existingSourceNodes, ...result.nodes];
+    const agentGroupNodeIds = Array.from(new Set(agentGroupNodes.map((node) => node.id)));
+    const agentGroupBounds = shouldCreateGroup ? getBoundsForNodes(agentGroupNodes) : null;
+    const agentGroup = agentGroupBounds
+      ? createGroup(agentGroupNodeIds, agentGroupBounds)
+      : null;
+    const agentGroupName = agentGroup
+      ? getAgentGroupName(payload.plan, imageGenerationNodeIds.length)
+      : undefined;
+
+    if (agentGroup && agentGroupName) {
+      renameGroup(agentGroup.id, agentGroupName);
+    }
+
+    if (agentGroup) {
+      setSelectedNodeIds(new Set());
+      setActiveNodeId(null);
+      setSelectedGroupId(agentGroup.id);
+    } else if (focusNodeId) {
+      setSelectedNodeIds(new Set([focusNodeId]));
+      setActiveNodeId(focusNodeId);
+    }
+
+    clearEdgeSelection();
+    setAddMenu(null);
+    clearConnectionMenu();
+    showProjectMessage('Agent 已创建生成节点，请确认后触发生成');
+    return {
+      ok: true,
+      imageGenerationNodeId: focusNodeId ?? undefined,
+      imageGenerationNodeIds,
+      groupId: agentGroup?.id,
+      groupName: agentGroupName,
+    };
+  }, [
+    addEdgeStore,
+    addNodes,
+    clearConnectionMenu,
+    clearEdgeSelection,
+    createGroup,
+    project,
+    refreshNodeInternalsAfterRender,
+    renameGroup,
+    showProjectMessage,
+  ]);
+
+  const handleConfirmAgentGeneration = useCallback((payload: {
+    nodeId?: string;
+    nodeIds?: string[];
+    groupId?: string;
+  }) => {
+    const state = useCanvasStore.getState();
+    const group = payload.groupId
+      ? state.groups.find((candidate) => candidate.id === payload.groupId)
+      : null;
+    const nodeIds = group
+      ? group.nodeIds
+      : payload.nodeIds?.length
+        ? payload.nodeIds
+        : payload.nodeId
+          ? [payload.nodeId]
+          : [];
+    const imageGenerationNodeIds = nodeIds.filter((nodeId) =>
+      state.nodes.some((candidate) => candidate.id === nodeId && candidate.type === 'image_generation'),
+    );
+
+    if (imageGenerationNodeIds.length === 0) {
+      showProjectMessage('找不到需要生成的图片生成节点');
+      return false;
+    }
+
+    void Promise.allSettled(
+      imageGenerationNodeIds.map((nodeId) => generateImageFromImageGenerationNode(nodeId)),
+    ).then((results) => {
+      const failedCount = results.filter((result) => result.status === 'rejected').length;
+
+      if (failedCount > 0) {
+        showProjectMessage(`${failedCount} 个图片生成任务失败`);
+      }
+    });
+    showProjectMessage(
+      imageGenerationNodeIds.length > 1
+        ? `已并发触发 ${imageGenerationNodeIds.length} 个图片生成任务`
+        : '已触发图片生成',
+    );
+    return true;
+  }, [generateImageFromImageGenerationNode, showProjectMessage]);
+
   const handleAddMenuSelect = useCallback((action: AddNodeMenuAction) => {
     if (closeAddMenuTimeoutRef.current) {
       window.clearTimeout(closeAddMenuTimeoutRef.current);
@@ -9505,6 +9892,29 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onSaveProject={() => void handleSaveProject()}
         materialLibraryOpen={materialLibraryAnchor !== null}
         historyOpen={historyAnchor !== null}
+      />
+      {!agentPanelOpen ? (
+        <button
+          type="button"
+          aria-label="打开 Canvas Agent"
+          className="fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full border border-white/16 bg-[#f4f7fb] text-[#11141b] shadow-[0_18px_42px_rgba(0,0,0,0.35)] transition hover:scale-105 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+          onClick={() => setAgentPanelOpen(true)}
+        >
+          <Bot size={21} strokeWidth={2.2} />
+        </button>
+      ) : null}
+      <CanvasAgentPanel
+        open={agentPanelOpen}
+        projectId={currentProject?.id}
+        projectName={projectName}
+        nodeCount={storeNodes.length}
+        edgeCount={storeEdges.length}
+        groupCount={storeGroups.length}
+        nodes={storeNodes}
+        onClose={() => setAgentPanelOpen(false)}
+        onCreateSourceNodes={handleCreateAgentSourceNodes}
+        onConfirmPlan={handleConfirmAgentPlan}
+        onConfirmGeneration={handleConfirmAgentGeneration}
       />
       <MaterialLibraryPanel
         open={materialLibraryAnchor !== null}

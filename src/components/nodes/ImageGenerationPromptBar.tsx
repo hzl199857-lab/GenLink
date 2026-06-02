@@ -18,103 +18,33 @@ import {
   readStoredApiKey,
   type ApiProvider,
 } from '@/store/canvas-store';
+import {
+  API_PROVIDERS,
+  FIXED_IMAGE_FORMAT_MODEL_IDS,
+  getAspectRatioLayoutForImageModel,
+  getImageModelLabel,
+  getRunningHubChannelLabel,
+  IMAGE_DETAIL_OPTIONS,
+  IMAGE_MODEL_OPTIONS_BY_PROVIDER,
+  IMAGE_MODELS,
+  IMAGE_MODERATION_OPTIONS,
+  IMAGE_OUTPUT_FORMAT_OPTIONS,
+  IMAGE_SIZE_OPTIONS,
+  isNanoBananaImageModel,
+  RUNNING_HUB_CHANNEL_MODEL_IDS,
+  RUNNING_HUB_CHANNEL_OPTIONS,
+  type RunningHubChannel,
+} from '@/lib/image-generation-options';
 
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
-type ImageModelOption = {
-  id: string;
-  label: string;
-};
 type ImagePromptPreset = {
   id: string;
   title: string;
   prompt: string;
   runOptions?: ImageGenerationRunOptions;
 };
-const IMAGE_MODELS = [
-  { id: 'gpt-image-2', label: 'gpt-image-2' },
-  { id: 'nano-banana-2', label: 'Nano banana pro' },
-] as const satisfies readonly ImageModelOption[];
-const RUNNING_HUB_IMAGE_MODELS = [
-  { id: 'gpt-image-2', label: 'gpt-image-2' },
-  { id: 'nano-banana-pro', label: 'Nano banana pro' },
-  { id: 'nano-banana-2', label: 'Nano banana 2' },
-] as const satisfies readonly ImageModelOption[];
-const GRSAI_IMAGE_MODELS = [
-  { id: 'gpt-image-2-vip', label: 'gpt-image-2-vip' },
-  { id: 'nano-banana-pro', label: 'Nano banana pro' },
-] as const satisfies readonly ImageModelOption[];
-const RUNNING_HUB_CHANNEL_MODEL_IDS: ReadonlySet<string> = new Set(
-  RUNNING_HUB_IMAGE_MODELS.map((model) => model.id),
-);
-const RUNNING_HUB_NANO_MODEL_IDS: ReadonlySet<string> = new Set([
-  'nano-banana-pro',
-  'nano-banana-2',
-]);
-const FIXED_IMAGE_FORMAT_MODEL_IDS: ReadonlySet<string> = new Set([
-  'gpt-image-2',
-]);
-const RUNNING_HUB_CHANNEL_OPTIONS = [
-  { id: 'official', label: '官方稳定版' },
-  { id: 'low-cost', label: '低价渠道版' },
-] as const;
-type RunningHubChannel = typeof RUNNING_HUB_CHANNEL_OPTIONS[number]['id'];
-const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen', 'runninghub', 'grsai'];
-const IMAGE_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly ImageModelOption[]> = {
-  vibe: IMAGE_MODELS,
-  fucheers: IMAGE_MODELS,
-  comfly: IMAGE_MODELS,
-  zhenzhen: IMAGE_MODELS,
-  runninghub: RUNNING_HUB_IMAGE_MODELS,
-  grsai: GRSAI_IMAGE_MODELS,
-};
 const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
-const IMAGE_SIZE_OPTIONS = ['1K', '2K', '4K'] as const;
-const IMAGE_OUTPUT_FORMAT_OPTIONS = [
-  { value: 'png', label: 'PNG' },
-  { value: 'jpeg', label: 'JPEG' },
-  { value: 'webp', label: 'WebP' },
-] as const;
-const IMAGE_MODERATION_OPTIONS = [
-  { value: 'auto', label: '自动' },
-  { value: 'low', label: '低' },
-] as const;
-const IMAGE_DETAIL_OPTIONS = [
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-] as const;
-const IMAGE_ASPECT_RATIO_LAYOUT = [
-  { value: 'auto', label: '自适应', className: 'col-start-1 row-start-1 row-span-2 h-[109px]' },
-  { value: '1:1', className: 'col-start-2 row-start-1 h-[54px]' },
-  { value: '4:3', className: 'col-start-3 row-start-1 h-[54px]' },
-  { value: '3:4', className: 'col-start-4 row-start-1 h-[54px]' },
-  { value: '5:4', className: 'col-start-5 row-start-1 h-[54px]' },
-  { value: '4:5', className: 'col-start-2 row-start-2 h-[54px]' },
-  { value: '3:2', className: 'col-start-3 row-start-2 h-[54px]' },
-  { value: '2:3', className: 'col-start-4 row-start-2 h-[54px]' },
-  { value: '16:9', className: 'col-start-5 row-start-2 h-[54px]' },
-  { value: '9:16', className: 'col-start-2 row-start-3 h-[54px]' },
-  { value: '2:1', className: 'col-start-3 row-start-3 h-[54px]' },
-  { value: '21:9', className: 'col-start-4 row-start-3 h-[54px]' },
-  { value: '9:21', className: 'col-start-5 row-start-3 h-[54px]' },
-] as const;
-const GEMINI_IMAGE_ASPECT_RATIO_LAYOUT = [
-  { value: '1:1', className: 'col-start-1 row-start-1 h-[54px]' },
-  { value: '1:4', className: 'col-start-2 row-start-1 h-[54px]' },
-  { value: '1:8', className: 'col-start-3 row-start-1 h-[54px]' },
-  { value: '2:3', className: 'col-start-4 row-start-1 h-[54px]' },
-  { value: '3:2', className: 'col-start-5 row-start-1 h-[54px]' },
-  { value: '3:4', className: 'col-start-1 row-start-2 h-[54px]' },
-  { value: '4:1', className: 'col-start-2 row-start-2 h-[54px]' },
-  { value: '4:3', className: 'col-start-3 row-start-2 h-[54px]' },
-  { value: '4:5', className: 'col-start-4 row-start-2 h-[54px]' },
-  { value: '5:4', className: 'col-start-5 row-start-2 h-[54px]' },
-  { value: '8:1', className: 'col-start-1 row-start-3 h-[54px]' },
-  { value: '9:16', className: 'col-start-2 row-start-3 h-[54px]' },
-  { value: '16:9', className: 'col-start-3 row-start-3 h-[54px]' },
-  { value: '21:9', className: 'col-start-4 row-start-3 h-[54px]' },
-] as const;
 const IMAGE_PROMPT_PRESETS = [
   {
     id: 'multi-camera-grid',
@@ -453,20 +383,6 @@ function getRatioShapeClass(ratio: string) {
   }
 }
 
-function getImageModelLabel(model: string): string {
-  return (
-    GRSAI_IMAGE_MODELS.find((option) => option.id === model)?.label ??
-    RUNNING_HUB_IMAGE_MODELS.find((option) => option.id === model)?.label ??
-    IMAGE_MODELS.find((option) => option.id === model)?.label ??
-    model
-  );
-}
-
-function getRunningHubChannelLabel(channel?: RunningHubChannel): string {
-  const resolvedChannel = channel === 'low-cost' ? 'low-cost' : 'official';
-  return RUNNING_HUB_CHANNEL_OPTIONS.find((option) => option.id === resolvedChannel)?.label ?? '官方稳定版';
-}
-
 function RatioIcon({
   ratio,
   active = false,
@@ -588,12 +504,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   if (!visible) return null;
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
-  const isNanoBananaModel =
-    provider === 'runninghub'
-      ? RUNNING_HUB_NANO_MODEL_IDS.has(model)
-      : provider === 'grsai'
-        ? model === 'nano-banana-pro'
-      : (model?.startsWith('nano-banana') ?? false);
+  const isNanoBananaModel = isNanoBananaImageModel(provider, model);
   const activeRunningHubChannel = runningHubChannel === 'low-cost' ? 'low-cost' : 'official';
   const modelLabel =
     provider === 'runninghub' && RUNNING_HUB_CHANNEL_MODEL_IDS.has(model)
@@ -605,11 +516,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     activeModelForChannel !== null &&
     RUNNING_HUB_CHANNEL_MODEL_IDS.has(activeModelForChannel);
   const modelAspectRatio = isNanoBananaModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
-  const aspectRatioLayout = isNanoBananaModel
-    ? provider === 'grsai'
-      ? IMAGE_ASPECT_RATIO_LAYOUT.filter((item) => item.value !== 'auto' && item.value !== '2:1' && item.value !== '9:21')
-      : GEMINI_IMAGE_ASPECT_RATIO_LAYOUT
-    : IMAGE_ASPECT_RATIO_LAYOUT;
+  const aspectRatioLayout = getAspectRatioLayoutForImageModel(provider, model);
   const settingsLabel = `${modelAspectRatio} / ${quality}`;
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
   const showFormatMenu = !isNanoBananaModel && !FIXED_IMAGE_FORMAT_MODEL_IDS.has(model);

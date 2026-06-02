@@ -244,7 +244,7 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   comfly: "Comfly",
   runninghub: "RunningHub",
   grsai: "Grsai",
-  zhenzhen: "鐪熺湡 AI 宸ュ潑",
+  zhenzhen: "贞贞 AI 工坊",
 };
 
 export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
