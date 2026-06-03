@@ -9,6 +9,7 @@ type ConcreteVariant = {
   scene: string;
   clothing: string;
   action: string;
+  prop: string;
   composition: string;
   palette: string;
 };
@@ -18,7 +19,8 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     city: "东京",
     scene: "东京夜晚城市街头，霓虹招牌、玻璃橱窗、过街人群与车辆灯光自然虚化",
     clothing: "白色短款夹克、浅色衬衫和米色半身裙",
-    action: "侧身步行，手拿一杯咖啡，动作轻松自然",
+    action: "侧身步行，动作轻松自然",
+    prop: "手拿一杯咖啡",
     composition: "半身到七分身街拍构图，人物位于画面三分线附近",
     palette: "冷暖霓虹交错，肤色自然干净",
   },
@@ -27,6 +29,7 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     scene: "纽约雨后街角，出租车灯光、湿润柏油路、街边店铺与远处高楼形成层次",
     clothing: "黑色皮夹克、白色内搭、深色直筒裤和短靴",
     action: "回头看向镜头，一只手整理头发，姿态自信从容",
+    prop: "另一只手拿深色雨伞",
     composition: "低机位轻微仰拍，人物从街角人流中突出",
     palette: "雨夜反光与暖色橱窗形成电影感对比",
   },
@@ -35,6 +38,7 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     scene: "巴黎清晨街头，石板路、街边咖啡馆、浅色建筑立面与柔和晨光",
     clothing: "米色风衣、针织上衣、浅色长裙和细跟鞋",
     action: "抬手轻扶帽檐并看向远处，动作优雅安静",
+    prop: "手臂自然挽着小号皮包",
     composition: "中景人像构图，背景建筑线条引导视线",
     palette: "低饱和暖调，清晨光线柔和细腻",
   },
@@ -43,6 +47,7 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     scene: "上海梧桐树街区，老洋房立面、街边栏杆、斑驳树影和城市生活细节",
     clothing: "蓝色针织衫、白色阔腿裤、银色耳饰和小号手提包",
     action: "倚靠在人行道栏杆旁，微微转身看向侧前方，神态自然",
+    prop: "手边放着一本打开的杂志",
     composition: "竖幅街头肖像构图，前景树影与背景街景形成纵深",
     palette: "自然日光与清爽蓝白色彩关系",
   },
@@ -51,6 +56,7 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     scene: "伦敦黄昏街头，红砖建筑、街灯、双层巴士远景和轻微薄雾",
     clothing: "灰色西装外套、酒红色针织内搭、黑色半裙和乐福鞋",
     action: "站在路边抬手招车，身体微微前倾，表情松弛",
+    prop: "手拿小号黑色手包",
     composition: "长焦压缩街景层次，人物清晰突出",
     palette: "黄昏暖光与灰红城市色调",
   },
@@ -58,7 +64,8 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     city: "首尔",
     scene: "首尔潮流商业街，韩文店招、浅色墙面、街拍人群和干净橱窗",
     clothing: "浅灰连帽卫衣、短款外套、百褶裙和运动鞋",
-    action: "边走边转身微笑，手里拿着手机，动作有活力",
+    action: "边走边转身微笑，动作有活力",
+    prop: "手里拿着手机",
     composition: "动态抓拍构图，背景轻微运动虚化",
     palette: "清透日光，年轻明快的城市色彩",
   },
@@ -67,6 +74,7 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     scene: "米兰时装街区，石质建筑、精品店橱窗、街边长椅和高级商业氛围",
     clothing: "黑白拼色套装、细腰带、墨镜和小牛皮手袋",
     action: "站在橱窗前轻抬下巴，手扶墨镜，姿态利落",
+    prop: "另一只手拿小牛皮手袋",
     composition: "时尚杂志式全身构图，留出干净背景空间",
     palette: "高对比黑白与自然肤色",
   },
@@ -75,6 +83,7 @@ const PORTRAIT_VARIANTS: ConcreteVariant[] = [
     scene: "洛杉矶傍晚街区，棕榈树、低矮建筑、金色夕阳和远处车流",
     clothing: "浅色牛仔外套、白色背心、卡其长裤和帆布鞋",
     action: "自然走过斑马线，头发被微风带起，表情放松",
+    prop: "单肩背着帆布托特包",
     composition: "逆光街拍构图，人物边缘有柔和轮廓光",
     palette: "金色夕阳与清爽浅色穿搭",
   },
@@ -169,11 +178,8 @@ function createPortraitPrompt(baseRequest: string, index: number, hasReferenceIm
   return [
     identityRule,
     `具体方案 ${index + 1}：${baseRequest}。`,
-    `服装：${variant.clothing}。`,
-    `动作：${variant.action}。`,
-    `城市与背景：${variant.city}，${variant.scene}。`,
-    `构图：${variant.composition}。`,
-    `色彩与光线：${variant.palette}。`,
+    `人物穿着${variant.clothing}，在${variant.city}街头${variant.action}，${variant.prop}。`,
+    `背景呈现${variant.scene}，${variant.composition}，${variant.palette}。`,
     "保持用户要求的摄影机、镜头、焦段、光圈、风格和核心约束；如果用户指定了镜头参数，必须完整保留。",
     "高质量商业摄影质感，浅景深，真实胶片颗粒，高动态范围，肤色自然细腻，光影层次丰富。",
     "避免文字、水印、畸变、低清晰度、重复构图、脸部变形和明显修图痕迹。",
@@ -185,10 +191,7 @@ function createProductPrompt(baseRequest: string, index: number): string {
 
   return [
     `具体方案 ${index + 1}：${baseRequest}。`,
-    `配色：${variant.color}。`,
-    `角度：${variant.angle}。`,
-    `场景：${variant.scene}。`,
-    `细节：${variant.detail}。`,
+    `采用${variant.color}，以${variant.angle}呈现，放在${variant.scene}中，${variant.detail}。`,
     "保持用户指定的产品类型、卖点、材质、功能和品牌调性，主体清晰完整。",
     "高质量商业产品摄影，构图干净，光影自然，边缘锐利，质感真实。",
     "避免文字、水印、畸变、低清晰度、主体残缺和重复构图。",

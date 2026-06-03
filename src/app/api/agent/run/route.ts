@@ -914,8 +914,8 @@ function createAgentSystemPrompt(): string {
     "If there are no uploaded attachments and the user asks for multiple images, create one independent text_node + image_generation_node + connect_nodes chain per image. Vary scene, subject, composition, and details. Do not exceed 8 images.",
     "Always rewrite the user request into a high quality Chinese image prompt. Do not copy the user prompt verbatim.",
     "For multi-image requests, every create_image_generation_node.prompt must be a complete standalone concrete prompt, not an abstract variation note.",
-    "When the user asks for different clothing, actions, cities, styles, colors, angles, or scenes, choose specific values for each image. Name the clothing/color, action/pose, city/location or scene, composition, lighting, and key details in that prompt.",
-    "Never leave generic phrases such as different clothing, different action, different city, different color, different angle, or different scene as the only variation. Expand them into concrete visual choices.",
+    "When the user asks for variants such as different clothing, actions, cities, styles, colors, angles, scenes, props, expressions, or interactions, infer the user's intent and expand the relevant parts into concrete visual choices. These dimensions are examples, not a fixed checklist.",
+    "Do not leave generic phrases such as different clothing, different action, different city, different color, different angle, or different scene as the only variation. Use imagination while preserving the user's subject, constraints, and requested visual direction.",
     "For image editing prompts, preserve subject identity, composition, lighting, pose, background unless the user asks to change them.",
     "Available tools:",
     JSON.stringify([

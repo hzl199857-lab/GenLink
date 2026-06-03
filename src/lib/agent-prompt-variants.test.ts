@@ -15,6 +15,7 @@ test("creates concrete prompts for each requested image variant", () => {
   const cities = ["东京", "纽约", "巴黎", "上海"];
   const clothing = ["白色短款夹克", "黑色皮夹克", "米色风衣", "蓝色针织衫"];
   const actions = ["步行", "回头", "抬手", "倚靠"];
+  const interactionDetails = ["咖啡", "雨伞", "皮包", "杂志"];
 
   prompts.forEach((prompt, index) => {
     assert.match(prompt, /参考图人物身份保持一致|主体身份保持一致/);
@@ -25,6 +26,7 @@ test("creates concrete prompts for each requested image variant", () => {
     assert.match(prompt, new RegExp(cities[index]));
     assert.match(prompt, new RegExp(clothing[index]));
     assert.match(prompt, new RegExp(actions[index]));
+    assert.match(prompt, new RegExp(interactionDetails[index]));
     assert.doesNotMatch(prompt, /不同衣服、不同动作，背景是不同城市/);
   });
 });
