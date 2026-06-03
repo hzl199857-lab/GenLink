@@ -1681,12 +1681,13 @@ function resolveAgentCreatedNodeId(
 function createAgentSourceImageNodes(params: {
   attachments: AgentTaskAttachment[];
   startPosition: { x: number; y: number };
+  existingNodeIds?: Set<string>;
 }): { nodes: Array<Extract<CanvasNode, { type: 'uploaded_image' }>>; nodeIdsByAttachmentId: Record<string, string> } {
   const nodes: Array<Extract<CanvasNode, { type: 'uploaded_image' }>> = [];
   const nodeIdsByAttachmentId: Record<string, string> = {};
 
   params.attachments.forEach((attachment, index) => {
-    if (attachment.sourceNodeId) {
+    if (attachment.sourceNodeId && params.existingNodeIds?.has(attachment.sourceNodeId)) {
       nodeIdsByAttachmentId[attachment.id] = attachment.sourceNodeId;
       return;
     }
@@ -8857,12 +8858,14 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   }, [addNodeAtCenter, clearConnectionMenu, focusCreatedNode, project]);
 
   const handleCreateAgentSourceNodes = useCallback((attachments: AgentTaskAttachment[]) => {
+    const existingNodeIds = new Set(useCanvasStore.getState().nodes.map((node) => node.id));
     const result = createAgentSourceImageNodes({
       attachments,
       startPosition: project({
         x: window.innerWidth / 2 - UPLOADED_IMAGE_MAX_CARD_WIDTH / 2,
         y: window.innerHeight / 2 - 220,
       }),
+      existingNodeIds,
     });
 
     if (result.nodes.length > 0) {
@@ -8903,10 +8906,24 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       return { ok: false };
     }
 
-    const startPosition = project({
-      x: window.innerWidth / 2 + UPLOADED_IMAGE_MAX_CARD_WIDTH / 2 + 180,
-      y: window.innerHeight / 2 - 180,
-    });
+    const sourceNodeIds = payload.attachments.flatMap((attachment) =>
+      attachment.sourceNodeId ? [attachment.sourceNodeId] : [],
+    );
+    const existingSourceNodes = sourceNodeIds
+      .map((nodeId) => useCanvasStore.getState().nodes.find((node) => node.id === nodeId))
+      .filter((node): node is CanvasNode => Boolean(node));
+    const sourceBounds = existingSourceNodes.length > 0
+      ? getBoundsForNodes(existingSourceNodes, 0)
+      : null;
+    const startPosition = sourceBounds
+      ? {
+          x: sourceBounds.x + sourceBounds.width + 140,
+          y: sourceBounds.y,
+        }
+      : project({
+          x: window.innerWidth / 2 + UPLOADED_IMAGE_MAX_CARD_WIDTH / 2 + 180,
+          y: window.innerHeight / 2 - 180,
+        });
     const result = createAgentGenerationNodesAndEdges({
       actions: payload.actions,
       startPosition,
@@ -8928,12 +8945,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const focusNodeId = result.focusNodeId ?? result.nodes[result.nodes.length - 1]?.id ?? null;
     const imageGenerationNodeIds = result.imageGenerationNodeIds;
     const shouldCreateGroup = imageGenerationNodeIds.length > 1;
-    const sourceNodeIds = payload.attachments.flatMap((attachment) =>
-      attachment.sourceNodeId ? [attachment.sourceNodeId] : [],
-    );
-    const existingSourceNodes = sourceNodeIds
-      .map((nodeId) => useCanvasStore.getState().nodes.find((node) => node.id === nodeId))
-      .filter((node): node is CanvasNode => Boolean(node));
     const agentGroupNodes = [...existingSourceNodes, ...result.nodes];
     const agentGroupNodeIds = Array.from(new Set(agentGroupNodes.map((node) => node.id)));
     const agentGroupBounds = shouldCreateGroup ? getBoundsForNodes(agentGroupNodes) : null;

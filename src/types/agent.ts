@@ -207,6 +207,7 @@ export type AgentPanelMessage =
       type: "text";
       content: string;
       attachmentIds?: string[];
+      attachments?: AgentTaskAttachment[];
       createdAt: string;
     }
   | {

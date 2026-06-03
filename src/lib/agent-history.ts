@@ -126,6 +126,17 @@ function createThreadTitle(messages: AgentPanelMessage[]): string {
 
 function compactMessages(messages: AgentPanelMessage[]): AgentPanelMessage[] {
   return messages.map((message) => {
+    if (message.type === "text" && message.role === "user" && message.attachments?.length) {
+      return {
+        ...message,
+        attachments: message.attachments.map((attachment) => ({
+          ...attachment,
+          imageUrl: "",
+          previewUrl: "",
+        })),
+      };
+    }
+
     if (message.type === "attachment_selection") {
       return {
         ...message,

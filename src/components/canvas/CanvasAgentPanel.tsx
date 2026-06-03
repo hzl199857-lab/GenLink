@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 
 import { buildAgentTaskContext, getReferencedAgentAttachmentIds } from '@/lib/agent-task-context';
+import { createBatchPromptVariants } from '@/lib/agent-prompt-variants';
 import {
   deleteAgentThread,
   loadAgentDraft,
@@ -78,6 +79,8 @@ const AGENT_MODEL_OPTIONS = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   { id: 'auto', label: '自动' },
 ] as const;
+
+const TEXT_CAPABLE_AGENT_PROVIDERS: AgentProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen'];
 
 type AgentRunPanelResult = {
   summary: string;
@@ -186,18 +189,41 @@ function parseRequestedImageCount(message: string): number {
   return Number.isFinite(count) && count > 1 ? Math.min(8, Math.floor(count)) : 1;
 }
 
-function createBatchPromptVariants(message: string, count: number): string[] {
-  const clean = stripReferenceMentionTokens(message, []).trim();
-  const dogBreeds = ['金毛幼犬', '柯基幼犬', '萨摩耶幼犬', '法国斗牛犬幼犬', '边境牧羊犬幼犬', '柴犬幼犬', '比熊幼犬', '拉布拉多幼犬'];
-  const scenes = ['阳光草地', '温馨客厅', '雪地公园', '城市咖啡店门口', '花园小径', '海边木栈道', '儿童房地毯', '秋日森林'];
+function isTextCapableAgentProvider(provider: AgentProvider): boolean {
+  return TEXT_CAPABLE_AGENT_PROVIDERS.includes(provider);
+}
 
-  return Array.from({ length: count }, (_, index) => [
-    clean || '可爱小狗图像',
-    `主体：${dogBreeds[index % dogBreeds.length]}。`,
-    `场景：${scenes[index % scenes.length]}，与其他图片明显不同。`,
-    '可爱、干净、高质量商业摄影，主体清晰，构图完整，自然光影，细节丰富。',
-    '避免文字、水印、畸变、低清晰度和重复构图。',
-  ].join(' '));
+function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
+  provider: AgentProvider;
+  apiKey: string;
+} {
+  const candidates: AgentProvider[] = [
+    preferredProvider,
+    readStoredSelectedApiProvider('text'),
+    readStoredSelectedApiProvider('image'),
+    ...TEXT_CAPABLE_AGENT_PROVIDERS,
+  ].filter((provider, index, providers) => (
+    isTextCapableAgentProvider(provider) && providers.indexOf(provider) === index
+  ));
+
+  for (const candidate of candidates) {
+    const textKey = readStoredApiKey('text', candidate);
+
+    if (textKey) {
+      return { provider: candidate, apiKey: textKey };
+    }
+
+    const imageKey = readStoredApiKey('image', candidate);
+
+    if (imageKey) {
+      return { provider: candidate, apiKey: imageKey };
+    }
+  }
+
+  return {
+    provider: isTextCapableAgentProvider(preferredProvider) ? preferredProvider : 'vibe',
+    apiKey: '',
+  };
 }
 
 function createCleanFallbackPlan(
@@ -211,9 +237,11 @@ function createCleanFallbackPlan(
   const textActionId = 'text-prompt-1';
   const generationActionId = 'image-generation-1';
   const hasSourceImages = selectedAttachments.length > 0;
-  const batchCount = hasSourceImages ? 1 : parseRequestedImageCount(message);
+  const batchCount = parseRequestedImageCount(message);
   const isBatch = batchCount > 1;
-  const batchPrompts = isBatch ? createBatchPromptVariants(message, batchCount) : [];
+  const batchPrompts = isBatch
+    ? createBatchPromptVariants(message, batchCount, { hasReferenceImages: hasSourceImages })
+    : [];
   const batchActions: CanvasAgentAction[] = batchPrompts.flatMap((prompt, index) => {
     const number = index + 1;
     const nextTextActionId = `text-prompt-${number}`;
@@ -245,25 +273,33 @@ function createCleanFallbackPlan(
 
   return {
     summary: isBatch
-      ? `本地兜底已准备好 ${batchCount} 组批量文生图链路。`
+      ? `本地兜底已准备好 ${batchCount} 组批量图像生成链路。`
       : hasSourceImages ? '本地兜底已准备好图片编辑链路。' : '本地兜底已准备好文生图链路。',
     plan: {
       stageLabel: '阶段 1/2',
       title: isBatch ? '批量图像生成组' : hasSourceImages ? '图片编辑链路' : '文生图链路',
       brief: [
         { label: '输入', value: selectedAttachments.map((_, index) => `图片${index + 1}`).join('、') || '无' },
-        { label: '任务', value: isBatch ? '批量文生图' : hasSourceImages ? '图生图 / 图片编辑' : '文生图' },
+        { label: '任务', value: isBatch ? (hasSourceImages ? '批量图生图 / 图片编辑' : '批量文生图') : hasSourceImages ? '图生图 / 图片编辑' : '文生图' },
         ...(isBatch ? [{ label: '生成任务', value: `${batchCount} 个` }] : []),
         { label: 'Agent', value: `${provider} / ${model}` },
       ],
       steps: isBatch
-        ? [
-            `创建 ${batchCount} 个提示词文本节点。`,
-            `创建 ${batchCount} 个图像生成节点。`,
-            '连接每组提示词节点到图像生成节点。',
-            '把整批节点放入同一个分组。',
-            '等待用户确认后并发触发整组生成。',
-          ]
+        ? hasSourceImages
+          ? [
+              `创建 ${batchCount} 个图像生成节点。`,
+              '把参考图连接到每个图像生成节点。',
+              '把每张图的差异化 prompt 写入对应图像生成节点。',
+              '把参考图和整批生成节点放入同一个分组。',
+              '等待用户确认后并发触发整组生成。',
+            ]
+          : [
+              `创建 ${batchCount} 个提示词文本节点。`,
+              `创建 ${batchCount} 个图像生成节点。`,
+              '连接每组提示词节点到图像生成节点。',
+              '把整批节点放入同一个分组。',
+              '等待用户确认后并发触发整组生成。',
+            ]
         : hasSourceImages
         ? [
             '使用上传图片节点作为上游输入。',
@@ -283,26 +319,30 @@ function createCleanFallbackPlan(
       confirmationLabel: '创建到画布',
     },
     actions: hasSourceImages
-      ? [
-          {
-            type: 'create_image_generation_node',
-            clientActionId: generationActionId,
-            prompt: promptPreview,
-            options: {
-              provider,
-              model: model === 'auto' ? undefined : model,
+      ? (isBatch ? batchPrompts : [promptPreview]).flatMap((prompt, index) => {
+          const nextGenerationActionId = `image-generation-${index + 1}`;
+
+          return [
+            {
+              type: 'create_image_generation_node' as const,
+              clientActionId: nextGenerationActionId,
+              prompt,
+              options: {
+                provider,
+                model: model === 'auto' ? undefined : model,
+              },
             },
-          },
-          ...selectedAttachments.flatMap((attachment) => (
-            attachment.sourceNodeId
-              ? [{
-                  type: 'connect_nodes' as const,
-                  sourceRef: { kind: 'existing' as const, nodeId: attachment.sourceNodeId },
-                  targetRef: { kind: 'created' as const, clientActionId: generationActionId },
-                }]
-              : []
-          )),
-        ]
+            ...selectedAttachments.flatMap((attachment) => (
+              attachment.sourceNodeId
+                ? [{
+                    type: 'connect_nodes' as const,
+                    sourceRef: { kind: 'existing' as const, nodeId: attachment.sourceNodeId },
+                    targetRef: { kind: 'created' as const, clientActionId: nextGenerationActionId },
+                  }]
+                : []
+            )),
+          ];
+        })
       : isBatch
         ? batchActions
       : [
@@ -387,6 +427,7 @@ async function requestAgentRun(params: {
   provider: AgentProvider;
   model: string;
 }): Promise<AgentRunPanelResult> {
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
   const response = await fetch('/api/agent/run', {
     method: 'POST',
     headers: {
@@ -395,9 +436,9 @@ async function requestAgentRun(params: {
     body: JSON.stringify({
       message: params.message,
       context: params.context,
-      provider: params.provider,
+      provider: textRunConfig.provider,
       model: params.model,
-      apiKey: readStoredApiKey('text', params.provider),
+      apiKey: textRunConfig.apiKey,
     }),
   });
   const json = await response.json() as
@@ -456,7 +497,7 @@ function getAgentCanvasNodeChips(message: Extract<AgentPanelMessage, { type: 'ex
       return {
         id: `${message.id}-${action.clientActionId}-${index}`,
         title: message.plan.title || '图像生成',
-        typeLabel: '文生图',
+        typeLabel: message.attachments.length > 0 ? '图生图' : '文生图',
       };
     });
 }
@@ -479,6 +520,28 @@ function getAgentResultText(message: Extract<AgentPanelMessage, { type: 'executi
   }
 
   return '搞定，已经放到画布上了。';
+}
+
+function getMessageAttachments(
+  attachmentIds: string[] | undefined,
+  attachments: AgentTaskAttachment[],
+  snapshotAttachments?: AgentTaskAttachment[],
+): AgentTaskAttachment[] {
+  if (snapshotAttachments?.length) {
+    return snapshotAttachments;
+  }
+
+  if (!attachmentIds?.length) {
+    return [];
+  }
+
+  const attachmentById = new Map(attachments.map((attachment) => [attachment.id, attachment]));
+
+  return attachmentIds.flatMap((attachmentId) => {
+    const attachment = attachmentById.get(attachmentId);
+
+    return attachment ? [attachment] : [];
+  });
 }
 
 function resolveAutoImageProvider(): ApiProvider {
@@ -514,7 +577,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const [model, setModel] = useState<string>(AGENT_MODEL_OPTIONS[0].id);
   const [messages, setMessages] = useState<AgentPanelMessage[]>([]);
   const [busy, setBusy] = useState(false);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyThreads, setHistoryThreads] = useState(() => listAgentThreads(projectId, projectName));
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -746,14 +808,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setMessages((current) => [
       ...current,
       {
-        id: createPanelId('agent-message'),
-        role: 'user',
-        type: 'text',
-        content: params.prompt,
-        attachmentIds: params.selectedAttachments.map((attachment) => attachment.id),
-        createdAt: params.userMessageCreatedAt,
-      },
-      {
         id: createPanelId('agent-plan'),
         role: 'agent',
         type: 'execution_plan',
@@ -771,7 +825,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         createdAt: new Date().toISOString(),
       },
     ]);
-    setPendingPrompt(null);
   }, [
     edgeCount,
     groupCount,
@@ -819,6 +872,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           type: 'text',
           content: trimmedDraft,
           attachmentIds: taskAttachments.map((attachment) => attachment.id),
+          attachments: taskAttachments.map((attachment) => ({ ...attachment })),
           createdAt: now,
         },
         {
@@ -836,14 +890,26 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           createdAt: new Date().toISOString(),
         },
       ]);
-      setPendingPrompt(null);
       setDraft('');
+      setAttachments([]);
       setBusy(false);
       return;
     }
 
+    setMessages((current) => [
+      ...current,
+      {
+        id: createPanelId('agent-message'),
+        role: 'user',
+        type: 'text',
+        content: trimmedDraft,
+        attachmentIds: selectedAttachments.map((attachment) => attachment.id),
+        attachments: selectedAttachments.map((attachment) => ({ ...attachment })),
+        createdAt: now,
+      },
+    ]);
     setDraft('');
-    setPendingPrompt(trimmedDraft);
+    setAttachments([]);
     void runAgent({
       prompt: trimmedDraft,
       taskAttachments,
@@ -851,7 +917,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       userMessageCreatedAt: now,
     }).finally(() => {
       setBusy(false);
-      setPendingPrompt(null);
     });
   }, [
     attachments,
@@ -891,7 +956,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         : message
     )));
     setBusy(true);
-    setPendingPrompt(selectionMessage.prompt);
     void runAgent({
       prompt: selectionMessage.prompt,
       taskAttachments: selectionMessage.attachments,
@@ -899,7 +963,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       userMessageCreatedAt: new Date().toISOString(),
     }).finally(() => {
       setBusy(false);
-      setPendingPrompt(null);
     });
   }, [busy, messages, runAgent]);
 
@@ -1100,6 +1163,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         <div className="space-y-3">
           {messages.map((message) => {
             if (message.type === 'text') {
+              const messageAttachments = getMessageAttachments(
+                message.role === 'user' ? message.attachmentIds : undefined,
+                attachments,
+                message.role === 'user' ? message.attachments : undefined,
+              );
+
               return (
                 <div
                   key={message.id}
@@ -1110,7 +1179,40 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       : 'mr-10 bg-white/[0.04] text-white/76',
                   ].join(' ')}
                 >
-                  {stripReferenceMentionTokens(message.content, attachments)}
+                  <div>{stripReferenceMentionTokens(message.content, messageAttachments)}</div>
+                  {message.role === 'user' && messageAttachments.length ? (
+                    <div className="mt-2 space-y-2">
+                      {messageAttachments.map((attachment, index) => (
+                        <div
+                          key={`${message.id}-${attachment.id}`}
+                          className="flex items-center gap-2 rounded-md bg-[#f1f2f5] p-2 text-[#11141b]"
+                        >
+                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-black/5">
+                            {attachment.previewUrl || attachment.imageUrl ? (
+                              <NextImage
+                                src={attachment.previewUrl || attachment.imageUrl}
+                                alt={attachment.name || `图片${index + 1}`}
+                                fill
+                                sizes="48px"
+                                className="object-cover"
+                                unoptimized
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-[10px] text-black/35">
+                                图片
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-medium text-[#2a2d34]">{`图片${index + 1}`}</div>
+                            <div className="mt-1 inline-flex rounded-full bg-[#17b36a]/12 px-2 py-0.5 text-[11px] font-medium text-[#0c8d50]">
+                              已添加到画布
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               );
             }
@@ -1245,11 +1347,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
             return null;
           })}
-          {pendingPrompt ? (
-            <div className="rounded-lg px-3 py-2 text-sm leading-6 ml-10 bg-white text-[#11141b]">
-              {stripReferenceMentionTokens(pendingPrompt, attachments)}
-            </div>
-          ) : null}
           {busy ? (
             <div className="flex items-start gap-3 rounded-lg bg-transparent px-1 py-2">
               <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#c9ff4a]/15 text-[#c9ff4a] shadow-[0_0_18px_rgba(201,255,74,0.3)]">

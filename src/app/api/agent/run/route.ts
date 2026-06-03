@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { createBatchPromptVariants } from "@/lib/agent-prompt-variants";
 import { stripReferenceMentionTokens } from "@/lib/prompt-mentions";
 import { generateText, VibeApiError, type ImageApiProvider } from "@/lib/vibe";
 import type {
@@ -305,20 +306,6 @@ function parseRequestedImageCount(message: string): number {
   return Math.min(8, Math.floor(count));
 }
 
-function createBatchPromptVariants(message: string, count: number): string[] {
-  const clean = getCleanUserPrompt(message, []);
-  const dogBreeds = ["金毛幼犬", "柯基幼犬", "萨摩耶幼犬", "法国斗牛犬幼犬", "边境牧羊犬幼犬", "柴犬幼犬", "比熊幼犬", "拉布拉多幼犬"];
-  const scenes = ["阳光草地", "温馨客厅", "雪地公园", "城市咖啡店门口", "花园小径", "海边木栈道", "儿童房地毯", "秋日森林"];
-
-  return Array.from({ length: count }, (_, index) => [
-    clean || "可爱小狗图像",
-    `画面主体：${dogBreeds[index % dogBreeds.length]}。`,
-    `场景：${scenes[index % scenes.length]}，与其他图片明显不同。`,
-    "风格：可爱、干净、高质量商业摄影，主体清晰，构图完整，自然光影，细节丰富。",
-    "避免文字、水印、畸变、低清晰度和重复构图。",
-  ].join(" "));
-}
-
 function getToolRisk(name: CanvasAgentToolName): CanvasAgentToolCall["risk"] {
   return name === "read_canvas_summary" ? "read" : name === "run_image_generation" ? "generate" : "write";
 }
@@ -552,6 +539,123 @@ function executeAndTrace(state: AgentRuntimeState, call: CanvasAgentToolCall): C
   return result;
 }
 
+function normalizeImageEditActions(state: AgentRuntimeState) {
+  const selectedAttachments = getSelectedAttachments(state.context)
+    .filter((attachment) => attachment.sourceNodeId);
+  const requestedCount = parseRequestedImageCount(state.message);
+
+  if (selectedAttachments.length === 0) {
+    return;
+  }
+
+  const textActionIds = new Set(
+    state.actions.flatMap((action) => (
+      action.type === "create_text_node" ? [action.clientActionId] : []
+    )),
+  );
+  const textByActionId = new Map(
+    state.actions.flatMap((action) => (
+      action.type === "create_text_node" ? [[action.clientActionId, action.text] as const] : []
+    )),
+  );
+  const promptByGenerationId = new Map<string, string>();
+
+  for (const action of state.actions) {
+    if (
+      action.type === "connect_nodes" &&
+      action.sourceRef.kind === "created" &&
+      action.targetRef.kind === "created" &&
+      textActionIds.has(action.sourceRef.clientActionId)
+    ) {
+      const prompt = textByActionId.get(action.sourceRef.clientActionId);
+
+      if (prompt) {
+        promptByGenerationId.set(action.targetRef.clientActionId, prompt);
+      }
+    }
+  }
+
+  if (promptByGenerationId.size > 0) {
+    state.actions = state.actions.filter((action) => {
+      if (action.type === "create_text_node") {
+        return false;
+      }
+
+      if (
+        action.type === "connect_nodes" &&
+        action.sourceRef.kind === "created" &&
+        textActionIds.has(action.sourceRef.clientActionId)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    state.actions = state.actions.map((action) => {
+      if (action.type !== "create_image_generation_node") {
+        return action;
+      }
+
+      const prompt = promptByGenerationId.get(action.clientActionId);
+
+      return prompt
+        ? { ...action, prompt }
+        : action;
+    });
+  }
+
+  let imageGenerationActions = state.actions.filter(
+    (action): action is Extract<CanvasAgentAction, { type: "create_image_generation_node" }> =>
+      action.type === "create_image_generation_node",
+  );
+  const requiredCount = Math.max(requestedCount, imageGenerationActions.length, 1);
+  const prompts = requiredCount > 1
+    ? createBatchPromptVariants(state.message, requiredCount, { hasReferenceImages: true })
+    : [state.promptPreview];
+  const existingGenerationIds = new Set(imageGenerationActions.map((action) => action.clientActionId));
+
+  for (let index = 0; index < requiredCount; index += 1) {
+    const number = index + 1;
+    const existingAction = imageGenerationActions[index];
+    let clientActionId = existingAction?.clientActionId ?? `image-generation-${number}`;
+
+    if (!existingAction) {
+      while (existingGenerationIds.has(clientActionId)) {
+        clientActionId = `image-generation-${number}-${existingGenerationIds.size + 1}`;
+      }
+      executeAndTrace(state, createToolCall("create_image_generation_node", {
+        clientActionId,
+        prompt: prompts[index] ?? state.promptPreview,
+        provider: state.provider,
+        model: state.model === "auto" ? undefined : state.model,
+      }));
+      existingGenerationIds.add(clientActionId);
+      imageGenerationActions = state.actions.filter(
+        (action): action is Extract<CanvasAgentAction, { type: "create_image_generation_node" }> =>
+          action.type === "create_image_generation_node",
+      );
+    }
+
+    for (const attachment of selectedAttachments) {
+      const alreadyConnected = state.actions.some((action) =>
+        action.type === "connect_nodes" &&
+        action.sourceRef.kind === "existing" &&
+        action.sourceRef.nodeId === attachment.sourceNodeId &&
+        action.targetRef.kind === "created" &&
+        action.targetRef.clientActionId === clientActionId,
+      );
+
+      if (!alreadyConnected) {
+        executeAndTrace(state, createToolCall("connect_nodes", {
+          sourceNodeId: attachment.sourceNodeId,
+          targetClientActionId: clientActionId,
+        }));
+      }
+    }
+  }
+}
+
 function createFallbackState(params: {
   message: string;
   context: AgentTaskContext;
@@ -564,13 +668,15 @@ function createFallbackState(params: {
   const selectedAttachments = getSelectedAttachments(params.context);
   const state = createRuntimeState(params);
   const enhancedPrompt = enhancePromptLocally(params.message, selectedAttachments);
-  const batchCount = selectedAttachments.length === 0 ? parseRequestedImageCount(params.message) : 1;
+  const batchCount = parseRequestedImageCount(params.message);
 
   state.trace.push({
     id: createRuntimeId("trace"),
     type: "thinking",
     content: selectedAttachments.length
-      ? "我会把这次任务作为图生图/图片编辑处理，先使用上传素材作为上游输入。"
+      ? batchCount > 1
+        ? `我会把这次任务拆成 ${batchCount} 个参考图编辑结果，并共用上传素材作为上游输入。`
+        : "我会把这次任务作为图生图/图片编辑处理，先使用上传素材作为上游输入。"
       : batchCount > 1
         ? `我会把这次任务拆成 ${batchCount} 个不同画面，并创建批量文生图链路。`
         : "我会把这次任务作为文生图处理，先创建提示词节点再连接图像生成节点。",
@@ -586,23 +692,32 @@ function createFallbackState(params: {
       }));
     }
 
-    executeAndTrace(state, createToolCall("create_image_generation_node", {
-      clientActionId: "image-generation-1",
-      prompt: enhancedPrompt,
-      provider: params.provider,
-      model: params.model === "auto" ? undefined : params.model,
-    }));
+    const prompts = batchCount > 1
+      ? createBatchPromptVariants(params.message, batchCount, { hasReferenceImages: true })
+      : [enhancedPrompt];
 
-    for (const attachment of selectedAttachments) {
-      if (!attachment.sourceNodeId) {
-        continue;
-      }
+    prompts.forEach((prompt, index) => {
+      const number = index + 1;
+      const generationActionId = `image-generation-${number}`;
 
-      executeAndTrace(state, createToolCall("connect_nodes", {
-        sourceNodeId: attachment.sourceNodeId,
-        targetClientActionId: "image-generation-1",
+      executeAndTrace(state, createToolCall("create_image_generation_node", {
+        clientActionId: generationActionId,
+        prompt,
+        provider: params.provider,
+        model: params.model === "auto" ? undefined : params.model,
       }));
-    }
+
+      for (const attachment of selectedAttachments) {
+        if (!attachment.sourceNodeId) {
+          continue;
+        }
+
+        executeAndTrace(state, createToolCall("connect_nodes", {
+          sourceNodeId: attachment.sourceNodeId,
+          targetClientActionId: generationActionId,
+        }));
+      }
+    });
   } else if (batchCount > 1) {
     const prompts = createBatchPromptVariants(params.message, batchCount);
 
@@ -652,6 +767,8 @@ function createFallbackState(params: {
     type: "final",
     content: final,
   });
+
+  normalizeImageEditActions(state);
 
   return createAgentResultFromState(state, {
     usedModel: params.usedModel === true,
@@ -707,14 +824,18 @@ function createAgentResultFromState(state: AgentRuntimeState, meta: AgentRunMeta
   const hasSourceImages = selectedAttachments.length > 0;
   const imageGenerationCount = state.actions.filter((action) => action.type === "create_image_generation_node").length;
   const isBatchGeneration = imageGenerationCount > 1;
-  const toolLabels = state.trace.flatMap((item) => (
-    item.type === "tool_call" ? [getToolDisplayName(item.call.name)] : []
-  ));
+  const toolLabels = hasSourceImages
+    ? []
+    : state.trace.flatMap((item) => (
+        item.type === "tool_call" ? [getToolDisplayName(item.call.name)] : []
+      ));
 
   return {
     summary: state.finalResponse ??
       (isBatchGeneration
-        ? `我会创建 ${imageGenerationCount} 组文生图链路，并放入同一个批量生成分组。`
+        ? hasSourceImages
+          ? `我会基于上传图片创建 ${imageGenerationCount} 个图生图结果，并放入同一个批量生成分组。`
+          : `我会创建 ${imageGenerationCount} 组文生图链路，并放入同一个批量生成分组。`
         : hasSourceImages
         ? "我会使用上传图片作为上游素材，创建图像生成节点并写入编辑 prompt。"
         : "我会创建提示词节点和图像生成节点，并把它们连接成文生图链路。"),
@@ -724,7 +845,7 @@ function createAgentResultFromState(state: AgentRuntimeState, meta: AgentRunMeta
       brief: [
         {
           label: "任务类型",
-          value: isBatchGeneration ? "批量文生图" : hasSourceImages ? "图生图 / 图片编辑" : "文生图",
+          value: isBatchGeneration ? (hasSourceImages ? "批量图生图 / 图片编辑" : "批量文生图") : hasSourceImages ? "图生图 / 图片编辑" : "文生图",
         },
         ...(isBatchGeneration
           ? [{
@@ -744,7 +865,9 @@ function createAgentResultFromState(state: AgentRuntimeState, meta: AgentRunMeta
       steps: toolLabels.length > 0
         ? toolLabels
         : isBatchGeneration
-          ? ["读取画布摘要", `创建 ${imageGenerationCount} 个提示词节点`, `创建 ${imageGenerationCount} 个图像生成节点`, "连接每组节点", "放入批量生成分组", "等待确认后并发生成"]
+          ? hasSourceImages
+            ? ["读取画布摘要", "放置上传图片", `创建 ${imageGenerationCount} 个图像生成节点`, "连接参考图到每个生成节点", "放入批量生成分组", "等待确认后并发生成"]
+            : ["读取画布摘要", `创建 ${imageGenerationCount} 个提示词节点`, `创建 ${imageGenerationCount} 个图像生成节点`, "连接每组节点", "放入批量生成分组", "等待确认后并发生成"]
         : hasSourceImages
           ? ["读取画布摘要", "放置上传图片", "创建图像生成节点", "连接图片到生成节点", "等待确认生成"]
           : ["读取画布摘要", "创建提示词节点", "创建图像生成节点", "连接节点", "等待确认生成"],
@@ -784,17 +907,22 @@ function createAgentSystemPrompt(): string {
     "You must choose one next tool call at a time, wait for tool results in the transcript, then continue.",
     "Do not return a batch of fixed actions. Think as a tool-using agent.",
     "Never call run_image_generation. Image generation costs credits and must wait for explicit user confirmation.",
-    "If there are uploaded attachments, use create_uploaded_image_node for each selected attachment, then create_image_generation_node, then connect_nodes.",
+    "If there are uploaded attachments, this is image-to-image/image editing. Use create_uploaded_image_node for each selected attachment, then create_image_generation_node, then connect_nodes from every source image to each generation node.",
+    "When uploaded attachments are present, do not create text_node prompt nodes by default. Put the rewritten prompt directly in each create_image_generation_node.prompt.",
     "If there are no uploaded attachments, this is usually text-to-image: create_text_node, create_image_generation_node, connect_nodes.",
-    "If the user asks for multiple images, create one independent text_node + image_generation_node + connect_nodes chain per image. Vary scene, subject, composition, and details. Do not exceed 8 images.",
+    "If uploaded attachments are present and the user asks for multiple images, create one image_generation_node per requested result and connect the same source image node(s) to every generation node. Vary clothing, pose, scene, composition, and details. Do not exceed 8 images.",
+    "If there are no uploaded attachments and the user asks for multiple images, create one independent text_node + image_generation_node + connect_nodes chain per image. Vary scene, subject, composition, and details. Do not exceed 8 images.",
     "Always rewrite the user request into a high quality Chinese image prompt. Do not copy the user prompt verbatim.",
+    "For multi-image requests, every create_image_generation_node.prompt must be a complete standalone concrete prompt, not an abstract variation note.",
+    "When the user asks for different clothing, actions, cities, styles, colors, angles, or scenes, choose specific values for each image. Name the clothing/color, action/pose, city/location or scene, composition, lighting, and key details in that prompt.",
+    "Never leave generic phrases such as different clothing, different action, different city, different color, different angle, or different scene as the only variation. Expand them into concrete visual choices.",
     "For image editing prompts, preserve subject identity, composition, lighting, pose, background unless the user asks to change them.",
     "Available tools:",
     JSON.stringify([
       { name: "read_canvas_summary", input: {} },
       { name: "create_uploaded_image_node", input: { attachmentId: "string", title: "string optional" } },
       { name: "create_text_node", input: { clientActionId: "text-prompt-1", title: "Agent Prompt", text: "rewritten prompt" } },
-      { name: "create_image_generation_node", input: { clientActionId: "image-generation-1", prompt: "rewritten prompt" } },
+      { name: "create_image_generation_node", input: { clientActionId: "image-generation-1", prompt: "rewritten prompt", provider: "optional", model: "optional", aspectRatio: "auto", quality: "1K" } },
       {
         name: "connect_nodes",
         input: {
@@ -914,6 +1042,7 @@ async function runAgentLoop(params: {
         type: "final",
         content: modelStep.message,
       });
+      normalizeImageEditActions(state);
 
       return createAgentResultFromState(state, {
         usedModel: true,
