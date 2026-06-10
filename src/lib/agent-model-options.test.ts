@@ -22,10 +22,10 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const { AGENT_MODEL_OPTIONS } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
 
-test("includes gemini 3.5 flash in agent model options", () => {
-  assert.deepEqual(
-    AGENT_MODEL_OPTIONS.find((option) => option.id === "gemini-3.5-flash"),
-    { id: "gemini-3.5-flash", label: "gemini-3.5-flash" },
+test("does not include gemini 3.5 flash in agent model options", () => {
+  assert.equal(
+    AGENT_MODEL_OPTIONS.some((option) => option.id === "gemini-3.5-flash"),
+    false,
   );
 });
 

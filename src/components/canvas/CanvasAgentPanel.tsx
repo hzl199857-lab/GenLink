@@ -488,19 +488,21 @@ function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
   };
 }
 
-function getVisiblePlanfEcomSessionFields(
-  message: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>,
+function getVisiblePlanfEcomFields(
+  session: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session'],
 ) {
   const hiddenKnownFieldIds = new Set([
     'productName',
     'productAsset',
     'category',
+    'platform',
+    'sellingPoints',
     'imageSet',
     'styleMode',
     'mainColor',
   ]);
 
-  return message.session.fields.filter((field) => {
+  return session.fields.filter((field) => {
     if (!hiddenKnownFieldIds.has(field.id)) {
       return true;
     }
@@ -510,11 +512,25 @@ function getVisiblePlanfEcomSessionFields(
     }
 
     if (field.id === 'productAsset') {
-      return message.session.referenceImageCount <= 0;
+      return session.referenceImageCount <= 0;
+    }
+
+    if (field.id === 'platform') {
+      return session.preset !== 'amazon-adapter';
+    }
+
+    if (field.id === 'sellingPoints') {
+      return field.source !== 'user_explicit';
     }
 
     return false;
   });
+}
+
+function getVisiblePlanfEcomSessionFields(
+  message: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>,
+) {
+  return getVisiblePlanfEcomFields(message.session);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1139,6 +1155,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   onConfirmGeneration,
 }: CanvasAgentPanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const attachmentsRef = useRef<AgentTaskAttachment[]>([]);
   const resizeDragRef = useRef<{
     startClientX: number;
@@ -1334,6 +1351,21 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
     window.setTimeout(() => setHistoryThreads(listAgentThreads(projectId, projectName)), 0);
   }, [messages, projectId, projectName, threadId]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({
+        block: 'end',
+        behavior: 'smooth',
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [busyMode, messages, open]);
 
   const handleUploadClick = useCallback(() => {
     inputRef.current?.click();
@@ -1549,6 +1581,40 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               createdAt: new Date().toISOString(),
             },
           ]);
+          return;
+        }
+
+        if (getVisiblePlanfEcomFields(session).length === 0) {
+          setBusyMode('mcp');
+
+          try {
+            const planMessage = await requestOpenClawPlanfEcomConfirm(session, provider, model, projectId);
+
+            setMessages((current) => [
+              ...current,
+              {
+                ...planMessage,
+                attachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
+              },
+            ]);
+          } catch (error) {
+            const errorText = formatAgentChatErrorText(
+              error instanceof Error ? error.message : undefined,
+              'GenLink 电商编排确认失败，请稍后重试。',
+            );
+
+            setMessages((current) => [
+              ...current,
+              {
+                id: createPanelId('planf-auto-confirm-error'),
+                role: 'agent',
+                type: 'text',
+                content: 'GenLink 没能自动进入电商编排。\n' + errorText,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          }
+
           return;
         }
 
@@ -2351,7 +2417,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       </div>
 
       {historyOpen ? (
-        <div className="max-h-72 overflow-y-auto border-b border-white/10 bg-white/[0.03] px-4 py-3">
+        <div className="scrollbar-hide max-h-72 overflow-y-auto border-b border-white/10 bg-white/[0.03] px-4 py-3">
           <div className="mb-2 flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-medium text-white/70">
               <Clock3 size={14} />
@@ -2422,7 +2488,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         </div>
       ) : null}
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div className="scrollbar-hide flex-1 overflow-y-auto px-4 py-4">
         <div className="space-y-3">
           {messages.map((message) => {
             if (message.type === 'text') {
@@ -2923,7 +2989,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               return (
                 <div key={message.id} className="rounded-lg bg-transparent px-1 py-2">
                   <div className="mb-3 flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#c9ff4a]/15 text-[#c9ff4a] shadow-[0_0_18px_rgba(201,255,74,0.3)]">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#19d3ff]/25 bg-[#14212b] text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.12)]">
                       <Bot size={16} />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -2938,9 +3004,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                             {nodeChips.map((chip) => (
                               <div
                                 key={chip.id}
-                                className="flex max-w-full items-center gap-1.5 rounded-md bg-[#25412b] px-2.5 py-1.5 text-xs text-[#dfffd2]"
+                                className="flex max-w-full items-center gap-1.5 rounded-md border border-[#19d3ff]/15 bg-[#14212b] px-2.5 py-1.5 text-xs text-white/82"
                               >
-                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#c9ff4a]" />
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#19d3ff]" />
                                 <span className="truncate font-medium">{chip.title}</span>
                                 <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/62">
                                   {chip.typeLabel}
@@ -2956,7 +3022,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       {message.status === 'waiting_confirmation' ? (
                         <button
                           type="button"
-                          className="mt-4 flex h-9 items-center gap-2 rounded-lg bg-[#c9ff1a] px-4 text-sm font-semibold text-[#11141b] transition hover:bg-[#d6ff48]"
+                          className="mt-4 flex h-9 items-center gap-2 rounded-lg bg-[#19d3ff] px-4 text-sm font-semibold text-[#061019] transition hover:bg-[#6ee7ff]"
                           onClick={() => handleConfirmPlan(message.id)}
                         >
                           <Sparkles size={15} />
@@ -2967,7 +3033,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       {message.status === 'waiting_generation_confirmation' ? (
                         <button
                           type="button"
-                          className="mt-4 flex h-9 items-center gap-2 rounded-lg bg-[#c9ff1a] px-4 text-sm font-semibold text-[#11141b] transition hover:bg-[#d6ff48]"
+                          className="mt-4 flex h-9 items-center gap-2 rounded-lg bg-[#19d3ff] px-4 text-sm font-semibold text-[#061019] transition hover:bg-[#6ee7ff]"
                           onClick={() => handleConfirmGeneration(message.id)}
                         >
                           <Sparkles size={15} />
@@ -2984,7 +3050,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
                       {message.status === 'executed' ? (
                         <>
-                          <div className="mt-4 flex h-8 items-center gap-2 text-xs text-[#c9ff4a]">
+                          <div className="mt-4 flex h-8 items-center gap-2 text-xs text-[#19d3ff]">
                             <Check size={14} />
                             生成已完成
                           </div>
@@ -2992,7 +3058,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                             <button
                               type="button"
                               disabled={busy}
-                              className="mt-2 flex h-9 items-center gap-2 rounded-lg bg-[#c9ff1a] px-4 text-sm font-semibold text-[#11141b] transition hover:bg-[#d6ff48] disabled:cursor-not-allowed disabled:opacity-45"
+                              className="mt-2 flex h-9 items-center gap-2 rounded-lg bg-[#19d3ff] px-4 text-sm font-semibold text-[#061019] transition hover:bg-[#6ee7ff] disabled:cursor-not-allowed disabled:opacity-45"
                               onClick={() => handleConfirmPlanfEcomAnchorFanout(message.id)}
                             >
                               <Sparkles size={15} />
@@ -3023,12 +3089,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           })}
           {busy ? (
             <div className="flex items-start gap-3 rounded-lg bg-transparent px-1 py-2">
-              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#19d3ff]/15 text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.26)]">
+              <div className="agent-busy-avatar mt-0.5 flex h-8 w-8 shrink-0 animate-pulse items-center justify-center rounded-full bg-[#19d3ff]/15 text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.26)]">
                 <Bot size={16} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-semibold text-[#19d3ff]">
-                  {busyMode === 'mcp' ? '正在准备画布节点' : '正在思考中...'}
+                  <span className="agent-busy-shimmer">
+                    {busyMode === 'mcp' ? '正在准备画布节点' : '正在思考中...'}
+                  </span>
                   <span className="text-[11px] font-normal text-white/38">请稍等</span>
                 </div>
                 <div className="mt-1 text-xs leading-5 text-white/45">
@@ -3037,12 +3105,19 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     : '正在理解需求，读取规则，并准备下一步响应。'}
                 </div>
                 <div className="mt-4 flex items-center gap-2 text-xs text-white/62">
-                  <span className="h-2 w-2 rounded-full bg-[#19d3ff] shadow-[0_0_10px_rgba(25,211,255,0.75)]" />
-                  {busyMode === 'mcp' ? '正在创建节点...' : '正在生成回复...'}
+                  <span className="agent-busy-wave" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  <span className="agent-busy-shimmer">
+                    {busyMode === 'mcp' ? '正在创建节点...' : '正在生成回复...'}
+                  </span>
                 </div>
               </div>
             </div>
           ) : null}
+          <div ref={messagesEndRef} />
         </div>
       </div>
 
@@ -3396,7 +3471,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               value={draft}
               connectedImages={mentionImages}
               placeholder="描述你希望 Agent 在画布上完成什么，可以用 @ 引用上传图片。"
-              className="agent-mention-input min-h-[64px] max-h-32 flex-1 overflow-y-auto px-1 py-1 text-sm leading-6 text-white outline-none"
+              className="agent-mention-input scrollbar-hide min-h-[64px] max-h-32 flex-1 overflow-y-auto px-1 py-1 text-sm leading-6 text-white outline-none"
               mentionMenuVariant="agent"
               onChange={setDraft}
             />
@@ -3463,9 +3538,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               >
                 <SlidersHorizontal size={15} />
               </button>
-              <div className="hidden truncate text-[11px] text-white/34 sm:block">
-                {attachments.length} 张图片 / {nodeCount} 个节点 / {edgeCount} 条连线
-              </div>
             </div>
 
             <button

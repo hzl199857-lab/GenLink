@@ -6,7 +6,11 @@ import path from "node:path";
 import type { ImageApiProvider } from "@/lib/vibe";
 import { generateText } from "@/lib/vibe";
 
-import type { OpenClawPlanfEcomField, OpenClawPlanfEcomOption } from "./planf-ecom-session";
+import type {
+  OpenClawPlanfEcomField,
+  OpenClawPlanfEcomFieldSource,
+  OpenClawPlanfEcomOption,
+} from "./planf-ecom-session";
 
 const DEFAULT_RULES_ROOT = path.join(
   /* turbopackIgnore: true */
@@ -156,10 +160,93 @@ function extractJsonObject(value: string): Record<string, unknown> | undefined {
   }
 }
 
+function findJsonObjectEnd(source: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function extractFormFieldsObject(value: string): Record<string, unknown> | undefined {
+  const fenced = value.match(/```(?:json|form-fields)?\s*([\s\S]*?)```/i);
+  const source = fenced?.[1] ?? value;
+  let searchFrom = 0;
+
+  while (searchFrom < source.length) {
+    const marker = source.indexOf("form-fields", searchFrom);
+
+    if (marker < 0) {
+      return undefined;
+    }
+
+    const start = source.lastIndexOf("{", marker);
+
+    if (start < 0) {
+      searchFrom = marker + "form-fields".length;
+      continue;
+    }
+
+    const end = findJsonObjectEnd(source, start);
+
+    if (end < 0) {
+      searchFrom = marker + "form-fields".length;
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(source.slice(start, end + 1)) as unknown;
+
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        (parsed as Record<string, unknown>).type === "form-fields"
+      ) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Continue searching; earlier text may contain non-protocol JSON snippets.
+    }
+
+    searchFrom = marker + "form-fields".length;
+  }
+
+  return undefined;
+}
+
 function extractJsonArray(value: string): unknown[] | undefined {
   const fenced = value.match(/```(?:json|form-fields)?\s*([\s\S]*?)```/i);
   const source = fenced?.[1] ?? value;
-  const object = extractJsonObject(source);
+  const object = extractFormFieldsObject(source) ?? extractJsonObject(source);
   const objectFields = object
     ? (
         Array.isArray(object.fields)
@@ -206,6 +293,14 @@ function parseFieldOption(value: unknown) {
     : undefined;
 }
 
+function parseFieldSource(value: unknown): OpenClawPlanfEcomFieldSource | undefined {
+  return value === "user_explicit" ||
+    value === "model_suggested" ||
+    value === "default_guess"
+    ? value
+    : undefined;
+}
+
 function parseOpenClawFormFieldArray(value: string): OpenClawPlanfEcomField[] | undefined {
   const rawFields = extractJsonArray(value);
 
@@ -227,6 +322,7 @@ function parseOpenClawFormFieldArray(value: string): OpenClawPlanfEcomField[] | 
     const label = typeof record.label === "string" ? record.label : "";
     const type = typeof record.type === "string" ? record.type : "";
     const required = record.required === true;
+    const source = parseFieldSource(record.source);
 
     if (!id || !label) {
       return [];
@@ -240,6 +336,7 @@ function parseOpenClawFormFieldArray(value: string): OpenClawPlanfEcomField[] | 
         value: typeof record.value === "string" ? record.value : "",
         required,
         placeholder: typeof record.placeholder === "string" ? record.placeholder : undefined,
+        source,
       }];
     }
 
@@ -288,6 +385,7 @@ function parseOpenClawFormFieldArray(value: string): OpenClawPlanfEcomField[] | 
         options,
         required,
         hint: typeof record.hint === "string" ? record.hint : undefined,
+        source,
       }];
     }
 
@@ -308,11 +406,14 @@ function parseOpenClawFormFieldArray(value: string): OpenClawPlanfEcomField[] | 
         id,
         label,
         type,
-        value: [],
+        value: Array.isArray(record.value)
+          ? record.value.filter((item): item is string => typeof item === "string")
+          : [],
         options,
         required,
         maxSelected: typeof record.maxSelect === "number" ? record.maxSelect : 3,
         minSelected: typeof record.minSelect === "number" ? record.minSelect : undefined,
+        source,
       }];
     }
 
@@ -378,6 +479,61 @@ function normalizeSellingPointsField(
     return field;
   }
 
+  if (field.source === "user_explicit") {
+    if (field.type === "text") {
+      return field;
+    }
+
+    const selectedLabels = field.type === "multi-select"
+      ? field.options
+          .filter((option) => field.value.includes(option.value))
+          .map((option) => option.label)
+      : [];
+
+    return {
+      id: field.id,
+      label: field.label || "核心卖点",
+      type: "text",
+      value: selectedLabels.join("、"),
+      required: field.required,
+      source: field.source,
+    };
+  }
+
+  if (field.source === "default_guess") {
+    return {
+      id: field.id,
+      label: field.label || "核心卖点",
+      type: "text",
+      value: field.type === "text" ? field.value : "",
+      required: true,
+      placeholder: "请写下 1-3 个主打卖点，例如：透气、轻量、防晒、可调节。",
+      source: field.source,
+    };
+  }
+
+  if (field.source === "model_suggested" && field.type === "multi-select" && field.options.length) {
+    const optionMap = new Map<string, OpenClawPlanfEcomOption>();
+
+    for (const option of field.options) {
+      optionMap.set(option.value, option);
+    }
+
+    const options = Array.from(optionMap.values());
+    const values = field.value.filter((value) =>
+      options.some((option) => option.value === value),
+    );
+
+    return {
+      ...field,
+      label: field.label || "核心卖点",
+      value: values.length
+        ? values
+        : options.slice(0, field.maxSelected).map((option) => option.value),
+      options,
+    };
+  }
+
   const baseOptions = preset === "ugc-lifestyle" || preset === "editorial-stylist"
     ? APPAREL_SELLING_POINT_OPTIONS
     : GENERAL_SELLING_POINT_OPTIONS;
@@ -407,6 +563,7 @@ function normalizeSellingPointsField(
     required: field.required,
     maxSelected: field.type === "multi-select" ? field.maxSelected : 3,
     minSelected: field.type === "multi-select" ? field.minSelected : undefined,
+    source: field.source,
   };
 }
 
@@ -540,6 +697,10 @@ async function runFormFields(
       "字段类型只能是 text、select、multi-select、upload。",
       "select 和 multi-select 的 options 必须是 {label,value}。",
       "必须至少包含 productName、category、platform。",
+      "sellingPoints 字段必须带 source：user_explicit | model_suggested | default_guess。",
+      "source=user_explicit 仅用于用户原文明确给出 1-3 个卖点/利益点；此时 sellingPoints 用 type=text 并保留用户原文卖点。",
+      "source=model_suggested 用于可根据知名产品/类目提出可信候选卖点；此时 sellingPoints 用 type=multi-select。",
+      "source=default_guess 用于只有泛产品名且主打方向商业上不确定；此时 sellingPoints 用 type=text、value 为空，让用户输入。",
       "如果当前 skill 规则要求详情页、UGC 或造型师增量字段，必须追加。",
       "当用户点击入口是 full-set-8，且没有详情页/UGC/造型师标签或关键词时，必须严格使用 ecom-image/SKILL.md §6.2 通用主图 / 套图 form-fields。",
       "full-set-8 只允许字段 id：productName、productAsset、category、platform、sellingPoints、imageSet、styleMode、mainColor。",

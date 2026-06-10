@@ -1751,7 +1751,7 @@ function createAgentGenerationNodesAndEdges(params: {
       const nodeId = crypto.randomUUID();
       const position = action.position ?? {
         x: params.startPosition.x - 680,
-        y: params.startPosition.y + textIndex * 440,
+        y: params.startPosition.y + textIndex * AGENT_IMAGE_GENERATION_NODE_ROW_SPACING,
       };
       const node: Extract<CanvasNode, { type: 'text' }> = {
         id: nodeId,
@@ -1774,7 +1774,7 @@ function createAgentGenerationNodesAndEdges(params: {
       const nodeId = crypto.randomUUID();
       const position = action.position ?? {
         x: params.startPosition.x,
-        y: params.startPosition.y + generationIndex * 440,
+        y: params.startPosition.y + generationIndex * AGENT_IMAGE_GENERATION_NODE_ROW_SPACING,
       };
       const provider = action.options?.provider;
       const node: Extract<CanvasNode, { type: 'image_generation' }> = {
@@ -3391,6 +3391,12 @@ const IMAGE_GENERATION_MAX_CARD_EDGE = 540;
 const IMAGE_GENERATION_MIN_CARD_EDGE = 220;
 const IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE = 64;
 const IMAGE_GENERATION_CARD_ACCESSORY_GAP = 12;
+const AGENT_IMAGE_GENERATION_NODE_ROW_GAP = 72;
+const AGENT_IMAGE_GENERATION_NODE_ROW_SPACING =
+  IMAGE_GENERATION_MAX_CARD_EDGE +
+  IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
+  IMAGE_GENERATION_CARD_ACCESSORY_GAP +
+  AGENT_IMAGE_GENERATION_NODE_ROW_GAP;
 const UPLOADED_IMAGE_MAX_CARD_WIDTH = 420;
 const UPLOADED_IMAGE_MAX_CARD_HEIGHT = 540;
 const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
@@ -9102,7 +9108,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     const focusNodeId = result.focusNodeId ?? result.nodes[result.nodes.length - 1]?.id ?? null;
     const imageGenerationNodeIds = result.imageGenerationNodeIds;
     const shouldCreateGroup = imageGenerationNodeIds.length > 1;
-    const agentGroupNodes = [...existingSourceNodes, ...result.nodes];
+    const agentGroupNodes = result.nodes;
     const agentGroupNodeIds = Array.from(new Set(agentGroupNodes.map((node) => node.id)));
     const agentGroupBounds = shouldCreateGroup ? getBoundsForNodes(agentGroupNodes) : null;
     const agentGroup = agentGroupBounds

@@ -541,6 +541,134 @@ body {
   display: none;
 }
 
+.agent-busy-avatar {
+  position: relative;
+}
+
+.agent-busy-avatar::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(25, 211, 255, 0.34), rgba(25, 211, 255, 0));
+  animation: agent-busy-avatar-pulse 1.8s ease-in-out infinite;
+}
+
+.agent-busy-avatar > svg {
+  position: relative;
+  z-index: 1;
+}
+
+.agent-busy-spinner {
+  transform-box: fill-box;
+  transform-origin: center;
+  filter: drop-shadow(0 0 8px rgba(25, 211, 255, 0.7));
+  animation: agent-busy-spin 0.86s linear infinite;
+}
+
+.agent-busy-wave {
+  display: inline-flex;
+  width: 15px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.agent-busy-wave > span {
+  width: 3px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #19d3ff;
+  box-shadow: 0 0 8px rgba(25, 211, 255, 0.72);
+  transform: scaleY(0.34);
+  transform-origin: center;
+  animation: agent-busy-wave 0.78s ease-in-out infinite;
+}
+
+.agent-busy-wave > span:nth-child(2) {
+  animation-delay: 0.13s;
+}
+
+.agent-busy-wave > span:nth-child(3) {
+  animation-delay: 0.26s;
+}
+
+.agent-busy-shimmer {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.agent-busy-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0) 34%,
+    rgba(255, 255, 255, 0.5) 50%,
+    rgba(255, 255, 255, 0) 66%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  animation: agent-busy-text-sweep 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes agent-busy-avatar-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.84);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes agent-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes agent-busy-wave {
+  0%,
+  100% {
+    opacity: 0.46;
+    transform: scaleY(0.34);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes agent-busy-text-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  58%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-busy-avatar::before,
+  .agent-busy-spinner,
+  .agent-busy-shimmer::after {
+    animation: none;
+  }
+}
+
 .prompt-mention-input {
   white-space: pre-wrap;
   word-break: break-word;

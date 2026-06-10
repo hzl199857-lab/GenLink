@@ -320,6 +320,7 @@ export type AgentPanelMessage =
               value: string;
               required: boolean;
               placeholder?: string;
+              source?: "user_explicit" | "model_suggested" | "default_guess";
             }
           | {
               id: string;
@@ -329,6 +330,7 @@ export type AgentPanelMessage =
               options: Array<{ label: string; value: string }>;
               required: boolean;
               hint?: string;
+              source?: "user_explicit" | "model_suggested" | "default_guess";
             }
           | {
               id: string;
@@ -339,6 +341,7 @@ export type AgentPanelMessage =
               required: boolean;
               maxSelected: number;
               minSelected?: number;
+              source?: "user_explicit" | "model_suggested" | "default_guess";
             }
           | {
               id: string;
@@ -347,6 +350,7 @@ export type AgentPanelMessage =
               value: string;
               required: boolean;
               placeholder?: string;
+              source?: "user_explicit" | "model_suggested" | "default_guess";
             }
           | {
               id: string;

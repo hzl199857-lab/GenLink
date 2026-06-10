@@ -19,6 +19,11 @@ export type OpenClawPlanfEcomOption = {
   value: string;
 };
 
+export type OpenClawPlanfEcomFieldSource =
+  | "user_explicit"
+  | "model_suggested"
+  | "default_guess";
+
 export type OpenClawPlanfEcomField =
   | {
       id: string;
@@ -27,6 +32,7 @@ export type OpenClawPlanfEcomField =
       value: string;
       required: boolean;
       placeholder?: string;
+      source?: OpenClawPlanfEcomFieldSource;
     }
   | {
       id: string;
@@ -36,6 +42,7 @@ export type OpenClawPlanfEcomField =
       options: OpenClawPlanfEcomOption[];
       required: boolean;
       hint?: string;
+      source?: OpenClawPlanfEcomFieldSource;
     }
   | {
       id: string;
@@ -46,6 +53,7 @@ export type OpenClawPlanfEcomField =
       required: boolean;
       maxSelected: number;
       minSelected?: number;
+      source?: OpenClawPlanfEcomFieldSource;
     }
   | {
       id: string;
@@ -54,6 +62,7 @@ export type OpenClawPlanfEcomField =
       value: string;
       required: boolean;
       placeholder?: string;
+      source?: OpenClawPlanfEcomFieldSource;
     }
   | {
       id: string;
