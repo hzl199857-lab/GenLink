@@ -15,6 +15,7 @@ import {
   type ImageGenerationToolbarAction,
 } from './ImageGenerationNodeToolbar';
 import { ImageGenerationPromptBar } from './ImageGenerationPromptBar';
+import { SilkRunningPreview } from './SilkRunningPreview';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   readStoredSelectedApiProvider,
@@ -543,18 +544,29 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
               }
             }}
           >
+            {isGenerating ? (
+              <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-black">
+                <div className="absolute inset-[-4.5%] blur-[5.2px]">
+                  <SilkRunningPreview />
+                </div>
+                <div className="absolute inset-0 backdrop-blur-[3.6px] bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.024),rgba(0,0,0,0.22)_100%)]" />
+              </div>
+            ) : null}
+
             {previewImageUrl ? (
-              <GeneratedPreviewImage
-                src={previewImageUrl}
-                alt={data.prompt?.trim() || 'Generated image'}
-              />
+              <div className="relative z-10 h-full w-full">
+                <GeneratedPreviewImage
+                  src={previewImageUrl}
+                  alt={data.prompt?.trim() || 'Generated image'}
+                />
+              </div>
             ) : (
               data.status === 'error' && data.errorMessage ? (
-                <div className="max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
+                <div className="relative z-10 max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
                   {data.errorMessage}
                 </div>
               ) : (
-                <ImageIcon size={44} className="text-gl-text-muted" />
+                <ImageIcon size={44} className="relative z-10 text-gl-text-muted" />
               )
             )}
 
