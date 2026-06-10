@@ -57,7 +57,7 @@ export function buildAgentTaskContext({
     executionTarget: {
       createOnCanvas: true,
       placement: "viewport_center_right",
-      confirmationMode: "execution_plan_required",
+      confirmationMode: "workflow_auto_apply",
     },
     ...(canvasSnapshot
       ? {

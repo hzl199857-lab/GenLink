@@ -2015,7 +2015,11 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
         onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
         onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
-        onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({ targetNodeId: id, targetType: 'image_generation' })}
+        onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
+          targetKind: 'node',
+          targetNodeId: id,
+          targetType: 'image_generation',
+        })}
         onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
         onToolbarAction={(action) => {
           if (action === 'pan') {
@@ -2238,7 +2242,11 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       onTitleChange={(nextTitle) => updateNodeData<'video_generation'>(id, { title: nextTitle })}
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
-      onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({ targetNodeId: id, targetType: 'video_generation' })}
+        onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
+          targetKind: 'node',
+          targetNodeId: id,
+          targetType: 'video_generation',
+        })}
       onToolbarAction={handleToolbarAction}
       onFrameCapture={(position, video) => void extractGeneratedVideoFrame(position, video)}
       onSelectNode={handleVideoCardClick}
@@ -3472,8 +3480,12 @@ type GroupConnectionPreview = {
 };
 
 type QuickReferenceConnectMode = {
+  targetKind: 'node';
   targetNodeId: string;
   targetType: 'image_generation' | 'video_generation';
+} | {
+  targetKind: 'agent';
+  onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate';
 };
 
 type ConnectedCopyBuffer = {
@@ -3522,8 +3534,12 @@ function canNodeProvideQuickReference(
   node: CanvasNode,
   mode: QuickReferenceConnectMode,
 ): boolean {
-  if (node.id === mode.targetNodeId) {
+  if (mode.targetKind === 'node' && node.id === mode.targetNodeId) {
     return false;
+  }
+
+  if (mode.targetKind === 'agent') {
+    return canNodeProvideImageReference(node);
   }
 
   if (mode.targetType === 'image_generation') {
@@ -3531,6 +3547,76 @@ function canNodeProvideQuickReference(
   }
 
   return canNodeProvideImageReference(node) || canNodeProvideVideoReference(node);
+}
+
+function createAgentAttachmentFromCanvasImageNode(node: CanvasNode): AgentTaskAttachment | null {
+  if (node.type === 'uploaded_image') {
+    const imageUrl = node.data.hostedImageUrl?.trim() || node.data.imageUrl.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      kind: 'image',
+      name: node.data.title?.trim() || node.data.fileName?.trim() || 'Canvas image',
+      mimeType: 'image/*',
+      imageUrl,
+      previewUrl: imageUrl,
+      width: node.data.width,
+      height: node.data.height,
+      sizeBytes: node.data.sizeBytes,
+      status: 'ready',
+      sourceNodeId: node.id,
+    };
+  }
+
+  if (node.type === 'image') {
+    const imageUrl = node.data.hostedImageUrl?.trim() || node.data.imageUrl.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      kind: 'image',
+      name: node.data.title?.trim() || 'Canvas image',
+      mimeType: 'image/*',
+      imageUrl,
+      previewUrl: imageUrl,
+      width: node.data.width,
+      height: node.data.height,
+      sizeBytes: node.data.sizeBytes,
+      status: 'ready',
+      sourceNodeId: node.id,
+    };
+  }
+
+  if (node.type === 'image_generation') {
+    const imageUrl = node.data.generatedHostedImageUrl?.trim() || node.data.generatedImageUrl?.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      kind: 'image',
+      name: node.data.title?.trim() || 'Generated image',
+      mimeType: 'image/*',
+      imageUrl,
+      previewUrl: imageUrl,
+      width: node.data.generatedImageWidth,
+      height: node.data.generatedImageHeight,
+      sizeBytes: node.data.generatedImageSizeBytes,
+      status: 'ready',
+      sourceNodeId: node.id,
+    };
+  }
+
+  return null;
 }
 
 function cloneNodeData<T>(data: T): T {
@@ -6633,6 +6719,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   useEffect(() => {
     if (
       quickReferenceConnect &&
+      quickReferenceConnect.targetKind === 'node' &&
       !storeNodes.some(
         (node) => node.id === quickReferenceConnect.targetNodeId && node.type === quickReferenceConnect.targetType,
       )
@@ -6657,7 +6744,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       className: quickReferenceConnect
         ? [
             'gl-quick-reference-node',
-            n.id === quickReferenceConnect.targetNodeId
+            quickReferenceConnect.targetKind === 'node' && n.id === quickReferenceConnect.targetNodeId
               ? 'gl-quick-reference-target'
               : canNodeProvideQuickReference(n, quickReferenceConnect)
                 ? 'gl-quick-reference-connectable'
@@ -7577,26 +7664,33 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     setSelectedNodeIds((current) => (current.size === 0 ? current : new Set()));
   }, [deleteNodes, selectedNodeIds]);
 
-  const handleQuickReferenceMouseDownCapture = useCallback((event: React.MouseEvent) => {
-    if (!quickReferenceConnect || event.button !== 0) {
+  const applyQuickReferenceSelection = useCallback((nodeId: string) => {
+    if (!quickReferenceConnect) {
       return;
     }
-
-    const target = event.target instanceof Element ? event.target : null;
-    const nodeElement = target?.closest('.react-flow__node');
-    const nodeId = nodeElement?.getAttribute('data-id');
-
-    if (!nodeId) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
 
     const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
 
     if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
       showProjectMessage('这个节点不能作为当前节点的参考素材');
+      return;
+    }
+
+    if (quickReferenceConnect.targetKind === 'agent') {
+      const attachment = createAgentAttachmentFromCanvasImageNode(sourceNode);
+
+      if (!attachment) {
+        showProjectMessage('这个节点不能作为当前节点的参考素材');
+        return;
+      }
+
+      const result = quickReferenceConnect.onSelect(attachment);
+      showProjectMessage(result === 'duplicate' ? '参考图已添加' : '已添加为 Agent 参考图');
+      setQuickReferenceConnect(null);
+      clearEdgeSelection();
+      setSelectedGroupId(null);
+      selectSingleNode(sourceNode.id);
+      setAgentPanelOpen(true);
       return;
     }
 
@@ -7629,6 +7723,64 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     storeNodes,
   ]);
 
+  const handleQuickReferenceMouseDownCapture = useCallback((event: React.MouseEvent) => {
+    if (!quickReferenceConnect || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const nodeElement = target?.closest('.react-flow__node');
+    const nodeId = nodeElement?.getAttribute('data-id');
+
+    if (!nodeId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (quickReferenceConnect.targetKind === 'agent') {
+      applyQuickReferenceSelection(nodeId);
+      return;
+    }
+
+    const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
+
+    if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
+      showProjectMessage('这个节点不能作为当前节点的参考素材');
+      return;
+    }
+
+    const alreadyConnected = storeEdges.some(
+      (edge) => edge.source === sourceNode.id && edge.target === quickReferenceConnect.targetNodeId,
+    );
+
+    if (alreadyConnected) {
+      showProjectMessage('参考连接已存在');
+    } else {
+      addEdgeStore({
+        id: crypto.randomUUID(),
+        source: sourceNode.id,
+        target: quickReferenceConnect.targetNodeId,
+      });
+      showProjectMessage('已连接为参考素材');
+    }
+
+    setQuickReferenceConnect(null);
+    clearEdgeSelection();
+    setSelectedGroupId(null);
+    selectSingleNode(quickReferenceConnect.targetNodeId);
+  }, [
+    addEdgeStore,
+    clearEdgeSelection,
+    applyQuickReferenceSelection,
+    quickReferenceConnect,
+    selectSingleNode,
+    showProjectMessage,
+    storeEdges,
+    storeNodes,
+  ]);
+
   const handleNodeClick = useCallback((
     event: React.MouseEvent,
     node: ReactFlowNode,
@@ -7636,6 +7788,11 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     if (quickReferenceConnect) {
       event.preventDefault();
       event.stopPropagation();
+
+      if (quickReferenceConnect.targetKind === 'agent') {
+        applyQuickReferenceSelection(node.id);
+        return;
+      }
 
       const sourceNode = storeNodes.find((candidate) => candidate.id === node.id);
 
@@ -7685,7 +7842,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
     }
 
     selectSingleNode(node.id);
-    }, [addEdgeStore, clearEdgeSelection, quickReferenceConnect, selectSingleNode, showProjectMessage, storeEdges, storeNodes]);
+    }, [addEdgeStore, applyQuickReferenceSelection, clearEdgeSelection, quickReferenceConnect, selectSingleNode, showProjectMessage, storeEdges, storeNodes]);
 
   const handleNodeDoubleClick = useCallback((
     event: React.MouseEvent,
@@ -9942,6 +10099,13 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         nodes={storeNodes}
         onClose={() => setAgentPanelOpen(false)}
         onCreateSourceNodes={handleCreateAgentSourceNodes}
+        onQuickReferenceSelect={(onSelect) => {
+          setAgentPanelOpen(true);
+          startQuickReferenceConnect({
+            targetKind: 'agent',
+            onSelect,
+          });
+        }}
         onConfirmPlan={handleConfirmAgentPlan}
         onConfirmGeneration={handleConfirmAgentGeneration}
       />

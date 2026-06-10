@@ -1,0 +1,231 @@
+version: 1
+workspace: GenLinkCanvas
+description: >
+  GenLink Canvas 的 RH / PlanF 兼容画布能力矩阵。这里定义的是当前画布协议中
+  已知可执行的节点能力、字段要求与拓扑约束，不等同于 OpenClaw 平台原生
+  Canvas 产品的默认能力。
+
+scope:
+  product: GenLink Infinite Canvas
+  notThis: OpenClaw Native Canvas
+
+modelDisplayNames:
+  image: 图片
+  video: Seedance2.0
+
+supportedCapabilitySet:
+  images:
+    default:
+      - text-image
+      - image-image
+  videos:
+    default:
+      - text-video
+      - image-video
+      - multimodal-video
+      - video-edit
+      - video-hd
+    conditional:
+      - start-end-video
+      - video-video
+  text:
+    default:
+      - image-text
+      - video-text
+
+nodeTypes:
+  rh-text:
+    subTypes:
+      text-text:
+        tier: default
+        contentMode: directText
+        contentRequired: true
+        note: 预留能力，当前无 Skill 主动路由至此类型
+        upstream:
+          allow:
+            - rh-text
+      image-text:
+        tier: default
+        contentMode: directText
+        contentRequired: true
+        upstream:
+          require:
+            - rh-image
+      video-text:
+        tier: default
+        contentMode: directText
+        contentRequired: true
+        upstream:
+          require:
+            - rh-video
+  rh-image:
+    subTypes:
+      text-image:
+        tier: default
+        contentMode: autoSourceText
+        contentRequired: true
+        upstream:
+          allow:
+            - rh-text
+      image-image:
+        tier: default
+        contentMode: directPrompt
+        contentRequired: true
+        note: 基于已有图做增量编辑时，默认使用 editAction:redraw；如引用画布已有真实节点，建议同时提供 edge 与 sourceNodeId
+        upstream:
+          require:
+            - rh-image
+        editActions:
+          - redraw
+          - erase
+          - enhance
+          - expand
+          - cutout
+          - lighting
+          - multiangle
+  rh-video:
+    subTypes:
+      text-video:
+        tier: default
+        contentMode: autoSourceText
+        contentRequired: true
+        upstream:
+          allow:
+            - rh-text
+      image-video:
+        tier: default
+        contentMode: directPrompt
+        contentRequired: true
+        upstream:
+          require:
+            - rh-image
+      multimodal-video:
+        tier: default
+        contentMode: directPrompt
+        contentRequired: true
+        upstream:
+          allow:
+            - rh-text
+            - rh-image
+            - rh-video
+      video-edit:
+        tier: default
+        contentMode: directPrompt
+        contentRequired: true
+        upstream:
+          require:
+            - rh-video
+      video-hd:
+        tier: default
+        contentMode: none
+        contentRequired: false
+        upstream:
+          require:
+            - rh-video
+      start-end-video:
+        tier: conditional
+        contentMode: directPrompt
+        contentRequired: true
+        upstream:
+          require:
+            - rh-image
+            - rh-image
+      video-video:
+        tier: conditional
+        contentMode: directPrompt
+        contentRequired: true
+        upstream:
+          require:
+            - rh-video
+
+fieldPolicy:
+  workflow:
+    allowedTopLevelFields:
+      - name
+      - nodes
+      - edges
+      - group
+      - autoRun
+  commonNodeFields:
+    - id
+    - type
+    - subType
+    - title
+    - content
+    - aspectRatio
+    - sourceNodeId
+    - _isSourceTextNode
+    - editAction
+    - from
+    - agentNodeType
+  agentFields:
+    from:
+      required: true
+      fixedValue: agent
+    agentNodeType:
+      required: true
+      description: >
+        节点角色标签。必须从以下值中选择：
+        character, non_human_character, prop, shot, first_frame, scene,
+        copywriting, logo, cover, illustration, background, reference,
+        style_ref, output, prompt_bridge, storyboard, video_clip, enhancer,
+        campaign_shot, interior_render, floor_plan, material_board,
+        detail_shot, body_part, transform_state
+  forbiddenNodeFields:
+    note: >
+      以下字段绝对不允许出现在 Agent 的 workflow-json 节点中。
+    toolsType:
+      forbidden: true
+      reason: >
+        toolsType 会覆盖 subType 的模型查找路径，导致选错模型列表。
+        Agent 只能通过 subType 和 editAction 表达意图。
+      examples:
+        wrong: '{"toolsType": "image-redraw", "subType": "image-image"}'
+        correct: '{"editAction": "redraw", "subType": "image-image"}'
+  videoNodeFields:
+    agentOptional:
+      - duration # 格式必须为 4s~15s
+    clientManaged:
+      - resolution
+      - videoWithAudio
+      - modelCode
+  aspectRatios:
+    common:
+      - "1:1"
+      - "16:9"
+      - "9:16"
+      - "4:3"
+      - "3:4"
+    defaults:
+      image: "1:1"
+      video: "16:9"
+      characterSheet: "16:9"
+
+contentPolicy:
+  language: zh-CN
+  conventions:
+    image-image: 优先写"保留什么 + 只改什么"，未指明部分默认保持一致
+    multimodal-video: 写清参考关系、镜头节奏、动作与连贯性
+
+routingHeuristics:
+  preferImageGenerationFromScratch: text-image
+  preferImageDeriveFromUploadedImage: image-image
+  preferAnimateUploadedImage: image-video
+
+topologies:
+  sourceReference:
+    note: 引用画布已有真实节点时，优先同时写 edge 与 sourceNodeId
+  pipeline:
+    examples:
+      - text-image-to-image-image
+      - text-image-storyboard-to-multimodal-video
+
+executionRules:
+  doNotInventCapabilities: true
+  reuseUploadedNodesFirst: true
+  derivativeImageTasksMustUseImageInputs: true
+  keepPromptsChinese: true
+  onlyCreateFinalNeededNodes: true
+  multiClipDurationsMustMatchClipTable: true
+
+

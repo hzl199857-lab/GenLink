@@ -289,12 +289,12 @@ export function ApiSettingsPanel({
                                   [provider.key]: !current[provider.key],
                                 }))
                               }
-                              aria-label={isRevealed ? '闅愯棌' : '鏄剧ず'}
+                              aria-label={isRevealed ? '隐藏' : '显示'}
                               className="ml-2 flex h-7 w-7 items-center justify-center rounded-sm text-[#666666] transition-colors hover:bg-white/5 hover:text-[#cccccc]"
                             >
                               {isRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
                             </button>
-                            <Tooltip label={isRevealed ? '闅愯棌' : '鏄剧ず'} side="top" />
+                            <Tooltip label={isRevealed ? '隐藏' : '显示'} side="top" />
                           </div>
                         </div>
                       </div>

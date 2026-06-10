@@ -62,7 +62,7 @@ export type AgentTaskContext = {
   executionTarget: {
     createOnCanvas: true;
     placement: "viewport_center_right";
-    confirmationMode: "execution_plan_required";
+    confirmationMode: "workflow_auto_apply";
   };
   canvasSummary?: {
     nodeCount: number;
@@ -135,7 +135,15 @@ export type CanvasAgentToolName =
   | "create_image_generation_node"
   | "connect_nodes"
   | "set_image_generation_options"
-  | "run_image_generation";
+  | "run_image_generation"
+  | "genlink_canvas_get_snapshot"
+  | "genlink_canvas_get_node"
+  | "genlink_canvas_create_workflow"
+  | "genlink_canvas_create_node"
+  | "genlink_canvas_connect_nodes"
+  | "genlink_canvas_update_node_params"
+  | "genlink_canvas_run_node"
+  | "genlink_canvas_get_job_status";
 
 export type CanvasAgentToolCall = {
   id: string;
@@ -213,6 +221,52 @@ export type AgentPanelMessage =
   | {
       id: string;
       role: "agent";
+      type: "planf_ecom_plan";
+      summary: string;
+      session: Extract<AgentPanelMessage, { type: "planf_ecom_session" }>["session"];
+      values: Record<string, unknown>;
+      plan: {
+        type: "ecom-image-plan" | "ecom-detail-page-plan";
+        title: string;
+        checkpointPrompt: string;
+        meta: {
+          productName: string;
+          category: string;
+          platform: string;
+          imageSet: string;
+          anchorMode: string;
+          totalImages: number;
+          deliveryRounds: number;
+          styleMode: string;
+          extraConstraints?: string;
+        };
+        imageSlots: Array<{
+          index: number;
+          slot: string;
+          round: number;
+          subType: string;
+          anchorSource: string;
+          ratio: string;
+          intent: string;
+        }>;
+        options: Array<{
+          id: "A" | "B" | "C" | "D";
+          label: string;
+        }>;
+      };
+      attachments: AgentTaskAttachment[];
+      status: "waiting_confirmation" | "adjusting" | "submitted" | "completed" | "error";
+      adjustmentOption?: {
+        id: "B" | "C" | "D";
+        label: string;
+      };
+      adjustmentDraft?: string;
+      errorMessage?: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      role: "agent";
       type: "text";
       content: string;
       createdAt: string;
@@ -235,6 +289,84 @@ export type AgentPanelMessage =
   | {
       id: string;
       role: "agent";
+      type: "planf_ecom_session";
+      session: {
+        sessionId: string;
+        route: "ecomImageTrack";
+        phase: "collecting";
+        preset: string;
+        request: string;
+        referenceImageCount: number;
+        stateHeader: string;
+        protocol: {
+          name: "form-fields";
+          trigger: string;
+          responsePath: string;
+        };
+        agent: {
+          title: string;
+          subtitle: string;
+        };
+        message: string;
+        thinkingSteps: Array<{
+          label: string;
+          detail: string;
+        }>;
+        fields: Array<
+          | {
+              id: string;
+              label: string;
+              type: "text";
+              value: string;
+              required: boolean;
+              placeholder?: string;
+            }
+          | {
+              id: string;
+              label: string;
+              type: "select";
+              value: string;
+              options: Array<{ label: string; value: string }>;
+              required: boolean;
+              hint?: string;
+            }
+          | {
+              id: string;
+              label: string;
+              type: "multi-select";
+              value: string[];
+              options: Array<{ label: string; value: string }>;
+              required: boolean;
+              maxSelected: number;
+              minSelected?: number;
+            }
+          | {
+              id: string;
+              label: string;
+              type: "text";
+              value: string;
+              required: boolean;
+              placeholder?: string;
+            }
+          | {
+              id: string;
+              label: string;
+              type: "upload";
+              value: string;
+              accept: "image";
+              required: boolean;
+              hint: string;
+            }
+        >;
+      };
+      attachments: AgentTaskAttachment[];
+      status: "collecting" | "submitted" | "error";
+      errorMessage?: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      role: "agent";
       type: "execution_plan";
       summary?: string;
       plan: AgentExecutionPlan;
@@ -246,6 +378,14 @@ export type AgentPanelMessage =
       imageGenerationNodeIds?: string[];
       groupId?: string;
       groupName?: string;
+      planfEcom?: {
+        phase: "white-bg-anchor" | "fanout";
+        session: Extract<AgentPanelMessage, { type: "planf_ecom_session" }>["session"];
+        values: Record<string, unknown>;
+        plan: Extract<AgentPanelMessage, { type: "planf_ecom_plan" }>["plan"];
+        anchorNodeId?: string;
+        anchorOutputUrl?: string;
+      };
       status:
         | "waiting_confirmation"
         | "cancelled"

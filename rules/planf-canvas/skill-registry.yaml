@@ -1,0 +1,400 @@
+version: 1
+workspace: GenLinkCanvas
+displayName: GenLink Canvas
+description: >
+  GenLink Canvas 的 RH / PlanF 兼容 Skill 注册表。维护 Skill 入口、触发标签、
+  阶段归属、下游交接关系、追问偏置和 Deep Mode 声明。
+
+sourceOfTruth:
+  identity: IDENTITY.md
+  soul: SOUL.md
+  phases: phase-policy.md
+  videoWorkflow: VIDEO_PIPELINE.md
+  capabilities: canvas-capabilities.yaml
+  orchestrator: AGENTS.md
+  contractProtocol: skills/_shared/skill-contract-protocol.md
+  documentChainProtocol: skills/_shared/document-chain-protocol.md
+  videoArtifactProtocol: skills/_shared/video-workflow-contract.md
+
+runtimeScope:
+  product: GenLink Infinite Canvas
+  note: >
+    本注册表服务的是 GenLink 画布创作链路；其中 "OpenClaw"
+    仅指承接这些结构化协议的前端/Agent 集成层，不代表另一套原生
+    Canvas 运行时或默认工具集合。
+
+defaults:
+  language: zh-CN
+  confirmationMode: adaptiveDepth
+  imagePromptSkill: prompter
+  videoPromptSkill: videoPrompt
+  narrativeVideoPromptSkill: videoPrompt
+  analysisPromptSkill: reverse-engineer
+  engineerSkill: engineer
+  reuseUploadedNodesFirst: true
+
+coreSkills:
+  analyst:
+    path: skills/analyst/SKILL.md
+    role: 复杂需求分析、四维评分与路由建议
+    phase: [A]
+    handoffTo: [prompter, videoSop, marketingVideo, reverse-engineer, seedance-prompter, storyboard-master,
+      mangaDrama, brandDesigner, brochure, poster, ecomImage, ecomIdea, ecomScript, ecomRefGen, interiorDesign,
+      socialCarousel, crossPlatformAdapter, adCreative, youtubeThumbnail, socialOrganicSurface, rednoteCover]
+  prompter:
+    path: skills/prompter/SKILL.md
+    role: 图片提示词创作
+    phase: [C]
+    media: [image]
+    handoffTo: [engineer]
+    conflictsWith: [reverse-engineer]
+  reverse-engineer:
+    path: skills/reverse-engineer/SKILL.md
+    role: 图片与视频反推
+    phase: [C]
+    media: [text]
+    handoffTo: [engineer]
+    conflictsWith: [prompter]
+  engineer:
+    path: skills/engineer/SKILL.md
+    role: workflow-json 与 canvas-command 组装
+    phase: [D]
+    handoffTo: []
+    prerequisites: [prompter, videoPrompt, storyRefGen, reverse-engineer, seedance-prompter]
+
+hybridSkills:
+  seedance-prompter:
+    note: >
+      混合型 Skill，横跨 A/B/C 三阶段。当前仅作为技术型兼容编译器，
+      不再拥有默认视频主链路由权。
+    path: skills/seedance-prompter/SKILL.md
+    role: Seedance 2.0 技术型视频提示词编译器
+    phase: [A, B, C]
+    media: [video]
+    handoffTo: [engineer]
+    conflictsWith: [videoSop, videoPrompt]
+    contentLanguage: zh-CN+en
+  storyboard-master:
+    note: >
+      混合型 Skill，跨 A/B/C 三阶段：
+      - A/B：通用分镜规划
+      - C：clip-table-grid 模式作为 video-sop Phase 6.5 构图蓝图
+    path: skills/storyboard-master/SKILL.md
+    role: 分镜大师，基于参考图生成电影级分镜画面提示词；clip-table-grid 模式承担 video-sop Phase 6.5 构图蓝图
+    phase: [A, B, C]
+    media: [image]
+    handoffTo: [prompter, videoPrompt, seedance-prompter, engineer]
+    conflictsWith: [mangaDrama]
+
+pipelineSkills:
+  videoSop:
+    tagPrefix: skill:video_sop/
+    path: skills/video-sop/SKILL.md
+    role: 默认视频项目总控，按视频九阶段组织中间产物与 workflow 交付
+    phase: [A, B, C, D]
+    media: [video]
+    conflictsWith: [seedance-prompter, marketingVideo, mangaDrama]
+    handoff:
+      defaultSequence: [storyIdea, storyScript, refExtract, scriptChunk, shotsTiming, shotsAssembly, sceneReflection, storyRefGen,
+        videoPrompt, engineer]
+      continuityStrictSequence: [storyIdea, storyScript, refExtract, scriptChunk, shotsTiming, shotsAssembly, sceneReflection,
+        storyboardMaster, storyRefGen, videoPrompt, engineer]
+      storyboardIntentSequence: [storyIdea, storyScript, refExtract, scriptChunk, shotsTiming, shotsAssembly, sceneReflection,
+        storyboardMaster, storyRefGen, videoPrompt, engineer]
+    deepMode:
+      enabled: false
+  storyIdea:
+    tagPrefix: skill:story_idea/
+    path: skills/story-idea/SKILL.md
+    role: 视频内容大纲
+    phase: [B]
+    media: [video]
+  storyScript:
+    tagPrefix: skill:story_script/
+    path: skills/story-script/SKILL.md
+    role: 可拍剧本生成
+    phase: [B]
+    media: [video]
+  refExtract:
+    tagPrefix: skill:ref_extract/
+    path: skills/ref-extract/SKILL.md
+    role: 资产注册表生成
+    phase: [B]
+    media: [video, image]
+  scriptChunk:
+    tagPrefix: skill:script_chunk/
+    path: skills/script-chunk/SKILL.md
+    role: 分镜切分
+    phase: [C]
+    media: [video]
+  shotsTiming:
+    tagPrefix: skill:shots_timing/
+    path: skills/shots-timing/SKILL.md
+    role: 分镜计时
+    phase: [C]
+    media: [video]
+  shotsAssembly:
+    tagPrefix: skill:shots_assembly/
+    path: skills/shots-assembly/SKILL.md
+    role: Clip 组合
+    phase: [C]
+    media: [video]
+  sceneReflection:
+    tagPrefix: skill:scene_reflection/
+    path: skills/scene-reflection/SKILL.md
+    role: 连贯性校验
+    phase: [C]
+    media: [video]
+  storyRefGen:
+    tagPrefix: skill:story_ref_gen/
+    path: skills/story-ref-gen/SKILL.md
+    role: 参考素材 workflow 生成
+    phase: [C]
+    media: [image, video]
+  videoPrompt:
+    tagPrefix: skill:video_prompt/
+    path: skills/video-prompt/SKILL.md
+    role: 视频增强版 Prompt Pack 生成
+    phase: [C]
+    media: [video]
+  bgmSearch:
+    tagPrefix: skill:bgm_search/
+    path: skills/bgm-search/SKILL.md
+    role: 配乐关键词生成
+    phase: [C]
+    media: [audio, video]
+  ecomIdea:
+    tagPrefix: skill:ecom_idea/
+    path: skills/ecom-idea/SKILL.md
+    role: 营销视频大纲
+    phase: [B]
+  ecomScript:
+    tagPrefix: skill:ecom_script/
+    path: skills/ecom-script/SKILL.md
+    role: 营销视频剧本
+    phase: [B]
+  ecomRefGen:
+    tagPrefix: skill:ecom_ref_gen/
+    path: skills/ecom-ref-gen/SKILL.md
+    role: 营销参考素材生成
+    phase: [B, C]
+
+domainSkills:
+  marketingVideo:
+    tagPrefix: skill:marketing-video
+    path: skills/marketing-video/SKILL.md
+    role: 营销视频专项总控
+    phase: [A, B, C, D]
+    media: [video]
+    subScenes: [short, standard, longform, amazon]
+    handoff:
+      defaultSequence: [ecomIdea, ecomScript, ecomRefGen, scriptChunk, shotsTiming, shotsAssembly, sceneReflection, videoPrompt, engineer]
+    firstRoundInquiry:
+      enabled: true
+  ecomImage:
+    tagPrefix: skill:ecom-image
+    path: skills/ecom-image/SKILL.md
+    role: 电商主图集专项总控
+    phase: [A, B, C]
+    media: [image]
+    subScenes: [main, full-set, detail, amazon, ugc, stylist]
+    sceneRouting:
+      ugc:
+        knowledgeBase: skills/ecom-image/references/ugc-style.md
+        styleMode: ugc
+        autoRewriteFullSetTo: 6
+      stylist:
+        knowledgeBase: skills/ecom-image/references/fashion-stylist.md
+        styleMode: stylist
+        autoRewriteFullSetTo: 6
+      amazon:
+        platformLayer: true
+    handoff:
+      defaultSequence: [prompter, engineer]
+    firstRoundInquiry:
+      enabled: true
+  brandDesigner:
+    tagPrefix: skill:brand_design/
+    path: skills/brand-designer/SKILL.md
+    role: BrandOracle · 顶级品牌视觉专家
+    phase: [A, B]
+    media: [image]
+    subScenes: [logo, vi, poster, peripheral, campaign]
+    sceneRouting:
+      campaign:
+        prerequisites: [productImage, logoImage]
+        plan: brand-campaign-plan
+        knowledgeBase: skills/brand-designer/references/brand-campaign-register.md
+    firstRoundInquiry:
+      enabled: true
+  brandIpDesigner:
+    tagPrefix: skill:brand_ip_design
+    path: skills/brand-ip-designer/SKILL.md
+    role: 潮玩 IP 设计总监
+    phase: [A, B]
+    media: [image, 3d]
+  brochure:
+    tagPrefix: skill:brochure/
+    path: skills/brochure/SKILL.md
+    role: 宣传册/画册设计师
+    phase: [A, B]
+    firstRoundInquiry:
+      enabled: true
+  poster:
+    tagPrefix: skill:poster/
+    path: skills/poster/SKILL.md
+    role: 营销海报设计师
+    phase: [A, B]
+    firstRoundInquiry:
+      enabled: true
+  socialCarousel:
+    tagPrefix: skill:social_carousel/
+    path: skills/social-carousel/SKILL.md
+    role: 社交轮播多卡（滑动组图）
+    phase: [A, B]
+  crossPlatformAdapter:
+    tagPrefix: skill:cross_platform/
+    path: skills/cross-platform-adapter/SKILL.md
+    role: 单源图跨平台比例与安全区适配
+    phase: [A, B]
+  adCreative:
+    tagPrefix: skill:ad_creative/
+    path: skills/ad-creative/SKILL.md
+    role: 付费投放静态创意
+    phase: [A, B]
+  youtubeThumbnail:
+    tagPrefix: skill:youtube_thumbnail/
+    path: skills/youtube-thumbnail/SKILL.md
+    role: 横版 16:9 视频封面
+    phase: [A, B]
+  socialOrganicSurface:
+    tagPrefix: skill:social_organic/
+    path: skills/social-organic-surface/SKILL.md
+    role: 有机社交图文
+    phase: [A, B]
+  rednoteCover:
+    tagPrefix: skill:rednote_cover/
+    path: skills/rednote-cover/SKILL.md
+    role: 小红书封面（3:4 竖版首图）
+    phase: [A, B]
+    firstRoundInquiry:
+      enabled: true
+  interiorDesign:
+    tagPrefix: skill:interior_design/
+    path: skills/interior-design/SKILL.md
+    role: 室内设计专项总控
+    phase: [A, B, C]
+    subScenes: [render, floor-plan, material-board, furniture-layout, detail-shot]
+    sceneRouting:
+      render:
+        knowledgeBase: skills/interior-design/references/
+    firstRoundInquiry:
+      enabled: true
+  mangaDrama:
+    tagPrefix: skill:manga_drama/
+    path: skills/manga-drama/SKILL.md
+    role: 漫剧前置叙事入口
+    phase: [A, B]
+    media: [image, video]
+    handoff:
+      round1: [prompter, engineer]
+      round2: []
+      round3: [videoSop, videoPrompt, engineer]
+    policy:
+      threeRoundPipeline: true
+      characterSheet:
+        nodeType: text-image
+        aspectRatio: "16:9"
+      scenePlan:
+        format: creative-doc
+
+routing:
+  untaggedMessage:
+    strategy: classifyByMediaAndIntent
+  implicitKeywordRouting:
+    videoSop:
+      keywords: [视频, 品牌视频, 商业短片, 宣传片, 短片, 微电影, 叙事短片, 故事短片, 创意短片, 叙事视频, 连续成片, 影视, 电影, Seedance, seedance, Clip表, 分镜脚本, 长视频, 故事视频]
+      priority: 2
+    marketingVideo:
+      keywords: [营销视频, 广告视频, 带货视频, 电商视频, 产品广告, 种草视频, 卖货视频, 直播切片, 主图视频, 详情页视频, 亚马逊广告, 淘宝主图视频, TVC, tvc, 商品视频, 短视频带货, 广告片]
+      priority: 1
+    mangaDrama:
+      keywords: [漫剧, 漫画, 连环画, 故事板, 角色设定图, 做剧, 剧集]
+      priority: 1
+    ecomImage:
+      keywords: [电商主图, 商品主图, 产品主图, 白底图, 详情页图, 详情页设计, 主图设计, 套图, 产品图集, 商品轮播, 平台主图, 卖点图, 商品白底, 亚马逊主图, 亚马逊A+, 亚马逊a+, 淘宝主图, 京东主图, 天猫主图, 拼多多主图, 抖音小店主图, 详情页, 主图]
+      priority: 1
+    ecomImageUgc:
+      keywords: [UGC, ugc, 上身图, 生活化上身图, 素人感, 种草感, 真人感, iPhone拍, 街拍感, 生活方式图, 笔记感, 镜面自拍, mirror selfie]
+      priority: 1
+      targetSkill: ecomImage
+      scene: ugc
+    ecomImageStylist:
+      keywords: [造型师, AI造型师, 编辑大片, 高奢感, Editorial, 时尚大片, Vogue感, 高转化模特图, Fashion Stylist, 大片感, 时尚造型]
+      priority: 1
+      targetSkill: ecomImage
+      scene: stylist
+    brandDesigner:
+      keywords: [品牌设计, Logo, logo, 标志设计, VI设计, 品牌主视觉, 品牌识别系统, 品牌周边]
+      priority: 3
+    brandDesignerCampaign:
+      keywords: [品牌战役, 整套品牌物料, 品牌摄影套图, 整合营销, brand campaign, 视觉战役, 品牌大片]
+      priority: 2
+      targetSkill: brandDesigner
+      scene: campaign
+    brochure:
+      keywords: [宣传册, 画册, 宣传单, 营销手册, 产品手册, 企业画册, 传单]
+      priority: 3
+    poster:
+      keywords: [海报, 营销海报, 活动海报, 节日海报, 促销海报, 节气海报, 主视觉, 主视觉海报, 招募海报]
+      priority: 2
+    socialCarousel:
+      keywords: [轮播图, 滑动组图, 多页社交图, 小红书轮播, carousel, 多卡图文]
+      priority: 2
+    adCreative:
+      keywords: [广告素材, 信息流广告, 投放素材, Meta广告, 抖音广告, Google Display, 转化素材]
+      priority: 2
+    youtubeThumbnail:
+      keywords: [YouTube封面, 油管封面, YT缩略图, 16:9封面, 点击率封面]
+      priority: 2
+    rednoteCover:
+      keywords: [小红书封面, 小红书首图, 小红书笔记封面, 笔记主图, xhs封面, 薯条封面]
+      priority: 1
+    storyboardMaster:
+      keywords: [分镜, 分镜大师, 宫格分镜, 九宫格, 四宫格, 三视图, 动态场效]
+      priority: 3
+    interiorDesign:
+      keywords: [室内设计, 装修, 装修方案, 翻新, 旧房改造, 样板间, 渲染图, 室内效果图, 3D渲染, 彩平图, 户型图, 软装]
+      priority: 2
+    bgmSearch:
+      keywords: [配乐, BGM, bgm, 背景音乐, 音乐关键词]
+      priority: 4
+
+conflictResolution:
+  defaultPrecedence: [marketingVideo, mangaDrama, ecomImage, videoSop, interiorDesign, brandDesigner, brandIpDesigner,
+    adCreative, rednoteCover, socialCarousel, socialOrganicSurface, crossPlatformAdapter, youtubeThumbnail, poster, brochure,
+    storyboardMaster, bgmSearch]
+  rules:
+    - whenMatched: [ecomImage, marketingVideo]
+      winner: marketingVideo
+      unlessOutputIntent: image
+      rationale: 营销视频优先；图片意图回 ecomImage
+    - whenMatched: [ecomImage, brandDesigner]
+      winner: ecomImage
+      rationale: 电商语义走专项链路；品牌设计是长期资产
+    - whenMatched: [videoSop, mangaDrama]
+      winner: mangaDrama
+      rationale: 漫剧/剧集优先完成叙事入口
+
+blockingQuestions:
+  common: [missingPrimaryIntent, missingSourceAsset, conflictingOutputModes]
+  videoSop: [missingStoryTheme]
+  marketingVideo: [missingBrandOrProductAnchor]
+  ecomImage: [missingProductAnchor, missingCategoryOrPlatform]
+  brandDesigner: [missingBrandNameOrSubject]
+  brochure: [missingTopicOrPurpose]
+  poster: [missingTopicOrPurpose]
+  rednoteCover: [missingContentLane, missingCoverTitle]
+  interiorDesign: [missingModeOrSpaceType]
+
+

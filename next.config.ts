@@ -22,6 +22,13 @@ function getBuildVersion() {
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  outputFileTracingIncludes: {
+    "/api/openclaw/planf/ecom/start": [
+      "./rules/planf-canvas/**/*",
+      "./rules/genlink-overrides/**/*",
+    ],
+    "/api/planf/ecom-workflow": ["./rules/planf-canvas/**/*"],
+  },
   env: {
     NEXT_PUBLIC_APP_VERSION: getBuildVersion(),
   },

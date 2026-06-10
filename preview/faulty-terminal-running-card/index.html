@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GenLink Running Card Preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d10;
+        --panel: #15171a;
+        --stroke: rgba(255, 255, 255, 0.14);
+        --muted: rgba(232, 238, 247, 0.58);
+        --text: #f2f6fb;
+        --angle: 0deg;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(104, 148, 255, 0.12), transparent 26%),
+          radial-gradient(circle at 82% 78%, rgba(132, 255, 212, 0.08), transparent 30%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .page {
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+        padding: 34px;
+      }
+
+      .stage {
+        display: grid;
+        width: min(1180px, 100%);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 34px;
+        align-items: start;
+      }
+
+      .sample {
+        display: grid;
+        gap: 14px;
+        justify-items: center;
+      }
+
+      .label {
+        display: flex;
+        width: min(540px, 100%);
+        align-items: center;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .label strong {
+        color: var(--text);
+        font-size: 15px;
+        font-weight: 650;
+      }
+
+      .node-title {
+        display: flex;
+        width: 540px;
+        align-items: center;
+        gap: 10px;
+        color: rgba(232, 238, 247, 0.62);
+        font-size: 22px;
+        font-weight: 550;
+      }
+
+      .image-icon {
+        width: 25px;
+        height: 25px;
+      }
+
+      .card {
+        position: relative;
+        display: grid;
+        width: 540px;
+        height: 304px;
+        place-items: center;
+        overflow: hidden;
+        border: 1px solid var(--stroke);
+        border-radius: 22px;
+        background: var(--panel);
+        box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+      }
+
+      .current-running {
+        border-color: transparent;
+        background:
+          linear-gradient(#15171a, #15171a) padding-box,
+          conic-gradient(
+            from var(--angle),
+            rgba(255, 255, 255, 0.18) 0deg,
+            rgba(255, 255, 255, 0.18) 238deg,
+            rgba(255, 255, 255, 0.92) 282deg,
+            #ffffff 318deg,
+            rgba(255, 255, 255, 0.18) 360deg
+          )
+          border-box;
+        animation: running-border 2s linear infinite;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.14),
+          0 0 18px rgba(255, 255, 255, 0.26),
+          0 0 38px rgba(255, 255, 255, 0.14),
+          0 18px 46px rgba(0, 0, 0, 0.42);
+      }
+
+      .empty-icon {
+        width: 50px;
+        height: 50px;
+        color: rgba(232, 238, 247, 0.36);
+      }
+
+      .faulty-card {
+        border-color: rgba(255, 255, 255, 0.16);
+        background: #000;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.12),
+          0 0 22px rgba(255, 255, 255, 0.14),
+          0 18px 46px rgba(0, 0, 0, 0.42);
+      }
+
+      .faulty-card::after {
+        position: absolute;
+        inset: 0;
+        content: "";
+        pointer-events: none;
+        background: linear-gradient(rgba(255, 255, 255, 0.045), transparent 2px) 0 0 / 100% 5px;
+        mix-blend-mode: screen;
+        opacity: 0.76;
+      }
+
+      .faulty-card canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        background: #050607;
+        filter: blur(5.2px);
+        transform: scale(1.045);
+      }
+
+      .faulty-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        backdrop-filter: blur(3.6px);
+        background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.024), rgba(0, 0, 0, 0.22) 100%);
+      }
+
+      .run-chip {
+        position: absolute;
+        right: 14px;
+        bottom: 14px;
+        z-index: 2;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        background: rgba(10, 12, 14, 0.62);
+        color: rgba(242, 246, 251, 0.78);
+        font-size: 12px;
+        line-height: 1;
+        padding: 8px 10px;
+        backdrop-filter: blur(10px);
+      }
+
+      .prompt-bar {
+        display: flex;
+        width: 540px;
+        height: 52px;
+        align-items: center;
+        justify-content: space-between;
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 18px;
+        background: rgba(21, 23, 26, 0.86);
+        padding: 0 12px 0 18px;
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.34);
+      }
+
+      .prompt-text {
+        min-width: 0;
+        color: rgba(242, 246, 251, 0.58);
+        font-size: 13px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .run-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .pill {
+        display: grid;
+        height: 22px;
+        min-width: 28px;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        color: rgba(242, 246, 251, 0.72);
+        font-size: 12px;
+      }
+
+      .run-button {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        place-items: center;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.45);
+        color: #050607;
+      }
+
+      @property --angle {
+        syntax: "<angle>";
+        inherits: false;
+        initial-value: 0deg;
+      }
+
+      @keyframes running-border {
+        to {
+          --angle: 360deg;
+        }
+      }
+
+      @media (max-width: 980px) {
+        body {
+          overflow: auto;
+        }
+
+        .stage {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .page {
+          padding: 20px;
+        }
+
+        .node-title,
+        .card,
+        .prompt-bar {
+          width: min(540px, 100vw - 40px);
+        }
+
+        .card {
+          height: min(304px, calc((100vw - 40px) * 0.563));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="stage" aria-label="running state preview">
+        <article class="sample">
+          <div class="label">
+            <strong>当前运行态</strong>
+            <span>旋转高亮边框</span>
+          </div>
+          <div class="node-title">
+            <svg class="image-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="9" cy="9" r="2" />
+              <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+            </svg>
+            <span>Image</span>
+          </div>
+          <div class="card current-running">
+            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="9" cy="9" r="2" />
+              <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+            </svg>
+          </div>
+          <div class="prompt-bar">
+            <div class="prompt-text">A cinematic product shot with reflective glass...</div>
+            <div class="run-control">
+              <span class="pill">x1</span>
+              <button class="run-button" aria-label="生成中" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6">
+                  <path d="M12 19V5" />
+                  <path d="m5 12 7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <article class="sample">
+          <div class="label">
+            <strong>Silk 运行态</strong>
+            <span>React Bits shader 参数预览</span>
+          </div>
+          <div class="node-title">
+            <svg class="image-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="9" cy="9" r="2" />
+              <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+            </svg>
+            <span>Image</span>
+          </div>
+          <div class="card faulty-card" id="silk-card">
+            <canvas id="silk-canvas"></canvas>
+            <div class="faulty-overlay"></div>
+          </div>
+          <div class="prompt-bar">
+            <div class="prompt-text">A cinematic product shot with reflective glass...</div>
+            <div class="run-control">
+              <span class="pill">x1</span>
+              <button class="run-button" aria-label="生成中" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6">
+                  <path d="M12 19V5" />
+                  <path d="m5 12 7-7 7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const canvas = document.querySelector("#silk-canvas");
+      const card = document.querySelector("#silk-card");
+      const gl = canvas.getContext("webgl", {
+        alpha: false,
+        antialias: false,
+        depth: false,
+        stencil: false,
+      });
+
+      if (!gl) {
+        card.insertAdjacentHTML("beforeend", '<span class="run-chip">WebGL unavailable</span>');
+        throw new Error("WebGL unavailable");
+      }
+
+      const vertexShaderSource = `
+        attribute vec2 position;
+        attribute vec2 uv;
+        varying vec2 vUv;
+        varying vec3 vPosition;
+
+        void main() {
+          vPosition = vec3(position, 0.0);
+          vUv = uv;
+          gl_Position = vec4(position, 0.0, 1.0);
+        }
+      `;
+
+      const fragmentShaderSource = `
+        precision mediump float;
+
+        varying vec2 vUv;
+        varying vec3 vPosition;
+
+        uniform float uTime;
+        uniform vec3 uColor;
+        uniform float uSpeed;
+        uniform float uScale;
+        uniform float uRotation;
+        uniform float uNoiseIntensity;
+
+        const float e = 2.71828182845904523536;
+
+        float noise(vec2 texCoord) {
+          float G = e;
+          vec2 r = (G * sin(G * texCoord));
+          return fract(r.x * r.y * (1.0 + texCoord.x));
+        }
+
+        vec2 rotateUvs(vec2 uv, float angle) {
+          float c = cos(angle);
+          float s = sin(angle);
+          mat2 rot = mat2(c, -s, s, c);
+          return rot * uv;
+        }
+
+        void main() {
+          float rnd = noise(gl_FragCoord.xy);
+          vec2 uv = rotateUvs(vUv * uScale, uRotation);
+          vec2 tex = uv * uScale;
+          float tOffset = uSpeed * uTime;
+
+          tex.y += 0.03 * sin(8.0 * tex.x - tOffset);
+
+          float pattern = 0.6 +
+                          0.4 * sin(5.0 * (tex.x + tex.y +
+                                           cos(3.0 * tex.x + 5.0 * tex.y) +
+                                           0.02 * tOffset) +
+                                   sin(20.0 * (tex.x + tex.y - 0.1 * tOffset)));
+
+          vec4 col = vec4(uColor, 1.0) * vec4(pattern) - rnd / 15.0 * uNoiseIntensity;
+          col.a = 1.0;
+          gl_FragColor = col;
+        }
+      `;
+
+      function createShader(type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          throw new Error(gl.getShaderInfoLog(shader) || "Shader compile failed");
+        }
+        return shader;
+      }
+
+      const program = gl.createProgram();
+      gl.attachShader(program, createShader(gl.VERTEX_SHADER, vertexShaderSource));
+      gl.attachShader(program, createShader(gl.FRAGMENT_SHADER, fragmentShaderSource));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program) || "Program link failed");
+      }
+      gl.useProgram(program);
+
+      const vertices = new Float32Array([
+        -1, -1, 0, 0,
+        1, -1, 1, 0,
+        -1, 1, 0, 1,
+        -1, 1, 0, 1,
+        1, -1, 1, 0,
+        1, 1, 1, 1,
+      ]);
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+      const positionLocation = gl.getAttribLocation(program, "position");
+      const uvLocation = gl.getAttribLocation(program, "uv");
+      gl.enableVertexAttribArray(positionLocation);
+      gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
+      gl.enableVertexAttribArray(uvLocation);
+      gl.vertexAttribPointer(uvLocation, 2, gl.FLOAT, false, 16, 8);
+
+      const uniforms = {
+        uTime: gl.getUniformLocation(program, "uTime"),
+        uColor: gl.getUniformLocation(program, "uColor"),
+        uSpeed: gl.getUniformLocation(program, "uSpeed"),
+        uScale: gl.getUniformLocation(program, "uScale"),
+        uRotation: gl.getUniformLocation(program, "uRotation"),
+        uNoiseIntensity: gl.getUniformLocation(program, "uNoiseIntensity"),
+      };
+
+      const params = {
+        speed: 20,
+        scale: 0.9,
+        color: [1, 1, 1],
+        noiseIntensity: 0,
+        rotation: 0,
+      };
+
+      const startTime = performance.now();
+
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const width = Math.max(1, Math.floor(rect.width * dpr));
+        const height = Math.max(1, Math.floor(rect.height * dpr));
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+
+      function draw(now) {
+        resize();
+        const elapsed = (now - startTime) * 0.001 * 0.1;
+        gl.uniform1f(uniforms.uTime, elapsed);
+        gl.uniform3f(uniforms.uColor, params.color[0], params.color[1], params.color[2]);
+        gl.uniform1f(uniforms.uSpeed, params.speed);
+        gl.uniform1f(uniforms.uScale, params.scale);
+        gl.uniform1f(uniforms.uRotation, params.rotation);
+        gl.uniform1f(uniforms.uNoiseIntensity, params.noiseIntensity);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        requestAnimationFrame(draw);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame(draw);
+    </script>
+  </body>
+</html>
