@@ -72,6 +72,7 @@ export type OpenClawPlanfEcomField =
       accept: "image";
       required: boolean;
       hint: string;
+      source?: OpenClawPlanfEcomFieldSource;
     };
 
 export type OpenClawPlanfEcomSession = {

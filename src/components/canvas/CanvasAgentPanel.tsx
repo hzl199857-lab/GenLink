@@ -520,7 +520,7 @@ function getVisiblePlanfEcomFields(
     }
 
     if (field.id === 'sellingPoints') {
-      return field.source !== 'user_explicit';
+      return !('source' in field) || field.source !== 'user_explicit';
     }
 
     return false;

@@ -360,6 +360,7 @@ export type AgentPanelMessage =
               accept: "image";
               required: boolean;
               hint: string;
+              source?: "user_explicit" | "model_suggested" | "default_guess";
             }
         >;
       };
