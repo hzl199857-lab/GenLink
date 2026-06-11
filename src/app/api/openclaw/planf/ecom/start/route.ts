@@ -175,6 +175,12 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (error instanceof Error) {
+      console.error("[openclaw-planf-ecom-start] failed", {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      });
+
       if (
         error.name === "RealOpenClawRuntimeError" ||
         error.message.startsWith("OpenClaw ")
@@ -184,7 +190,14 @@ export async function POST(request: Request) {
           { status: 502 },
         );
       }
+
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 502 },
+      );
     }
+
+    console.error("[openclaw-planf-ecom-start] failed with non-error", error);
 
     return NextResponse.json(
       { ok: false, error: "Invalid OpenClaw ecom start request" },

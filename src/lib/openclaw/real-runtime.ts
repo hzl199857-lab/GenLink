@@ -91,6 +91,23 @@ function syncCoreRulesToOpenClawWorkspace(): void {
   }
 }
 
+function assertOpenClawRuntimeAvailable(): void {
+  const entry = getOpenClawEntry();
+  const entryDir = path.dirname(entry);
+
+  if (!existsSync(entry)) {
+    throw new RealOpenClawRuntimeError(
+      `OpenClaw runtime entry does not exist: ${entry}`,
+    );
+  }
+
+  if (!existsSync(entryDir)) {
+    throw new RealOpenClawRuntimeError(
+      `OpenClaw runtime directory does not exist: ${entryDir}`,
+    );
+  }
+}
+
 function resolveTextModel(): string | undefined {
   return process.env.OPENCLAW_AGENT_MODEL?.trim() || undefined;
 }
@@ -176,7 +193,15 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     );
   }
 
-  syncCoreRulesToOpenClawWorkspace();
+  assertOpenClawRuntimeAvailable();
+
+  try {
+    syncCoreRulesToOpenClawWorkspace();
+  } catch (error) {
+    throw new RealOpenClawRuntimeError(
+      `OpenClaw workspace sync failed: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
+  }
 
   return await new Promise((resolve, reject) => {
     const args = [
@@ -226,7 +251,7 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     });
     child.on("error", (error) => {
       clearTimeout(timeout);
-      reject(error);
+      reject(new RealOpenClawRuntimeError(`OpenClaw process failed to start: ${error.message}`));
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
