@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
 import {
   startPlanfEcomSession,
@@ -115,6 +116,12 @@ function applyRuntimeFormFields(
 
 export async function POST(request: Request) {
   try {
+    const proxied = await proxyOpenClawRequest(request);
+
+    if (proxied) {
+      return proxied;
+    }
+
     const body = (await request.json()) as StartRequestBody;
     const userRequest = typeof body.request === "string" ? body.request.trim() : "";
     const preset = parsePreset(body.preset);

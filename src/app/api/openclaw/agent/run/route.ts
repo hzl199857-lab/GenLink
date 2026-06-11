@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import { decideAgentPhaseRoute } from "@/lib/openclaw/agent-phase-policy";
 import { buildOpenClawAgentMessage, createAgentResultFromOpenClawText } from "@/lib/openclaw/agent-workflow";
 import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
@@ -142,6 +143,12 @@ function getSelectedAttachments(context: AgentTaskContext): AgentTaskAttachment[
 
 export async function POST(request: Request) {
   try {
+    const proxied = await proxyOpenClawRequest(request);
+
+    if (proxied) {
+      return proxied;
+    }
+
     const body = (await request.json()) as OpenClawAgentRunRequestBody;
     const message = typeof body.message === "string" ? body.message.trim() : "";
     const context = parseContext(body.context);

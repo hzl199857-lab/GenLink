@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import {
   buildOpenClawEcomConfirmMessage,
   parseOpenClawEcomCreativeDoc,
@@ -78,6 +79,12 @@ function parseValues(value: unknown) {
 
 export async function POST(request: Request) {
   try {
+    const proxied = await proxyOpenClawRequest(request);
+
+    if (proxied) {
+      return proxied;
+    }
+
     const body = (await request.json()) as ConfirmRequestBody;
     const session = parseSession(body.session);
     const values = parseValues(body.values);

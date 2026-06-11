@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import {
   createPlanfEcomWorkflowFromAnchor,
   createPlanfEcomWorkflowFromPlan,
@@ -300,6 +301,12 @@ async function runOpenClawWorkflow(input: {
 
 export async function POST(request: Request) {
   try {
+    const proxied = await proxyOpenClawRequest(request);
+
+    if (proxied) {
+      return proxied;
+    }
+
     const body = (await request.json()) as CreateWorkflowRequestBody;
     const session = parseSession(body.session);
     const values = parseValues(body.values);
