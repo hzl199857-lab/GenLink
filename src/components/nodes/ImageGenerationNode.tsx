@@ -565,8 +565,10 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                 <div className="relative z-10 max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
                   {data.errorMessage}
                 </div>
-              ) : (
+              ) : !isGenerating ? (
                 <ImageIcon size={44} className="relative z-10 text-gl-text-muted" />
+              ) : (
+                null
               )
             )}
 
