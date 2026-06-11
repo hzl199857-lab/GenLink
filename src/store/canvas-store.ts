@@ -1501,61 +1501,12 @@ async function hostReferenceImageForRequest(image: {
   return json.result.imageUrl;
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === "string" && reader.result.trim()) {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error("Failed to read reference image data"));
-    };
-    reader.onerror = () => reject(new Error("Failed to read reference image data"));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function normalizeReferenceImageForInlineRequest(image: {
-  imageUrl: string;
-  originalImageUrl?: string;
-  fileName?: string;
-}): Promise<string> {
-  const url = image.imageUrl.trim();
-  const originalUrl = image.originalImageUrl?.trim();
-  const readableUrl =
-    originalUrl && (originalUrl.startsWith("data:") || !/^https?:\/\//i.test(originalUrl))
-      ? originalUrl
-      : url;
-
-  if (!readableUrl || readableUrl.startsWith("data:")) {
-    return readableUrl;
-  }
-
-  if (/^https?:\/\//i.test(readableUrl)) {
-    return readableUrl;
-  }
-
-  return blobToDataUrl(
-    await readReferenceImageBlob(
-      readableUrl,
-      "Failed to read reference image before request",
-    ),
-  );
-}
-
 async function normalizeReferenceImagesForRequest(
   images: ConnectedImagePayload[],
-  options?: {
-    inlineReadableImages?: boolean;
-  },
 ): Promise<Array<{ url: string; fileName?: string }>> {
   const uploadCache = new Map<string, Promise<string>>();
   const requestImages: Array<{ url: string; fileName?: string }> = [];
   const seenRequestUrls = new Set<string>();
-  const inlineReadableImages = options?.inlineReadableImages ?? false;
 
   for (const image of images) {
     const cacheKey =
@@ -1564,18 +1515,12 @@ async function normalizeReferenceImagesForRequest(
       image.imageUrl.trim();
     const normalizedPromise =
       uploadCache.get(cacheKey) ??
-      (inlineReadableImages
-        ? normalizeReferenceImageForInlineRequest({
+      (shouldHostReferenceImageBeforeRequest(image.imageUrl)
+        ? hostReferenceImageForRequest({
             imageUrl: image.imageUrl,
-            originalImageUrl: image.originalImageUrl,
             fileName: image.fileName,
           })
-        : shouldHostReferenceImageBeforeRequest(image.imageUrl)
-          ? hostReferenceImageForRequest({
-              imageUrl: image.imageUrl,
-              fileName: image.fileName,
-            })
-          : Promise.resolve(image.imageUrl.trim()));
+        : Promise.resolve(image.imageUrl.trim()));
 
     uploadCache.set(cacheKey, normalizedPromise);
 
@@ -4180,10 +4125,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ];
       const imageProvider =
         latestImageGenerationNode.data.provider ?? readStoredSelectedApiProvider("image");
-      const shouldUseOssReferenceImages =
-        imageProvider === "grsai" || imageProvider === "runninghub";
-      const shouldInlineReferenceImages =
-        !shouldUseOssReferenceImages && SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES;
+      const shouldUploadReferenceImagesToOss =
+        SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES || imageProvider === "grsai";
       let requestImages:
         | Array<{
             url: string;
@@ -4192,7 +4135,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         | undefined;
 
       if (referenceImages.length > 0) {
-        if (shouldUseOssReferenceImages) {
+        if (shouldUploadReferenceImagesToOss) {
           try {
             requestImages = await normalizeReferenceImagesViaOss(referenceImages);
           } catch (error) {
@@ -4203,18 +4146,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               throw error;
             }
 
-            requestImages = await normalizeReferenceImagesForRequest(referenceImages, {
-              inlineReadableImages: shouldInlineReferenceImages,
-            });
+            requestImages = await normalizeReferenceImagesForRequest(referenceImages);
           }
         } else {
-          requestImages = await normalizeReferenceImagesForRequest(referenceImages, {
-            inlineReadableImages: shouldInlineReferenceImages,
-          });
+          requestImages = await normalizeReferenceImagesForRequest(referenceImages);
         }
       }
 
-      if (requestImages?.length) {
+      if (shouldUploadReferenceImagesToOss && requestImages?.length) {
         console.info(
           "[GenLink] reference images for API",
           requestImages.map((image, index) => ({
@@ -4393,7 +4332,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
             if (imageProvider === "grsai") {
               hostedImageUrl = result.hostedImageUrl?.trim();
-            } else if (shouldFallbackUploadGeneratedResultToOss(result)) {
+            } else if (
+              shouldUploadReferenceImagesToOss &&
+              shouldFallbackUploadGeneratedResultToOss(result)
+            ) {
               try {
                 hostedImageUrl = await uploadGeneratedResultToOss(
                   result,
