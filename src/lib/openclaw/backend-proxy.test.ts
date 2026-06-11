@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   BackendProxyError,
   getAgentBackendBaseUrl,
-  proxyBackendRequest,
   proxyOpenClawRequest,
 } from "./backend-proxy.ts";
 
@@ -64,37 +63,6 @@ test("proxies OpenClaw request to configured Agent backend", async () => {
   assert.equal(calls[0].init?.body, JSON.stringify({ request: "test" }));
 });
 
-test("proxies image API request to configured backend path", async () => {
-  process.env.GENLINK_AGENT_BACKEND_URL = "http://127.0.0.1:3001";
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const request = new Request("https://genlink.example/api/ai/image", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ prompt: "shoe", provider: "vibe" }),
-  });
-
-  const response = await proxyBackendRequest(
-    request,
-    "/api/ai/image",
-    async (url, init) => {
-      calls.push({ url: String(url), init });
-
-      return new Response(JSON.stringify({ jobId: "job-1" }), {
-        status: 202,
-        headers: { "content-type": "application/json" },
-      });
-    },
-  );
-
-  assert.equal(response?.status, 202);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "http://127.0.0.1:3001/api/ai/image");
-  assert.equal(calls[0].init?.method, "POST");
-  assert.equal(calls[0].init?.body, JSON.stringify({ prompt: "shoe", provider: "vibe" }));
-});
-
 test("throws diagnostic error when backend fetch fails", async () => {
   process.env.GENLINK_AGENT_BACKEND_URL = "http://127.0.0.1:3001";
   const request = new Request("https://genlink.example/api/ai/image", {
@@ -104,16 +72,16 @@ test("throws diagnostic error when backend fetch fails", async () => {
 
   await assert.rejects(
     () =>
-      proxyBackendRequest(
+      proxyOpenClawRequest(
         request,
-        "/api/ai/image",
+        "/api/openclaw/planf/ecom/start",
         async () => {
           throw new Error("connect timeout");
         },
       ),
     (error: unknown) => {
       assert.equal(error instanceof BackendProxyError, true);
-      assert.equal((error as BackendProxyError).targetUrl, "http://127.0.0.1:3001/api/ai/image");
+      assert.equal((error as BackendProxyError).targetUrl, "http://127.0.0.1:3001/api/openclaw/planf/ecom/start");
       assert.equal((error as Error).message, "connect timeout");
 
       return true;
