@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 
 import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
 import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
+import { proxyBackendRequest } from "@/lib/openclaw/backend-proxy";
 import { prisma } from "@/lib/prisma";
 import {
   getComflyImageTaskResult,
@@ -1435,6 +1436,12 @@ async function tryResumePendingComflyJob(job: {
 
 export async function POST(request: Request) {
   try {
+    const proxied = await proxyBackendRequest(request);
+
+    if (proxied) {
+      return proxied;
+    }
+
     await cleanupExpiredJobs();
 
     const body = (await request.json()) as ImageRequestBody;
@@ -1603,6 +1610,12 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const proxied = await proxyBackendRequest(request);
+
+  if (proxied) {
+    return proxied;
+  }
+
   await cleanupExpiredJobs();
 
   const { searchParams } = new URL(request.url);

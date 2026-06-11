@@ -35,7 +35,7 @@ function buildProxyHeaders(request: Request): Headers {
   return headers;
 }
 
-export async function proxyOpenClawRequest(
+export async function proxyBackendRequest(
   request: Request,
   pathname = new URL(request.url).pathname,
   fetcher: FetchLike = fetch,
@@ -59,3 +59,5 @@ export async function proxyOpenClawRequest(
     cache: "no-store",
   });
 }
+
+export const proxyOpenClawRequest = proxyBackendRequest;

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   getAgentBackendBaseUrl,
+  proxyBackendRequest,
   proxyOpenClawRequest,
 } from "./backend-proxy.ts";
 
@@ -60,4 +61,35 @@ test("proxies OpenClaw request to configured Agent backend", async () => {
   assert.equal((calls[0].init?.headers as Headers).get("content-type"), "application/json");
   assert.equal((calls[0].init?.headers as Headers).has("x-ignore-me"), false);
   assert.equal(calls[0].init?.body, JSON.stringify({ request: "test" }));
+});
+
+test("proxies image API request to configured backend path", async () => {
+  process.env.GENLINK_AGENT_BACKEND_URL = "http://127.0.0.1:3001";
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const request = new Request("https://genlink.example/api/ai/image", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ prompt: "shoe", provider: "vibe" }),
+  });
+
+  const response = await proxyBackendRequest(
+    request,
+    "/api/ai/image",
+    async (url, init) => {
+      calls.push({ url: String(url), init });
+
+      return new Response(JSON.stringify({ jobId: "job-1" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  );
+
+  assert.equal(response?.status, 202);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "http://127.0.0.1:3001/api/ai/image");
+  assert.equal(calls[0].init?.method, "POST");
+  assert.equal(calls[0].init?.body, JSON.stringify({ prompt: "shoe", provider: "vibe" }));
 });
