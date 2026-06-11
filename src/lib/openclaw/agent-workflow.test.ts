@@ -227,3 +227,21 @@ test("defaults missing image workflow aspectRatio to the rules-library image def
     },
   ]);
 });
+
+test("converts plain OpenClaw text into a chat reply without canvas actions", () => {
+  const text = "我可以帮你做电商套图、图片改图、视频分镜和画布工作流编排。你可以直接上传参考图或描述目标。";
+
+  const result = createAgentResultFromOpenClawText({
+    request: "你能帮我完成什么任务？",
+    text,
+    model: "genlink_text/gpt-5.5",
+  });
+
+  assert.equal(result.summary, text);
+  assert.equal(result.actions.length, 0);
+  assert.equal(result.plan.stageLabel, "GenLink");
+  assert.equal(result.plan.title, "GenLink 助手");
+  assert.equal(result.plan.confirmationLabel, undefined);
+  assert.equal(result.meta.model, "openclaw");
+  assert.equal(result.meta.modelRawOutput, text);
+});

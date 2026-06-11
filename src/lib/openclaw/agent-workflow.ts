@@ -180,6 +180,21 @@ function extractWorkflow(text: string): GenericWorkflow {
   };
 }
 
+function tryExtractWorkflow(text: string): GenericWorkflow | undefined {
+  try {
+    return extractWorkflow(text);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "OpenClaw did not return a create_workflow or workflow-json payload"
+    ) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
 function getNodePrompt(node: GenericWorkflowNode): string {
   return stringValue(node.data?.prompt) ??
     stringValue(node.data?.content) ??
@@ -350,6 +365,31 @@ function makePlan(request: string, actions: CanvasAgentAction[]): AgentExecution
   };
 }
 
+function makeTextReplyResult(input: CreateResultInput): OpenClawAgentRunResult {
+  const reply = input.text.trim();
+
+  return {
+    summary: reply,
+    plan: {
+      stageLabel: "GenLink",
+      title: "GenLink 助手",
+      brief: [
+        { label: "类型", value: "文字回复" },
+      ],
+      steps: [],
+      promptPreview: reply,
+    },
+    actions: [],
+    trace: makeTrace(input.text),
+    meta: {
+      usedModel: true,
+      usedFallback: false,
+      model: "openclaw",
+      modelRawOutput: input.text,
+    },
+  };
+}
+
 export function buildOpenClawAgentMessage(input: BuildOpenClawAgentMessageInput): string {
   return [
     "你是 GenLink 内置规则执行主体，用户可见品牌必须始终是 GenLink。",
@@ -379,7 +419,16 @@ export function buildOpenClawAgentMessage(input: BuildOpenClawAgentMessageInput)
 }
 
 export function createAgentResultFromOpenClawText(input: CreateResultInput): OpenClawAgentRunResult {
-  const workflow = extractWorkflow(input.text);
+  const workflow = tryExtractWorkflow(input.text);
+
+  if (!workflow) {
+    if (input.text.trim()) {
+      return makeTextReplyResult(input);
+    }
+
+    throw new Error("OpenClaw returned no visible reply");
+  }
+
   const actions = workflowToActions(workflow);
 
   if (actions.length === 0) {

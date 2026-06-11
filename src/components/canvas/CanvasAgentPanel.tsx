@@ -1658,6 +1658,20 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       return;
     }
 
+    if (result.actions.length === 0) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: createPanelId('agent-text-reply'),
+          role: 'agent',
+          type: 'text',
+          content: result.summary,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      return;
+    }
+
     const mentionRestoredActions = restoreReferenceMentionLabelsInActions(
       result.actions,
       params.prompt,
