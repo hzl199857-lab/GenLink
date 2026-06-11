@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 
 import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
 import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
-import { proxyBackendRequest } from "@/lib/openclaw/backend-proxy";
+import { BackendProxyError, proxyBackendRequest } from "@/lib/openclaw/backend-proxy";
 import { prisma } from "@/lib/prisma";
 import {
   getComflyImageTaskResult,
@@ -1595,6 +1595,26 @@ export async function POST(request: Request) {
       status: "pending" satisfies ImageJobStatus,
     });
   } catch (error) {
+    if (error instanceof BackendProxyError) {
+      console.error(
+        "[GenLink backend proxy failed]",
+        JSON.stringify({
+          route: "/api/ai/image",
+          targetUrl: error.targetUrl,
+          message: error.message,
+        }),
+      );
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Backend proxy failed: ${error.message}`,
+          targetUrl: error.targetUrl,
+        },
+        { status: 502 },
+      );
+    }
+
     if (error instanceof VibeApiError) {
       return NextResponse.json(
         { ok: false, error: error.message },

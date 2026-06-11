@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BackendProxyError,
   getAgentBackendBaseUrl,
   proxyBackendRequest,
   proxyOpenClawRequest,
@@ -92,4 +93,30 @@ test("proxies image API request to configured backend path", async () => {
   assert.equal(calls[0].url, "http://127.0.0.1:3001/api/ai/image");
   assert.equal(calls[0].init?.method, "POST");
   assert.equal(calls[0].init?.body, JSON.stringify({ prompt: "shoe", provider: "vibe" }));
+});
+
+test("throws diagnostic error when backend fetch fails", async () => {
+  process.env.GENLINK_AGENT_BACKEND_URL = "http://127.0.0.1:3001";
+  const request = new Request("https://genlink.example/api/ai/image", {
+    method: "POST",
+    body: JSON.stringify({ prompt: "shoe" }),
+  });
+
+  await assert.rejects(
+    () =>
+      proxyBackendRequest(
+        request,
+        "/api/ai/image",
+        async () => {
+          throw new Error("connect timeout");
+        },
+      ),
+    (error: unknown) => {
+      assert.equal(error instanceof BackendProxyError, true);
+      assert.equal((error as BackendProxyError).targetUrl, "http://127.0.0.1:3001/api/ai/image");
+      assert.equal((error as Error).message, "connect timeout");
+
+      return true;
+    },
+  );
 });
