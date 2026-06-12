@@ -42,6 +42,22 @@ type CreateWorkflowRequestBody = {
   apiKey?: unknown;
 };
 
+function errorJson(
+  error: string,
+  status: number,
+  stage: "parse_request" | "generate_workflow" | "materialize_canvas",
+) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error,
+      stage,
+      retryable: stage !== "parse_request",
+    },
+    { status },
+  );
+}
+
 function parseSession(value: unknown): OpenClawPlanfEcomSession | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -321,17 +337,11 @@ export async function POST(request: Request) {
       : "default";
 
     if (!session || !values || !plan) {
-      return NextResponse.json(
-        { ok: false, error: "session, values, and confirmed plan are required" },
-        { status: 400 },
-      );
+      return errorJson("session, values, and confirmed plan are required", 400, "parse_request");
     }
 
     if (!shouldUseRealOpenClawRuntime()) {
-      return NextResponse.json(
-        { ok: false, error: "OPENCLAW_REAL_RUNTIME=0 disables the real OpenClaw runtime." },
-        { status: 502 },
-      );
+      return errorJson("OPENCLAW_REAL_RUNTIME=0 disables the real OpenClaw runtime.", 502, "generate_workflow");
     }
 
     const localResponse = anchor
@@ -375,29 +385,29 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ...response,
-      summary: "GenLink 已产出画布工作流，并转换为画布创建动作。",
+      summary: "GenLink 已产出画布工作流，并物化为画布节点。",
       actions: mergeWorkflowActionsWithoutDuplicateConnections(mcpActions, existingAnchorActions),
+      nodes: toolResult.nodes,
+      edges: toolResult.edges,
+      nodeIdMap: toolResult.nodeIdMap,
+      edgeIdMap: toolResult.edgeIdMap,
       mcp: {
         toolName: "genlink_canvas_create_workflow",
         auditId: toolResult.auditId,
         message: toolResult.message,
         createdNodeIds: toolResult.createdNodeIds,
         createdEdgeIds: toolResult.createdEdgeIds,
+        nodeIdMap: toolResult.nodeIdMap,
+        edgeIdMap: toolResult.edgeIdMap,
       },
     });
   } catch (error) {
     if (error instanceof RealOpenClawRuntimeError) {
-      return NextResponse.json(
-        { ok: false, error: error.message },
-        { status: 504 },
-      );
+      return errorJson(error.message, 504, "generate_workflow");
     }
 
     if (error instanceof OpenClawMcpClientError) {
-      return NextResponse.json(
-        { ok: false, error: error.message },
-        { status: 502 },
-      );
+      return errorJson(error.message, 502, "materialize_canvas");
     }
 
     const message = error instanceof Error
@@ -406,9 +416,6 @@ export async function POST(request: Request) {
 
     console.error("[openclaw/planf/ecom/create-workflow]", error);
 
-    return NextResponse.json(
-      { ok: false, error: message },
-      { status: 400 },
-    );
+    return errorJson(message, 400, "parse_request");
   }
 }

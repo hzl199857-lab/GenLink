@@ -75,6 +75,7 @@ import {
   createProjectAtParentDirectory,
   pickProjectParentDirectory,
 } from '@/lib/project-storage';
+import { layoutAgentWorkflowNodes } from '@/lib/canvas/agent-layout';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
   CanvasEdge,
@@ -9059,6 +9060,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
   const handleConfirmAgentPlan = useCallback((payload: {
     actions: CanvasAgentAction[];
+    nodes?: CanvasNode[];
+    edges?: CanvasEdge[];
     attachments: AgentTaskAttachment[];
     plan: AgentExecutionPlan;
   }) => {
@@ -9087,10 +9090,31 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           x: window.innerWidth / 2 + UPLOADED_IMAGE_MAX_CARD_WIDTH / 2 + 180,
           y: window.innerHeight / 2 - 180,
         });
-    const result = createAgentGenerationNodesAndEdges({
-      actions: payload.actions,
-      startPosition,
+    const canvasNodesBeforeCreate = useCanvasStore.getState().nodes;
+    const rawResult = payload.nodes?.length
+      ? {
+          nodes: payload.nodes,
+          edges: payload.edges ?? [],
+          focusNodeId: payload.nodes[payload.nodes.length - 1]?.id ?? null,
+          imageGenerationNodeIds: payload.nodes.flatMap((node) => (
+            node.type === 'image_generation' ? [node.id] : []
+          )),
+        }
+      : createAgentGenerationNodesAndEdges({
+          actions: payload.actions,
+          startPosition,
+        });
+    const positionedNodes = layoutAgentWorkflowNodes({
+      incomingNodes: rawResult.nodes,
+      incomingEdges: rawResult.edges,
+      existingNodes: canvasNodesBeforeCreate,
+      sourceNodes: existingSourceNodes,
+      fallbackStartPosition: startPosition,
     });
+    const result = {
+      ...rawResult,
+      nodes: positionedNodes,
+    };
 
     if (result.nodes.length === 0) {
       showProjectMessage('Agent 没有可执行的画布动作');

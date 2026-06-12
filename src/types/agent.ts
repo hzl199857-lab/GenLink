@@ -262,6 +262,8 @@ export type AgentPanelMessage =
       };
       adjustmentDraft?: string;
       errorMessage?: string;
+      retryStage?: "confirm_plan" | "create_workflow" | "materialize_canvas";
+      retryable?: boolean;
       createdAt: string;
     }
   | {
@@ -376,6 +378,8 @@ export type AgentPanelMessage =
       summary?: string;
       plan: AgentExecutionPlan;
       actions: CanvasAgentAction[];
+      nodes?: CanvasNode[];
+      edges?: CanvasEdge[];
       attachments: AgentTaskAttachment[];
       trace?: CanvasAgentTraceItem[];
       meta?: AgentRunMeta;

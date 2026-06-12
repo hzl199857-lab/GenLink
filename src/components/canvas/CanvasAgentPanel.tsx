@@ -6,7 +6,6 @@ import {
   AtSign,
   Bot,
   Check,
-  ChevronDown,
   ChevronRight,
   Clock3,
   History,
@@ -65,8 +64,10 @@ import {
   getPlanfEcomPlanStatusLabel,
   getPlanfEcomSlotKey,
 } from '@/lib/agent-plan-display';
+import { applyImageGenerationActionOptionsToMaterializedNodes } from '@/lib/agent-node-preferences';
 import { decideAgentPhaseRoute } from '@/lib/openclaw/agent-phase-policy';
 import type {
+  CanvasEdge,
   CanvasNode,
 } from '@/types/canvas';
 import type {
@@ -109,6 +110,9 @@ type AgentRunPanelResult = {
   summary: string;
   plan: AgentExecutionPlan;
   actions: CanvasAgentAction[];
+  nodes?: CanvasNode[];
+  edges?: CanvasEdge[];
+  nodeIdMap?: Record<string, string>;
   trace: CanvasAgentTraceItem[];
   meta: AgentRunMeta;
 };
@@ -195,18 +199,31 @@ type PlanfEcomWorkflowApiResponse =
         };
       };
       actions: CanvasAgentAction[];
+      nodes?: CanvasNode[];
+      edges?: CanvasEdge[];
+      nodeIdMap?: Record<string, string>;
+      edgeIdMap?: Record<string, string>;
       mcp?: {
         toolName: CanvasAgentToolName;
         auditId?: string;
         message?: string;
         createdNodeIds?: string[];
         createdEdgeIds?: string[];
+        nodeIdMap?: Record<string, string>;
+        edgeIdMap?: Record<string, string>;
       };
     }
   | {
       ok: false;
       error: string;
+      stage?: 'parse_request' | 'generate_workflow' | 'materialize_canvas';
+      retryable?: boolean;
     };
+
+type PlanfEcomWorkflowRequestError = Error & {
+  stage?: 'parse_request' | 'generate_workflow' | 'materialize_canvas';
+  retryable?: boolean;
+};
 
 type OpenClawPlanfEcomStartResponse =
   | {
@@ -233,6 +250,8 @@ type CanvasAgentPanelProps = {
   ) => void;
   onConfirmPlan?: (payload: {
     actions: CanvasAgentAction[];
+    nodes?: CanvasNode[];
+    edges?: CanvasEdge[];
     attachments: AgentTaskAttachment[];
     plan: AgentExecutionPlan;
   }) => {
@@ -575,7 +594,7 @@ function createPlanfEcomPanelResult(
       steps: [
         '\u8bfb\u53d6 GenLink \u7535\u5546\u56fe\u89c4\u5219\u5e93\u3002',
         '\u751f\u6210 GenLink \u753b\u5e03\u5de5\u4f5c\u6d41\u3002',
-        '\u8f6c\u6362\u4e3a GenLink \u753b\u5e03\u8282\u70b9\u521b\u5efa\u52a8\u4f5c\u3002',
+        '后端校验 workflow-json，并物化为 GenLink 画布节点。',
         '\u81ea\u52a8\u521b\u5efa\u6587\u672c\u8282\u70b9\u3001\u56fe\u50cf\u751f\u6210\u8282\u70b9\u548c\u8fde\u7ebf\u3002',
         '\u753b\u5e03\u8282\u70b9\u521b\u5efa\u540e\uff0c\u7b49\u5f85\u7528\u6237\u786e\u8ba4\u751f\u6210\u3002',
       ],
@@ -583,6 +602,9 @@ function createPlanfEcomPanelResult(
       confirmationLabel: '\u786e\u8ba4\u751f\u6210',
     },
     actions: response.actions,
+    nodes: response.nodes,
+    edges: response.edges,
+    nodeIdMap: response.nodeIdMap ?? response.mcp?.nodeIdMap,
     trace: [
       {
         id: createPanelId('agent-trace'),
@@ -603,6 +625,8 @@ function createPlanfEcomPanelResult(
           data: {
             workflow: response.workflow,
             auditId: response.mcp?.auditId,
+            nodeIdMap: response.mcp?.nodeIdMap ?? response.nodeIdMap,
+            edgeIdMap: response.mcp?.edgeIdMap ?? response.edgeIdMap,
           },
         },
       },
@@ -613,6 +637,44 @@ function createPlanfEcomPanelResult(
       model: 'planf-ecom',
     },
   };
+}
+
+async function readJsonResponse<T>(response: Response, fallback: string): Promise<T> {
+  const contentType = response.headers.get('content-type') ?? '';
+
+  if (contentType.includes('application/json')) {
+    return await response.json() as T;
+  }
+
+  const text = await response.text().catch(() => '');
+  const snippet = text.trim().slice(0, 160);
+
+  throw new Error(snippet ? `${fallback}：服务返回了非 JSON 响应（${snippet}）` : `${fallback}：服务返回了非 JSON 响应`);
+}
+
+function throwPlanfWorkflowError(json: Extract<PlanfEcomWorkflowApiResponse, { ok: false }>): never {
+  const error = new Error(json.error) as PlanfEcomWorkflowRequestError;
+  error.stage = json.stage;
+  error.retryable = json.retryable;
+  throw error;
+}
+
+function getPlanfWorkflowRetryStage(error: unknown): Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>['retryStage'] {
+  const stage = (error as PlanfEcomWorkflowRequestError | undefined)?.stage;
+
+  if (stage === 'generate_workflow') {
+    return 'create_workflow';
+  }
+
+  if (stage === 'materialize_canvas') {
+    return 'materialize_canvas';
+  }
+
+  return undefined;
+}
+
+function isPlanfWorkflowRetryable(error: unknown): boolean {
+  return Boolean((error as PlanfEcomWorkflowRequestError | undefined)?.retryable);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -632,10 +694,13 @@ async function requestPlanfEcomWorkflow(
       packageMode: packageMode ?? undefined,
     }),
   });
-  const json = await response.json() as PlanfEcomWorkflowApiResponse;
+  const json = await readJsonResponse<PlanfEcomWorkflowApiResponse>(response, 'GenLink 工作流请求失败');
 
   if (!response.ok || !json.ok) {
-    throw new Error(json.ok ? 'GenLink 工作流请求失败' : json.error);
+    if (!json.ok) {
+      throwPlanfWorkflowError(json);
+    }
+    throw new Error('GenLink 工作流请求失败');
   }
 
   return createPlanfEcomPanelResult(message, json);
@@ -890,10 +955,13 @@ async function requestOpenClawPlanfEcomCreateWorkflow(
       apiKey: textRunConfig.apiKey,
     }),
   });
-  const json = await response.json() as PlanfEcomWorkflowApiResponse;
+  const json = await readJsonResponse<PlanfEcomWorkflowApiResponse>(response, 'GenLink 电商工作流创建失败');
 
   if (!response.ok || !json.ok) {
-    throw new Error(json.ok ? 'GenLink 电商工作流创建失败' : json.error);
+    if (!json.ok) {
+      throwPlanfWorkflowError(json);
+    }
+    throw new Error('GenLink 电商工作流创建失败');
   }
 
   return createPlanfEcomPanelResult(planMessage.session.request, json);
@@ -925,10 +993,13 @@ async function requestOpenClawPlanfEcomFanoutWorkflow(
       apiKey: textRunConfig.apiKey,
     }),
   });
-  const json = await response.json() as PlanfEcomWorkflowApiResponse;
+  const json = await readJsonResponse<PlanfEcomWorkflowApiResponse>(response, 'GenLink 电商扇出工作流创建失败');
 
   if (!response.ok || !json.ok) {
-    throw new Error(json.ok ? 'GenLink 电商扇出工作流创建失败' : json.error);
+    if (!json.ok) {
+      throwPlanfWorkflowError(json);
+    }
+    throw new Error('GenLink 电商扇出工作流创建失败');
   }
 
   return createPlanfEcomPanelResult(planfEcom.session.request, json);
@@ -1120,6 +1191,99 @@ function getImageModelDefault(provider: ApiProvider): string {
   const options = IMAGE_MODEL_OPTIONS_BY_PROVIDER[provider];
 
   return options.find((option) => option.id === 'gpt-image-2')?.id ?? options[0]?.id ?? 'gpt-image-2';
+}
+
+type AgentPanelSelectOption<TValue extends string> = {
+  value: TValue;
+  label: string;
+};
+
+function AgentPanelSelect<TValue extends string>({
+  label,
+  value,
+  options,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  value: TValue;
+  options: AgentPanelSelectOption<TValue>[];
+  disabled?: boolean;
+  onChange: (value: TValue) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectedOption = options.find((option) => option.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <span className="mb-1 block text-[11px] uppercase tracking-[0.08em] text-white/36">{label}</span>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={[
+          'flex h-9 w-full items-center justify-between gap-2 rounded-lg bg-white/[0.055] px-3 text-left text-xs font-medium text-white/82 outline-none transition',
+          disabled
+            ? 'cursor-not-allowed opacity-55'
+            : 'hover:bg-white/[0.085] focus:bg-white/[0.085] focus:ring-1 focus:ring-white/12',
+        ].join(' ')}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="min-w-0 truncate">{selectedOption?.label ?? value}</span>
+        <ChevronRight size={14} className="shrink-0 text-white/34" />
+      </button>
+      {open && !disabled ? (
+        <div
+          role="listbox"
+          className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-full min-w-[152px] overflow-hidden rounded-xl border border-white/10 bg-[#101217] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)]"
+        >
+          {options.map((option) => {
+            const selected = option.value === value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={[
+                  'flex h-9 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-xs transition',
+                  selected
+                    ? 'bg-white/[0.12] font-semibold text-white'
+                    : 'text-white/62 hover:bg-white/[0.075] hover:text-white/86',
+                ].join(' ')}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="min-w-0 truncate">{option.label}</span>
+                <ChevronRight size={13} className={selected ? 'text-white/52' : 'text-white/24'} />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1927,14 +2091,23 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       message.id === messageId && message.type === 'planf_ecom_plan'
     ));
 
-    if (!planMessage || planMessage.status !== 'waiting_confirmation') {
+    if (!planMessage || (
+      planMessage.status !== 'waiting_confirmation' &&
+      !(planMessage.status === 'error' && planMessage.retryable)
+    )) {
       return;
     }
 
     setBusyMode('mcp');
     setMessages((current) => current.map((message) => (
       message.id === messageId && message.type === 'planf_ecom_plan'
-        ? { ...message, status: 'submitted' as const }
+        ? {
+            ...message,
+            status: 'submitted' as const,
+            errorMessage: undefined,
+            retryStage: undefined,
+            retryable: undefined,
+          }
         : message
     )));
     void requestOpenClawPlanfEcomCreateWorkflow(planMessage, provider, model, projectId)
@@ -1973,9 +2146,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           preferenceActions,
           planMessage.attachments,
         );
+        const preferenceNodes = applyImageGenerationActionOptionsToMaterializedNodes({
+          nodes: result.nodes,
+          actions: executionActions,
+          nodeIdMap: result.nodeIdMap,
+        });
         const attachmentsForExecution = planMessage.attachments.map((attachment) => ({ ...attachment }));
         const executionResult = onConfirmPlan?.({
           actions: executionActions,
+          nodes: preferenceNodes,
+          edges: result.edges,
           attachments: attachmentsForExecution,
           plan: result.plan,
         }) ?? { ok: false };
@@ -1993,6 +2173,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             summary: result.summary,
             plan: result.plan,
             actions: executionActions,
+            nodes: preferenceNodes,
+            edges: result.edges,
             attachments: attachmentsForExecution,
             trace: result.trace,
             meta: result.meta,
@@ -2016,12 +2198,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       .catch((error) => {
         setMessages((current) => current.map((message) => (
           message.id === messageId && message.type === 'planf_ecom_plan'
-            ? {
-                ...message,
-                status: 'error' as const,
-                errorMessage: error instanceof Error ? error.message : 'GenLink 电商工作流创建失败',
-              }
-            : message
+              ? {
+                  ...message,
+                  status: 'error' as const,
+                  errorMessage: error instanceof Error ? error.message : 'GenLink 电商工作流创建失败',
+                  retryStage: getPlanfWorkflowRetryStage(error),
+                  retryable: isPlanfWorkflowRetryable(error),
+                }
+              : message
         )));
       })
       .finally(() => {
@@ -2171,6 +2355,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
     const executionResult = onConfirmPlan?.({
       actions: planMessage.actions,
+      nodes: planMessage.nodes,
+      edges: planMessage.edges,
       attachments: planMessage.attachments,
       plan: planMessage.plan,
     }) ?? { ok: true };
@@ -2274,9 +2460,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               }
             : action
         ));
+        const preferenceNodes = applyImageGenerationActionOptionsToMaterializedNodes({
+          nodes: result.nodes,
+          actions: preferenceActions,
+          nodeIdMap: result.nodeIdMap,
+        });
         const attachmentsForExecution = anchorMessage.attachments.map((attachment) => ({ ...attachment }));
         const executionResult = onConfirmPlan?.({
           actions: preferenceActions,
+          nodes: preferenceNodes,
+          edges: result.edges,
           attachments: attachmentsForExecution,
           plan: result.plan,
         }) ?? { ok: false };
@@ -2290,6 +2483,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             summary: result.summary,
             plan: result.plan,
             actions: preferenceActions,
+            nodes: preferenceNodes,
+            edges: result.edges,
             attachments: attachmentsForExecution,
             trace: result.trace,
             meta: result.meta,
@@ -2310,10 +2505,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           },
         ]);
       })
-      .catch(() => {
+      .catch((error) => {
         setMessages((current) => current.map((message) => (
           message.id === messageId && message.type === 'execution_plan'
-            ? { ...message, status: 'error' as const }
+            ? {
+                ...message,
+                status: 'error' as const,
+                meta: {
+                  ...(message.meta ?? { usedModel: true, usedFallback: false }),
+                  fallbackReason: error instanceof Error ? error.message : 'GenLink 电商扇出工作流创建失败',
+                },
+              }
             : message
         )));
       })
@@ -2983,8 +3185,21 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       ) : null}
 
                       {message.status === 'error' ? (
-                        <div className="mt-3 text-xs leading-5 text-[#ffb4a8]">
-                          {formatAgentChatErrorText(message.errorMessage, '创建画布节点失败，请稍后重试。')}
+                        <div className="mt-3 space-y-2">
+                          <div className="text-xs leading-5 text-[#ffb4a8]">
+                            {formatAgentChatErrorText(message.errorMessage, '创建画布节点失败，请稍后重试。')}
+                          </div>
+                          {message.retryable && message.retryStage ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              className="flex h-8 items-center gap-2 rounded-lg border border-[#19d3ff]/35 bg-[#19d3ff]/12 px-3 text-xs font-semibold text-[#7eeaff] transition hover:bg-[#19d3ff]/18 disabled:cursor-not-allowed disabled:opacity-45"
+                              onClick={() => handleConfirmPlanfEcomPlan(message.id)}
+                            >
+                              <Sparkles size={13} />
+                              {message.retryStage === 'materialize_canvas' ? '重新创建画布节点' : '重新生成工作流'}
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -3151,36 +3366,24 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <label className="relative">
-                  <span className="mb-1 block text-[11px] text-white/42">渠道</span>
-                  <select
-                    className="h-9 w-full appearance-none rounded-md bg-white/[0.04] px-3 text-xs text-white outline-none transition focus:bg-white/[0.07]"
-                    value={provider}
-                    onChange={(event) => setProvider(event.target.value as AgentProvider)}
-                  >
-                    {AGENT_PROVIDERS.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-[#11141b]">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="pointer-events-none absolute bottom-2.5 right-2 text-white/42" />
-                </label>
-                <label className="relative">
-                  <span className="mb-1 block text-[11px] text-white/42">模型</span>
-                  <select
-                    className="h-9 w-full appearance-none rounded-md bg-white/[0.04] px-3 text-xs text-white outline-none transition focus:bg-white/[0.07]"
-                    value={model}
-                    onChange={(event) => setModel(event.target.value)}
-                  >
-                    {AGENT_MODEL_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-[#11141b]">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="pointer-events-none absolute bottom-2.5 right-2 text-white/42" />
-                </label>
+                <AgentPanelSelect
+                  label="Provider"
+                  value={provider}
+                  options={AGENT_PROVIDERS.map((option) => ({
+                    value: option.id,
+                    label: option.label,
+                  }))}
+                  onChange={setProvider}
+                />
+                <AgentPanelSelect
+                  label="Model"
+                  value={model}
+                  options={AGENT_MODEL_OPTIONS.map((option) => ({
+                    value: option.id,
+                    label: option.label,
+                  }))}
+                  onChange={setModel}
+                />
               </div>
             </div>
           ) : null}
@@ -3228,7 +3431,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         imagePreferenceControlsDisabled
                           ? 'cursor-not-allowed'
                           : 'hover:bg-white/[0.09]',
-                        selected ? 'bg-[#9dff51] text-[#11141b]' : 'bg-white/[0.05] text-white/54',
+                        selected
+                          ? 'bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]'
+                          : 'bg-white/[0.05] text-white/54',
                       ].join(' ')}
                       disabled={imagePreferenceControlsDisabled}
                       onClick={() => {
@@ -3262,7 +3467,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         imagePreferenceControlsDisabled
                           ? 'cursor-not-allowed'
                           : 'hover:bg-white/[0.09]',
-                        selected ? 'bg-[#9dff51] text-[#11141b]' : 'bg-white/[0.05] text-white/54',
+                        selected
+                          ? 'bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]'
+                          : 'bg-white/[0.05] text-white/54',
                       ].join(' ')}
                       disabled={imagePreferenceControlsDisabled}
                       onClick={() => {
@@ -3284,60 +3491,40 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   imagePreferenceControlsDisabled ? 'opacity-35' : 'opacity-100',
                 ].join(' ')}
               >
-                <label className="relative">
-                  <span className="mb-1 block text-[11px] text-white/42">图片渠道</span>
-                  <select
-                    className={[
-                      'h-9 w-full appearance-none rounded-md bg-white/[0.04] px-3 text-xs text-white outline-none transition focus:bg-white/[0.07]',
-                      imagePreferenceControlsDisabled ? 'cursor-not-allowed' : '',
-                    ].join(' ')}
-                    value={resolvedImagePreference.provider}
-                    disabled={imagePreferenceControlsDisabled}
-                    onChange={(event) => {
-                      const nextProvider = event.target.value as ApiProvider;
-
-                      setImagePreference((current) => ({
-                        ...current,
-                        mode: 'manual',
-                        provider: nextProvider,
-                        model: getImageModelDefault(nextProvider),
-                      }));
-                    }}
-                  >
-                    {API_PROVIDERS.map((option) => (
-                      <option key={option} value={option} className="bg-[#11141b]">
-                        {getApiProviderLabel(option)}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="pointer-events-none absolute bottom-2.5 right-2 text-white/42" />
-                </label>
-                <label className="relative">
-                  <span className="mb-1 block text-[11px] text-white/42">图片模型</span>
-                  <select
-                    className={[
-                      'h-9 w-full appearance-none rounded-md bg-white/[0.04] px-3 text-xs text-white outline-none transition focus:bg-white/[0.07]',
-                      imagePreferenceControlsDisabled ? 'cursor-not-allowed' : '',
-                    ].join(' ')}
-                    value={resolvedImagePreference.model}
-                    disabled={imagePreferenceControlsDisabled}
-                    onChange={(event) => {
-                      setImagePreference((current) => ({
-                        ...current,
-                        mode: 'manual',
-                        provider: resolvedImagePreference.provider,
-                        model: event.target.value,
-                      }));
-                    }}
-                  >
-                    {activeImageModels.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-[#11141b]">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="pointer-events-none absolute bottom-2.5 right-2 text-white/42" />
-                </label>
+                <AgentPanelSelect
+                  label="Provider"
+                  value={resolvedImagePreference.provider}
+                  disabled={imagePreferenceControlsDisabled}
+                  options={API_PROVIDERS.map((option) => ({
+                    value: option,
+                    label: getApiProviderLabel(option),
+                  }))}
+                  onChange={(nextProvider) => {
+                    setImagePreference((current) => ({
+                      ...current,
+                      mode: 'manual',
+                      provider: nextProvider,
+                      model: getImageModelDefault(nextProvider),
+                    }));
+                  }}
+                />
+                <AgentPanelSelect
+                  label="Model"
+                  value={resolvedImagePreference.model}
+                  disabled={imagePreferenceControlsDisabled}
+                  options={activeImageModels.map((option) => ({
+                    value: option.id,
+                    label: option.label,
+                  }))}
+                  onChange={(nextModel) => {
+                    setImagePreference((current) => ({
+                      ...current,
+                      mode: 'manual',
+                      provider: resolvedImagePreference.provider,
+                      model: nextModel,
+                    }));
+                  }}
+                />
               </div>
             </div>
           ) : null}
@@ -3539,7 +3726,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 type="button"
                 className={[
                   'flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/[0.08] hover:text-white/70',
-                  generationPreferenceOpen ? 'bg-white/[0.08] text-[#9dff51]' : 'text-white/38',
+                  generationPreferenceOpen ? 'bg-white/[0.08] text-[#19d3ff]' : 'text-white/38',
                 ].join(' ')}
                 aria-label="生成偏好"
                 aria-expanded={generationPreferenceOpen}

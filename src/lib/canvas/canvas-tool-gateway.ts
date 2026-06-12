@@ -30,6 +30,10 @@ export type CanvasToolResult = {
   createdNodeIds?: string[];
   createdEdgeIds?: string[];
   updatedNodeIds?: string[];
+  nodes?: CanvasNode[];
+  edges?: CanvasEdge[];
+  nodeIdMap?: Record<string, string>;
+  edgeIdMap?: Record<string, string>;
   actions?: CanvasAgentAction[];
   data?: unknown;
   error?: string;
@@ -52,6 +56,19 @@ export type CanvasWorkflowMutationResult = {
   createdNodeIds: string[];
   createdEdgeIds: string[];
   actions: CanvasAgentAction[];
+};
+
+export type CanvasWorkflowMaterializeOptions = CanvasWorkflowValidationOptions & {
+  startPosition?: { x: number; y: number };
+  createNodeId?: (logicalId: string) => string;
+  createEdgeId?: (logicalId: string) => string;
+};
+
+export type CanvasWorkflowMaterializeResult = CanvasWorkflowMutationResult & {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  nodeIdMap: Record<string, string>;
+  edgeIdMap: Record<string, string>;
 };
 
 export type CanvasWorkflowValidationOptions = {
@@ -85,6 +102,10 @@ const CREATIVE_PATCH_KEYS = new Set([
   "generatedImageUrl",
   "generatedVideoUrl",
 ]);
+
+const DEFAULT_WORKFLOW_START_POSITION = { x: 0, y: 0 };
+const WORKFLOW_TEXT_NODE_X_OFFSET = -680;
+const WORKFLOW_NODE_ROW_SPACING = 360;
 
 function isObject(value: unknown): value is JsonObject {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -345,6 +366,156 @@ export function mapWorkflowToCanvasMutations(
   };
 }
 
+function workflowNodeToCanvasNode(
+  node: GLWorkflowNode,
+  realNodeId: string,
+  position: { x: number; y: number },
+): CanvasNode {
+  if (node.type === "text") {
+    return {
+      id: realNodeId,
+      type: "text",
+      position,
+      data: {
+        title: node.title || "Agent Prompt",
+        text: typeof node.data.text === "string"
+          ? node.data.text
+          : typeof node.data.prompt === "string"
+            ? node.data.prompt
+            : "",
+        status: "idle",
+      },
+    };
+  }
+
+  if (node.type === "image_generation") {
+    const provider = node.data.provider;
+
+    return {
+      id: realNodeId,
+      type: "image_generation",
+      position,
+      data: {
+        title: node.title || "Agent Image",
+        prompt: typeof node.data.prompt === "string"
+          ? node.data.prompt
+          : typeof node.data.effectivePromptOverride === "string"
+            ? node.data.effectivePromptOverride
+            : "",
+        provider:
+          provider === "vibe" ||
+          provider === "fucheers" ||
+          provider === "comfly" ||
+          provider === "zhenzhen" ||
+          provider === "runninghub" ||
+          provider === "grsai"
+            ? provider
+            : undefined,
+        model: typeof node.data.model === "string" ? node.data.model : undefined,
+        runningHubChannel:
+          node.data.runningHubChannel === "official" || node.data.runningHubChannel === "low-cost"
+            ? node.data.runningHubChannel
+            : undefined,
+        aspectRatio: typeof node.data.aspectRatio === "string" ? node.data.aspectRatio : "auto",
+        quality: typeof node.data.quality === "string" ? node.data.quality : "1K",
+        detail: "medium",
+        outputFormat: "png",
+        moderation: "auto",
+        parallelCount: 1,
+        status: "idle",
+      },
+    };
+  }
+
+  throw new Error(`workflow node ${node.id} cannot be materialized as ${node.type}`);
+}
+
+export function materializeWorkflowForCanvas(
+  workflow: GLWorkflow,
+  options: CanvasWorkflowMaterializeOptions = {},
+): CanvasWorkflowMaterializeResult {
+  const mutations = mapWorkflowToCanvasMutations(workflow, options);
+  const startPosition = options.startPosition ?? DEFAULT_WORKFLOW_START_POSITION;
+  const createNodeId = options.createNodeId ?? (() => `node-${randomUUID()}`);
+  const createEdgeId = options.createEdgeId ?? (() => `edge-${randomUUID()}`);
+  const nodes: CanvasNode[] = [];
+  const logicalNodeIds = new Set(workflow.nodes.map((node) => node.id));
+  const allowedExistingSourceIds = new Set(
+    (options.allowedExistingSourceIds ?? []).map((nodeId) => nodeId.trim()).filter(Boolean),
+  );
+  const nodeIdMap: Record<string, string> = {};
+  const edgeIdMap: Record<string, string> = {};
+  let textIndex = 0;
+  let generationIndex = 0;
+
+  for (const node of workflow.nodes) {
+    if (node.type !== "text" && node.type !== "image_generation") {
+      throw new Error(`workflow node ${node.id} cannot be materialized as ${node.type}`);
+    }
+
+    nodeIdMap[node.id] = createNodeId(node.id);
+  }
+
+  for (const node of workflow.nodes) {
+    const realNodeId = nodeIdMap[node.id];
+
+    if (!realNodeId) {
+      throw new Error(`workflow node ${node.id} did not receive a real canvas id`);
+    }
+
+    const position = node.type === "text"
+      ? {
+          x: startPosition.x + WORKFLOW_TEXT_NODE_X_OFFSET,
+          y: startPosition.y + textIndex++ * WORKFLOW_NODE_ROW_SPACING,
+        }
+      : {
+          x: startPosition.x,
+          y: startPosition.y + generationIndex++ * WORKFLOW_NODE_ROW_SPACING,
+        };
+
+    nodes.push(workflowNodeToCanvasNode(node, realNodeId, position));
+  }
+
+  const edges: CanvasEdge[] = workflow.edges.flatMap((edge) => {
+    const target = nodeIdMap[edge.target];
+
+    if (!target) {
+      return [];
+    }
+
+    const source = logicalNodeIds.has(edge.source)
+      ? nodeIdMap[edge.source]
+      : allowedExistingSourceIds.has(edge.source) || edge.source.startsWith("node-")
+        ? edge.source
+        : undefined;
+
+    if (!source) {
+      return [];
+    }
+
+    const edgeId = createEdgeId(edge.id);
+    edgeIdMap[edge.id] = edgeId;
+
+    return [{
+      id: edgeId,
+      source,
+      target,
+      sourceHandle: undefined,
+      targetHandle: undefined,
+    }];
+  });
+
+  return {
+    ...mutations,
+    createdNodeIds: workflow.nodes.map((node) => nodeIdMap[node.id]).filter((nodeId): nodeId is string => Boolean(nodeId)),
+    createdEdgeIds: workflow.edges.map((edge) => edgeIdMap[edge.id]).filter((edgeId): edgeId is string => Boolean(edgeId)),
+    nodes,
+    edges,
+    nodeIdMap,
+    edgeIdMap,
+  };
+}
+
 function validatePatch(patch: unknown): CanvasToolValidationResult {
   if (!isObject(patch)) {
     return { ok: false, error: "patch must be an object" };
@@ -421,15 +592,15 @@ export async function executeCanvasTool(
       return deny(validation.error);
     }
 
-    const mutations = mapWorkflowToCanvasMutations(workflow as GLWorkflow, { allowedExistingSourceIds });
+    const mutations = materializeWorkflowForCanvas(workflow as GLWorkflow, { allowedExistingSourceIds });
 
     return {
       ok: true,
-      message: "workflow validated and converted to GenLink canvas actions",
+      message: "workflow validated and materialized to GenLink canvas nodes",
       auditId: makeAuditId(toolName),
       ...mutations,
       data: {
-        persistence: "pending-client-apply",
+        persistence: "server-materialized-client-apply",
       },
     };
   }

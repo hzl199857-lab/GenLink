@@ -21,6 +21,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 };
 
 const {
+  materializeWorkflowForCanvas,
   mapWorkflowToCanvasMutations,
   validateCanvasNodeDraft,
   validateGLWorkflowForCanvas,
@@ -141,6 +142,63 @@ describe("canvas tool gateway validation", () => {
     assert.equal(mapped.actions[0].type, "create_text_node");
     assert.equal(mapped.actions[1].type, "create_image_generation_node");
     assert.equal(mapped.actions[2].type, "connect_nodes");
+  });
+
+  it("materializes workflow into concrete canvas nodes and edges with real id mappings", () => {
+    const workflow = validWorkflow();
+    const materialized = materializeWorkflowForCanvas(workflow, {
+      startPosition: { x: 100, y: 200 },
+      createNodeId: (logicalId) => `real-${logicalId}`,
+      createEdgeId: (logicalId) => `real-${logicalId}`,
+    });
+
+    assert.deepEqual(materialized.nodeIdMap, {
+      "prompt-1": "real-prompt-1",
+      "image-1": "real-image-1",
+    });
+    assert.deepEqual(materialized.edgeIdMap, {
+      "edge-1": "real-edge-1",
+    });
+    assert.deepEqual(materialized.createdNodeIds, ["real-prompt-1", "real-image-1"]);
+    assert.deepEqual(materialized.createdEdgeIds, ["real-edge-1"]);
+    assert.equal(materialized.nodes.length, 2);
+    assert.equal(materialized.edges.length, 1);
+    assert.equal(materialized.nodes[0].id, "real-prompt-1");
+    assert.equal(materialized.nodes[0].type, "text");
+    assert.deepEqual(materialized.nodes[0].position, { x: -580, y: 200 });
+    assert.equal(materialized.nodes[1].id, "real-image-1");
+    assert.equal(materialized.nodes[1].type, "image_generation");
+    assert.deepEqual(materialized.nodes[1].position, { x: 100, y: 200 });
+    assert.equal(materialized.edges[0].id, "real-edge-1");
+    assert.equal(materialized.edges[0].source, "real-prompt-1");
+    assert.equal(materialized.edges[0].target, "real-image-1");
+  });
+
+  it("keeps allowed existing canvas sources while mapping created targets", () => {
+    const sourceNodeId = "59df6c9c-77f6-4c1a-b55f-06dac91e4a56";
+    const workflow = validWorkflow();
+    workflow.nodes = [workflow.nodes[1]];
+    workflow.nodes[0].id = "edit-image-1";
+    workflow.nodes[0].data.sourceNodeId = sourceNodeId;
+    workflow.edges = [
+      {
+        id: `edge-${sourceNodeId}-edit-image-1`,
+        source: sourceNodeId,
+        target: "edit-image-1",
+        role: "reference",
+      },
+    ];
+    const materialized = materializeWorkflowForCanvas(workflow, {
+      allowedExistingSourceIds: [sourceNodeId],
+      createNodeId: (logicalId) => `real-${logicalId}`,
+      createEdgeId: (logicalId) => `real-${logicalId}`,
+    });
+
+    assert.deepEqual(materialized.nodeIdMap, {
+      "edit-image-1": "real-edit-image-1",
+    });
+    assert.equal(materialized.edges[0].source, sourceNodeId);
+    assert.equal(materialized.edges[0].target, "real-edit-image-1");
   });
 
   it("accepts workflow edges from existing canvas nodes", () => {

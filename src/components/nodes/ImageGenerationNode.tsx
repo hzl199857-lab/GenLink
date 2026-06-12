@@ -2,7 +2,7 @@
 
 import React, { memo, useEffect, useState } from 'react';
 import { Position, useUpdateNodeInternals } from 'reactflow';
-import { ChevronDown, Image as ImageIcon } from 'lucide-react';
+import { ChevronDown, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import type {
   ImageGenerationNodeData,
   ImageGenerationRunOptions,
@@ -562,8 +562,22 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
               </div>
             ) : (
               data.status === 'error' && data.errorMessage ? (
-                <div className="relative z-10 max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
-                  {data.errorMessage}
+                <div className="relative z-10 flex max-w-[78%] flex-col items-center gap-3 text-center">
+                  <div className="whitespace-pre-line text-[13px] leading-5 text-gl-error">
+                    {data.errorMessage}
+                  </div>
+                  <button
+                    type="button"
+                    className="nodrag nopan inline-flex h-8 items-center gap-2 rounded-lg border border-white/12 bg-white/[0.06] px-3 text-xs font-semibold text-white/82 transition hover:border-white/24 hover:bg-white/[0.1]"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectNode?.();
+                      onRun?.();
+                    }}
+                  >
+                    <RotateCcw size={13} />
+                    重新生成
+                  </button>
                 </div>
               ) : !isGenerating ? (
                 <ImageIcon size={44} className="relative z-10 text-gl-text-muted" />
