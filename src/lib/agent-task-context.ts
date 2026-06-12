@@ -1,4 +1,5 @@
 import { parseReferenceMentions } from "@/lib/prompt-mentions";
+import type { CanvasRuntimeSnapshot } from "@/lib/canvas/runtime-snapshot";
 import type {
   AgentCanvasSnapshot,
   AgentMessageSummary,
@@ -17,6 +18,7 @@ export type BuildAgentTaskContextInput = {
   recentRuns?: AgentRunSummary[];
   recentMessages?: AgentMessageSummary[];
   canvasSnapshot?: AgentCanvasSnapshot;
+  canvasRuntimeSnapshot?: CanvasRuntimeSnapshot;
 };
 
 export function getReferencedAgentAttachmentIds(
@@ -46,6 +48,7 @@ export function buildAgentTaskContext({
   recentRuns,
   recentMessages,
   canvasSnapshot,
+  canvasRuntimeSnapshot,
 }: BuildAgentTaskContextInput): AgentTaskContext {
   return {
     project,
@@ -65,9 +68,18 @@ export function buildAgentTaskContext({
             nodeCount: canvasSnapshot.nodes.length,
             edgeCount: canvasSnapshot.edges.length,
             groupCount: canvasSnapshot.groupCount,
+            ...(canvasRuntimeSnapshot
+              ? {
+                  pendingCount: canvasRuntimeSnapshot.summary.pendingCount,
+                  runningCount: canvasRuntimeSnapshot.summary.runningCount,
+                  finishedCount: canvasRuntimeSnapshot.summary.finishedCount,
+                  failedCount: canvasRuntimeSnapshot.summary.failedCount,
+                }
+              : {}),
           },
         }
       : {}),
+    ...(canvasRuntimeSnapshot ? { canvasRuntimeSnapshot } : {}),
     ...(recentRuns?.length ? { recentRuns } : {}),
     ...(recentMessages?.length ? { recentMessages } : {}),
   };

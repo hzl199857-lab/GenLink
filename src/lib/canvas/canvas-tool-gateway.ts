@@ -7,6 +7,12 @@ import type { GenLinkCanvasToolName } from "../mcp/genlink-canvas-tools";
 import type { JsonObject } from "../mcp/protocol";
 import type { GLWorkflow, GLWorkflowEdge, GLWorkflowNode } from "../planf-ecom";
 import { glWorkflowToCanvasAgentActions } from "../planf-ecom";
+export type {
+  CanvasRuntimeNodeStatus,
+  CanvasRuntimeSnapshot,
+  CanvasRuntimeSnapshotNode,
+} from "./runtime-snapshot";
+export { buildCanvasRuntimeSnapshot } from "./runtime-snapshot";
 
 export type CanvasToolAuthContext = {
   userId: string;
@@ -422,6 +428,12 @@ function workflowNodeToCanvasNode(
         outputFormat: "png",
         moderation: "auto",
         parallelCount: 1,
+        agentLogicalId: node.id,
+        agentNodeType: typeof node.data.agentNodeType === "string" ? node.data.agentNodeType : undefined,
+        agentWorkflowId: typeof node.data.agentWorkflowId === "string" ? node.data.agentWorkflowId : undefined,
+        generationStatus: "pending",
+        generationRetryable: true,
+        generationUpdatedAt: new Date(0).toISOString(),
         status: "idle",
       },
     };

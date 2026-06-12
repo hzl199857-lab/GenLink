@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createBatchPromptVariants } from "@/lib/agent-prompt-variants";
 import { stripReferenceMentionTokens } from "@/lib/prompt-mentions";
+import type { CanvasRuntimeSnapshot } from "@/lib/canvas/runtime-snapshot";
 import { generateText, VibeApiError, type ImageApiProvider } from "@/lib/vibe";
 import type {
   AgentExecutionPlan,
@@ -19,6 +20,8 @@ import type {
 export const runtime = "nodejs";
 
 const MAX_TOOL_STEPS = 20;
+
+type CanvasRuntimeStatus = CanvasRuntimeSnapshot["nodes"][number]["status"];
 
 type AgentRunRequestBody = {
   message?: unknown;
@@ -137,6 +140,7 @@ function parseContext(value: unknown): AgentTaskContext | null {
     record.canvasSummary && typeof record.canvasSummary === "object"
       ? record.canvasSummary as Record<string, unknown>
       : undefined;
+  const canvasRuntimeSnapshot = parseCanvasRuntimeSnapshot(record.canvasRuntimeSnapshot);
 
   return {
     project: {
@@ -166,9 +170,74 @@ function parseContext(value: unknown): AgentTaskContext | null {
           nodeCount: typeof canvasSummary.nodeCount === "number" ? canvasSummary.nodeCount : 0,
           edgeCount: typeof canvasSummary.edgeCount === "number" ? canvasSummary.edgeCount : 0,
           groupCount: typeof canvasSummary.groupCount === "number" ? canvasSummary.groupCount : 0,
+          pendingCount: typeof canvasSummary.pendingCount === "number" ? canvasSummary.pendingCount : undefined,
+          runningCount: typeof canvasSummary.runningCount === "number" ? canvasSummary.runningCount : undefined,
+          finishedCount: typeof canvasSummary.finishedCount === "number" ? canvasSummary.finishedCount : undefined,
+          failedCount: typeof canvasSummary.failedCount === "number" ? canvasSummary.failedCount : undefined,
         }
       : undefined,
+    canvasRuntimeSnapshot,
   };
+}
+
+function parseCanvasRuntimeSnapshot(value: unknown): CanvasRuntimeSnapshot | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const nodes = Array.isArray(record.nodes)
+    ? record.nodes.flatMap((node) => {
+        if (!node || typeof node !== "object" || Array.isArray(node)) {
+          return [];
+        }
+
+        const item = node as Record<string, unknown>;
+        const status = item.status;
+
+        if (
+          typeof item.id !== "string" ||
+          typeof item.type !== "string" ||
+          !isCanvasRuntimeStatus(status)
+        ) {
+          return [];
+        }
+
+        return [{
+          id: item.id,
+          type: item.type as CanvasRuntimeSnapshot["nodes"][number]["type"],
+          title: typeof item.title === "string" ? item.title : undefined,
+          logicalId: typeof item.logicalId === "string" ? item.logicalId : undefined,
+          agentNodeType: typeof item.agentNodeType === "string" ? item.agentNodeType : undefined,
+          status,
+          outputUrl: typeof item.outputUrl === "string" ? item.outputUrl : undefined,
+          errorCode: typeof item.errorCode === "string" ? item.errorCode : undefined,
+          errorMessage: typeof item.errorMessage === "string" ? item.errorMessage : undefined,
+          retryable: item.retryable === true,
+          updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
+        }];
+      })
+    : [];
+  const summary = record.summary && typeof record.summary === "object" && !Array.isArray(record.summary)
+    ? record.summary as Record<string, unknown>
+    : {};
+
+  return {
+    nodes,
+    summary: {
+      nodeCount: typeof summary.nodeCount === "number" ? summary.nodeCount : nodes.length,
+      edgeCount: typeof summary.edgeCount === "number" ? summary.edgeCount : 0,
+      groupCount: typeof summary.groupCount === "number" ? summary.groupCount : 0,
+      pendingCount: typeof summary.pendingCount === "number" ? summary.pendingCount : nodes.filter((node) => node.status === "pending").length,
+      runningCount: typeof summary.runningCount === "number" ? summary.runningCount : nodes.filter((node) => node.status === "running").length,
+      finishedCount: typeof summary.finishedCount === "number" ? summary.finishedCount : nodes.filter((node) => node.status === "finished").length,
+      failedCount: typeof summary.failedCount === "number" ? summary.failedCount : nodes.filter((node) => node.status === "failed").length,
+    },
+  };
+}
+
+function isCanvasRuntimeStatus(value: unknown): value is CanvasRuntimeStatus {
+  return value === "pending" || value === "running" || value === "finished" || value === "failed";
 }
 
 function parseStringRecord(value: unknown): Record<string, unknown> | null {
@@ -814,6 +883,8 @@ function createAgentSystemPrompt(): string {
     "If there are no uploaded attachments, this is usually text-to-image: create_text_node, create_image_generation_node, connect_nodes.",
     "If uploaded attachments are present and the user asks for multiple images, create one image_generation_node per requested result and connect the same source image node(s) to every generation node. Vary clothing, pose, scene, composition, and details. Do not exceed 8 images.",
     "If there are no uploaded attachments and the user asks for multiple images, create one independent text_node + image_generation_node + connect_nodes chain per image. Vary scene, subject, composition, and details. Do not exceed 8 images.",
+    "Canvas runtime snapshot is the source of truth. Treat status=failed as failed even if previous text implied success. Do not use failed nodes as finished references. Prefer retrying or creating a replacement only when the user asks.",
+    "When referencing existing canvas images, only use nodes with status=finished and a non-empty outputUrl.",
     "Always rewrite the user request into a high quality Chinese image prompt. Do not copy the user prompt verbatim.",
     "For multi-image requests, every create_image_generation_node.prompt must be a complete standalone concrete prompt, not an abstract variation note.",
     "When the user asks for variants such as different clothing, actions, cities, styles, colors, angles, scenes, props, expressions, or interactions, infer the user's intent and expand the relevant parts into concrete visual choices. These dimensions are examples, not a fixed checklist.",
@@ -861,6 +932,24 @@ function createAgentUserPrompt(state: AgentRuntimeState): string {
       edgeCount: 0,
       groupCount: 0,
     },
+    canvasRuntimeSnapshot: state.context.canvasRuntimeSnapshot
+      ? {
+          summary: state.context.canvasRuntimeSnapshot.summary,
+          nodes: state.context.canvasRuntimeSnapshot.nodes.map((node) => ({
+            id: node.id,
+            logicalId: node.logicalId,
+            type: node.type,
+            title: node.title,
+            agentNodeType: node.agentNodeType,
+            status: node.status,
+            outputUrl: node.status === "finished" ? node.outputUrl : undefined,
+            errorCode: node.errorCode,
+            errorMessage: node.status === "failed" ? node.errorMessage : undefined,
+            retryable: node.retryable,
+            updatedAt: node.updatedAt,
+          })),
+        }
+      : undefined,
     generationPreference: {
       provider: state.provider,
       model: state.model,

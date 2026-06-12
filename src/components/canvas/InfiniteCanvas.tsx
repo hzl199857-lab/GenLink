@@ -25,7 +25,6 @@ import {
   Download,
   ListOrdered,
   Ungroup,
-  Bot,
 } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
@@ -132,6 +131,7 @@ import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasHeader } from './CanvasHeader';
 import { CanvasAgentPanel } from './CanvasAgentPanel';
+import UniqueLoading from '../ui/grid-loading';
 import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLibraryDialog';
@@ -142,6 +142,7 @@ import { createVideoClipJob, pollVideoClipJob } from '@/lib/video/clip-client';
 import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 import { validateCanvasAgentActions } from '@/lib/agent-actions';
+import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
   CreateProjectDialog,
   getProjectDirectoryLabel,
@@ -182,6 +183,7 @@ let notifyVideoGenerationReferenceUpload:
 let notifyQuickReferenceConnectRequest:
   | ((mode: QuickReferenceConnectMode) => void)
   | null = null;
+let notifyAgentPanelOpenRequest: (() => void) | null = null;
 let notifyPanorama360NavigationActiveChange:
   | ((nodeId: string, active: boolean) => void)
   | null = null;
@@ -6614,10 +6616,109 @@ function mergeStableReactFlowNodes(
 
 interface InnerCanvasProps {
   onBackToLibrary?: () => void;
+  onCanvasReady?: () => void;
 }
 
+type CanvasAgentDockProps = {
+  projectId?: string;
+  projectName: string;
+  nodeCount: number;
+  edgeCount: number;
+  groupCount: number;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  onCreateSourceNodes: (attachments: AgentTaskAttachment[]) => Record<string, string>;
+  onQuickReferenceSelect: (
+    onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
+  ) => void;
+  onConfirmPlan: (payload: {
+    actions: CanvasAgentAction[];
+    nodes?: CanvasNode[];
+    edges?: CanvasEdge[];
+    attachments: AgentTaskAttachment[];
+    plan: AgentExecutionPlan;
+    groupName?: string;
+  }) => { ok: true; imageGenerationNodeId?: string; imageGenerationNodeIds?: string[]; groupId?: string } | { ok: false; error?: string };
+  onConfirmGeneration: (payload: { nodeId?: string; nodeIds?: string[]; groupId?: string }) => boolean;
+};
+
+const CanvasAgentDock = memo(function CanvasAgentDock({
+  projectId,
+  projectName,
+  nodeCount,
+  edgeCount,
+  groupCount,
+  nodes,
+  edges,
+  onCreateSourceNodes,
+  onQuickReferenceSelect,
+  onConfirmPlan,
+  onConfirmGeneration,
+}: CanvasAgentDockProps) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    notifyAgentPanelOpenRequest = () => setOpen(true);
+
+    return () => {
+      if (notifyAgentPanelOpenRequest) {
+        notifyAgentPanelOpenRequest = null;
+      }
+    };
+  }, []);
+
+  const handleOpen = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setOpen(true);
+  }, []);
+
+  const handleQuickReferenceSelect = useCallback((
+    onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
+  ) => {
+    setOpen(true);
+    onQuickReferenceSelect(onSelect);
+  }, [onQuickReferenceSelect]);
+
+  return (
+    <>
+      {!open ? (
+        <button
+          type="button"
+          aria-label="打开 Canvas Agent"
+          className="nodrag nopan fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center text-[#d8dadd] transition hover:scale-105 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+          }}
+          onClick={handleOpen}
+        >
+          <UniqueLoading variant="squares" size="agent" />
+        </button>
+      ) : null}
+      <CanvasAgentPanel
+        open={open}
+        projectId={projectId}
+        projectName={projectName}
+        nodeCount={nodeCount}
+        edgeCount={edgeCount}
+        groupCount={groupCount}
+        nodes={nodes}
+        edges={edges}
+        onClose={() => setOpen(false)}
+        onCreateSourceNodes={onCreateSourceNodes}
+        onQuickReferenceSelect={handleQuickReferenceSelect}
+        onConfirmPlan={onConfirmPlan}
+        onConfirmGeneration={onConfirmGeneration}
+      />
+    </>
+  );
+});
+
 // --- Inner Canvas ---
-function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
+function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
   const projectName = useCanvasStore((s) => s.projectName);
@@ -6664,6 +6765,8 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const updateGroupBackgroundColor = useCanvasStore((s) => s.updateGroupBackgroundColor);
   const moveGroup = useCanvasStore((s) => s.moveGroup);
 
+  const canvasReadyRootRef = useRef<HTMLDivElement | null>(null);
+  const canvasReadyNotifiedRef = useRef(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const selectedNodeIdsRef = useRef<Set<string>>(selectedNodeIds);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -6697,7 +6800,6 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [materialLibraryAnchor, setMaterialLibraryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [pendingMaterialSource, setPendingMaterialSource] = useState<PendingMaterialSource | null>(null);
-  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
@@ -6807,6 +6909,97 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 
     return () => window.clearTimeout(timeout);
   }, [derivedRfNodes]);
+
+  useEffect(() => {
+    canvasReadyNotifiedRef.current = false;
+  }, [currentProject?.id]);
+
+  useEffect(() => {
+    if (!onCanvasReady || canvasReadyNotifiedRef.current || loading) {
+      return;
+    }
+
+    if (!areCanvasNodesSynced(
+      storeNodes.map((node) => node.id),
+      rfNodes.map((node) => node.id),
+    )) {
+      return;
+    }
+
+    let cancelled = false;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const cleanups: Array<() => void> = [];
+
+    const notifyReady = () => {
+      if (cancelled || canvasReadyNotifiedRef.current) {
+        return;
+      }
+
+      canvasReadyNotifiedRef.current = true;
+      onCanvasReady();
+    };
+
+    const waitForMedia = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const root = canvasReadyRootRef.current;
+      const images = root
+        ? Array.from(root.querySelectorAll('img'))
+        : [];
+      const videos = root
+        ? Array.from(root.querySelectorAll('video'))
+        : [];
+      const pendingImages = images.filter((image) => !image.complete);
+      const pendingVideos = videos.filter((video) => video.readyState < 2);
+      const pendingMediaCount = pendingImages.length + pendingVideos.length;
+
+      if (pendingMediaCount === 0) {
+        notifyReady();
+        return;
+      }
+
+      let settledCount = 0;
+      const handleSettled = () => {
+        settledCount += 1;
+
+        if (settledCount >= pendingMediaCount) {
+          notifyReady();
+        }
+      };
+
+      pendingImages.forEach((image) => {
+        image.addEventListener('load', handleSettled, { once: true });
+        image.addEventListener('error', handleSettled, { once: true });
+        cleanups.push(() => {
+          image.removeEventListener('load', handleSettled);
+          image.removeEventListener('error', handleSettled);
+        });
+      });
+
+      pendingVideos.forEach((video) => {
+        video.addEventListener('loadeddata', handleSettled, { once: true });
+        video.addEventListener('error', handleSettled, { once: true });
+        cleanups.push(() => {
+          video.removeEventListener('loadeddata', handleSettled);
+          video.removeEventListener('error', handleSettled);
+        });
+      });
+    };
+
+    firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(waitForMedia);
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [currentProject?.id, loading, onCanvasReady, rfNodes, storeNodes]);
 
   const rfEdges = useMemo<ReactFlowEdge[]>(() => {
     const edgeType = getReactFlowEdgeType(edgeStyle);
@@ -7697,7 +7890,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
       clearEdgeSelection();
       setSelectedGroupId(null);
       selectSingleNode(sourceNode.id);
-      setAgentPanelOpen(true);
+      notifyAgentPanelOpenRequest?.();
       return;
     }
 
@@ -9949,6 +10142,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
       />
+      <div ref={canvasReadyRootRef} className="h-full w-full">
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
@@ -10058,6 +10252,7 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
           onDownloadGroup={handleDownloadGroup}
         />
       </ReactFlow>
+      </div>
 
       <GroupConnectionPreviewOverlay preview={groupConnectionPreview} />
 
@@ -10109,28 +10304,16 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
         materialLibraryOpen={materialLibraryAnchor !== null}
         historyOpen={historyAnchor !== null}
       />
-      {!agentPanelOpen ? (
-        <button
-          type="button"
-          aria-label="打开 Canvas Agent"
-          className="fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full border border-white/16 bg-[#f4f7fb] text-[#11141b] shadow-[0_18px_42px_rgba(0,0,0,0.35)] transition hover:scale-105 hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-          onClick={() => setAgentPanelOpen(true)}
-        >
-          <Bot size={21} strokeWidth={2.2} />
-        </button>
-      ) : null}
-      <CanvasAgentPanel
-        open={agentPanelOpen}
+      <CanvasAgentDock
         projectId={currentProject?.id}
         projectName={projectName}
         nodeCount={storeNodes.length}
         edgeCount={storeEdges.length}
         groupCount={storeGroups.length}
         nodes={storeNodes}
-        onClose={() => setAgentPanelOpen(false)}
+        edges={storeEdges}
         onCreateSourceNodes={handleCreateAgentSourceNodes}
         onQuickReferenceSelect={(onSelect) => {
-          setAgentPanelOpen(true);
           startQuickReferenceConnect({
             targetKind: 'agent',
             onSelect,
@@ -10228,10 +10411,13 @@ function InnerCanvas({ onBackToLibrary }: InnerCanvasProps) {
 }
 
 // --- Wrapper ---
-export function InfiniteCanvas({ onBackToLibrary }: InnerCanvasProps) {
+export function InfiniteCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   return (
     <ReactFlowProvider>
-      <InnerCanvas onBackToLibrary={onBackToLibrary} />
+      <InnerCanvas
+        onBackToLibrary={onBackToLibrary}
+        onCanvasReady={onCanvasReady}
+      />
     </ReactFlowProvider>
   );
 }

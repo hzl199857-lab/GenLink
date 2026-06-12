@@ -4,14 +4,13 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import NextImage from 'next/image';
 import {
   AtSign,
-  Bot,
   Check,
   ChevronRight,
   Clock3,
-  History,
   ImagePlus,
   Loader2,
   MessageSquare,
+  MessageSquarePlus,
   Send,
   SlidersHorizontal,
   Sparkles,
@@ -20,6 +19,8 @@ import {
 } from 'lucide-react';
 
 import { buildAgentTaskContext, getReferencedAgentAttachmentIds } from '@/lib/agent-task-context';
+import { buildCanvasRuntimeSnapshot } from '@/lib/canvas/runtime-snapshot';
+import UniqueLoading from '@/components/ui/grid-loading';
 import {
   deleteAgentThread,
   loadAgentDraft,
@@ -243,6 +244,7 @@ type CanvasAgentPanelProps = {
   edgeCount: number;
   groupCount: number;
   nodes?: CanvasNode[];
+  edges?: CanvasEdge[];
   onClose: () => void;
   onCreateSourceNodes?: (attachments: AgentTaskAttachment[]) => Record<string, string>;
   onQuickReferenceSelect?: (
@@ -272,6 +274,38 @@ function createPanelId(prefix: string): string {
   }
 
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatAgentThreadTime(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  const time = date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  if (sameDay) {
+    return `今天 ${time}`;
+  }
+
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `昨天 ${time}`;
+  }
+
+  return date.toLocaleDateString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+  }).replace(/\//g, '-') + ` ${time}`;
 }
 
 function getTraceToolLabel(name: CanvasAgentToolName): string {
@@ -467,6 +501,14 @@ function AgentReferenceImageIcon() {
         />
       </svg>
     </span>
+  );
+}
+
+function AgentAvatarMark() {
+  return (
+    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center text-[#d8dadd]">
+      <UniqueLoading variant="squares" size="agent-sm" />
+    </div>
   );
 }
 
@@ -728,7 +770,10 @@ async function requestOpenClawPlanfEcomStart(params: {
       apiKey: textRunConfig.apiKey,
     }),
   });
-  const json = await response.json() as OpenClawPlanfEcomStartResponse;
+  const json = await readJsonResponse<OpenClawPlanfEcomStartResponse>(
+    response,
+    'GenLink 电商会话启动失败',
+  );
 
   if (!response.ok || !json.ok) {
     throw new Error(json.ok ? 'GenLink 电商会话启动失败' : json.error);
@@ -901,7 +946,10 @@ async function requestOpenClawPlanfEcomConfirm(
       apiKey: textRunConfig.apiKey,
     }),
   });
-  const json = await response.json() as PlanfEcomPlanApiResponse;
+  const json = await readJsonResponse<PlanfEcomPlanApiResponse>(
+    response,
+    'GenLink 电商编排确认失败',
+  );
 
   if (!response.ok || !json.ok) {
     throw new Error(json.ok ? 'GenLink 电商编排确认失败' : json.error);
@@ -1034,7 +1082,10 @@ async function requestOpenClawPlanfEcomReplan(
       apiKey: textRunConfig.apiKey,
     }),
   });
-  const json = await response.json() as PlanfEcomPlanApiResponse;
+  const json = await readJsonResponse<PlanfEcomPlanApiResponse>(
+    response,
+    'GenLink 电商编排调整失败',
+  );
 
   if (!response.ok || !json.ok) {
     throw new Error(json.ok ? 'GenLink 电商编排调整失败' : json.error);
@@ -1074,7 +1125,7 @@ async function requestOpenClawAgentRun(params: {
       apiKey: textRunConfig.apiKey,
     }),
   });
-  const json = await response.json() as
+  const json = await readJsonResponse<
     | {
         ok: true;
         result: AgentRunPanelResult;
@@ -1082,7 +1133,8 @@ async function requestOpenClawAgentRun(params: {
     | {
         ok: false;
         error: string;
-      };
+      }
+  >(response, 'Agent 请求失败');
 
   if (!response.ok || !json.ok) {
     throw new Error(json.ok ? 'Agent 请求失败' : json.error);
@@ -1312,6 +1364,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   edgeCount,
   groupCount,
   nodes = [],
+  edges = [],
   onClose,
   onCreateSourceNodes,
   onQuickReferenceSelect,
@@ -1471,6 +1524,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     window.addEventListener('pointerup', stopDragging);
     window.addEventListener('pointercancel', stopDragging);
   }, [panelWidth]);
+
+  const handleNewThread = useCallback(() => {
+    setMessages([]);
+    setThreadId(undefined);
+    setHistoryOpen(false);
+  }, []);
+
+  const handleOpenHistory = useCallback(() => {
+    setHistoryThreads(listAgentThreads(projectId, projectName));
+    setHistoryOpen(true);
+  }, [projectId, projectName]);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -1666,10 +1730,15 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       message: params.prompt,
       attachments: params.taskAttachments,
       canvasSnapshot: {
-        nodes: [],
-        edges: [],
+        nodes,
+        edges,
         groupCount,
       },
+      canvasRuntimeSnapshot: buildCanvasRuntimeSnapshot({
+        nodes,
+        edges,
+        groupCount,
+      }),
       recentMessages: messages
         .filter((message): message is Extract<AgentPanelMessage, { type: 'text' }> => message.type === 'text')
         .slice(-6)
@@ -1891,10 +1960,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     ]);
   }, [
     edgeCount,
+    edges,
     groupCount,
     messages,
     model,
     nodeCount,
+    nodes,
     onConfirmPlan,
     planfRouteMode,
     projectId,
@@ -2575,20 +2646,34 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   }, [nodes]);
 
   return (
-    <aside
+    <div
       className={[
-        'fixed z-40 flex flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[#11141b] text-white shadow-[-18px_18px_70px_rgba(0,0,0,0.42)] transition-transform duration-200',
-        open ? 'translate-x-0' : 'translate-x-[calc(100%+2rem)]',
+        'nodrag nopan pointer-events-none fixed inset-0 z-40 overflow-hidden',
         panelResizing ? 'select-none' : '',
       ].join(' ')}
-      style={{
-        width: panelWidth,
-        top: AGENT_PANEL_FLOATING_INSET,
-        right: AGENT_PANEL_FLOATING_INSET,
-        bottom: AGENT_PANEL_FLOATING_INSET,
-      }}
       aria-hidden={!open}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
     >
+      <aside
+        className={[
+          'pointer-events-auto absolute flex flex-col overflow-hidden rounded-[22px] border border-white/10 bg-[#11141b] text-white shadow-[-18px_18px_70px_rgba(0,0,0,0.42)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+          open ? 'translate-x-0' : 'translate-x-[calc(100%+2rem)]',
+        ].join(' ')}
+        style={{
+          width: panelWidth,
+          top: AGENT_PANEL_FLOATING_INSET,
+          right: AGENT_PANEL_FLOATING_INSET,
+          bottom: AGENT_PANEL_FLOATING_INSET,
+        }}
+      >
       <button
         type="button"
         aria-label="\u62d6\u52a8\u8c03\u6574 Agent \u9762\u677f\u5bbd\u5ea6"
@@ -2601,84 +2686,83 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       />
       <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#11141b]">
-            <Bot size={17} strokeWidth={2.2} />
+          <div className="flex h-8 w-8 items-center justify-center text-[#d8dadd]">
+            <UniqueLoading variant="squares" size="agent-sm" />
           </div>
           <div>
-            <div className="text-sm font-medium">Canvas Agent</div>
-            <div className="text-[11px] text-white/45">画布工具操作员</div>
+            <div className="text-sm font-medium">GenLink Agent</div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-5">
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white"
+            className="flex h-8 w-8 items-center justify-center text-[#aeb4c2] transition hover:text-white"
             aria-label="历史会话"
-            onClick={() => {
-              setHistoryThreads(listAgentThreads(projectId, projectName));
-              setHistoryOpen((current) => !current);
-            }}
+            title="历史会话"
+            onClick={handleOpenHistory}
           >
-            <History size={16} />
+            <Clock3 size={18} strokeWidth={1.8} />
           </button>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white"
-            aria-label="\u5173\u95ed Agent \u9762\u677f"
+            className="flex h-8 w-8 items-center justify-center text-[#aeb4c2] transition hover:text-white"
+            aria-label="新建对话"
+            title="新建对话"
+            onClick={handleNewThread}
+          >
+            <MessageSquarePlus size={18} strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
+            className="flex h-8 w-8 items-center justify-center text-[#aeb4c2] transition hover:text-white"
+            aria-label="退出 Agent 面板"
+            title="退出 Agent 面板"
             onClick={onClose}
           >
-            <X size={16} />
+            <ChevronRight size={22} strokeWidth={1.9} />
           </button>
         </div>
       </div>
 
       {historyOpen ? (
-        <div className="scrollbar-hide max-h-72 overflow-y-auto border-b border-white/10 bg-white/[0.03] px-4 py-3">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-medium text-white/70">
-              <Clock3 size={14} />
-              {'\u5386\u53f2\u4f1a\u8bdd'}
-            </div>
+        <div className="absolute inset-0 z-30 flex flex-col bg-[#1d2025] text-white">
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4">
+            <div className="text-sm font-semibold text-white/92">历史会话</div>
             <button
               type="button"
-              className="h-7 rounded-md bg-white/[0.04] px-2 text-xs text-white/62 transition hover:bg-white/[0.08]"
-              onClick={() => {
-                setMessages([]);
-                setThreadId(undefined);
-                setHistoryOpen(false);
-              }}
+              className="flex h-8 w-8 items-center justify-center text-white/52 transition hover:text-white"
+              aria-label="关闭历史会话"
+              title="关闭历史会话"
+              onClick={() => setHistoryOpen(false)}
             >
-              {'\u65b0\u5efa'}
+              <X size={17} strokeWidth={1.8} />
             </button>
           </div>
           {historyThreads.length ? (
-            <div className="space-y-2">
+            <div className="scrollbar-hide flex-1 overflow-y-auto px-3 py-3">
               {historyThreads.map((thread) => (
                 <div
                   key={thread.id}
-                  className={[
-                    'group flex items-center gap-2 rounded-md transition',
-                    thread.id === threadId ? 'bg-white/[0.08]' : 'bg-white/[0.035] hover:bg-white/[0.06]',
-                  ].join(' ')}
+                  className="group relative"
                 >
                   <button
                     type="button"
-                    className="min-w-0 flex-1 px-3 py-2 text-left"
+                    className={[
+                      'block w-full min-w-0 rounded-md px-3 py-2.5 text-left transition',
+                      thread.id === threadId ? 'bg-white/[0.075]' : 'hover:bg-white/[0.045]',
+                    ].join(' ')}
                     onClick={() => {
                       setMessages(restoreAgentThreadMessages(thread.messages));
                       setThreadId(thread.id);
                       setHistoryOpen(false);
                     }}
                   >
-                    <div className="truncate text-xs font-medium text-white/78">{thread.title}</div>
-                    <div className="mt-1 flex items-center justify-between text-[11px] text-white/38">
-                      <span>{thread.messages.length} 条消息</span>
-                      <span>{new Date(thread.updatedAt).toLocaleString()}</span>
-                    </div>
+                    <div className="truncate pr-7 text-[13px] font-semibold leading-5 text-white/88">{thread.title}</div>
+                    <div className="mt-0.5 text-[11px] leading-4 text-white/34">{formatAgentThreadTime(thread.updatedAt)}</div>
                   </button>
                   <button
                     type="button"
-                    className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white/34 opacity-0 transition hover:bg-white/[0.08] hover:text-white/76 group-hover:opacity-100"
+                    className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-white/30 opacity-0 transition hover:bg-white/[0.08] hover:text-white/76 group-hover:opacity-100"
                     aria-label="删除历史会话"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -2697,7 +2781,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               ))}
             </div>
           ) : (
-            <div className="rounded-md border border-dashed border-white/12 px-3 py-4 text-xs text-white/42">
+            <div className="mx-4 mt-4 rounded-md border border-dashed border-white/12 px-3 py-4 text-xs text-white/42">
               当前项目还没有 Agent 历史会话。
             </div>
           )}
@@ -2820,9 +2904,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               return (
                 <div key={message.id} className="rounded-lg bg-transparent px-1 py-2">
                   <div className="mb-3 flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#19d3ff]/25 bg-[#14212b] text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.12)]">
-                      <Bot size={16} />
-                    </div>
+                    <AgentAvatarMark />
                     <div className="min-w-0 flex-1 rounded-[18px] bg-[#1f2023] p-4 shadow-[0_12px_32px_rgba(0,0,0,0.26)]">
                       {SHOW_PLANF_ECOM_RUNTIME_IN_CHAT ? (
                         <>
@@ -3003,9 +3085,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               return (
                 <div key={message.id} className="rounded-lg bg-transparent px-1 py-2">
                   <div className="mb-3 flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#19d3ff]/25 bg-[#14212b] text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.12)]">
-                      <Bot size={16} />
-                    </div>
+                    <AgentAvatarMark />
                     <div className="min-w-0 flex-1 rounded-[18px] bg-[#1f2023] p-4 shadow-[0_12px_32px_rgba(0,0,0,0.26)]">
                       {shouldShowAgentInternalText(protocolLabel) ? (
                         <div className="mb-3 inline-flex rounded bg-[#10151f] px-2 py-1 text-[11px] font-medium text-[#7dffb2]">
@@ -3218,9 +3298,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               return (
                 <div key={message.id} className="rounded-lg bg-transparent px-1 py-2">
                   <div className="mb-3 flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#19d3ff]/25 bg-[#14212b] text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.12)]">
-                      <Bot size={16} />
-                    </div>
+                    <AgentAvatarMark />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold leading-6 text-white/90">
                         {getAgentResultText(message)}
@@ -3318,9 +3396,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           })}
           {busy ? (
             <div className="flex items-start gap-3 rounded-lg bg-transparent px-1 py-2">
-              <div className="agent-busy-avatar mt-0.5 flex h-8 w-8 shrink-0 animate-pulse items-center justify-center rounded-full bg-[#19d3ff]/15 text-[#19d3ff] shadow-[0_0_18px_rgba(25,211,255,0.26)]">
-                <Bot size={16} />
-              </div>
+              <AgentAvatarMark />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-semibold text-[#19d3ff]">
                   <span className="agent-busy-shimmer">
@@ -3763,6 +3839,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         onChange={handleFilesSelected}
       />
       <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
-    </aside>
+      </aside>
+    </div>
   );
 });

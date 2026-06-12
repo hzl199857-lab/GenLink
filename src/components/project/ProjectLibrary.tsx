@@ -29,6 +29,7 @@ import { DeleteProjectDialog } from './DeleteProjectDialog';
 interface ProjectLibraryProps {
   onOpenProject: () => void;
   onBackToHero?: () => void;
+  onProjectsReady?: (projectCount: number) => void;
 }
 
 function formatDate(value: string): string {
@@ -346,7 +347,7 @@ function CreateProjectDialog({
   );
 }
 
-export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryProps) {
+export function ProjectLibrary({ onOpenProject, onBackToHero, onProjectsReady }: ProjectLibraryProps) {
   const attachProject = useCanvasStore((state) => state.attachProject);
   const listProjects = useCanvasStore((state) => state.listProjects);
   const loadProject = useCanvasStore((state) => state.loadProject);
@@ -355,7 +356,7 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
   const duplicateProject = useCanvasStore((state) => state.duplicateProject);
 
   const [projects, setProjects] = useState<ProjectHandleRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menuProjectId, setMenuProjectId] = useState<string | null>(null);
@@ -407,12 +408,13 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
         project.thumbnailUrl ? [project.thumbnailUrl] : [],
       );
       setProjects(nextProjects);
+      onProjectsReady?.(nextProjects.length);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '项目列表加载失败');
     } finally {
       setLoading(false);
     }
-  }, [listProjects]);
+  }, [listProjects, onProjectsReady]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -670,9 +672,6 @@ export function ProjectLibrary({ onOpenProject, onBackToHero }: ProjectLibraryPr
           ))}
         </div>
 
-        <div className="mt-16 text-center text-[12px] text-white/28">
-          {loading ? '项目加载中...' : '没有更多了'}
-        </div>
       </div>
 
       <CreateProjectDialog

@@ -52,6 +52,15 @@ export interface ImageGenerationNodeData {
   title?: string;
   prompt?: string;
   effectivePromptOverride?: string;
+  agentLogicalId?: string;
+  agentWorkflowId?: string;
+  agentNodeType?: string;
+  generationStatus?: "pending" | "running" | "finished" | "failed";
+  generationErrorCode?: string;
+  generationErrorMessage?: string;
+  generationRetryable?: boolean;
+  generationLastRunId?: string;
+  generationUpdatedAt?: string;
   provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
   runningHubChannel?: "official" | "low-cost";

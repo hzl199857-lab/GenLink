@@ -63,6 +63,42 @@ test("proxies OpenClaw request to configured Agent backend", async () => {
   assert.equal(calls[0].init?.body, JSON.stringify({ request: "test" }));
 });
 
+test("wraps non-JSON backend responses in a structured JSON error", async () => {
+  process.env.GENLINK_AGENT_BACKEND_URL = "http://127.0.0.1:3001/";
+  const request = new Request("https://genlink.example/api/openclaw/planf/ecom/start", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ request: "test" }),
+  });
+
+  const response = await proxyOpenClawRequest(
+    request,
+    "/api/openclaw/planf/ecom/start",
+    async () =>
+      new Response("<!doctype html><html><h1>502 Bad Gateway</h1></html>", {
+        status: 502,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+  );
+
+  assert.equal(response?.status, 502);
+  assert.match(response?.headers.get("content-type") ?? "", /application\/json/);
+
+  const json = await response?.json() as {
+    ok: false;
+    error: string;
+    stage: string;
+    retryable: boolean;
+  };
+
+  assert.equal(json.ok, false);
+  assert.equal(json.stage, "start_session");
+  assert.equal(json.retryable, true);
+  assert.match(json.error, /backend returned non-JSON/i);
+});
+
 test("throws diagnostic error when backend fetch fails", async () => {
   process.env.GENLINK_AGENT_BACKEND_URL = "http://127.0.0.1:3001";
   const request = new Request("https://genlink.example/api/ai/image", {

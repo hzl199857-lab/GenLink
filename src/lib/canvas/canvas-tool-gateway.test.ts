@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { describe, it } from "node:test";
 
+import type { CanvasNode } from "@/types/canvas";
+
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
@@ -21,6 +23,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 };
 
 const {
+  buildCanvasRuntimeSnapshot,
   materializeWorkflowForCanvas,
   mapWorkflowToCanvasMutations,
   validateCanvasNodeDraft,
@@ -172,6 +175,81 @@ describe("canvas tool gateway validation", () => {
     assert.equal(materialized.edges[0].id, "real-edge-1");
     assert.equal(materialized.edges[0].source, "real-prompt-1");
     assert.equal(materialized.edges[0].target, "real-image-1");
+    assert.equal(materialized.nodes[1].type, "image_generation");
+    assert.equal(materialized.nodes[1].data.agentLogicalId, "image-1");
+    assert.equal(materialized.nodes[1].data.agentNodeType, "ecom_image_generation");
+    assert.equal(materialized.nodes[1].data.generationStatus, "pending");
+  });
+
+  it("builds a runtime snapshot with finished and failed generation status", () => {
+    const nodes: CanvasNode[] = [
+      {
+        id: "node-finished",
+        type: "image_generation",
+        position: { x: 0, y: 0 },
+        data: {
+          title: "Finished image",
+          prompt: "A product image.",
+          agentLogicalId: "image-finished",
+          agentNodeType: "ecom_image_generation",
+          status: "idle",
+          generatedHostedImageUrl: "https://cdn.example/finished.png",
+          generatedImageWidth: 1024,
+          generatedImageHeight: 1024,
+          generatedAt: "2026-06-12T10:00:00.000Z",
+        },
+      },
+      {
+        id: "node-failed",
+        type: "image_generation",
+        position: { x: 400, y: 0 },
+        data: {
+          title: "Failed image",
+          prompt: "A failed product image.",
+          agentLogicalId: "image-failed",
+          agentNodeType: "ecom_image_generation",
+          status: "error",
+          errorMessage: "OpenClaw backend returned non-JSON response (502)",
+          generationErrorCode: "BACKEND_NON_JSON",
+          generationRetryable: true,
+          generationUpdatedAt: "2026-06-12T10:05:00.000Z",
+        },
+      },
+    ];
+
+    const snapshot = buildCanvasRuntimeSnapshot({
+      nodes,
+      edges: [],
+      groupCount: 0,
+    });
+
+    assert.equal(snapshot.summary.finishedCount, 1);
+    assert.equal(snapshot.summary.failedCount, 1);
+    assert.deepEqual(snapshot.nodes.map((node) => ({
+      id: node.id,
+      logicalId: node.logicalId,
+      status: node.status,
+      outputUrl: node.outputUrl,
+      errorCode: node.errorCode,
+      retryable: node.retryable,
+    })), [
+      {
+        id: "node-finished",
+        logicalId: "image-finished",
+        status: "finished",
+        outputUrl: "https://cdn.example/finished.png",
+        errorCode: undefined,
+        retryable: false,
+      },
+      {
+        id: "node-failed",
+        logicalId: "image-failed",
+        status: "failed",
+        outputUrl: undefined,
+        errorCode: "BACKEND_NON_JSON",
+        retryable: true,
+      },
+    ]);
   });
 
   it("keeps allowed existing canvas sources while mapping created targets", () => {

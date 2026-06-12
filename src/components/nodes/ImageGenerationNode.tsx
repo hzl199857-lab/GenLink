@@ -417,6 +417,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   const promptBarVisible = toolbarVisible && !hidePromptBar;
   const showAccessories = toolbarVisible;
   const isGenerating = data.status === 'generating';
+  const isFailed = data.status === 'error';
   const displayResults = getDisplayResults(data);
   const resultCount = displayResults.length;
   const canOpenGallery = resultCount > 1 && !isGenerating;
@@ -532,9 +533,11 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
               'cursor-grab',
               isGenerating
                 ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
-                : selected
-                  ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
-                  : 'border-gl-stroke-subtle',
+                : isFailed
+                  ? 'border-gl-error/70 shadow-[0_0_0_1px_rgba(239,68,68,0.45),0_0_24px_rgba(239,68,68,0.16)]'
+                  : selected
+                    ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
+                    : 'border-gl-stroke-subtle',
             ].join(' ')}
             onClick={(event) => {
               event.stopPropagation();
@@ -561,7 +564,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                 />
               </div>
             ) : (
-              data.status === 'error' && data.errorMessage ? (
+              isFailed && data.errorMessage ? (
                 <div className="relative z-10 flex max-w-[78%] flex-col items-center gap-3 text-center">
                   <div className="whitespace-pre-line text-[13px] leading-5 text-gl-error">
                     {data.errorMessage}
@@ -606,9 +609,21 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
             ) : null}
           </div>
 
-          {data.status === 'error' && data.errorMessage && previewImageUrl ? (
-            <div className="absolute left-0 right-0 -bottom-6 px-1 text-center text-[11px] text-gl-error">
-              {data.errorMessage}
+          {isFailed && data.errorMessage && previewImageUrl ? (
+            <div className="absolute left-0 right-0 -bottom-8 flex items-center justify-center gap-2 px-1 text-center text-[11px] text-gl-error">
+              <span className="max-w-[75%] truncate">{data.errorMessage}</span>
+              <button
+                type="button"
+                className="nodrag nopan inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-gl-error/35 bg-gl-error/10 px-2 text-[11px] font-semibold text-gl-error transition hover:bg-gl-error/16"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectNode?.();
+                  onRun?.();
+                }}
+              >
+                <RotateCcw size={11} />
+                重新生成
+              </button>
             </div>
           ) : null}
 

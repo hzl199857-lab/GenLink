@@ -4106,6 +4106,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   generatedModel: undefined,
                   generatedAt: undefined,
                   generationResults: undefined,
+                  generationStatus: "running",
+                  generationErrorCode: undefined,
+                  generationErrorMessage: undefined,
+                  generationRetryable: undefined,
+                  generationLastRunId: `image-run-${Date.now()}`,
+                  generationUpdatedAt: nowIso(),
                   status: "generating",
                   errorMessage: undefined,
                 },
@@ -4436,6 +4442,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 ...node,
                 data: {
                   ...node.data,
+                  generationStatus: primaryResult ? "finished" : "failed",
+                  generationErrorCode: primaryResult ? undefined : "IMAGE_GENERATION_FAILED",
+                  generationErrorMessage:
+                    primaryResult
+                      ? undefined
+                      : failureMessages.length > 0
+                        ? failureMessages.join("\n")
+                        : "Image generation failed",
+                  generationRetryable: primaryResult ? undefined : true,
+                  generationUpdatedAt: nowIso(),
                   status: primaryResult ? "idle" : "error",
                   errorMessage:
                     failureMessages.length > 0
@@ -4475,6 +4491,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                       errorMessage: message,
                     },
                   ],
+                  generationStatus: "failed",
+                  generationErrorCode: "IMAGE_GENERATION_FAILED",
+                  generationErrorMessage: message,
+                  generationRetryable: true,
+                  generationUpdatedAt: nowIso(),
                   status: "error",
                   errorMessage: message,
                 },

@@ -1025,6 +1025,10 @@ export async function listProjectLibrary(): Promise<ProjectHandleRecord[]> {
   return validProjects;
 }
 
+export async function getStoredProjectRecordCount(): Promise<number> {
+  return (await readAllProjectRecords()).length;
+}
+
 export async function renameProjectDirectory(
   project: ProjectHandleRecord,
   nextName: string,

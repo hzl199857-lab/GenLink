@@ -49,6 +49,52 @@ function buildProxyHeaders(request: Request): Headers {
   return headers;
 }
 
+function isJsonResponse(response: Response): boolean {
+  return (response.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
+}
+
+function getOpenClawStage(pathname: string): string {
+  if (pathname.endsWith("/start")) {
+    return "start_session";
+  }
+
+  if (pathname.endsWith("/confirm")) {
+    return "confirm_plan";
+  }
+
+  if (pathname.endsWith("/create-workflow")) {
+    return "create_workflow";
+  }
+
+  return "backend_proxy";
+}
+
+async function wrapNonJsonBackendResponse(
+  response: Response,
+  targetUrl: string,
+  pathname: string,
+): Promise<Response> {
+  if (isJsonResponse(response)) {
+    return response;
+  }
+
+  const text = await response.text().catch(() => "");
+  const snippet = text.trim().replace(/\s+/g, " ").slice(0, 180);
+
+  return Response.json(
+    {
+      ok: false,
+      error: snippet
+        ? `OpenClaw backend returned non-JSON response (${response.status} ${response.statusText}): ${snippet}`
+        : `OpenClaw backend returned non-JSON response (${response.status} ${response.statusText})`,
+      stage: getOpenClawStage(pathname),
+      retryable: response.status >= 500 || response.status === 0,
+      targetUrl,
+    },
+    { status: response.status || 502 },
+  );
+}
+
 export async function proxyBackendRequest(
   request: Request,
   pathname = new URL(request.url).pathname,
@@ -66,13 +112,15 @@ export async function proxyBackendRequest(
     : await request.text();
 
   try {
-    return await fetcher(url.toString(), {
+    const response = await fetcher(url.toString(), {
       method: request.method,
       headers: buildProxyHeaders(request),
       body,
       redirect: "manual",
       cache: "no-store",
     });
+
+    return await wrapNonJsonBackendResponse(response, url.toString(), pathname);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown proxy error";
 

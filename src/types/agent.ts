@@ -68,6 +68,34 @@ export type AgentTaskContext = {
     nodeCount: number;
     edgeCount: number;
     groupCount: number;
+    pendingCount?: number;
+    runningCount?: number;
+    finishedCount?: number;
+    failedCount?: number;
+  };
+  canvasRuntimeSnapshot?: {
+    nodes: Array<{
+      id: string;
+      type: CanvasNode["type"];
+      title?: string;
+      logicalId?: string;
+      agentNodeType?: string;
+      status: "pending" | "running" | "finished" | "failed";
+      outputUrl?: string;
+      errorCode?: string;
+      errorMessage?: string;
+      retryable: boolean;
+      updatedAt?: string;
+    }>;
+    summary: {
+      nodeCount: number;
+      edgeCount: number;
+      groupCount: number;
+      pendingCount: number;
+      runningCount: number;
+      finishedCount: number;
+      failedCount: number;
+    };
   };
   recentRuns?: AgentRunSummary[];
   recentMessages?: AgentMessageSummary[];
