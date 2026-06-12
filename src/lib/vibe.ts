@@ -2519,7 +2519,8 @@ async function generateImageOpenAI(
   let json: VibeImageResponse;
 
   if (params.images?.length) {
-    const canUseReferenceImageUrls = params.images.every(isHttpImageUrl);
+    const canUseReferenceImageUrls =
+      vibeCompatibleProvider === "vibe" && params.images.every(isHttpImageUrl);
 
     if (canUseReferenceImageUrls) {
       const requestBody: {
