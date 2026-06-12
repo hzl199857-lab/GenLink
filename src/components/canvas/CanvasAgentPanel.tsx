@@ -61,6 +61,10 @@ import {
   resolveStoredAgentPanelWidth,
 } from '@/lib/agent-panel-layout';
 import {
+  getAgentReferenceUploadNudgeRequestForPlanfPanel,
+  shouldShowAgentReferenceUploadNudge,
+} from '@/lib/agent-reference-upload-nudge';
+import {
   getPlanfEcomImageSummary,
   getPlanfEcomPlanStatusLabel,
   getPlanfEcomSlotKey,
@@ -1405,6 +1409,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const [generationPreferenceOpen, setGenerationPreferenceOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const [isInputDragActive, setIsInputDragActive] = useState(false);
+  const [referenceUploadNudgeRequested, setReferenceUploadNudgeRequested] = useState(false);
   const [imagePreference, setImagePreference] = useState<AgentImageGenerationPreference>({
     mode: 'auto',
     aspectRatio: DEFAULT_IMAGE_ASPECT_RATIO,
@@ -1444,6 +1449,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     })),
     [attachments],
   );
+  const showReferenceUploadNudge = shouldShowAgentReferenceUploadNudge({
+    requested: referenceUploadNudgeRequested,
+    attachmentCount: attachments.length,
+  });
   const hasUserDecisionPending = messages.some((message) => (
     (message.type === 'attachment_selection' && message.status === 'waiting') ||
     (
@@ -1529,6 +1538,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setMessages([]);
     setThreadId(undefined);
     setHistoryOpen(false);
+  }, []);
+
+  const setPlanfPresetPanelOpen = useCallback((nextOpen: boolean) => {
+    setPlanfPresetOpen(nextOpen);
+    setReferenceUploadNudgeRequested(
+      getAgentReferenceUploadNudgeRequestForPlanfPanel({
+        panelOpen: nextOpen,
+        attachmentCount: attachmentsRef.current.length,
+      }),
+    );
   }, []);
 
   const handleOpenHistory = useCallback(() => {
@@ -1626,6 +1645,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       };
     })).then((nextAttachments) => {
       setAttachments((current) => [...current, ...nextAttachments]);
+      setReferenceUploadNudgeRequested(false);
     });
   }, []);
 
@@ -1711,6 +1731,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
         return [...current, attachment];
       });
+
+      if (result === 'added') {
+        setReferenceUploadNudgeRequested(false);
+      }
 
       return result;
     });
@@ -3682,7 +3706,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   type="button"
                   className="flex h-6 w-6 items-center justify-center rounded-md text-white/38 transition hover:bg-white/[0.08] hover:text-white/72"
                   aria-label="关闭电商套图方向"
-                  onClick={() => setPlanfPresetOpen(false)}
+                  onClick={() => setPlanfPresetPanelOpen(false)}
                 >
                   <X size={13} />
                 </button>
@@ -3742,7 +3766,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             onDragLeave={handleInputDragLeave}
             onDrop={handleInputDrop}
           >
-            <div className="flex min-h-10 items-center gap-2">
+            <div className="relative flex min-h-10 items-center gap-2">
               <button
                 type="button"
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.055] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
@@ -3801,11 +3825,19 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
               <button
                 type="button"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.035] text-white/42 transition hover:bg-white/[0.07] hover:text-white/66"
+                className={[
+                  'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.035] text-white/42 transition hover:bg-white/[0.07] hover:text-white/66',
+                  showReferenceUploadNudge ? 'agent-reference-upload-nudge' : '',
+                ].join(' ')}
                 aria-label="上传图片"
                 title="添加参考图"
                 onClick={handleUploadClick}
               >
+                {showReferenceUploadNudge ? (
+                  <span className="pointer-events-none absolute -top-7 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#c9ff1a] px-2 py-1 text-[11px] font-semibold leading-none text-[#182000] shadow-[0_8px_22px_rgba(0,0,0,0.32)]">
+                    建议上传图片
+                  </span>
+                ) : null}
                 <ImagePlus size={16} />
               </button>
             </div>
@@ -3835,7 +3867,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 onClick={() => {
                   setSettingsOpen((current) => !current);
                   setGenerationPreferenceOpen(false);
-                  setPlanfPresetOpen(false);
+                  setPlanfPresetPanelOpen(false);
                 }}
               >
                 <Sparkles size={13} />
@@ -3856,7 +3888,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 aria-expanded={planfPresetOpen}
                 title="电商套图方向"
                 onClick={() => {
-                  setPlanfPresetOpen((current) => !current);
+                  setPlanfPresetPanelOpen(!planfPresetOpen);
                   setSettingsOpen(false);
                   setGenerationPreferenceOpen(false);
                 }}
@@ -3875,7 +3907,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 onClick={() => {
                   setGenerationPreferenceOpen((current) => !current);
                   setSettingsOpen(false);
-                  setPlanfPresetOpen(false);
+                  setPlanfPresetPanelOpen(false);
                 }}
               >
                 <SlidersHorizontal size={15} />
