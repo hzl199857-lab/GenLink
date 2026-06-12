@@ -1037,6 +1037,10 @@ function createOpenAiUserContent(
   return userContent.length === 1 ? prompt : userContent;
 }
 
+function isHttpImageUrl(image: { url: string }): boolean {
+  return /^https?:\/\//i.test(image.url.trim());
+}
+
 function createClaudeUserContent(
   prompt: string,
   images?: Array<{
@@ -2515,49 +2519,83 @@ async function generateImageOpenAI(
   let json: VibeImageResponse;
 
   if (params.images?.length) {
-    const formData = new FormData();
-    formData.append("model", model);
-    formData.append("prompt", params.prompt);
+    const canUseReferenceImageUrls = params.images.every(isHttpImageUrl);
 
-    if (size) {
-      formData.append("size", size);
-    }
+    if (canUseReferenceImageUrls) {
+      const requestBody: {
+        model: string;
+        prompt: string;
+        size: string;
+        quality?: string;
+        output_format: string;
+        moderation: string;
+        images: Array<{ image_url: string }>;
+      } = {
+        model,
+        prompt: params.prompt,
+        size,
+        quality,
+        output_format: outputFormat,
+        moderation,
+        images: params.images.map((image) => ({
+          image_url: image.url.trim(),
+        })),
+      };
 
-    if (quality) {
-      formData.append("quality", quality);
-    }
-
-    if (outputFormat) {
-      formData.append("output_format", outputFormat);
-    }
-
-    if (moderation) {
-      formData.append("moderation", moderation);
-    }
-
-    const imageBlobs = await Promise.all(
-      params.images.map((image, index) => createImageFilePart(image, index)),
-    );
-
-    imageBlobs.forEach((blob, index) => {
-      formData.append(
-        "image[]",
-        blob,
-        getSafeMultipartFileName(
-          params.images?.[index]?.fileName,
-          `reference-${index + 1}`,
-        ),
+      json = await requestJsonWithBaseUrl<VibeImageResponse>(
+        baseUrl,
+        "/images/edits",
+        requestBody,
+        params.apiKey,
+        createHeaders,
+        IMAGE_REQUEST_TIMEOUT_MS,
+        providerLabel,
       );
-    });
+    } else {
+      const formData = new FormData();
+      formData.append("model", model);
+      formData.append("prompt", params.prompt);
 
-    json = await requestFormWithBaseUrl<VibeImageResponse>(
-      baseUrl,
-      "/images/edits",
-      formData,
-      params.apiKey,
-      IMAGE_REQUEST_TIMEOUT_MS,
-      providerLabel,
-    );
+      if (size) {
+        formData.append("size", size);
+      }
+
+      if (quality) {
+        formData.append("quality", quality);
+      }
+
+      if (outputFormat) {
+        formData.append("output_format", outputFormat);
+      }
+
+      if (moderation) {
+        formData.append("moderation", moderation);
+      }
+
+      const imageBlobs = await Promise.all(
+        params.images.map((image, index) => createImageFilePart(image, index)),
+      );
+
+      imageBlobs.forEach((blob, index) => {
+        formData.append(
+          "image[]",
+          blob,
+          getSafeMultipartFileName(
+            params.images?.[index]?.fileName,
+            `reference-${index + 1}`,
+          ),
+        );
+      });
+
+      json = await requestFormWithBaseUrl<VibeImageResponse>(
+        baseUrl,
+        "/images/edits",
+        formData,
+        params.apiKey,
+        IMAGE_REQUEST_TIMEOUT_MS,
+        providerLabel,
+      );
+    }
   } else {
     const requestBody: {
       model: string;
