@@ -452,8 +452,8 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".gif": "image/gif",
 };
 const REFERENCE_IMAGE_FETCH_TIMEOUT_MS = 30_000;
-const REFERENCE_IMAGE_FETCH_ATTEMPTS = 3;
-const REFERENCE_IMAGE_FETCH_RETRY_DELAY_MS = 700;
+const REFERENCE_IMAGE_FETCH_RETRY_DELAYS_MS = [700, 1_500, 3_000, 6_000];
+const REFERENCE_IMAGE_FETCH_ATTEMPTS = REFERENCE_IMAGE_FETCH_RETRY_DELAYS_MS.length + 1;
 
 function getImageMimeType(fileName: string): string {
   return IMAGE_MIME_TYPES[path.extname(fileName).toLowerCase()] || "image/png";
@@ -579,7 +579,7 @@ async function readReferenceImage(
     }
 
     if (attempt < REFERENCE_IMAGE_FETCH_ATTEMPTS) {
-      await sleep(REFERENCE_IMAGE_FETCH_RETRY_DELAY_MS * attempt);
+      await sleep(REFERENCE_IMAGE_FETCH_RETRY_DELAYS_MS[attempt - 1] ?? 0);
     }
   }
 

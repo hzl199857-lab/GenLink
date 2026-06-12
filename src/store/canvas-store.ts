@@ -177,6 +177,8 @@ const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const IMAGE_JOB_SUBMIT_RETRY_COUNT = 3;
 const IMAGE_JOB_SUBMIT_RETRY_DELAY_MS = 800;
+const OSS_IMAGE_READINESS_ATTEMPTS = 5;
+const OSS_IMAGE_READINESS_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000];
 const VIDEO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const VIDEO_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_IMAGE_UPLOAD_MODE =
@@ -1169,6 +1171,8 @@ async function uploadImageBlobToOss(
     throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
   }
 
+  await waitForHostedImageReadiness(targetJson.result.imageUrl);
+
   console.info("[GenLink] reference image upload step", {
     step: "put-oss-complete",
     folder,
@@ -1178,6 +1182,52 @@ async function uploadImageBlobToOss(
     imageUrl: targetJson.result.imageUrl,
   });
   return targetJson.result.imageUrl;
+}
+
+async function waitForHostedImageReadiness(imageUrl: string): Promise<void> {
+  let lastError = "read failed";
+
+  for (let attempt = 1; attempt <= OSS_IMAGE_READINESS_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch("/api/image-hosting/read", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ imageUrl }),
+      });
+
+      if (response.ok) {
+        await response.body?.cancel();
+        console.info("[GenLink] reference image upload step", {
+          step: "oss-readiness-complete",
+          attempt,
+          urlType: getReferenceImageDebugLabel(imageUrl),
+        });
+        return;
+      }
+
+      lastError = `HTTP ${response.status}`;
+      await response.body?.cancel();
+    } catch (error) {
+      lastError = toErrorMessage(error);
+    }
+
+    const delayMs = OSS_IMAGE_READINESS_RETRY_DELAYS_MS[attempt - 1];
+
+    if (delayMs !== undefined) {
+      console.info("[GenLink] reference image upload step", {
+        step: "oss-readiness-retry",
+        attempt,
+        delayMs,
+        urlType: getReferenceImageDebugLabel(imageUrl),
+        error: lastError,
+      });
+      await sleep(delayMs);
+    }
+  }
+
+  throw new Error(`Uploaded OSS image was not readable (${lastError})`);
 }
 
 async function uploadVideoBlobToOss(
