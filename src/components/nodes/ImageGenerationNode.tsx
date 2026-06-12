@@ -2,7 +2,7 @@
 
 import React, { memo, useEffect, useState } from 'react';
 import { Position, useUpdateNodeInternals } from 'reactflow';
-import { ChevronDown, Image as ImageIcon } from 'lucide-react';
+import { ChevronDown, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import type {
   ImageGenerationNodeData,
   ImageGenerationRunOptions,
@@ -15,6 +15,7 @@ import {
   type ImageGenerationToolbarAction,
 } from './ImageGenerationNodeToolbar';
 import { ImageGenerationPromptBar } from './ImageGenerationPromptBar';
+import { SilkRunningPreview } from './SilkRunningPreview';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   readStoredSelectedApiProvider,
@@ -543,18 +544,45 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
               }
             }}
           >
+            {isGenerating ? (
+              <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-black">
+                <div className="absolute inset-[-4.5%] blur-[5.2px]">
+                  <SilkRunningPreview />
+                </div>
+                <div className="absolute inset-0 backdrop-blur-[3.6px] bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.024),rgba(0,0,0,0.22)_100%)]" />
+              </div>
+            ) : null}
+
             {previewImageUrl ? (
-              <GeneratedPreviewImage
-                src={previewImageUrl}
-                alt={data.prompt?.trim() || 'Generated image'}
-              />
+              <div className="relative z-10 h-full w-full">
+                <GeneratedPreviewImage
+                  src={previewImageUrl}
+                  alt={data.prompt?.trim() || 'Generated image'}
+                />
+              </div>
             ) : (
               data.status === 'error' && data.errorMessage ? (
-                <div className="max-w-[78%] whitespace-pre-line text-center text-[13px] leading-5 text-gl-error">
-                  {data.errorMessage}
+                <div className="relative z-10 flex max-w-[78%] flex-col items-center gap-3 text-center">
+                  <div className="whitespace-pre-line text-[13px] leading-5 text-gl-error">
+                    {data.errorMessage}
+                  </div>
+                  <button
+                    type="button"
+                    className="nodrag nopan inline-flex h-8 items-center gap-2 rounded-lg border border-white/12 bg-white/[0.06] px-3 text-xs font-semibold text-white/82 transition hover:border-white/24 hover:bg-white/[0.1]"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectNode?.();
+                      onRun?.();
+                    }}
+                  >
+                    <RotateCcw size={13} />
+                    重新生成
+                  </button>
                 </div>
+              ) : !isGenerating ? (
+                <ImageIcon size={44} className="relative z-10 text-gl-text-muted" />
               ) : (
-                <ImageIcon size={44} className="text-gl-text-muted" />
+                null
               )
             )}
 

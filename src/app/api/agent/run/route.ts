@@ -159,7 +159,7 @@ function parseContext(value: unknown): AgentTaskContext | null {
     executionTarget: {
       createOnCanvas: true,
       placement: "viewport_center_right",
-      confirmationMode: "execution_plan_required",
+      confirmationMode: "workflow_auto_apply",
     },
     canvasSummary: canvasSummary
       ? {
@@ -307,7 +307,15 @@ function parseRequestedImageCount(message: string): number {
 }
 
 function getToolRisk(name: CanvasAgentToolName): CanvasAgentToolCall["risk"] {
-  return name === "read_canvas_summary" ? "read" : name === "run_image_generation" ? "generate" : "write";
+  return name === "read_canvas_summary" ||
+    name === "genlink_canvas_get_snapshot" ||
+    name === "genlink_canvas_get_node" ||
+    name === "genlink_canvas_get_job_status"
+    ? "read"
+    : name === "run_image_generation" ||
+        name === "genlink_canvas_run_node"
+      ? "generate"
+      : "write";
 }
 
 function createToolCall(name: CanvasAgentToolName, input: Record<string, unknown>): CanvasAgentToolCall {
@@ -656,128 +664,6 @@ function normalizeImageEditActions(state: AgentRuntimeState) {
   }
 }
 
-function createFallbackState(params: {
-  message: string;
-  context: AgentTaskContext;
-  provider?: AgentProvider;
-  model?: string;
-  fallbackReason: string;
-  usedModel?: boolean;
-  modelRawOutput?: string;
-}): AgentRunResult {
-  const selectedAttachments = getSelectedAttachments(params.context);
-  const state = createRuntimeState(params);
-  const enhancedPrompt = enhancePromptLocally(params.message, selectedAttachments);
-  const batchCount = parseRequestedImageCount(params.message);
-
-  state.trace.push({
-    id: createRuntimeId("trace"),
-    type: "thinking",
-    content: selectedAttachments.length
-      ? batchCount > 1
-        ? `我会把这次任务拆成 ${batchCount} 个参考图编辑结果，并共用上传素材作为上游输入。`
-        : "我会把这次任务作为图生图/图片编辑处理，先使用上传素材作为上游输入。"
-      : batchCount > 1
-        ? `我会把这次任务拆成 ${batchCount} 个不同画面，并创建批量文生图链路。`
-        : "我会把这次任务作为文生图处理，先创建提示词节点再连接图像生成节点。",
-  });
-
-  executeAndTrace(state, createToolCall("read_canvas_summary", {}));
-
-  if (selectedAttachments.length > 0) {
-    for (const attachment of selectedAttachments) {
-      executeAndTrace(state, createToolCall("create_uploaded_image_node", {
-        attachmentId: attachment.id,
-        title: attachment.name,
-      }));
-    }
-
-    const prompts = batchCount > 1
-      ? createBatchPromptVariants(params.message, batchCount, { hasReferenceImages: true })
-      : [enhancedPrompt];
-
-    prompts.forEach((prompt, index) => {
-      const number = index + 1;
-      const generationActionId = `image-generation-${number}`;
-
-      executeAndTrace(state, createToolCall("create_image_generation_node", {
-        clientActionId: generationActionId,
-        prompt,
-        provider: params.provider,
-        model: params.model === "auto" ? undefined : params.model,
-      }));
-
-      for (const attachment of selectedAttachments) {
-        if (!attachment.sourceNodeId) {
-          continue;
-        }
-
-        executeAndTrace(state, createToolCall("connect_nodes", {
-          sourceNodeId: attachment.sourceNodeId,
-          targetClientActionId: generationActionId,
-        }));
-      }
-    });
-  } else if (batchCount > 1) {
-    const prompts = createBatchPromptVariants(params.message, batchCount);
-
-    prompts.forEach((prompt, index) => {
-      const number = index + 1;
-      const textActionId = `text-prompt-${number}`;
-      const generationActionId = `image-generation-${number}`;
-
-      executeAndTrace(state, createToolCall("create_text_node", {
-        clientActionId: textActionId,
-        title: `Prompt ${number}`,
-        text: prompt,
-      }));
-      executeAndTrace(state, createToolCall("create_image_generation_node", {
-        clientActionId: generationActionId,
-        prompt,
-        provider: params.provider,
-        model: params.model === "auto" ? undefined : params.model,
-      }));
-      executeAndTrace(state, createToolCall("connect_nodes", {
-        sourceClientActionId: textActionId,
-        targetClientActionId: generationActionId,
-      }));
-    });
-  } else {
-    executeAndTrace(state, createToolCall("create_text_node", {
-      clientActionId: "text-prompt-1",
-      title: "Agent Prompt",
-      text: enhancedPrompt,
-    }));
-    executeAndTrace(state, createToolCall("create_image_generation_node", {
-      clientActionId: "image-generation-1",
-      prompt: enhancedPrompt,
-      provider: params.provider,
-      model: params.model === "auto" ? undefined : params.model,
-    }));
-    executeAndTrace(state, createToolCall("connect_nodes", {
-      sourceClientActionId: "text-prompt-1",
-      targetClientActionId: "image-generation-1",
-    }));
-  }
-
-  const final = "我已经把节点链路准备好，确认后会把它放到画布上；生成图片仍需要你再点一次确认。";
-
-  state.trace.push({
-    id: createRuntimeId("trace"),
-    type: "final",
-    content: final,
-  });
-
-  normalizeImageEditActions(state);
-
-  return createAgentResultFromState(state, {
-    usedModel: params.usedModel === true,
-    usedFallback: true,
-    fallbackReason: params.fallbackReason,
-    model: params.model,
-    modelRawOutput: params.modelRawOutput,
-  });
-}
 
 function createRuntimeState(params: {
   message: string;
@@ -872,7 +758,7 @@ function createAgentResultFromState(state: AgentRuntimeState, meta: AgentRunMeta
           ? ["读取画布摘要", "放置上传图片", "创建图像生成节点", "连接图片到生成节点", "等待确认生成"]
           : ["读取画布摘要", "创建提示词节点", "创建图像生成节点", "连接节点", "等待确认生成"],
       promptPreview: state.promptPreview,
-      confirmationLabel: "确认创建到画布",
+      confirmationLabel: "确认生成",
     },
     actions: state.actions,
     trace: state.trace,
@@ -897,6 +783,22 @@ function getToolDisplayName(name: CanvasAgentToolName): string {
       return "设置图像生成参数";
     case "run_image_generation":
       return "等待用户确认后触发生成";
+    case "genlink_canvas_get_snapshot":
+      return "MCP 读取画布快照";
+    case "genlink_canvas_get_node":
+      return "MCP 读取画布节点";
+    case "genlink_canvas_create_workflow":
+      return "MCP 创建画布工作流";
+    case "genlink_canvas_create_node":
+      return "MCP 创建画布节点";
+    case "genlink_canvas_connect_nodes":
+      return "MCP 连接画布节点";
+    case "genlink_canvas_update_node_params":
+      return "MCP 更新节点参数";
+    case "genlink_canvas_run_node":
+      return "MCP 触发节点生成";
+    case "genlink_canvas_get_job_status":
+      return "MCP 读取生成状态";
   }
 }
 
@@ -1027,12 +929,7 @@ async function runAgentLoop(params: {
     const modelStep = parseModelStep(response.content);
 
     if (!modelStep) {
-      return createFallbackState({
-        ...params,
-        fallbackReason: "模型返回的工具调用 JSON 无法解析，已改用本地兜底规划。",
-        usedModel: true,
-        modelRawOutput: lastRawOutput,
-      });
+      throw new Error("模型返回的工具调用 JSON 无法解析；本地兜底卡已禁用。");
     }
 
     if (modelStep.type === "final") {
@@ -1064,21 +961,11 @@ async function runAgentLoop(params: {
     const result = executeAndTrace(state, call);
 
     if (!result.ok) {
-      return createFallbackState({
-        ...params,
-        fallbackReason: `工具 ${call.name} 执行失败：${result.message}`,
-        usedModel: true,
-        modelRawOutput: lastRawOutput,
-      });
+      throw new Error(`工具 ${call.name} 执行失败：${result.message}`);
     }
   }
 
-  return createFallbackState({
-    ...params,
-    fallbackReason: `模型工具调用超过 ${MAX_TOOL_STEPS} 步，已改用本地兜底规划。`,
-    usedModel: true,
-    modelRawOutput: lastRawOutput,
-  });
+  throw new Error(`模型工具调用超过 ${MAX_TOOL_STEPS} 步；本地兜底卡已禁用。`);
 }
 
 export async function POST(request: Request) {
@@ -1118,17 +1005,13 @@ export async function POST(request: Request) {
         result,
       });
     } catch (error) {
-      return NextResponse.json({
-        ok: true,
-        result: createFallbackState({
-          message,
-          context,
-          provider,
-          model,
-          fallbackReason: error instanceof Error ? error.message : "模型调用失败，已改用本地兜底规划。",
-          usedModel: false,
-        }),
-      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : "模型调用失败；本地兜底卡已禁用。",
+        },
+        { status: 502 },
+      );
     }
   } catch (error) {
     if (error instanceof VibeApiError) {

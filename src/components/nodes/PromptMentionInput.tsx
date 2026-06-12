@@ -59,6 +59,7 @@ export interface PromptMentionInputProps {
   placeholder?: string;
   className?: string;
   style?: CSSProperties;
+  mentionMenuVariant?: 'default' | 'agent';
   focusRequestId?: number;
   onChange?: (next: string) => void;
   onFocus?: () => void;
@@ -248,6 +249,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
   placeholder,
   className,
   style,
+  mentionMenuVariant = 'default',
   focusRequestId,
   onChange,
   onFocus,
@@ -260,6 +262,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
   const composingRef = useRef(false);
   const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const agentMenu = mentionMenuVariant === 'agent';
 
   const mentionOptions = useMemo<MentionOption[]>(
     () => [
@@ -532,8 +535,11 @@ export const PromptMentionInput = memo(function PromptMentionInput({
       {trigger ? (
         <div
           data-ref-mention-menu="true"
-          className="v2-mention-menu nodrag nopan"
-          style={{
+          className={[
+            'v2-mention-menu nodrag nopan',
+            agentMenu ? 'agent-mention-menu' : '',
+          ].join(' ')}
+          style={agentMenu ? undefined : {
             left: trigger.left,
             top: trigger.top,
           }}
@@ -542,6 +548,9 @@ export const PromptMentionInput = memo(function PromptMentionInput({
             event.stopPropagation();
           }}
         >
+          {agentMenu ? (
+            <div className="agent-mention-menu-title">可能@的内容</div>
+          ) : null}
           {filteredOptions.length > 0 ? (
             filteredOptions.map((option, index) => {
               const active = index === activeIndex;

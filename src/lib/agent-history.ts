@@ -1,8 +1,9 @@
-import type { AgentPanelMessage } from "@/types/agent";
+import type { AgentPanelMessage, AgentTaskAttachment } from "@/types/agent";
 
 const AGENT_HISTORY_STORAGE_KEY = "genlink.canvasAgentThreads.v1";
 const AGENT_DRAFT_STORAGE_KEY = "genlink.canvasAgentDrafts.v1";
 const MAX_PROJECT_THREADS = 20;
+const MIN_PROJECT_THREADS_ON_QUOTA = 3;
 
 export type AgentThreadRecord = {
   id: string;
@@ -61,12 +62,24 @@ function readStorage(): AgentThreadStorage {
   }
 }
 
-function writeStorage(storage: AgentThreadStorage): void {
+function writeStorage(storage: AgentThreadStorage): boolean {
   if (!canUseStorage()) {
-    return;
+    return true;
   }
 
-  window.localStorage.setItem(AGENT_HISTORY_STORAGE_KEY, JSON.stringify(storage));
+  try {
+    window.localStorage.setItem(AGENT_HISTORY_STORAGE_KEY, JSON.stringify(storage));
+    return true;
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 function readDraftStorage(): AgentDraftStorage {
@@ -124,16 +137,20 @@ function createThreadTitle(messages: AgentPanelMessage[]): string {
   return title.length > 32 ? `${title.slice(0, 32)}...` : title;
 }
 
+function compactAttachment(attachment: AgentTaskAttachment): AgentTaskAttachment {
+  return {
+    ...attachment,
+    imageUrl: "",
+    previewUrl: "",
+  };
+}
+
 function compactMessages(messages: AgentPanelMessage[]): AgentPanelMessage[] {
   return messages.map((message) => {
     if (message.type === "text" && message.role === "user" && message.attachments?.length) {
       return {
         ...message,
-        attachments: message.attachments.map((attachment) => ({
-          ...attachment,
-          imageUrl: "",
-          previewUrl: "",
-        })),
+        attachments: message.attachments.map(compactAttachment),
       };
     }
 
@@ -141,11 +158,7 @@ function compactMessages(messages: AgentPanelMessage[]): AgentPanelMessage[] {
       return {
         ...message,
         status: message.status === "waiting" ? "cancelled" : message.status,
-        attachments: message.attachments.map((attachment) => ({
-          ...attachment,
-          imageUrl: "",
-          previewUrl: "",
-        })),
+        attachments: message.attachments.map(compactAttachment),
       };
     }
 
@@ -157,11 +170,24 @@ function compactMessages(messages: AgentPanelMessage[]): AgentPanelMessage[] {
           message.status === "waiting_generation_confirmation"
             ? "cancelled"
             : message.status,
-        attachments: message.attachments.map((attachment) => ({
-          ...attachment,
-          imageUrl: "",
-          previewUrl: "",
-        })),
+        attachments: message.attachments.map(compactAttachment),
+      };
+    }
+
+    if (message.type === "planf_ecom_session") {
+      return {
+        ...message,
+        attachments: message.attachments.map(compactAttachment),
+      };
+    }
+
+    if (message.type === "planf_ecom_plan") {
+      return {
+        ...message,
+        session: {
+          ...message.session,
+        },
+        attachments: message.attachments.map(compactAttachment),
       };
     }
 
@@ -246,7 +272,20 @@ export function saveAgentThread(params: {
     candidate.projectId !== resolvedProjectId || keptProjectThreadIds.has(candidate.id)
   ));
 
-  writeStorage({ version: 1, threads: prunedThreads });
+  let projectThreadLimit = MAX_PROJECT_THREADS;
+  let nextPrunedThreads = prunedThreads;
+
+  while (!writeStorage({ version: 1, threads: nextPrunedThreads }) && projectThreadLimit > MIN_PROJECT_THREADS_ON_QUOTA) {
+    projectThreadLimit = Math.max(MIN_PROJECT_THREADS_ON_QUOTA, Math.floor(projectThreadLimit / 2));
+
+    const nextKeptProjectThreadIds = new Set(
+      projectThreads.slice(0, projectThreadLimit).map((candidate) => candidate.id),
+    );
+
+    nextPrunedThreads = nextThreads.filter((candidate) => (
+      candidate.projectId !== resolvedProjectId || nextKeptProjectThreadIds.has(candidate.id)
+    ));
+  }
 
   return thread;
 }

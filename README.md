@@ -525,3 +525,5 @@ npx tsc --noEmit  # 类型检查
 ```
 
 技术栈：Next.js（App Router）+ TypeScript + Tailwind + React Flow + Zustand + Three.js + Prisma。
+
+MCP / OpenClaw 部署说明见：[docs/genlink-mcp-deployment.md](docs/genlink-mcp-deployment.md)。
