@@ -179,6 +179,7 @@ const IMAGE_JOB_SUBMIT_RETRY_COUNT = 3;
 const IMAGE_JOB_SUBMIT_RETRY_DELAY_MS = 800;
 const OSS_IMAGE_READINESS_ATTEMPTS = 5;
 const OSS_IMAGE_READINESS_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000];
+const REFERENCE_OSS_UPLOAD_CACHE_LIMIT = 80;
 const VIDEO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const VIDEO_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_IMAGE_UPLOAD_MODE =
@@ -502,6 +503,13 @@ type ConnectedImagePayload = {
   width?: number;
   height?: number;
 };
+
+type NormalizedReferenceImage = {
+  url: string;
+  fileName?: string;
+};
+
+const referenceOssUploadCache = new Map<string, Promise<NormalizedReferenceImage>>();
 
 type ConnectedVideoPayload = {
   id: string;
@@ -1352,10 +1360,7 @@ function dataUrlToBlob(dataUrl: string): Blob {
 async function normalizeReferenceImageViaOss(image: {
   imageUrl: string;
   fileName?: string;
-}): Promise<{
-  url: string;
-  fileName?: string;
-}> {
+}): Promise<NormalizedReferenceImage> {
   const url = image.imageUrl.trim();
 
   if (isAliyunOssUrl(url)) {
@@ -1391,10 +1396,32 @@ async function normalizeReferenceImageViaOss(image: {
   };
 }
 
+function getReferenceOssUploadCacheKey(image: ConnectedImagePayload): string {
+  return (
+    image.hostedImageUrl?.trim() ||
+    image.originalImageUrl?.trim() ||
+    image.imageUrl.trim()
+  );
+}
+
+function rememberReferenceOssUpload(
+  cacheKey: string,
+  uploadPromise: Promise<NormalizedReferenceImage>,
+) {
+  if (referenceOssUploadCache.size >= REFERENCE_OSS_UPLOAD_CACHE_LIMIT) {
+    const oldestKey = referenceOssUploadCache.keys().next().value;
+
+    if (oldestKey) {
+      referenceOssUploadCache.delete(oldestKey);
+    }
+  }
+
+  referenceOssUploadCache.set(cacheKey, uploadPromise);
+}
+
 async function normalizeReferenceImagesViaOss(
   images: ConnectedImagePayload[],
 ): Promise<Array<{ url: string; fileName?: string }>> {
-  const uploadCache = new Map<string, Promise<{ url: string; fileName?: string }>>();
   const requestImages: Array<{ url: string; fileName?: string }> = [];
   const seenRequestUrls = new Set<string>();
 
@@ -1415,24 +1442,32 @@ async function normalizeReferenceImagesViaOss(
   });
 
   for (const image of images) {
-    const cacheKey =
-      image.hostedImageUrl?.trim() ||
-      image.originalImageUrl?.trim() ||
-      image.imageUrl.trim();
-    const normalizedPromise =
-      uploadCache.get(cacheKey) ??
-      normalizeReferenceImageViaOss({
+    const cacheKey = getReferenceOssUploadCacheKey(image);
+    let normalizedPromise = referenceOssUploadCache.get(cacheKey);
+
+    if (normalizedPromise) {
+      console.info("[GenLink] reference image upload step", {
+        step: "normalize-cache-hit",
+        id: image.id,
+        sourceType: image.sourceType,
+        urlType: getReferenceImageDebugLabel(cacheKey),
+      });
+    } else {
+      normalizedPromise = normalizeReferenceImageViaOss({
         imageUrl: image.imageUrl,
         fileName: image.fileName,
       });
+      rememberReferenceOssUpload(cacheKey, normalizedPromise);
+    }
 
-    uploadCache.set(cacheKey, normalizedPromise);
-
-    let normalized: { url: string; fileName?: string };
+    let normalized: NormalizedReferenceImage;
 
     try {
       normalized = await normalizedPromise;
     } catch (error) {
+      if (referenceOssUploadCache.get(cacheKey) === normalizedPromise) {
+        referenceOssUploadCache.delete(cacheKey);
+      }
       console.error("[GenLink] reference image upload failed", {
         id: image.id,
         sourceType: image.sourceType,

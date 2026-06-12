@@ -71,8 +71,8 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "Internal error";
 
     return NextResponse.json(
-      { ok: false, error: message },
-      { status: 500 },
+      { ok: false, error: `Failed to fetch image: ${message}` },
+      { status: 502 },
     );
   } finally {
     clearTimeout(timeout);
