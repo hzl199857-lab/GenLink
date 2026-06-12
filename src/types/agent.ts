@@ -299,6 +299,12 @@ export type AgentPanelMessage =
       role: "agent";
       type: "text";
       content: string;
+      variant?: "retryable_error";
+      retryLabel?: string;
+      retryPrompt?: string;
+      retryTaskAttachments?: AgentTaskAttachment[];
+      retrySelectedAttachments?: AgentTaskAttachment[];
+      retryUserMessageCreatedAt?: string;
       createdAt: string;
     }
   | {

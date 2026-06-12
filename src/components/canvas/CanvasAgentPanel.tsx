@@ -1803,6 +1803,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             error instanceof Error ? error.message : undefined,
             'GenLink 规则运行超时，请稍后重试，或切换文本模型后再试。',
           );
+          console.error('[canvas-agent] ecom start failed', errorText);
 
           setMessages((current) => [
             ...current,
@@ -1810,7 +1811,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               id: createPanelId('planf-runtime-error'),
               role: 'agent',
               type: 'text',
-              content: 'GenLink 规则运行时没有返回可用表单。\n' + errorText,
+              variant: 'retryable_error',
+              content: '出现了一点小问题，规则表单没有生成成功。建议重试一次，不需要重新上传参考图。',
+              retryLabel: '重新生成',
+              retryPrompt: params.prompt,
+              retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
+              retrySelectedAttachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
+              retryUserMessageCreatedAt: params.userMessageCreatedAt,
               createdAt: new Date().toISOString(),
             },
           ]);
@@ -1835,6 +1842,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               error instanceof Error ? error.message : undefined,
               'GenLink 电商编排确认失败，请稍后重试。',
             );
+            console.error('[canvas-agent] ecom auto confirm failed', errorText);
 
             setMessages((current) => [
               ...current,
@@ -1842,7 +1850,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 id: createPanelId('planf-auto-confirm-error'),
                 role: 'agent',
                 type: 'text',
-                content: 'GenLink 没能自动进入电商编排。\n' + errorText,
+                variant: 'retryable_error',
+                content: '出现了一点小问题，电商编排没有继续完成。建议重试一次，不需要重新填写或上传。',
+                retryLabel: '重新生成',
+                retryPrompt: params.prompt,
+                retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
+                retrySelectedAttachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
+                retryUserMessageCreatedAt: params.userMessageCreatedAt,
                 createdAt: new Date().toISOString(),
               },
             ]);
@@ -1877,6 +1891,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         error instanceof Error ? error.message : undefined,
         'Agent 请求失败',
       );
+      console.error('[canvas-agent] run failed', errorText);
 
       setMessages((current) => [
         ...current,
@@ -1884,7 +1899,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           id: createPanelId('agent-run-error'),
           role: 'agent',
           type: 'text',
-          content: 'Agent 请求失败，没有创建本地兜底卡。\n' + errorText,
+          variant: 'retryable_error',
+          content: '出现了一点小问题，建议重试一次。如果仍然失败，可以稍后再试或切换模型。',
+          retryLabel: '重新生成',
+          retryPrompt: params.prompt,
+          retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
+          retrySelectedAttachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
+          retryUserMessageCreatedAt: params.userMessageCreatedAt,
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -2067,6 +2088,39 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     provider,
     runAgent,
   ]);
+
+  const handleRetryAgentMessage = useCallback((messageId: string) => {
+    if (busy) {
+      return;
+    }
+
+    const retryMessage = messages.find((message): message is Extract<AgentPanelMessage, { type: 'text'; role: 'agent' }> => (
+      message.id === messageId &&
+      message.type === 'text' &&
+      message.role === 'agent' &&
+      message.variant === 'retryable_error' &&
+      Boolean(message.retryPrompt)
+    ));
+
+    if (!retryMessage?.retryPrompt) {
+      return;
+    }
+
+    const taskAttachments = retryMessage.retryTaskAttachments?.map((attachment) => ({ ...attachment })) ?? [];
+    const selectedAttachments = retryMessage.retrySelectedAttachments?.map((attachment) => ({ ...attachment })) ?? taskAttachments;
+    const userMessageCreatedAt = retryMessage.retryUserMessageCreatedAt ?? new Date().toISOString();
+
+    setMessages((current) => current.filter((message) => message.id !== messageId));
+    setBusyMode('thinking');
+    void runAgent({
+      prompt: retryMessage.retryPrompt,
+      taskAttachments,
+      selectedAttachments,
+      userMessageCreatedAt,
+    }).finally(() => {
+      setBusyMode(null);
+    });
+  }, [busy, messages, runAgent]);
 
   const updatePlanfEcomSessionField = useCallback((
     messageId: string,
@@ -2809,6 +2863,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   ].join(' ')}
                 >
                   <div>{stripReferenceMentionTokens(message.content, messageAttachments)}</div>
+                  {message.role === 'agent' && message.variant === 'retryable_error' ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      className="mt-3 inline-flex h-8 items-center gap-2 rounded-lg border border-[#19d3ff]/35 bg-[#19d3ff]/12 px-3 text-xs font-semibold text-[#7eeaff] transition hover:bg-[#19d3ff]/18 disabled:cursor-not-allowed disabled:opacity-45"
+                      onClick={() => handleRetryAgentMessage(message.id)}
+                    >
+                      <Sparkles size={13} />
+                      {message.retryLabel ?? '重新生成'}
+                    </button>
+                  ) : null}
                   {message.role === 'user' && messageAttachments.length ? (
                     <div className="mt-2 space-y-2">
                       {messageAttachments.map((attachment, index) => (
