@@ -47,6 +47,11 @@ import {
   attachExistingSourceReferencesToImageActions,
   restoreReferenceMentionLabelsInActions,
 } from '@/lib/agent-actions';
+import {
+  type AgentImageAttachmentUploadKind,
+  type AgentImageDerivativeOptions,
+  createHostedAgentImageAttachment,
+} from '@/lib/agent-attachment-upload';
 import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
 import {
   formatAgentChatErrorText,
@@ -467,6 +472,78 @@ function readImageFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('读取图片失败'));
     reader.readAsDataURL(file);
   });
+}
+
+function createImageDerivativeDataUrl(
+  dataUrl: string,
+  options: AgentImageDerivativeOptions,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => {
+      const sourceWidth = image.naturalWidth || image.width;
+      const sourceHeight = image.naturalHeight || image.height;
+
+      if (!sourceWidth || !sourceHeight) {
+        reject(new Error('图片尺寸无效'));
+        return;
+      }
+
+      const scale = Math.min(1, options.maxEdge / Math.max(sourceWidth, sourceHeight));
+      const width = Math.max(1, Math.round(sourceWidth * scale));
+      const height = Math.max(1, Math.round(sourceHeight * scale));
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        reject(new Error('无法创建图片预处理画布'));
+        return;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      resolve(canvas.toDataURL(options.mimeType, options.quality));
+    };
+    image.onerror = () => reject(new Error('图片预处理失败'));
+    image.src = dataUrl;
+  });
+}
+
+async function uploadAgentImageDataUrl(
+  dataUrl: string,
+  fileName?: string,
+  kind: AgentImageAttachmentUploadKind = 'original',
+): Promise<string> {
+  const folderByKind: Record<AgentImageAttachmentUploadKind, string> = {
+    original: 'references',
+    preview: 'references/previews',
+    semantic: 'references/semantic',
+  };
+  const response = await fetch('/api/image-hosting/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      dataUrl,
+      fileName,
+      folder: folderByKind[kind],
+      forceOss: true,
+    }),
+  });
+  const json = (await response.json()) as
+    | { ok: true; result: { imageUrl: string } }
+    | { ok: false; error: string };
+
+  if (!response.ok || !json.ok) {
+    throw new Error('error' in json ? json.error : 'Failed to upload reference image');
+  }
+
+  return json.result.imageUrl;
 }
 
 function getAttachmentLabel(attachment: AgentTaskAttachment, index: number): string {
@@ -1624,30 +1701,37 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       return;
     }
 
-    void Promise.all(files.map(async (file) => {
-      const previewUrl = URL.createObjectURL(file);
-      const [imageUrl, dimensions] = await Promise.all([
-        readImageFileAsDataUrl(file),
-        readImageDimensions(previewUrl),
-      ]);
-
-      return {
-        id: createPanelId('agent-attachment'),
-        kind: 'image' as const,
-        name: file.name,
-        mimeType: file.type || 'image/*',
-        imageUrl,
-        previewUrl,
-        width: dimensions.width || undefined,
-        height: dimensions.height || undefined,
-        sizeBytes: file.size,
-        status: 'ready' as const,
-      };
-    })).then((nextAttachments) => {
+    void Promise.all(files.map((file) =>
+      createHostedAgentImageAttachment(file, {
+        createAttachmentId: () => createPanelId('agent-attachment'),
+        createPreviewUrl: (sourceFile) => URL.createObjectURL(sourceFile),
+        releasePreviewUrl: (url) => {
+          if (url.startsWith('blob:')) {
+            URL.revokeObjectURL(url);
+          }
+        },
+        readImageDataUrl: readImageFileAsDataUrl,
+        readImageDimensions,
+        createDerivativeDataUrl: createImageDerivativeDataUrl,
+        uploadImageDataUrl: uploadAgentImageDataUrl,
+      }),
+    )).then((nextAttachments) => {
       setAttachments((current) => [...current, ...nextAttachments]);
       setReferenceUploadNudgeRequested(false);
+    }).catch((error) => {
+      setMessages((current) => [
+        ...current,
+        {
+          id: createPanelId('agent-message'),
+          role: 'agent',
+          type: 'text',
+          content: error instanceof Error ? error.message : '参考图上传失败，请稍后重试。',
+          variant: 'retryable_error',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
     });
-  }, []);
+  }, [setMessages]);
 
   const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     addImageFiles(Array.from(event.target.files ?? []));

@@ -185,6 +185,8 @@ function normalizeImageGenerationNodeData(
           id: normalizeString(imageRecord.id) ?? `history-reference-${index + 1}`,
           imageUrl,
           hostedImageUrl: normalizeString(imageRecord.hostedImageUrl),
+          previewUrl: normalizeString(imageRecord.previewUrl),
+          semanticImageUrl: normalizeString(imageRecord.semanticImageUrl),
           fileName: normalizeString(imageRecord.fileName),
           width: normalizeNumber(imageRecord.width),
           height: normalizeNumber(imageRecord.height),

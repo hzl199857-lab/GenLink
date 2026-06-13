@@ -35,6 +35,7 @@ test("builds a generic OpenClaw message for non-ecommerce image edits", () => {
       name: "人物图",
       sourceNodeId: "node-upload-1",
       imageUrl: "data:image/jpeg;base64,THIS_SHOULD_NOT_BE_SENT",
+      semanticImageUrl: "https://oss.example.com/references/semantic/person.jpg",
     }],
   });
 
@@ -58,6 +59,7 @@ test("builds a generic OpenClaw message for non-ecommerce image edits", () => {
   assert.match(message, /只输出一个 ```workflow-json fence/);
   assert.doesNotMatch(message, /优先输出一个 <tool_call> create_workflow/);
   assert.match(message, /node-upload-1/);
+  assert.match(message, /https:\/\/oss\.example\.com\/references\/semantic\/person\.jpg/);
   assert.match(message, /把图中人物帽子去掉/);
   assert.doesNotMatch(message, /THIS_SHOULD_NOT_BE_SENT/);
   assert.doesNotMatch(message, /data:image/);

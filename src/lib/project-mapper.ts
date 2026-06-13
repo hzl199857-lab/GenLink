@@ -444,10 +444,21 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
         typeof record.hostedImageUrl === "string"
           ? record.hostedImageUrl
           : undefined,
+      previewUrl:
+        typeof record.previewUrl === "string" ? record.previewUrl : undefined,
+      semanticImageUrl:
+        typeof record.semanticImageUrl === "string"
+          ? record.semanticImageUrl
+          : undefined,
+      fileName: typeof record.fileName === "string" ? record.fileName : undefined,
       prompt: typeof record.prompt === "string" ? record.prompt : "",
       model: typeof record.model === "string" ? record.model : undefined,
       width: typeof record.width === "number" ? record.width : undefined,
       height: typeof record.height === "number" ? record.height : undefined,
+      displayWidth:
+        typeof record.displayWidth === "number" ? record.displayWidth : undefined,
+      displayHeight:
+        typeof record.displayHeight === "number" ? record.displayHeight : undefined,
       sizeBytes:
         typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
       generatedAt:
@@ -495,6 +506,11 @@ function normalizeUploadedImageNodeData(value: unknown): UploadedImageNodeData {
       hostedImageUrl:
         typeof record.hostedImageUrl === "string"
           ? record.hostedImageUrl
+          : undefined,
+      previewUrl: typeof record.previewUrl === "string" ? record.previewUrl : undefined,
+      semanticImageUrl:
+        typeof record.semanticImageUrl === "string"
+          ? record.semanticImageUrl
           : undefined,
       fileName: typeof record.fileName === "string" ? record.fileName : undefined,
       outputFileName:
@@ -562,11 +578,17 @@ function normalizeUploadedImageNodeDataAsImage(value: unknown): ImageNodeData {
     title: uploaded.title,
     imageUrl: uploaded.hostedImageUrl?.trim() || uploaded.imageUrl,
     hostedImageUrl: uploaded.hostedImageUrl,
+    previewUrl: uploaded.previewUrl,
+    semanticImageUrl: uploaded.semanticImageUrl,
+    fileName: uploaded.fileName,
     prompt: uploaded.fileName || uploaded.title || "Image",
     model: undefined,
     width: uploaded.width,
     height: uploaded.height,
+    displayWidth: uploaded.displayWidth,
+    displayHeight: uploaded.displayHeight,
     sizeBytes: uploaded.sizeBytes,
+    generatedOutputFileName: uploaded.outputFileName,
     generatedAt: new Date(0).toISOString(),
   };
 }

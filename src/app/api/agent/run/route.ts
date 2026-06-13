@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { createBatchPromptVariants } from "@/lib/agent-prompt-variants";
+import {
+  getAgentVisionImageIndexByAttachmentId,
+  getAgentVisionImages,
+} from "@/lib/agent-vision-images";
 import { stripReferenceMentionTokens } from "@/lib/prompt-mentions";
 import type { CanvasRuntimeSnapshot } from "@/lib/canvas/runtime-snapshot";
 import { generateText, VibeApiError, type ImageApiProvider } from "@/lib/vibe";
@@ -36,7 +40,7 @@ type AgentRuntimeState = {
   context: AgentTaskContext;
   provider?: AgentProvider;
   model?: string;
-  virtualNodes: Map<string, { id: string; type: "text" | "uploaded_image" | "image_generation"; title?: string }>;
+  virtualNodes: Map<string, { id: string; type: "text" | "image" | "image_generation"; title?: string }>;
   attachmentsById: Map<string, AgentTaskAttachment>;
   actions: CanvasAgentAction[];
   trace: CanvasAgentTraceItem[];
@@ -106,7 +110,11 @@ function parseAttachment(value: unknown): AgentTaskAttachment | null {
     name: record.name,
     mimeType: record.mimeType,
     imageUrl: record.imageUrl,
+    hostedImageUrl: typeof record.hostedImageUrl === "string" ? record.hostedImageUrl : undefined,
+    originalImageUrl: typeof record.originalImageUrl === "string" ? record.originalImageUrl : undefined,
     previewUrl: record.previewUrl,
+    thumbnailUrl: typeof record.thumbnailUrl === "string" ? record.thumbnailUrl : undefined,
+    semanticImageUrl: typeof record.semanticImageUrl === "string" ? record.semanticImageUrl : undefined,
     width: typeof record.width === "number" ? record.width : undefined,
     height: typeof record.height === "number" ? record.height : undefined,
     sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
@@ -445,7 +453,7 @@ function executeVirtualTool(
     const nodeId = attachment.sourceNodeId ?? `virtual-uploaded-${attachment.id}`;
     state.virtualNodes.set(nodeId, {
       id: nodeId,
-      type: "uploaded_image",
+      type: "image",
       title: attachment.name,
     });
 
@@ -742,13 +750,13 @@ function createRuntimeState(params: {
 }): AgentRuntimeState {
   const selectedAttachments = getSelectedAttachments(params.context);
   const attachmentsById = new Map(selectedAttachments.map((attachment) => [attachment.id, attachment]));
-  const virtualNodes = new Map<string, { id: string; type: "text" | "uploaded_image" | "image_generation"; title?: string }>();
+  const virtualNodes = new Map<string, { id: string; type: "text" | "image" | "image_generation"; title?: string }>();
 
   for (const attachment of selectedAttachments) {
     if (attachment.sourceNodeId) {
       virtualNodes.set(attachment.sourceNodeId, {
         id: attachment.sourceNodeId,
-        type: "uploaded_image",
+        type: "image",
         title: attachment.name,
       });
     }
@@ -879,6 +887,7 @@ function createAgentSystemPrompt(): string {
     "Do not return a batch of fixed actions. Think as a tool-using agent.",
     "Never call run_image_generation. Image generation costs credits and must wait for explicit user confirmation.",
     "If there are uploaded attachments, this is image-to-image/image editing. Use create_uploaded_image_node for each selected attachment, then create_image_generation_node, then connect_nodes from every source image to each generation node.",
+    "When uploaded attachments include visual inputs, inspect those images directly. Use the visual content to identify product material, color, structure, composition, and scene constraints.",
     "When uploaded attachments are present, do not create text_node prompt nodes by default. Put the rewritten prompt directly in each create_image_generation_node.prompt.",
     "If there are no uploaded attachments, this is usually text-to-image: create_text_node, create_image_generation_node, connect_nodes.",
     "If uploaded attachments are present and the user asks for multiple images, create one image_generation_node per requested result and connect the same source image node(s) to every generation node. Vary clothing, pose, scene, composition, and details. Do not exceed 8 images.",
@@ -924,6 +933,10 @@ function createAgentSystemPrompt(): string {
 }
 
 function createAgentUserPrompt(state: AgentRuntimeState): string {
+  const visionImageIndexByAttachmentId = getAgentVisionImageIndexByAttachmentId(
+    state.context.input.attachments,
+  );
+
   return JSON.stringify({
     userMessage: state.message,
     cleanUserMessage: getCleanUserPrompt(state.message, state.context.input.attachments),
@@ -960,6 +973,7 @@ function createAgentUserPrompt(state: AgentRuntimeState): string {
       fileName: attachment.name,
       width: attachment.width,
       height: attachment.height,
+      visualInputIndex: visionImageIndexByAttachmentId.get(attachment.id),
       sourceNodeId: attachment.sourceNodeId,
     })),
     toolTranscript: state.trace.map((item) => {
@@ -1010,6 +1024,9 @@ async function runAgentLoop(params: {
       provider: params.provider as ImageApiProvider | undefined,
       model: params.model === "auto" ? undefined : params.model,
       apiKey: params.apiKey,
+      images: getAgentVisionImages(state.context.input.attachments).map((image) => ({
+        url: image.url,
+      })),
       temperature: 0.2,
       maxTokens: 1200,
     });

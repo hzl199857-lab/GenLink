@@ -25,7 +25,11 @@ export type AgentTaskAttachment = {
   name: string;
   mimeType: string;
   imageUrl: string;
+  hostedImageUrl?: string;
+  originalImageUrl?: string;
   previewUrl: string;
+  thumbnailUrl?: string;
+  semanticImageUrl?: string;
   width?: number;
   height?: number;
   sizeBytes?: number;

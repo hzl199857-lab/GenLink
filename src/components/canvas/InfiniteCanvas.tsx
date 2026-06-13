@@ -74,6 +74,12 @@ import {
   createProjectAtParentDirectory,
   pickProjectParentDirectory,
 } from '@/lib/project-storage';
+import {
+  createHostedCanvasImageData,
+  createPendingCanvasImageData,
+  type CanvasImageAssetUploadKind,
+  type CanvasImageDerivativeOptions,
+} from '@/lib/canvas-image-assets';
 import { layoutAgentWorkflowNodes } from '@/lib/canvas/agent-layout';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
@@ -172,6 +178,9 @@ let notifyCanvasNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
 let notifyCanvasImageInfoRequest:
+  | ((nodeId: string) => void)
+  | null = null;
+let notifyCanvasImageLightboxRequest:
   | ((nodeId: string) => void)
   | null = null;
 let notifyImageGenerationReferenceUpload:
@@ -335,6 +344,25 @@ function toImageGenerationLightboxData(
     alt: data.prompt?.trim() || 'Generated image',
     width: data.generatedImageWidth,
     height: data.generatedImageHeight,
+  };
+}
+
+function toImageNodeLightboxData(
+  data: ImageNodeData,
+): ImageLightboxData | null {
+  const imageUrl =
+    data.hostedImageUrl?.trim() ||
+    data.imageUrl?.trim();
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return {
+    imageUrl,
+    alt: data.title || data.prompt || 'image',
+    width: data.width,
+    height: data.height,
   };
 }
 
@@ -754,6 +782,13 @@ function resolveUploadedImageCardDimensions(
 function resolveImageNodeCardDimensions(
   data: ImageNodeData,
 ): { width: number; height: number } {
+  if (data.displayWidth && data.displayHeight && data.displayWidth > 0 && data.displayHeight > 0) {
+    return {
+      width: data.displayWidth,
+      height: data.displayHeight,
+    };
+  }
+
   const imageWidth = Math.max(data.width || 320, 1);
   const imageHeight = Math.max(data.height || 320, 1);
   const imageAspectRatio = imageWidth / imageHeight;
@@ -1334,7 +1369,11 @@ type ImportedImageData = ImageNodeData & {
 
 type ImportedVideoData = VideoNodeData;
 
-function readImageFile(file: File): Promise<ImportedImageData> {
+type ReadImageFileOptions = {
+  folder?: 'images' | 'references';
+};
+
+function readImageFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
@@ -1346,25 +1385,189 @@ function readImageFile(file: File): Promise<ImportedImageData> {
         return;
       }
 
-      const image = new window.Image();
-      image.onload = () => {
-        resolve({
-          title: file.name,
-          imageUrl,
-          fileName: file.name,
-          prompt: file.name,
-          generatedAt: new Date().toISOString(),
-          width: image.naturalWidth || 320,
-          height: image.naturalHeight || 320,
-          sizeBytes: file.size,
-        });
-      };
-      image.onerror = () => reject(new Error('Invalid image file'));
-      image.src = imageUrl;
+      resolve(imageUrl);
     };
     reader.onerror = () => reject(new Error('Failed to read image file'));
     reader.readAsDataURL(file);
   });
+}
+
+function readImageDimensionsFromUrl(url: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.onload = () => {
+      resolve({
+        width: image.naturalWidth || image.width || 320,
+        height: image.naturalHeight || image.height || 320,
+      });
+    };
+    image.onerror = () => reject(new Error('Invalid image file'));
+    image.src = url;
+  });
+}
+
+function createCanvasImageDerivativeDataUrl(
+  dataUrl: string,
+  options: CanvasImageDerivativeOptions,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.onload = () => {
+      const sourceWidth = image.naturalWidth || image.width;
+      const sourceHeight = image.naturalHeight || image.height;
+
+      if (!sourceWidth || !sourceHeight) {
+        reject(new Error('Invalid image dimensions'));
+        return;
+      }
+
+      const scale = Math.min(1, options.maxEdge / Math.max(sourceWidth, sourceHeight));
+      const width = Math.max(1, Math.round(sourceWidth * scale));
+      const height = Math.max(1, Math.round(sourceHeight * scale));
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        reject(new Error('Failed to create image preprocessing canvas'));
+        return;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      resolve(canvas.toDataURL(options.mimeType, options.quality));
+    };
+    image.onerror = () => reject(new Error('Failed to preprocess image'));
+    image.src = dataUrl;
+  });
+}
+
+async function uploadCanvasImageAssetDataUrl(
+  dataUrl: string,
+  fileName: string | undefined,
+  kind: CanvasImageAssetUploadKind = 'original',
+  baseFolder: 'images' | 'references' = 'images',
+): Promise<string> {
+  const folderByKind: Record<CanvasImageAssetUploadKind, string> = {
+    original: baseFolder,
+    preview: `${baseFolder}/previews`,
+    semantic: `${baseFolder}/semantic`,
+  };
+  const response = await fetch('/api/image-hosting/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      dataUrl,
+      fileName,
+      folder: folderByKind[kind],
+      forceOss: true,
+    }),
+  });
+  const json = (await response.json()) as
+    | { ok: true; result: { imageUrl: string } }
+    | { ok: false; error: string };
+
+  if (!response.ok || !json.ok) {
+    throw new Error('error' in json ? json.error : 'Failed to host image');
+  }
+
+  return json.result.imageUrl;
+}
+
+async function uploadCanvasOriginalImageFile(
+  file: File,
+  kind: CanvasImageAssetUploadKind = 'original',
+  baseFolder: 'images' | 'references' = 'images',
+): Promise<string> {
+  const folderByKind: Record<CanvasImageAssetUploadKind, string> = {
+    original: baseFolder,
+    preview: `${baseFolder}/previews`,
+    semantic: `${baseFolder}/semantic`,
+  };
+  const response = await fetch('/api/image-hosting/upload-url', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contentType: file.type || 'application/octet-stream',
+      fileName: file.name,
+      folder: folderByKind[kind],
+    }),
+  });
+  const json = (await response.json()) as
+    | {
+        ok: true;
+        result: {
+          uploadUrl: string;
+          imageUrl: string;
+          headers: Record<string, string>;
+        };
+      }
+    | { ok: false; error: string };
+
+  if (!response.ok || !json.ok) {
+    throw new Error('error' in json ? json.error : 'Failed to create image upload URL');
+  }
+
+  const uploadResponse = await fetch(json.result.uploadUrl, {
+    method: 'PUT',
+    headers: json.result.headers,
+    body: file,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
+  }
+
+  return json.result.imageUrl;
+}
+
+function readImageFile(
+  file: File,
+  options: ReadImageFileOptions = {},
+): Promise<ImportedImageData> {
+  const folder = options.folder ?? 'images';
+
+  return createHostedCanvasImageData(file, {
+    readImageDataUrl: readImageFileAsDataUrl,
+    readImageDimensions: readImageDimensionsFromUrl,
+    createDerivativeDataUrl: createCanvasImageDerivativeDataUrl,
+    uploadOriginalImageFile: (imageFile, kind) =>
+      uploadCanvasOriginalImageFile(imageFile, kind, folder),
+    uploadImageDataUrl: (dataUrl, fileName, kind) =>
+      uploadCanvasImageAssetDataUrl(dataUrl, fileName, kind, folder),
+  });
+}
+
+async function createPendingImageImportNode(
+  file: File,
+  position: { x: number; y: number },
+): Promise<{ node: CanvasNode; localPreviewUrl: string }> {
+  const localPreviewUrl = URL.createObjectURL(file);
+
+  try {
+    const dimensions = await readImageDimensionsFromUrl(localPreviewUrl);
+    return {
+      node: createImportedImageNode(
+        createPendingCanvasImageData(file, {
+          previewUrl: localPreviewUrl,
+          dimensions,
+        }),
+        position,
+      ),
+      localPreviewUrl,
+    };
+  } catch (error) {
+    URL.revokeObjectURL(localPreviewUrl);
+    throw error;
+  }
 }
 
 function captureVideoFirstFrame(file: File): Promise<{
@@ -1640,6 +1843,8 @@ function toUploadedImageNodeData(data: ImportedImageData): UploadedImageNodeData
     title: data.title,
     imageUrl: data.imageUrl,
     hostedImageUrl: data.hostedImageUrl,
+    previewUrl: data.previewUrl,
+    semanticImageUrl: data.semanticImageUrl,
     fileName: data.fileName,
     width: data.width || 320,
     height: data.height || 320,
@@ -1685,8 +1890,8 @@ function createAgentSourceImageNodes(params: {
   attachments: AgentTaskAttachment[];
   startPosition: { x: number; y: number };
   existingNodeIds?: Set<string>;
-}): { nodes: Array<Extract<CanvasNode, { type: 'uploaded_image' }>>; nodeIdsByAttachmentId: Record<string, string> } {
-  const nodes: Array<Extract<CanvasNode, { type: 'uploaded_image' }>> = [];
+}): { nodes: Array<Extract<CanvasNode, { type: 'image' }>>; nodeIdsByAttachmentId: Record<string, string> } {
+  const nodes: Array<Extract<CanvasNode, { type: 'image' }>> = [];
   const nodeIdsByAttachmentId: Record<string, string> = {};
 
   params.attachments.forEach((attachment, index) => {
@@ -1696,9 +1901,9 @@ function createAgentSourceImageNodes(params: {
     }
 
     const nodeId = crypto.randomUUID();
-    const node: Extract<CanvasNode, { type: 'uploaded_image' }> = {
+    const node: Extract<CanvasNode, { type: 'image' }> = {
       id: nodeId,
-      type: 'uploaded_image',
+      type: 'image',
       position: {
         x: params.startPosition.x,
         y: params.startPosition.y + index * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + 48),
@@ -1706,10 +1911,16 @@ function createAgentSourceImageNodes(params: {
       data: {
         title: attachment.name || `图片${index + 1}`,
         imageUrl: attachment.imageUrl,
+        hostedImageUrl: attachment.hostedImageUrl ?? attachment.imageUrl,
+        previewUrl: attachment.thumbnailUrl ?? attachment.previewUrl,
+        semanticImageUrl: attachment.semanticImageUrl,
         fileName: attachment.name,
+        prompt: attachment.name || `Image ${index + 1}`,
         width: attachment.width || 320,
         height: attachment.height || 320,
         sizeBytes: attachment.sizeBytes,
+        generatedAt: new Date().toISOString(),
+        status: 'idle',
       },
     };
 
@@ -2387,7 +2598,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
         break;
       }
       case 'expand':
-        notifyCanvasImageInfoRequest?.(id);
+        notifyCanvasImageLightboxRequest?.(id);
         break;
       case 'pan':
         focusNodeViewport();
@@ -2439,6 +2650,8 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
       title: next.title,
       imageUrl: next.imageUrl,
       hostedImageUrl: next.hostedImageUrl,
+      previewUrl: next.previewUrl,
+      semanticImageUrl: next.semanticImageUrl,
       prompt: next.prompt,
       width: next.width,
       height: next.height,
@@ -2457,7 +2670,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
           hasGeneratedImage={hasImage}
           panActive={threeViewOpen}
           onAction={handleToolbarAction}
-          onOpenLightbox={() => notifyCanvasImageInfoRequest?.(id)}
+          onOpenLightbox={() => notifyCanvasImageLightboxRequest?.(id)}
         />
         <UploadedImageNode
           data={data as ImageNodeData}
@@ -3572,7 +3785,11 @@ function createAgentAttachmentFromCanvasImageNode(node: CanvasNode): AgentTaskAt
       name: node.data.title?.trim() || node.data.fileName?.trim() || 'Canvas image',
       mimeType: 'image/*',
       imageUrl,
-      previewUrl: imageUrl,
+      hostedImageUrl: imageUrl,
+      originalImageUrl: imageUrl,
+      previewUrl: node.data.previewUrl?.trim() || imageUrl,
+      thumbnailUrl: node.data.previewUrl?.trim() || undefined,
+      semanticImageUrl: node.data.semanticImageUrl?.trim() || imageUrl,
       width: node.data.width,
       height: node.data.height,
       sizeBytes: node.data.sizeBytes,
@@ -6739,6 +6956,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const splitImageGenerationNodeToGrid = useCanvasStore((s) => s.splitImageGenerationNodeToGrid);
   const cropImageGenerationNode = useCanvasStore((s) => s.cropImageGenerationNode);
   const splitUploadedImageNodeToGrid = useCanvasStore((s) => s.splitUploadedImageNodeToGrid);
@@ -7812,6 +8030,38 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [selectSingleNode, storeNodes]);
 
   useEffect(() => {
+    notifyCanvasImageLightboxRequest = (nodeId) => {
+      const node = storeNodes.find(
+        (item): item is Extract<CanvasNode, { type: 'image' }> =>
+          item.id === nodeId && item.type === 'image',
+      );
+
+      if (!node) {
+        return;
+      }
+
+      const lightboxData = toImageNodeLightboxData(node.data);
+
+      if (!lightboxData) {
+        return;
+      }
+
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 0);
+
+      selectSingleNode(nodeId);
+      setImageInfoPopover(null);
+      setImageLightbox(lightboxData);
+    };
+
+    return () => {
+      notifyCanvasImageLightboxRequest = null;
+    };
+  }, [selectSingleNode, storeNodes]);
+
+  useEffect(() => {
     const handleBlankConnectionDrop = (event: Event) => {
       const detail = (event as CustomEvent<BlankConnectionDropEventDetail>).detail;
 
@@ -8553,13 +8803,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return;
     }
 
-    const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
-    const nextNodes = imageDataList.map((data, index) =>
-      createImportedImageNode(
-        data,
-        getImageImportPosition(basePosition, index),
+    const pendingImports = await Promise.all(
+      imageFiles.map((file, index) =>
+        createPendingImageImportNode(file, getImageImportPosition(basePosition, index)),
       ),
     );
+    const nextNodes = pendingImports.map((pending) => pending.node);
     const nextNodeIds = new Set(nextNodes.map((node) => node.id));
 
     addNodes(nextNodes);
@@ -8569,7 +8818,36 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
       clearEdgeSelection();
     }
-  }, [addNodes, clearEdgeSelection]);
+
+    pendingImports.forEach(({ node, localPreviewUrl }, index) => {
+      const file = imageFiles[index];
+
+      void readImageFile(file)
+        .then((next) => {
+          updateNodeData<'image'>(node.id, {
+            title: next.title,
+            imageUrl: next.imageUrl,
+            hostedImageUrl: next.hostedImageUrl,
+            previewUrl: next.previewUrl,
+            semanticImageUrl: next.semanticImageUrl,
+            prompt: next.prompt,
+            width: next.width,
+            height: next.height,
+            sizeBytes: next.sizeBytes,
+            generatedAt: next.generatedAt,
+            status: 'idle',
+            errorMessage: undefined,
+          });
+          URL.revokeObjectURL(localPreviewUrl);
+        })
+        .catch((error) => {
+          updateNodeData<'image'>(node.id, {
+            status: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Image upload failed',
+          });
+        });
+    });
+  }, [addNodes, clearEdgeSelection, updateNodeData]);
 
   const addUploadedVideos = useCallback(async (
     files: File[],
@@ -9033,7 +9311,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           return;
         }
 
-        const imageDataList = await Promise.all(imageFiles.map((file) => readImageFile(file)));
+        const imageDataList = await Promise.all(
+          imageFiles.map((file) => readImageFile(file, { folder: 'references' })),
+        );
         addReferenceImagesToImageGenerationNode(referenceUploadNodeId, imageDataList);
       })();
     } else if (files.length > 0 && position) {

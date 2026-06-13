@@ -94,6 +94,14 @@ export function UploadedImageNode({
   const displayTitle = getNodeDisplayTitle(data);
   const displayAlt = displayTitle || ('prompt' in data ? data.prompt : undefined) || 'Image';
   const isGenerating = 'status' in data && data.status === 'generating';
+  const isError = 'status' in data && data.status === 'error';
+  const errorMessage = 'errorMessage' in data && typeof data.errorMessage === 'string'
+    ? data.errorMessage
+    : undefined;
+  const displayImageUrl = 'previewUrl' in data && data.previewUrl
+    ? data.previewUrl
+    : data.imageUrl;
+  const isLocalPreviewUrl = displayImageUrl.startsWith('blob:') || displayImageUrl.startsWith('data:');
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -134,9 +142,16 @@ export function UploadedImageNode({
           onShowInfo?.();
         }}
       >
-        {data.imageUrl ? (
+        {displayImageUrl && isLocalPreviewUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- blob/data previews cannot be optimized by next/image.
+          <img
+            src={displayImageUrl}
+            alt={displayAlt}
+            className="absolute inset-0 h-full w-full object-cover scale-[1.01]"
+          />
+        ) : displayImageUrl ? (
           <NextImage
-            src={data.imageUrl}
+            src={displayImageUrl}
             alt={displayAlt}
             fill
             unoptimized
@@ -148,6 +163,18 @@ export function UploadedImageNode({
             <ImageIcon size={28} />
           </div>
         )}
+
+        {isGenerating ? (
+          <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-black/70 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
+            Uploading...
+          </div>
+        ) : null}
+
+        {isError ? (
+          <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-red-600/85 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
+            {errorMessage || 'Upload failed'}
+          </div>
+        ) : null}
 
         {canReplace ? (
           <>

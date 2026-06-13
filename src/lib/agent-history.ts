@@ -141,7 +141,11 @@ function compactAttachment(attachment: AgentTaskAttachment): AgentTaskAttachment
   return {
     ...attachment,
     imageUrl: "",
+    hostedImageUrl: "",
+    originalImageUrl: "",
     previewUrl: "",
+    thumbnailUrl: "",
+    semanticImageUrl: "",
   };
 }
 

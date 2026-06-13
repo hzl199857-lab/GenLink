@@ -47,6 +47,7 @@ type BuildOpenClawAgentMessageInput = {
     name: string;
     sourceNodeId?: string;
     imageUrl?: string;
+    semanticImageUrl?: string;
   }>;
 };
 
@@ -297,6 +298,9 @@ function summarizeAttachments(input: BuildOpenClawAgentMessageInput["attachments
     name: attachment.name,
     sourceNodeId: attachment.sourceNodeId,
     hasImage: Boolean(attachment.imageUrl),
+    semanticImageUrl: /^https?:\/\//i.test(attachment.semanticImageUrl?.trim() ?? "")
+      ? attachment.semanticImageUrl?.trim()
+      : undefined,
   }));
 }
 

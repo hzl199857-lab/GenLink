@@ -82,6 +82,8 @@ export interface ImageGenerationNodeData {
     id: string;
     imageUrl: string;
     hostedImageUrl?: string;
+    previewUrl?: string;
+    semanticImageUrl?: string;
     fileName?: string;
     width?: number;
     height?: number;
@@ -186,10 +188,15 @@ export interface ImageNodeData {
   title?: string;
   imageUrl: string;
   hostedImageUrl?: string;
+  previewUrl?: string;
+  semanticImageUrl?: string;
+  fileName?: string;
   prompt: string;
   model?: string;
   width?: number;
   height?: number;
+  displayWidth?: number;
+  displayHeight?: number;
   sizeBytes?: number;
   generatedAt: string;
   status?: 'idle' | 'generating' | 'error';
@@ -208,6 +215,8 @@ export interface UploadedImageNodeData {
   title?: string;
   imageUrl: string;
   hostedImageUrl?: string;
+  previewUrl?: string;
+  semanticImageUrl?: string;
   fileName?: string;
   outputFileName?: string;
   width: number;

@@ -44,7 +44,6 @@ import type {
   ProjectOutputHistoryItem,
   ProjectSnapshot,
   TextNodeData,
-  UploadedImageNodeData,
   VideoNodeData,
   VideoGenerationMediaReference,
   VideoGenerationNodeData,
@@ -493,6 +492,7 @@ type ConnectedImagePayload = {
   id: string;
   imageUrl: string;
   previewUrl: string;
+  semanticImageUrl?: string;
   originalImageUrl: string;
   hostedImageUrl?: string;
   fileName?: string;
@@ -565,6 +565,8 @@ function dedupeConnectedImages(
 type CanvasImageSource = {
   imageUrl: string;
   hostedImageUrl?: string;
+  previewUrl?: string;
+  semanticImageUrl?: string;
   fileName?: string;
   title?: string;
   alt: string;
@@ -904,15 +906,6 @@ function createImageNodeData(): ImageNodeData {
   };
 }
 
-function createUploadedImageNodeData(): UploadedImageNodeData {
-  return {
-    title: "image",
-    imageUrl: "",
-    width: 320,
-    height: 320,
-  };
-}
-
 function createPanorama360NodeData(): Panorama360NodeData {
   return {
     title: "360全景图",
@@ -1080,9 +1073,11 @@ function getCanvasImageNodeDisplayDimensions(
   }
 
   if (node.type === "image") {
+    const fallback = getDisplayDimensionsForImage(sourceWidth, sourceHeight);
+
     return {
-      width: 420,
-      height: 420 * 3 / 4,
+      width: node.data.displayWidth ?? fallback.width,
+      height: node.data.displayHeight ?? fallback.height,
     };
   }
 
@@ -1705,9 +1700,9 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
     case "uploaded_image":
       return {
         id: crypto.randomUUID(),
-        type,
+        type: "image",
         position,
-        data: createUploadedImageNodeData(),
+        data: createImageNodeData(),
       };
     case "panorama-360":
       return {
@@ -2179,6 +2174,20 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
       if (node.type === "image") {
         if (isObjectUrl(node.data.hostedImageUrl)) {
           urls.add(node.data.hostedImageUrl as string);
+        }
+
+        if (isObjectUrl(node.data.imageUrl)) {
+          urls.add(node.data.imageUrl);
+        }
+      }
+
+      if (node.type === "uploaded_image") {
+        if (isObjectUrl(node.data.hostedImageUrl)) {
+          urls.add(node.data.hostedImageUrl as string);
+        }
+
+        if (isObjectUrl(node.data.previewUrl)) {
+          urls.add(node.data.previewUrl as string);
         }
 
         if (isObjectUrl(node.data.imageUrl)) {
@@ -2744,7 +2753,8 @@ function getConnectedImagesForTargetNode(
         imageUrl:
           sourceNode.data.hostedImageUrl?.trim() ||
           sourceNode.data.imageUrl,
-        previewUrl: sourceNode.data.imageUrl,
+        previewUrl: sourceNode.data.previewUrl?.trim() || sourceNode.data.imageUrl,
+        semanticImageUrl: sourceNode.data.semanticImageUrl?.trim() || undefined,
         originalImageUrl: sourceNode.data.imageUrl,
         hostedImageUrl: sourceNode.data.hostedImageUrl?.trim() || undefined,
         fileName: sourceNode.data.fileName,
@@ -2767,8 +2777,10 @@ function getConnectedImagesForTargetNode(
           sourceNode.data.hostedImageUrl?.trim() ||
           sourceNode.data.imageUrl,
         previewUrl:
+          sourceNode.data.previewUrl?.trim() ||
           sourceNode.data.hostedImageUrl?.trim() ||
           sourceNode.data.imageUrl,
+        semanticImageUrl: sourceNode.data.semanticImageUrl?.trim() || undefined,
         originalImageUrl: sourceNode.data.imageUrl,
         hostedImageUrl: sourceNode.data.hostedImageUrl?.trim() || undefined,
         fileName: undefined,
@@ -2929,7 +2941,8 @@ function getInlineReferenceImagesForImageGenerationNode(
       acc.push({
         id: image.id || `${node.id}-reference-${index}`,
         imageUrl: image.hostedImageUrl?.trim() || image.imageUrl,
-        previewUrl: image.imageUrl,
+        previewUrl: image.previewUrl?.trim() || image.imageUrl,
+        semanticImageUrl: image.semanticImageUrl?.trim() || undefined,
         originalImageUrl: image.imageUrl,
         hostedImageUrl: image.hostedImageUrl?.trim() || undefined,
         fileName: image.fileName,
@@ -3106,6 +3119,8 @@ function getCanvasImageSource(node: CanvasNode): CanvasImageSource | null {
     return {
       imageUrl: node.data.hostedImageUrl?.trim() || node.data.imageUrl,
       hostedImageUrl: node.data.hostedImageUrl?.trim() || undefined,
+      previewUrl: node.data.previewUrl?.trim() || undefined,
+      semanticImageUrl: node.data.semanticImageUrl?.trim() || undefined,
       title: node.data.title,
       alt: node.data.prompt?.trim() || "Generated image",
       width: node.data.width,
@@ -3121,6 +3136,8 @@ function getCanvasImageSource(node: CanvasNode): CanvasImageSource | null {
     return {
       imageUrl: node.data.hostedImageUrl?.trim() || node.data.imageUrl,
       hostedImageUrl: node.data.hostedImageUrl?.trim() || undefined,
+      previewUrl: node.data.previewUrl?.trim() || undefined,
+      semanticImageUrl: node.data.semanticImageUrl?.trim() || undefined,
       fileName: node.data.fileName,
       title: node.data.title,
       alt: node.data.fileName?.trim() || node.data.title?.trim() || "Uploaded image",
@@ -3372,6 +3389,8 @@ export interface CanvasState {
     images: Array<{
       imageUrl: string;
       hostedImageUrl?: string;
+      previewUrl?: string;
+      semanticImageUrl?: string;
       fileName?: string;
       width?: number;
       height?: number;
@@ -4269,6 +4288,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             id: image.id,
             imageUrl: requestImageUrl,
             hostedImageUrl: requestImageUrl,
+            previewUrl: image.previewUrl,
+            semanticImageUrl: image.semanticImageUrl,
             fileName: image.fileName,
             width: image.width,
             height: image.height,
@@ -5205,7 +5226,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
           nextNodes.push({
             id: crypto.randomUUID(),
-            type: "uploaded_image",
+            type: "image",
             position: {
               x: positionX,
               y: positionY,
@@ -5213,10 +5234,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             data: {
               title: `${baseTitle}-${titleIndex}`,
               imageUrl,
+              prompt: `${baseTitle}-${titleIndex}`,
               width: tileWidth,
               height: tileHeight,
               displayWidth: tileLayouts[rowIndex][columnIndex].cardWidth,
               displayHeight: tileLayouts[rowIndex][columnIndex].cardHeight,
+              generatedAt: new Date().toISOString(),
             },
           });
 
@@ -5414,15 +5437,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
           nextNodes.push({
             id: crypto.randomUUID(),
-            type: "uploaded_image",
+            type: "image",
             position: { x: positionX, y: positionY },
             data: {
               title: `${baseTitle}-${titleIndex}`,
               imageUrl,
+              prompt: `${baseTitle}-${titleIndex}`,
               width: tileWidth,
               height: tileHeight,
               displayWidth: tileLayouts[rowIndex][columnIndex].cardWidth,
               displayHeight: tileLayouts[rowIndex][columnIndex].cardHeight,
+              generatedAt: new Date().toISOString(),
             },
           });
 
@@ -5496,15 +5521,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       const nextNode: CanvasNode = {
         id: crypto.randomUUID(),
-        type: "uploaded_image",
+        type: "image",
         position: { x: positionX, y: positionY },
         data: {
           title: `${baseTitle}-crop`,
           imageUrl,
+          prompt: `${baseTitle}-crop`,
           width: sw,
           height: sh,
           displayWidth: displaySize.width,
           displayHeight: displaySize.height,
+          generatedAt: new Date().toISOString(),
         },
       };
 
@@ -5595,15 +5622,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
           nextNodes.push({
             id: crypto.randomUUID(),
-            type: "uploaded_image",
+            type: "image",
             position: { x: positionX, y: positionY },
             data: {
               title: `${baseTitle}-${titleIndex}`,
               imageUrl,
+              prompt: `${baseTitle}-${titleIndex}`,
               width: tileWidth,
               height: tileHeight,
               displayWidth: tileLayouts[rowIndex][columnIndex].cardWidth,
               displayHeight: tileLayouts[rowIndex][columnIndex].cardHeight,
+              generatedAt: new Date().toISOString(),
             },
           });
 
@@ -5677,15 +5706,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       const nextNode: CanvasNode = {
         id: crypto.randomUUID(),
-        type: "uploaded_image",
+        type: "image",
         position: { x: positionX, y: positionY },
         data: {
           title: `${baseTitle}-crop`,
           imageUrl,
+          prompt: `${baseTitle}-crop`,
           width: sw,
           height: sh,
           displayWidth: displaySize.width,
           displayHeight: displaySize.height,
+          generatedAt: new Date().toISOString(),
         },
       };
 
@@ -5897,11 +5928,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       id: sourceNode.id,
       imageUrl: source.hostedImageUrl?.trim() || source.imageUrl,
       hostedImageUrl: source.hostedImageUrl,
+      semanticImageUrl: source.semanticImageUrl,
       fileName: source.fileName,
       width: sourceWidth,
       height: sourceHeight,
       alt: source.alt,
-      previewUrl: source.imageUrl,
+      previewUrl: source.previewUrl || source.imageUrl,
       originalImageUrl: source.imageUrl,
       sourceType: "image",
     };
@@ -5958,6 +5990,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           id: sourceNode.id,
           imageUrl: requestImages[0]?.url || referenceImage.imageUrl,
           hostedImageUrl: requestImages[0]?.url || referenceImage.hostedImageUrl,
+          previewUrl: referenceImage.previewUrl,
+          semanticImageUrl: referenceImage.semanticImageUrl,
           fileName: referenceImage.fileName,
           width: sourceWidth,
           height: sourceHeight,
@@ -6176,7 +6210,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const nextNode: CanvasNode = {
       id: screenshotNodeId,
-      type: "uploaded_image",
+      type: "image",
       position: {
         x: sourceNode.position.x + PANORAMA_360_NODE_HEIGHT * 16 / 9 + PANORAMA_360_NODE_GAP,
         y: sourceNode.position.y,
@@ -6186,12 +6220,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         imageUrl: hostedImageUrl || imageUrl,
         hostedImageUrl,
         fileName,
-        outputFileName: fileName,
+        generatedOutputFileName: fileName,
+        prompt: title,
         width: capture.width,
         height: capture.height,
         displayWidth: capture.displayWidth,
         displayHeight: capture.displayHeight,
         sizeBytes,
+        generatedAt,
       },
     };
 
@@ -6281,6 +6317,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           id: sourceNode.id,
           imageUrl: source.hostedImageUrl?.trim() || source.imageUrl,
           hostedImageUrl: source.hostedImageUrl,
+          previewUrl: source.previewUrl,
+          semanticImageUrl: source.semanticImageUrl,
           fileName: source.fileName,
           width: sourceWidth,
           height: sourceHeight,
