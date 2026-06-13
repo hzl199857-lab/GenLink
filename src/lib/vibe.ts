@@ -2529,7 +2529,6 @@ async function generateImageOpenAI(
         size: string;
         quality?: string;
         output_format: string;
-        moderation: string;
         images: Array<{ image_url: string }>;
       } = {
         model,
@@ -2537,7 +2536,6 @@ async function generateImageOpenAI(
         size,
         quality,
         output_format: outputFormat,
-        moderation,
         images: params.images.map((image) => ({
           image_url: image.url.trim(),
         })),
