@@ -497,6 +497,48 @@ function describeReferenceImageUrl(url: string): string {
   }
 }
 
+function describeReferenceImageForLog(image: { url: string }): Record<string, string> {
+  const url = image.url.trim();
+
+  if (url.startsWith("data:")) {
+    return { type: "data-url" };
+  }
+
+  if (url.startsWith("/")) {
+    return { type: "same-origin" };
+  }
+
+  try {
+    const parsed = new URL(url);
+    return {
+      type: parsed.protocol.replace(/:$/, "") || "url",
+      host: parsed.hostname,
+    };
+  } catch {
+    return { type: "invalid-url" };
+  }
+}
+
+function logImageProviderRequest(
+  event: string,
+  details: Record<string, unknown>,
+) {
+  console.info(
+    "[GenLink image provider request]",
+    JSON.stringify({
+      event,
+      ...details,
+    }),
+  );
+}
+
+function isMultipartParseError(error: unknown): boolean {
+  return (
+    error instanceof VibeApiError &&
+    /failed to parse multipart form/i.test(error.message)
+  );
+}
+
 async function readReferenceImage(
   image: {
     url: string;
@@ -2521,36 +2563,25 @@ async function generateImageOpenAI(
   if (params.images?.length) {
     const canUseReferenceImageUrls =
       vibeCompatibleProvider === "vibe" && params.images.every(isHttpImageUrl);
+    const imageLogItems = params.images.map(describeReferenceImageForLog);
 
-    if (canUseReferenceImageUrls) {
-      const requestBody: {
-        model: string;
-        prompt: string;
-        size: string;
-        quality?: string;
-        output_format: string;
-        images: Array<{ image_url: string }>;
-      } = {
-        model,
-        prompt: params.prompt,
-        size,
-        quality,
-        output_format: outputFormat,
-        images: params.images.map((image) => ({
-          image_url: image.url.trim(),
-        })),
-      };
-
-      json = await requestJsonWithBaseUrl<VibeImageResponse>(
-        baseUrl,
-        "/images/edits",
-        requestBody,
-        params.apiKey,
-        createHeaders,
-        IMAGE_REQUEST_TIMEOUT_MS,
+    const submitMultipartImageEdit = async (
+      mode: "multipart" | "fallback-multipart",
+    ): Promise<VibeImageResponse> => {
+      logImageProviderRequest("submit", {
+        provider: vibeCompatibleProvider,
         providerLabel,
-      );
-    } else {
+        mode,
+        path: "/images/edits",
+        model,
+        size,
+        hasQuality: Boolean(quality),
+        hasOutputFormat: Boolean(outputFormat),
+        hasModeration: Boolean(moderation),
+        imageCount: params.images?.length ?? 0,
+        images: imageLogItems,
+      });
+
       const formData = new FormData();
       formData.append("model", model);
       formData.append("prompt", params.prompt);
@@ -2572,7 +2603,7 @@ async function generateImageOpenAI(
       }
 
       const imageBlobs = await Promise.all(
-        params.images.map((image, index) => createImageFilePart(image, index)),
+        params.images!.map((image, index) => createImageFilePart(image, index)),
       );
 
       imageBlobs.forEach((blob, index) => {
@@ -2586,7 +2617,7 @@ async function generateImageOpenAI(
         );
       });
 
-      json = await requestFormWithBaseUrl<VibeImageResponse>(
+      return requestFormWithBaseUrl<VibeImageResponse>(
         baseUrl,
         "/images/edits",
         formData,
@@ -2594,6 +2625,69 @@ async function generateImageOpenAI(
         IMAGE_REQUEST_TIMEOUT_MS,
         providerLabel,
       );
+    };
+
+    if (canUseReferenceImageUrls) {
+      const requestBody: {
+        model: string;
+        prompt: string;
+        size: string;
+        quality?: string;
+        output_format: string;
+        images: Array<{ image_url: string }>;
+      } = {
+        model,
+        prompt: params.prompt,
+        size,
+        quality,
+        output_format: outputFormat,
+        images: params.images.map((image) => ({
+          image_url: image.url.trim(),
+        })),
+      };
+
+      logImageProviderRequest("submit", {
+        provider: vibeCompatibleProvider,
+        providerLabel,
+        mode: "json-url",
+        path: "/images/edits",
+        model,
+        size,
+        hasQuality: Boolean(quality),
+        hasOutputFormat: Boolean(outputFormat),
+        imageCount: params.images.length,
+        images: imageLogItems,
+      });
+
+      try {
+        json = await requestJsonWithBaseUrl<VibeImageResponse>(
+          baseUrl,
+          "/images/edits",
+          requestBody,
+          params.apiKey,
+          createHeaders,
+          IMAGE_REQUEST_TIMEOUT_MS,
+          providerLabel,
+        );
+      } catch (error) {
+        if (!isMultipartParseError(error)) {
+          throw error;
+        }
+
+        logImageProviderRequest("json-url-fallback", {
+          provider: vibeCompatibleProvider,
+          providerLabel,
+          reason: "failed to parse multipart form",
+          model,
+          size,
+          imageCount: params.images.length,
+          images: imageLogItems,
+        });
+
+        json = await submitMultipartImageEdit("fallback-multipart");
+      }
+    } else {
+      json = await submitMultipartImageEdit("multipart");
     }
   } else {
     const requestBody: {
