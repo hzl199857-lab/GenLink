@@ -52,6 +52,7 @@ type PlannerAttachment = {
   name?: unknown;
   imageUrl?: unknown;
   previewUrl?: unknown;
+  plannerImageDataUrl?: unknown;
   ecomPlannerRole?: unknown;
 };
 
@@ -114,11 +115,17 @@ function getModelImages(attachments: PlannerAttachment[]): Array<{ url: string }
 
   return [...productImages.slice(0, 1), ...benchmarkImages.slice(0, 1)]
     .slice(0, PLANNER_MAX_MODEL_IMAGES)
-    .map((attachment) => (
-      typeof attachment.imageUrl === "string" && attachment.imageUrl
-        ? { url: attachment.imageUrl }
-        : undefined
-    ))
+    .map((attachment) => {
+      const plannerImageDataUrl = typeof attachment.plannerImageDataUrl === "string"
+        ? attachment.plannerImageDataUrl.trim()
+        : "";
+      const imageUrl = typeof attachment.imageUrl === "string"
+        ? attachment.imageUrl.trim()
+        : "";
+      const url = plannerImageDataUrl || imageUrl;
+
+      return url ? { url } : undefined;
+    })
     .filter((item): item is { url: string } => Boolean(item));
 }
 

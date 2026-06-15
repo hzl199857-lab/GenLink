@@ -79,17 +79,20 @@ export async function createHostedAgentImageAttachment(
             deps.uploadImageDataUrl(previewDataUrl, file.name, "preview"),
           )
       : Promise.resolve<string | undefined>(undefined);
-    const semanticUpload = deps.createDerivativeDataUrl
+    const semanticDataUrl = deps.createDerivativeDataUrl
       ? deps.createDerivativeDataUrl(dataUrl, SEMANTIC_DERIVATIVE_OPTIONS)
-          .then((semanticDataUrl) =>
-            deps.uploadImageDataUrl(semanticDataUrl, file.name, "semantic"),
-          )
-      : Promise.resolve<string | undefined>(undefined);
+      : Promise.resolve(dataUrl);
+    const semanticUpload = semanticDataUrl.then((nextDataUrl) => (
+      deps.createDerivativeDataUrl
+        ? deps.uploadImageDataUrl(nextDataUrl, file.name, "semantic")
+        : undefined
+    ));
     const [imageUrl, resolvedThumbnailUrl, semanticImageUrl] = await Promise.all([
       originalUpload,
       previewUpload,
       semanticUpload,
     ]);
+    const plannerImageDataUrl = await semanticDataUrl;
     thumbnailUrl = resolvedThumbnailUrl;
 
     if (thumbnailUrl && thumbnailUrl !== previewUrl) {
@@ -107,6 +110,7 @@ export async function createHostedAgentImageAttachment(
       previewUrl: thumbnailUrl ?? previewUrl,
       thumbnailUrl,
       semanticImageUrl: semanticImageUrl ?? imageUrl,
+      plannerImageDataUrl,
       width: dimensions.width || undefined,
       height: dimensions.height || undefined,
       sizeBytes: file.size,

@@ -61,6 +61,7 @@ test("uses hosted URL as the agent attachment image URL", async () => {
     previewUrl: "https://oss.example.com/preview/curtain.png",
     thumbnailUrl: "https://oss.example.com/preview/curtain.png",
     semanticImageUrl: "https://oss.example.com/semantic/curtain.png",
+    plannerImageDataUrl: "data:image/jpeg;max=2048",
     width: 4096,
     height: 3072,
     sizeBytes: file.size,
@@ -119,4 +120,5 @@ test("falls back to browser preview when derivative generation is omitted", asyn
   assert.equal(attachment.previewUrl, "blob:small-preview");
   assert.equal(attachment.thumbnailUrl, undefined);
   assert.equal(attachment.semanticImageUrl, "https://oss.example.com/original/small.png");
+  assert.equal(attachment.plannerImageDataUrl, "data:image/png;base64,c21hbGw=");
 });

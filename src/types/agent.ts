@@ -30,6 +30,7 @@ export type AgentTaskAttachment = {
   previewUrl: string;
   thumbnailUrl?: string;
   semanticImageUrl?: string;
+  plannerImageDataUrl?: string;
   width?: number;
   height?: number;
   sizeBytes?: number;
