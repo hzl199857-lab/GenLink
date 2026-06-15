@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -23,6 +24,8 @@ const PLANNER_SINGLE_OPTION_MAX_TOKENS = 8_000;
 const PLANNER_MULTI_OPTION_MAX_TOKENS = 12_000;
 const PLANNER_UI_SUMMARY_MAX_TOKENS = 900;
 const PLANNER_JSON_REPAIR_MAX_TOKENS = 4_000;
+const PLANNER_IMAGE_FETCH_TIMEOUT_MS = 15_000;
+const PLANNER_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
 const PLANNER_SKILL_DIR = path.join(
   process.cwd(),
@@ -117,6 +120,68 @@ function getModelImages(attachments: PlannerAttachment[]): Array<{ url: string }
         : undefined
     ))
     .filter((item): item is { url: string } => Boolean(item));
+}
+
+async function fetchPlannerModelImageAsDataUrl(
+  image: { url: string },
+  index: number,
+): Promise<{ url: string }> {
+  const trimmedUrl = image.url.trim();
+
+  if (!trimmedUrl || /^data:image\//i.test(trimmedUrl)) {
+    return image;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PLANNER_IMAGE_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(trimmedUrl, {
+      headers: {
+        Accept: "image/*",
+        "Cache-Control": "no-cache",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? 0);
+
+    if (contentLength > PLANNER_IMAGE_MAX_BYTES) {
+      throw new Error(`image is too large (${contentLength} bytes)`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+
+    if (arrayBuffer.byteLength > PLANNER_IMAGE_MAX_BYTES) {
+      throw new Error(`image is too large (${arrayBuffer.byteLength} bytes)`);
+    }
+
+    const mediaType = response.headers.get("content-type")?.split(";")[0] || "image/png";
+
+    return {
+      url: `data:${mediaType};base64,${Buffer.from(arrayBuffer).toString("base64")}`,
+    };
+  } catch (error) {
+    const message = error instanceof Error && error.name === "AbortError"
+      ? "download timed out"
+      : error instanceof Error ? error.message : "download failed";
+
+    throw new Error(`套图企划图片 ${index + 1} 读取失败：${message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function preparePlannerModelImages(
+  images: Array<{ url: string }>,
+): Promise<Array<{ url: string }>> {
+  return await Promise.all(images.map((image, index) => (
+    fetchPlannerModelImageAsDataUrl(image, index)
+  )));
 }
 
 function buildPlannerPrompt(params: {
@@ -441,6 +506,9 @@ export async function POST(request: Request) {
     const shouldSendImages = shouldSendImagesForEcomPlannerOption({
       hasSharedPlannerContext: Boolean(sharedPlannerContext),
     });
+    const modelImages = shouldSendImages
+      ? await preparePlannerModelImages(getModelImages(attachments))
+      : undefined;
     const result = await generatePlannerText({
       prompt: buildPlannerPrompt({ request: userRequest, attachments, optionId, sharedPlannerContext }),
       systemPrompt: plannerSystemPrompt,
@@ -449,7 +517,7 @@ export async function POST(request: Request) {
       apiKey,
       maxTokens: optionId ? PLANNER_SINGLE_OPTION_MAX_TOKENS : PLANNER_MULTI_OPTION_MAX_TOKENS,
       temperature: 0.65,
-      images: shouldSendImages ? getModelImages(attachments) : undefined,
+      images: modelImages,
     });
 
     const planner = await parsePlannerOrRepair({
