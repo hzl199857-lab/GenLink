@@ -22,7 +22,15 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   createHostedAgentImageAttachment,
+  dataUrlToImageBlob,
 } = require("./agent-attachment-upload.ts") as typeof import("./agent-attachment-upload");
+
+test("converts base64 image data URLs into uploadable blobs", async () => {
+  const blob = await dataUrlToImageBlob("data:image/png;base64,aW1hZ2UtYnl0ZXM=");
+
+  assert.equal(blob.type, "image/png");
+  assert.equal(blob.size, 11);
+});
 
 test("uses hosted URL as the agent attachment image URL", async () => {
   const file = new File(["image-bytes"], "curtain.png", { type: "image/png" });

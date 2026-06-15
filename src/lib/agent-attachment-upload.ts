@@ -30,6 +30,24 @@ export type CreateHostedAgentImageAttachmentDeps = {
   ) => Promise<string>;
 };
 
+export async function dataUrlToImageBlob(dataUrl: string): Promise<Blob> {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/i);
+
+  if (!match) {
+    throw new Error("Only base64 image data URLs can be uploaded");
+  }
+
+  const mimeType = match[1];
+
+  if (!mimeType.toLowerCase().startsWith("image/")) {
+    throw new Error("Only image data URLs can be uploaded");
+  }
+
+  const response = await fetch(dataUrl);
+
+  return await response.blob();
+}
+
 const PREVIEW_DERIVATIVE_OPTIONS: AgentImageDerivativeOptions = {
   maxEdge: 768,
   mimeType: "image/jpeg",
