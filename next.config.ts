@@ -27,6 +27,12 @@ const nextConfig: NextConfig = {
       "./rules/planf-canvas/**/*",
       "./rules/genlink-overrides/**/*",
     ],
+    "/api/openclaw/planf/ecom/planner": [
+      "./rules/planf-canvas/**/*",
+    ],
+    "/api/openclaw/planf/ecom/planner/prompts": [
+      "./rules/planf-canvas/**/*",
+    ],
     "/api/planf/ecom-workflow": ["./rules/planf-canvas/**/*"],
   },
   env: {
