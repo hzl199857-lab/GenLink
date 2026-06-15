@@ -8,6 +8,7 @@ export interface TooltipProps {
   label: string;
   side?: TooltipSide;
   className?: string;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
 const SIDE_CLASS_MAP: Record<TooltipSide, string> = {
@@ -24,14 +25,32 @@ export function Tooltip({
   label,
   side = 'top',
   className = '',
+  onClick,
 }: TooltipProps) {
+  const tooltipClassName = [
+    'absolute z-[90] whitespace-nowrap rounded-gl-pill bg-[#222326] px-3 py-1.5 text-[12px] font-medium leading-none text-white opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.3)] transition-all duration-150 ease-out group-hover/tooltip:opacity-100 group-focus-within/tooltip:opacity-100',
+    onClick
+      ? 'pointer-events-auto cursor-pointer border-0'
+      : 'pointer-events-none',
+    SIDE_CLASS_MAP[side],
+    className,
+  ].join(' ');
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={tooltipClassName}
+        onClick={onClick}
+      >
+        {label}
+      </button>
+    );
+  }
+
   return (
     <span
-      className={[
-        'pointer-events-none absolute z-[90] whitespace-nowrap rounded-gl-pill bg-[#222326] px-3 py-1.5 text-[12px] font-medium leading-none text-white opacity-0 shadow-[0_10px_24px_rgba(0,0,0,0.3)] transition-all duration-150 ease-out group-hover/tooltip:opacity-100 group-focus-within/tooltip:opacity-100',
-        SIDE_CLASS_MAP[side],
-        className,
-      ].join(' ')}
+      className={tooltipClassName}
     >
       {label}
     </span>

@@ -62,6 +62,11 @@ export function CanvasHeader({
     setEditing(false);
   };
 
+  const startProjectNameEdit = () => {
+    setDraft(displayProjectName);
+    setEditing(true);
+  };
+
   return (
     <div
       data-canvas-menu-ignore="true"
@@ -151,14 +156,11 @@ export function CanvasHeader({
             type="button"
             className="block max-w-[300px] truncate rounded-[7px] px-2 py-1 text-left text-[14px] font-medium leading-6 text-white transition hover:bg-white/8 focus-visible:bg-white/8 focus-visible:outline-none"
             title={displayProjectName}
-            onClick={() => {
-              setDraft(displayProjectName);
-              setEditing(true);
-            }}
+            onClick={startProjectNameEdit}
           >
             {displayProjectName}
           </button>
-          <Tooltip label="点击重命名" side="bottom" />
+          <Tooltip label="点击重命名" side="bottom" onClick={startProjectNameEdit} />
         </div>
       )}
     </div>
