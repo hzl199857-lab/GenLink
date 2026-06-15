@@ -1001,6 +1001,7 @@ async function requestAgentEcomPlannerOptions(params: {
   model: string;
 }): Promise<AgentEcomPlannerApiPlanner> {
   const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const clientRequestId = createPanelId(`ecom-planner-${params.optionId ?? 'all'}`);
   const response = await fetchAgentApi(
     '/api/openclaw/planf/ecom/planner',
     {
@@ -1009,6 +1010,7 @@ async function requestAgentEcomPlannerOptions(params: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        clientRequestId,
         request: params.message,
         optionId: params.optionId,
         sharedPlannerContext: params.sharedPlannerContext,

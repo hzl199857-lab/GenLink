@@ -64,6 +64,7 @@ type PlannerRequestBody = {
   model?: unknown;
   apiKey?: unknown;
   sharedPlannerContext?: unknown;
+  clientRequestId?: unknown;
 };
 
 function parseProvider(value: unknown): ImageApiProvider | undefined {
@@ -127,6 +128,17 @@ function getModelImages(attachments: PlannerAttachment[]): Array<{ url: string }
       return url ? { url } : undefined;
     })
     .filter((item): item is { url: string } => Boolean(item));
+}
+
+function describePlannerImageSources(attachments: PlannerAttachment[]): string[] {
+  return attachments.map((attachment, index) => {
+    const hasPlannerDataUrl = typeof attachment.plannerImageDataUrl === "string" &&
+      attachment.plannerImageDataUrl.trim().startsWith("data:image/");
+    const hasImageUrl = typeof attachment.imageUrl === "string" && attachment.imageUrl.trim();
+    const role = attachment.ecomPlannerRole === "benchmark" ? "benchmark" : "product";
+
+    return `${index + 1}:${role}:${hasPlannerDataUrl ? "planner-data-url" : hasImageUrl ? "image-url" : "missing"}`;
+  });
 }
 
 async function fetchPlannerModelImageAsDataUrl(
@@ -480,10 +492,14 @@ async function readPlannerSystemPrompt(): Promise<string> {
 
 export async function POST(request: Request) {
   const requestStartedAt = Date.now();
+  let clientRequestId = `planner-${requestStartedAt}`;
 
   try {
     const body = (await request.json()) as PlannerRequestBody;
     const userRequest = typeof body.request === "string" ? body.request.trim() : "";
+    clientRequestId = typeof body.clientRequestId === "string" && body.clientRequestId.trim()
+      ? body.clientRequestId.trim()
+      : `planner-${Date.now()}`;
 
     if (!userRequest) {
       return NextResponse.json(
@@ -512,6 +528,12 @@ export async function POST(request: Request) {
     const plannerSystemPrompt = await readPlannerSystemPrompt();
     const shouldSendImages = shouldSendImagesForEcomPlannerOption({
       hasSharedPlannerContext: Boolean(sharedPlannerContext),
+    });
+    console.info("[openclaw/planf/ecom/planner] request", {
+      clientRequestId,
+      optionId,
+      shouldSendImages,
+      imageSources: describePlannerImageSources(attachments),
     });
     const modelImages = shouldSendImages
       ? await preparePlannerModelImages(getModelImages(attachments))
@@ -555,6 +577,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("[openclaw/planf/ecom/planner] failed", {
+      clientRequestId,
       elapsedMs: Date.now() - requestStartedAt,
       error: error instanceof Error ? error.message : error,
     });
