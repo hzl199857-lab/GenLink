@@ -48,6 +48,22 @@ test("starts an ecomImageTrack collecting session", () => {
   assert.ok(session.thinkingSteps.some((step) => step.detail.includes("1 张参考图")));
 });
 
+test("extracts product name from planner handoff fields", () => {
+  const session = startPlanfEcomSession({
+    request: [
+      "套图企划选中方案 C",
+      "产品：博士半入耳式蓝牙耳机",
+      "平台：淘宝",
+      "任务类型：主图 + 详情页",
+    ].join("\n"),
+    preset: "full-set-8",
+    referenceImageCount: 1,
+  });
+
+  assert.equal(session.fields[0].id, "productName");
+  assert.equal(session.fields[0].value, "博士半入耳式蓝牙耳机");
+});
+
 test("returns preset-specific agent triage and field defaults", () => {
   const amazon = startPlanfEcomSession({
     request: "帮我做一套亚马逊主图集，产品是：旅行收纳包",

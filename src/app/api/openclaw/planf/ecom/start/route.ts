@@ -33,7 +33,8 @@ function parsePreset(value: unknown): PlanfEcomPresetId | undefined {
     value === "detail-page-pack" ||
     value === "amazon-adapter" ||
     value === "ugc-lifestyle" ||
-    value === "editorial-stylist"
+    value === "editorial-stylist" ||
+    value === "ecom-planner"
     ? value
     : undefined;
 }

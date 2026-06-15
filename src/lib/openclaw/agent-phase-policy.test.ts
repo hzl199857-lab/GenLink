@@ -35,6 +35,11 @@ const presetPrompts = [
     prompt: "\u5e2e\u6211\u505a\u4e00\u7ec4 UGC \u751f\u6d3b\u5316\u4e0a\u8eab\u56fe\uff0c\u4ea7\u54c1\u662f\uff1a",
     routeMode: "ugc" as const,
   },
+  {
+    id: "ecom-planner" as const,
+    prompt: "平台：[如：淘宝]",
+    routeMode: "default" as const,
+  },
 ];
 
 test("routes ordinary attached image edits to the fast generic OpenClaw path", () => {
@@ -64,6 +69,75 @@ test("routes explicit ecommerce preset submissions to ECOM_IMAGE form collection
   assert.equal(decision.route, "ecom-start");
   assert.equal(decision.nextAction, "await-form-submit");
   assert.equal(decision.preset, "full-set-8");
+});
+
+test("routes explicit ecommerce planner preset submissions to ECOM_IMAGE form collection", () => {
+  const plannerPreset = presetPrompts.find((preset) => preset.id === "ecom-planner");
+
+  const decision = decideAgentPhaseRoute({
+    message: `${plannerPreset?.prompt ?? ""}\n产品：AOC显示器`,
+    attachmentCount: 1,
+    routeMode: "default",
+    selectedPresetId: "ecom-planner",
+    presetPrompts,
+  });
+
+  assert.equal(decision.phase, "ECOM_IMAGE");
+  assert.equal(decision.route, "ecom-start");
+  assert.equal(decision.nextAction, "await-form-submit");
+  assert.equal(decision.preset, "ecom-planner");
+});
+
+test("keeps ecommerce planner selected after the user fills the brief template", () => {
+  const decision = decideAgentPhaseRoute({
+    message: [
+      "平台：淘宝",
+      "任务类型：主图+详情页",
+      "产品：博士入耳式耳机",
+      "核心卖点：半入耳式设计 / 4灯LED电量精显",
+      "目标人群：长时间佩戴的重要用户",
+      "图片数量：主图5张 + 详情页8张",
+    ].join("\n"),
+    attachmentCount: 1,
+    routeMode: "default",
+    selectedPresetId: "ecom-planner",
+    presetPrompts,
+  });
+
+  assert.equal(decision.phase, "ECOM_IMAGE");
+  assert.equal(decision.route, "ecom-start");
+  assert.equal(decision.nextAction, "await-form-submit");
+  assert.equal(decision.preset, "ecom-planner");
+});
+
+test("keeps ecommerce planner selected when the filled brief is collapsed into one line", () => {
+  const decision = decideAgentPhaseRoute({
+    message: "平台：淘宝 任务类型：主图+详情 产品：博士入耳式耳机 核心卖点：半入耳式设计 / 4灯LED电量精显 图片数量：主图5张 + 详情页8张",
+    attachmentCount: 1,
+    routeMode: "default",
+    selectedPresetId: "ecom-planner",
+    presetPrompts,
+  });
+
+  assert.equal(decision.phase, "ECOM_IMAGE");
+  assert.equal(decision.route, "ecom-start");
+  assert.equal(decision.nextAction, "await-form-submit");
+  assert.equal(decision.preset, "ecom-planner");
+});
+
+test("uses the clicked ecommerce planner preset without relying on brief formatting", () => {
+  const decision = decideAgentPhaseRoute({
+    message: "我已经点了套图企划，这里随便写用户补充的商品信息和卖点",
+    attachmentCount: 1,
+    routeMode: "default",
+    selectedPresetId: "ecom-planner",
+    presetPrompts,
+  });
+
+  assert.equal(decision.phase, "ECOM_IMAGE");
+  assert.equal(decision.route, "ecom-start");
+  assert.equal(decision.nextAction, "await-form-submit");
+  assert.equal(decision.preset, "ecom-planner");
 });
 
 test("routes typed ecommerce requests without pressing the preset button to ECOM_IMAGE", () => {

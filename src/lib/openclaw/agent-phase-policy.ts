@@ -13,7 +13,8 @@ export type AgentEcomPresetId =
   | "detail-page-pack"
   | "amazon-adapter"
   | "ugc-lifestyle"
-  | "editorial-stylist";
+  | "editorial-stylist"
+  | "ecom-planner";
 
 export type AgentPhaseRoute =
   | "greet"
@@ -76,9 +77,7 @@ function selectedPresetStillActive(input: DecideAgentPhaseRouteInput): AgentEcom
     return undefined;
   }
 
-  return normalizeMessage(input.message).startsWith(normalizeMessage(selected.prompt))
-    ? selected.id
-    : undefined;
+  return selected.id;
 }
 
 function inferEcomRouteMode(message: string, routeMode: AgentRouteMode): Exclude<AgentRouteMode, "auto"> {

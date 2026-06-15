@@ -19,6 +19,9 @@ import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
 export const runtime = "nodejs";
 
 const ECOM_CONFIRM_TIMEOUT_MS = 5 * 60_000;
+const ECOM_PLANNER_PRESET = "ecom-planner";
+const ECOM_PLANNER_FALLBACK_DISABLED_MESSAGE =
+  "套图企划流程要求 OpenClaw 按规则返回有效方案；本地图位兜底已禁用，请重新生成方案或调整输入后再试。";
 
 type ConfirmRequestBody = {
   session?: unknown;
@@ -126,6 +129,15 @@ export async function POST(request: Request) {
       } catch (error) {
         if (error instanceof RealOpenClawRuntimeError) {
           throw error;
+        }
+
+        if (session.preset === ECOM_PLANNER_PRESET) {
+          console.warn("[openclaw/planf/ecom/confirm] ecom planner creative-doc failed; fallback disabled", error);
+
+          return {
+            ok: false,
+            error: ECOM_PLANNER_FALLBACK_DISABLED_MESSAGE,
+          };
         }
 
         console.warn("[openclaw/planf/ecom/confirm] using local creative-doc fallback", error);

@@ -35,6 +35,56 @@ export type AgentTaskAttachment = {
   sizeBytes?: number;
   status: "attached" | "uploading" | "ready" | "error";
   sourceNodeId?: string;
+  ecomPlannerRole?: "product" | "benchmark";
+};
+
+export type AgentPlanfRouteMode = "auto" | "default" | "detail-page" | "ugc" | "stylist";
+
+export type AgentPlanfEcomPresetId =
+  | "full-set-8"
+  | "detail-page-pack"
+  | "amazon-adapter"
+  | "ugc-lifestyle"
+  | "editorial-stylist"
+  | "ecom-planner";
+
+export type AgentEcomPlannerOption = {
+  id: "A" | "B" | "C";
+  title: string;
+  positioning: string;
+  visualDirection: string;
+  sellingPointStrategy: string;
+  imagePlan: string[];
+  benchmarkUsage: string;
+  workflowPrompt: string;
+  uiSummary?: {
+    coreDifference: string;
+    visualKeyword: string;
+    sellingPointFocus: string;
+    scenarioMood: string;
+    bestFor: string;
+  };
+  detailSections?: Array<{ title: string; content: string }>;
+  rawOptionJson?: string;
+};
+
+export type AgentEcomPlannerSharedContext = {
+  anchorMode?: string;
+  diagnosticLog?: unknown;
+  productDNA?: unknown;
+  visualAnchor?: unknown;
+  differentiationMatrix?: unknown;
+  optionSkeletons?: unknown;
+  raw?: Record<string, unknown>;
+};
+
+export type AgentEcomPlannerPromptImageSlot = {
+  index: number;
+  slot: string;
+  intent: string;
+  ratio: string;
+  prompt: string;
+  markdownSection?: string;
 };
 
 export type AgentRunSummary = {
@@ -301,6 +351,45 @@ export type AgentPanelMessage =
   | {
       id: string;
       role: "agent";
+      type: "ecom_planner_options";
+      summary: string;
+      userRequest?: string;
+      productName: string;
+      platform: string;
+      taskType: string;
+      productImageCount: number;
+      benchmarkImageCount: number;
+      options: AgentEcomPlannerOption[];
+      sharedPlannerContext?: AgentEcomPlannerSharedContext;
+      attachments: AgentTaskAttachment[];
+      status: "generating" | "waiting" | "submitted" | "completed" | "error";
+      selectedOptionId?: "A" | "B" | "C";
+      promptCurrentStatus?: string;
+      promptProgressCurrent?: number;
+      promptProgressTotal?: number;
+      errorMessage?: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      role: "agent";
+      type: "ecom_planner_prompt_markdown";
+      optionId: "A" | "B" | "C";
+      title: string;
+      productName: string;
+      platform: string;
+      taskType: string;
+      markdown: string;
+      promptBlockCount: number;
+      imageSlots: AgentEcomPlannerPromptImageSlot[];
+      attachments: AgentTaskAttachment[];
+      status: "waiting_confirmation" | "submitted" | "completed" | "error";
+      errorMessage?: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      role: "agent";
       type: "text";
       content: string;
       variant?: "retryable_error";
@@ -309,6 +398,8 @@ export type AgentPanelMessage =
       retryTaskAttachments?: AgentTaskAttachment[];
       retrySelectedAttachments?: AgentTaskAttachment[];
       retryUserMessageCreatedAt?: string;
+      retrySelectedPlanfPresetId?: AgentPlanfEcomPresetId | null;
+      retryPlanfRouteMode?: AgentPlanfRouteMode;
       createdAt: string;
     }
   | {

@@ -151,6 +151,7 @@ export interface GenerateTextParams {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
   provider?: ImageApiProvider;
   apiKey?: string;
   images?: Array<{
@@ -2484,7 +2485,7 @@ export async function generateText(
       },
       params.apiKey,
       createAnthropicHeaders,
-      DEFAULT_REQUEST_TIMEOUT_MS,
+      params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
       providerLabel,
     );
 
@@ -2526,7 +2527,7 @@ export async function generateText(
     },
     params.apiKey,
     createHeaders,
-    DEFAULT_REQUEST_TIMEOUT_MS,
+    params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     providerLabel,
   );
 

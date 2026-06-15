@@ -12,7 +12,8 @@ export type PlanfEcomPresetId =
   | "detail-page-pack"
   | "amazon-adapter"
   | "ugc-lifestyle"
-  | "editorial-stylist";
+  | "editorial-stylist"
+  | "ecom-planner";
 
 export type OpenClawPlanfEcomOption = {
   label: string;
@@ -293,6 +294,27 @@ const PRESET_TO_MODE: Record<PlanfEcomPresetId, {
       { label: "节点策略", detail: "确认后创建 5 个节点：Hero Muse、三组 Archetype、Editorial 收束大片。" },
     ],
   },
+  "ecom-planner": {
+    packageMode: "full-set-8",
+    styleMode: "default",
+    defaultPlatform: "淘宝/天猫",
+    defaultPlatformValue: "taobao",
+    agentTitle: "电商套图企划师",
+    agentSubtitle: "E-Commerce Planning Director",
+    categoryDefault: "digital3c",
+    styleModeDefault: "default",
+    imageSetDefault: "full-set",
+    messageWithoutProduct: "我会先基于产品图、可选竞品对标图和你的 brief，整理 3 套差异化电商套图企划方向。",
+    messageWithProduct: (productName, referenceImageCount) =>
+      `收到，${productName}${referenceImageCount > 0 ? " 的产品图和参考图会进入企划判断" : ""}。我会先生成 3 套可选择的套图企划方向。`,
+    thinkingSteps: (referenceImageCount) => [
+      { label: "资产清点", detail: "区分产品图和竞品对标图，产品图用于锁定产品 DNA，对标图只参考风格、光影和版式。" },
+      { label: "企划推演", detail: "从平台、任务类型、卖点、人群和风格倾向推演 A/B/C 三套差异化方向。" },
+      { label: "对标图处理", detail: referenceImageCount > 0 ? `检测到 ${referenceImageCount} 张附件，将在规则运行时作为视觉参考上下文。` : "未检测到附件，套图企划需要先上传产品图。" },
+      { label: "红线审查", detail: "不编造未提供的参数、认证、尺寸或功效，保持产品外观和品牌识别一致。" },
+      { label: "下一步", detail: "用户选中某套企划后，再转成 GenLink 画布工作流。" },
+    ],
+  },
 };
 
 const CATEGORY_OPTIONS: OpenClawPlanfEcomOption[] = [
@@ -402,7 +424,7 @@ const ENVIRONMENT_OPTIONS: OpenClawPlanfEcomOption[] = [
 ];
 
 function extractProductName(request: string): string {
-  const match = request.match(/产品是[:：]\s*(.+)$/);
+  const match = request.match(/(?:产品是|产品|product)\s*[:：]\s*([^\n\r；;]+)/i);
 
   return match?.[1]?.trim() || "";
 }

@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   Clock3,
+  Copy,
   ImagePlus,
   Loader2,
   MessageSquare,
@@ -52,6 +53,17 @@ import {
   type AgentImageDerivativeOptions,
   createHostedAgentImageAttachment,
 } from '@/lib/agent-attachment-upload';
+import {
+  buildAgentEcomPlannerPromptDisplayBlocks,
+  ECOM_PLANNER_PRESET_ID,
+  ECOM_PLANNER_PROMPT_TEMPLATE,
+  getAgentEcomPlannerAttachmentRole,
+  getAgentEcomPlannerProductAttachments,
+  getAgentEcomPlannerSubmitBlockReason,
+  hasAgentEcomPlannerProductImage,
+  type AgentEcomPlannerAttachmentRole,
+  type AgentEcomPlannerOption,
+} from '@/lib/agent-ecom-planner';
 import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
 import {
   formatAgentChatErrorText,
@@ -85,6 +97,8 @@ import type {
   AgentImageGenerationPreference,
   AgentPanelMessage,
   AgentProvider,
+  AgentEcomPlannerSharedContext,
+  AgentEcomPlannerPromptImageSlot,
   AgentRunMeta,
   AgentTaskAttachment,
   AgentTaskContext,
@@ -139,7 +153,8 @@ type PlanfEcomPresetId =
   | 'detail-page-pack'
   | 'amazon-adapter'
   | 'ugc-lifestyle'
-  | 'editorial-stylist';
+  | 'editorial-stylist'
+  | typeof ECOM_PLANNER_PRESET_ID;
 
 const PLANF_ECOM_PRESETS: Array<{
   id: PlanfEcomPresetId;
@@ -177,6 +192,12 @@ const PLANF_ECOM_PRESETS: Array<{
     prompt: '帮我做一组高转化模特图（5 Archetype + Muse Profile + Editorial 大片），产品是：',
     routeMode: 'stylist',
   },
+  {
+    id: ECOM_PLANNER_PRESET_ID,
+    label: '套图企划',
+    prompt: ECOM_PLANNER_PROMPT_TEMPLATE,
+    routeMode: 'default',
+  },
 ];
 
 type PlanfEcomPlanApiResponse =
@@ -194,6 +215,69 @@ type PlanfEcomPlanApiResponse =
       ok: false;
       error: string;
     };
+
+type AgentEcomPlannerApiResponse =
+  | {
+      ok: true;
+      planner: {
+        productName: string;
+        platform: string;
+        taskType: string;
+        productImageCount: number;
+        benchmarkImageCount: number;
+        options: Extract<AgentPanelMessage, { type: 'ecom_planner_options' }>['options'];
+        sharedPlannerContext?: AgentEcomPlannerSharedContext;
+      };
+      model?: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+type AgentEcomPlannerApiPlanner = Extract<AgentEcomPlannerApiResponse, { ok: true }>['planner'];
+
+type AgentEcomPlannerPromptMarkdownApiResponse =
+  | {
+      ok: true;
+      prompt: {
+        optionId: 'A' | 'B' | 'C';
+        title: string;
+        productName: string;
+        platform: string;
+        taskType: string;
+        markdown: string;
+        promptBlockCount: number;
+        imageSlots: AgentEcomPlannerPromptImageSlot[];
+      };
+      model?: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+type AgentEcomPlannerPromptMarkdownApiPrompt = Extract<
+  AgentEcomPlannerPromptMarkdownApiResponse,
+  { ok: true }
+>['prompt'];
+
+type AgentEcomPlannerPromptStreamEvent =
+  | {
+      type: 'start' | 'slots' | 'slot_start' | 'slot_done' | 'done';
+      current?: number;
+      total?: number;
+      slotTitle?: string;
+      message: string;
+      prompt?: AgentEcomPlannerPromptMarkdownApiPrompt;
+      model?: string;
+    }
+  | {
+      type: 'error';
+      message: string;
+    };
+
+const ECOM_PLANNER_OPTION_IDS = ['A', 'B', 'C'] as const;
 
 type PlanfEcomWorkflowApiResponse =
   | {
@@ -863,6 +947,273 @@ async function requestOpenClawPlanfEcomStart(params: {
   return json.session;
 }
 
+async function requestAgentEcomPlannerOptions(params: {
+  message: string;
+  attachments: AgentTaskAttachment[];
+  optionId?: 'A' | 'B' | 'C';
+  sharedPlannerContext?: AgentEcomPlannerSharedContext;
+  provider: AgentProvider;
+  model: string;
+}): Promise<AgentEcomPlannerApiPlanner> {
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const response = await fetch('/api/openclaw/planf/ecom/planner', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      request: params.message,
+      optionId: params.optionId,
+      sharedPlannerContext: params.sharedPlannerContext,
+      attachments: params.attachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        imageUrl: attachment.imageUrl,
+        previewUrl: attachment.previewUrl,
+        ecomPlannerRole: getAgentEcomPlannerAttachmentRole(attachment),
+      })),
+      provider: textRunConfig.provider,
+      model: params.model,
+      apiKey: textRunConfig.apiKey,
+    }),
+  });
+  const json = await readJsonResponse<AgentEcomPlannerApiResponse>(
+    response,
+    '套图企划生成失败',
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? '套图企划生成失败' : json.error);
+  }
+
+  return json.planner;
+}
+
+async function requestAgentEcomPlannerPromptMarkdown(params: {
+  request: string;
+  plannerMessage: Extract<AgentPanelMessage, { type: 'ecom_planner_options' }>;
+  option: AgentEcomPlannerOption;
+  provider: AgentProvider;
+  model: string;
+  onProgress?: (event: AgentEcomPlannerPromptStreamEvent) => void;
+}): Promise<AgentEcomPlannerPromptMarkdownApiPrompt> {
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const optionSummary = params.option.uiSummary
+    ? [
+        params.option.uiSummary.coreDifference,
+        params.option.uiSummary.visualKeyword,
+        params.option.uiSummary.sellingPointFocus,
+        params.option.uiSummary.scenarioMood,
+        params.option.uiSummary.bestFor,
+      ].filter(Boolean).join(' / ')
+    : [
+        params.option.positioning,
+        params.option.visualDirection,
+        params.option.sellingPointStrategy,
+      ].filter(Boolean).join(' / ');
+  const response = await fetch('/api/openclaw/planf/ecom/planner/prompts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/x-ndjson',
+    },
+    body: JSON.stringify({
+      request: params.request,
+      productName: params.plannerMessage.productName,
+      platform: params.plannerMessage.platform,
+      taskType: params.plannerMessage.taskType,
+      optionId: params.option.id,
+      optionTitle: params.option.title,
+      optionJson: params.option.rawOptionJson,
+      optionSummary,
+      attachments: params.plannerMessage.attachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        imageUrl: attachment.imageUrl,
+        previewUrl: attachment.previewUrl,
+        ecomPlannerRole: getAgentEcomPlannerAttachmentRole(attachment),
+      })),
+      provider: textRunConfig.provider,
+      model: params.model,
+      apiKey: textRunConfig.apiKey,
+    }),
+  });
+
+  if (response.headers.get('content-type')?.includes('application/x-ndjson')) {
+    if (!response.ok || !response.body) {
+      throw new Error('套图企划生图 Prompt 生成失败');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let donePrompt: AgentEcomPlannerPromptMarkdownApiPrompt | undefined;
+    const handleStreamLine = (line: string) => {
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        return;
+      }
+
+      const event = JSON.parse(trimmed) as AgentEcomPlannerPromptStreamEvent;
+      params.onProgress?.(event);
+
+      if (event.type === 'error') {
+        throw new Error(event.message);
+      }
+
+      if (event.type === 'done' && event.prompt) {
+        donePrompt = event.prompt;
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        handleStreamLine(line);
+      }
+
+      if (done) {
+        break;
+      }
+    }
+
+    handleStreamLine(buffer);
+
+    if (!donePrompt) {
+      throw new Error('套图企划生图 Prompt 流式生成未返回最终结果');
+    }
+
+    return donePrompt;
+  }
+
+  const json = await readJsonResponse<AgentEcomPlannerPromptMarkdownApiResponse>(
+    response,
+    '套图企划生图 Prompt 生成失败',
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? '套图企划生图 Prompt 生成失败' : json.error);
+  }
+
+  return json.prompt;
+}
+
+function mergeAgentEcomPlannerOptions(
+  currentOptions: AgentEcomPlannerOption[],
+  nextOptions: AgentEcomPlannerOption[],
+): AgentEcomPlannerOption[] {
+  const byId = new Map<AgentEcomPlannerOption['id'], AgentEcomPlannerOption>();
+
+  for (const option of currentOptions) {
+    byId.set(option.id, option);
+  }
+
+  for (const option of nextOptions) {
+    byId.set(option.id, option);
+  }
+
+  return ECOM_PLANNER_OPTION_IDS
+    .map((optionId) => byId.get(optionId))
+    .filter((option): option is AgentEcomPlannerOption => Boolean(option));
+}
+
+function parsePlannerDetailValue(content: string): unknown {
+  const trimmed = content.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return trimmed;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return trimmed;
+  }
+}
+
+function stringifyPlannerDetailValue(value: unknown, depth = 0): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => stringifyPlannerDetailValue(item, depth + 1)).filter(Boolean).join('；');
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+
+    return Object.entries(record)
+      .map(([key, nestedValue]) => {
+        const rendered = depth > 1 && nestedValue && typeof nestedValue === 'object'
+          ? JSON.stringify(nestedValue)
+          : stringifyPlannerDetailValue(nestedValue, depth + 1);
+
+        return rendered ? `${key}：${rendered}` : '';
+      })
+      .filter(Boolean)
+      .join('；');
+  }
+
+  return '';
+}
+
+function truncatePlannerDetail(value: string, maxLength = 420): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength)}...`
+    : normalized;
+}
+
+function cleanPlannerSummaryValue(value: string, maxLength = 92): string {
+  return truncatePlannerDetail(
+    value
+      .replace(/[{}"]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    maxLength,
+  );
+}
+
+function getPlannerDetailSection(
+  option: AgentEcomPlannerOption,
+  title: string,
+): string {
+  const section = option.detailSections?.find((item) => item.title === title);
+
+  return section
+    ? truncatePlannerDetail(stringifyPlannerDetailValue(parsePlannerDetailValue(section.content)))
+    : '';
+}
+
+function buildPlannerSummaryRows(option: AgentEcomPlannerOption): Array<{ label: string; value: string }> {
+  const summary = option.uiSummary;
+
+  return [
+    { label: '核心方向', value: summary?.coreDifference || option.positioning },
+    { label: '视觉关键词', value: summary?.visualKeyword || option.visualDirection },
+    { label: '卖点重点', value: summary?.sellingPointFocus || option.sellingPointStrategy },
+    { label: '场景氛围', value: summary?.scenarioMood || getPlannerDetailSection(option, '版式语言与排版哲学') },
+    { label: '适合选择', value: summary?.bestFor || '适合需要该视觉方向的电商套图。' },
+  ]
+    .map((row) => ({ ...row, value: cleanPlannerSummaryValue(row.value) }))
+    .filter((row) => Boolean(row.value));
+}
+
 function attachReferencesToImageActions(
   actions: CanvasAgentAction[],
   attachments: AgentTaskAttachment[],
@@ -927,6 +1278,7 @@ function getPlanfFanoutRemainingCount(
     'amazon-adapter': 6,
     'ugc-lifestyle': 5,
     'editorial-stylist': 5,
+    [ECOM_PLANNER_PRESET_ID]: 0,
   };
   const total = planfEcom.values.imageSet === 'detail'
     ? 5
@@ -1453,6 +1805,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   onConfirmGeneration,
 }: CanvasAgentPanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pendingAttachmentRoleRef = useRef<AgentEcomPlannerAttachmentRole>('product');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const attachmentsRef = useRef<AgentTaskAttachment[]>([]);
   const resizeDragRef = useRef<{
@@ -1526,10 +1879,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     })),
     [attachments],
   );
-  const showReferenceUploadNudge = shouldShowAgentReferenceUploadNudge({
-    requested: referenceUploadNudgeRequested,
-    attachmentCount: attachments.length,
-  });
+  const ecomPlannerActive = selectedPlanfPresetId === ECOM_PLANNER_PRESET_ID;
+  const hasEcomPlannerProductImage = hasAgentEcomPlannerProductImage(attachments);
+  const showReferenceUploadNudge = ecomPlannerActive
+    ? !hasEcomPlannerProductImage
+    : shouldShowAgentReferenceUploadNudge({
+        requested: referenceUploadNudgeRequested,
+        attachmentCount: attachments.length,
+      });
   const hasUserDecisionPending = messages.some((message) => (
     (message.type === 'attachment_selection' && message.status === 'waiting') ||
     (
@@ -1545,9 +1902,18 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         message.status === 'waiting_confirmation' ||
         message.status === 'adjusting'
       )
+    ) ||
+    (
+      message.type === 'ecom_planner_prompt_markdown' &&
+      message.status === 'waiting_confirmation'
     )
   ));
   const busy = busyMode !== null;
+  const activeEcomPlannerPromptStatus = [...messages].reverse().find((message) => (
+    message.type === 'ecom_planner_options' &&
+    message.status === 'submitted' &&
+    Boolean(message.promptCurrentStatus)
+  ));
 
   useEffect(() => {
     const handleWindowResize = () => {
@@ -1691,11 +2057,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     return () => window.cancelAnimationFrame(frameId);
   }, [busyMode, messages, open]);
 
-  const handleUploadClick = useCallback(() => {
+  const handleUploadClick = useCallback((role: AgentEcomPlannerAttachmentRole = 'product') => {
+    pendingAttachmentRoleRef.current = role;
     inputRef.current?.click();
   }, []);
 
-  const addImageFiles = useCallback((nextFiles: File[]) => {
+  const addImageFiles = useCallback((nextFiles: File[], role: AgentEcomPlannerAttachmentRole = 'product') => {
     const files = nextFiles.filter((file) => file.type.startsWith('image/'));
     if (!files.length) {
       return;
@@ -1716,7 +2083,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         uploadImageDataUrl: uploadAgentImageDataUrl,
       }),
     )).then((nextAttachments) => {
-      setAttachments((current) => [...current, ...nextAttachments]);
+      const taggedAttachments = nextAttachments.map((attachment) => ({
+        ...attachment,
+        ecomPlannerRole: role,
+      }));
+
+      setAttachments((current) => [...current, ...taggedAttachments]);
       setReferenceUploadNudgeRequested(false);
     }).catch((error) => {
       setMessages((current) => [
@@ -1734,7 +2106,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   }, [setMessages]);
 
   const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    addImageFiles(Array.from(event.target.files ?? []));
+    addImageFiles(Array.from(event.target.files ?? []), pendingAttachmentRoleRef.current);
+    pendingAttachmentRoleRef.current = 'product';
 
     event.target.value = '';
   }, [addImageFiles]);
@@ -1782,7 +2155,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     event.preventDefault();
     event.stopPropagation();
     setIsInputDragActive(false);
-    addImageFiles(files);
+    addImageFiles(files, 'product');
   }, [addImageFiles]);
 
   const handleRemoveAttachment = useCallback((attachmentId: string) => {
@@ -1829,6 +2202,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     taskAttachments: AgentTaskAttachment[];
     selectedAttachments: AgentTaskAttachment[];
     userMessageCreatedAt: string;
+    selectedPlanfPresetId: PlanfEcomPresetId | null;
+    planfRouteMode: PlanfAgentRouteMode;
   }) => {
     const context = buildAgentTaskContext({
       project: {
@@ -1871,13 +2246,121 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       },
     };
     let result: AgentRunPanelResult;
+    const runEcomPlannerStaged = async () => {
+      setBusyMode('mcp');
+
+      const messageId = createPanelId('ecom-planner-options');
+      const productImageCount = params.selectedAttachments.filter((attachment) => (
+        getAgentEcomPlannerAttachmentRole(attachment) === 'product'
+      )).length;
+      const benchmarkImageCount = params.selectedAttachments.filter((attachment) => (
+        getAgentEcomPlannerAttachmentRole(attachment) === 'benchmark'
+      )).length;
+      const optionErrors: string[] = [];
+      let sharedPlannerContext: AgentEcomPlannerSharedContext | undefined;
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: messageId,
+          role: 'agent',
+          type: 'ecom_planner_options',
+          summary: '正在按套图企划规则逐套生成方案：先生成 A，再生成 B，最后生成 C。',
+          userRequest: params.prompt,
+          productName: '套图企划',
+          platform: '平台识别中',
+          taskType: '任务识别中',
+          productImageCount,
+          benchmarkImageCount,
+          options: [],
+          attachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
+          status: 'generating',
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+
+      for (const optionId of ECOM_PLANNER_OPTION_IDS) {
+        try {
+          const planner = await requestAgentEcomPlannerOptions({
+            message: params.prompt,
+            attachments: params.selectedAttachments,
+            optionId,
+            sharedPlannerContext,
+            provider,
+            model,
+          });
+          sharedPlannerContext = planner.sharedPlannerContext ?? sharedPlannerContext;
+
+          setMessages((current) => current.map((message) => {
+            if (message.id !== messageId || message.type !== 'ecom_planner_options') {
+              return message;
+            }
+
+            const nextOptions = mergeAgentEcomPlannerOptions(message.options, planner.options);
+
+            return {
+              ...message,
+              summary: `已生成 ${nextOptions.length}/3 套方案。${nextOptions.length < 3 ? '正在继续生成下一套。' : '请选择一套继续生成生图 Prompt。'}`,
+              productName: planner.productName || message.productName,
+              platform: planner.platform || message.platform,
+              taskType: planner.taskType || message.taskType,
+              productImageCount: planner.productImageCount,
+              benchmarkImageCount: planner.benchmarkImageCount,
+              options: nextOptions,
+              sharedPlannerContext,
+              errorMessage: optionErrors.length ? optionErrors.join('\n') : undefined,
+            };
+          }));
+        } catch (error) {
+          const errorText = formatAgentChatErrorText(
+            error instanceof Error ? error.message : undefined,
+            `方案 ${optionId} 生成失败。`,
+          );
+
+          optionErrors.push(`方案 ${optionId}：${errorText}`);
+          console.warn('[canvas-agent] ecom planner option failed', optionId, errorText);
+
+          setMessages((current) => current.map((message) => (
+            message.id === messageId && message.type === 'ecom_planner_options'
+              ? {
+                  ...message,
+                  summary: `方案 ${optionId} 生成失败，正在继续尝试其他方案。`,
+                  errorMessage: optionErrors.join('\n'),
+                }
+              : message
+          )));
+        }
+      }
+
+      setMessages((current) => current.map((message) => {
+        if (message.id !== messageId || message.type !== 'ecom_planner_options') {
+          return message;
+        }
+
+        const hasOptions = message.options.length > 0;
+
+        return {
+          ...message,
+          summary: hasOptions
+            ? `已生成 ${message.options.length}/3 套方案。${optionErrors.length ? '部分方案失败，可先选择已生成方案继续。' : '请选择一套继续生成生图 Prompt。'}`
+            : '套图企划生成失败，请稍后重试。',
+          status: hasOptions ? 'waiting' as const : 'error' as const,
+          errorMessage: optionErrors.length ? optionErrors.join('\n') : undefined,
+        };
+      }));
+    };
 
     try {
+      if (params.selectedPlanfPresetId === ECOM_PLANNER_PRESET_ID) {
+        await runEcomPlannerStaged();
+        return;
+      }
+
       const routeDecision = decideAgentPhaseRoute({
         message: params.prompt,
         attachmentCount: params.selectedAttachments.length,
-        routeMode: planfRouteMode,
-        selectedPresetId: selectedPlanfPresetId,
+        routeMode: params.planfRouteMode,
+        selectedPresetId: params.selectedPlanfPresetId,
         presetPrompts: PLANF_ECOM_PRESETS,
       });
 
@@ -1896,6 +2379,11 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       }
 
       if (routeDecision.route === 'ecom-start' && routeDecision.preset) {
+        if (routeDecision.preset === ECOM_PLANNER_PRESET_ID) {
+          await runEcomPlannerStaged();
+          return;
+        }
+
         let session: Awaited<ReturnType<typeof requestOpenClawPlanfEcomStart>>;
 
         try {
@@ -1926,6 +2414,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
               retrySelectedAttachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
               retryUserMessageCreatedAt: params.userMessageCreatedAt,
+              retrySelectedPlanfPresetId: params.selectedPlanfPresetId,
+              retryPlanfRouteMode: params.planfRouteMode,
               createdAt: new Date().toISOString(),
             },
           ]);
@@ -1965,6 +2455,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
                 retrySelectedAttachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
                 retryUserMessageCreatedAt: params.userMessageCreatedAt,
+                retrySelectedPlanfPresetId: params.selectedPlanfPresetId,
+                retryPlanfRouteMode: params.planfRouteMode,
                 createdAt: new Date().toISOString(),
               },
             ]);
@@ -2014,6 +2506,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
           retrySelectedAttachments: params.selectedAttachments.map((attachment) => ({ ...attachment })),
           retryUserMessageCreatedAt: params.userMessageCreatedAt,
+          retrySelectedPlanfPresetId: params.selectedPlanfPresetId,
+          retryPlanfRouteMode: params.planfRouteMode,
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -2096,18 +2590,39 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     nodeCount,
     nodes,
     onConfirmPlan,
-    planfRouteMode,
     projectId,
     projectName,
     provider,
     resolvedImagePreference,
-    selectedPlanfPresetId,
   ]);
 
   const handleSubmit = useCallback(() => {
     const trimmedDraft = draft.trim();
 
     if (!trimmedDraft || busy || hasUserDecisionPending) {
+      return;
+    }
+
+    const submittedPlanfPresetId = selectedPlanfPresetId;
+    const submittedPlanfRouteMode = planfRouteMode;
+    const submittedEcomPlannerActive = submittedPlanfPresetId === ECOM_PLANNER_PRESET_ID;
+
+    const plannerSubmitBlockReason = getAgentEcomPlannerSubmitBlockReason({
+      active: submittedEcomPlannerActive,
+      attachments,
+    });
+
+    if (plannerSubmitBlockReason) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: createPanelId('ecom-planner-product-required'),
+          role: 'agent',
+          type: 'text',
+          content: plannerSubmitBlockReason,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
       return;
     }
 
@@ -2129,7 +2644,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       setAttachments(taskAttachments);
     }
 
-    if (taskAttachments.length > 1 && referencedAttachmentIds.length === 0) {
+    if (!submittedEcomPlannerActive && taskAttachments.length > 1 && referencedAttachmentIds.length === 0) {
       setMessages((current) => [
         ...current,
         {
@@ -2183,6 +2698,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       taskAttachments,
       selectedAttachments,
       userMessageCreatedAt: now,
+      selectedPlanfPresetId: submittedPlanfPresetId,
+      planfRouteMode: submittedPlanfRouteMode,
     }).finally(() => {
       setBusyMode(null);
     });
@@ -2195,6 +2712,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     onCreateSourceNodes,
     provider,
     runAgent,
+    selectedPlanfPresetId,
+    planfRouteMode,
   ]);
 
   const handleRetryAgentMessage = useCallback((messageId: string) => {
@@ -2225,6 +2744,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       taskAttachments,
       selectedAttachments,
       userMessageCreatedAt,
+      selectedPlanfPresetId: retryMessage.retrySelectedPlanfPresetId ?? null,
+      planfRouteMode: retryMessage.retryPlanfRouteMode ?? 'auto',
     }).finally(() => {
       setBusyMode(null);
     });
@@ -2312,6 +2833,345 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         setBusyMode(null);
       });
   }, [busy, messages, model, projectId, provider]);
+
+  const handleSelectEcomPlannerOption = useCallback((
+    messageId: string,
+    optionId: 'A' | 'B' | 'C',
+  ) => {
+    if (busy) {
+      return;
+    }
+
+    const plannerMessage = messages.find((
+      message,
+    ): message is Extract<AgentPanelMessage, { type: 'ecom_planner_options' }> => (
+      message.id === messageId && message.type === 'ecom_planner_options'
+    ));
+    const selectedOption = plannerMessage?.options.find((option) => option.id === optionId);
+
+    if (!plannerMessage || !selectedOption || plannerMessage.status !== 'waiting') {
+      return;
+    }
+
+    setBusyMode('mcp');
+    setMessages((current) => current.map((message) => (
+      message.id === messageId && message.type === 'ecom_planner_options'
+        ? {
+            ...message,
+            status: 'submitted' as const,
+            selectedOptionId: optionId,
+            summary: `已选择方案 ${optionId}，正在按 skill 第 5 步分段生成生图 Prompt。`,
+            promptCurrentStatus: '准备读取规则并解析图位。',
+            promptProgressCurrent: 0,
+            promptProgressTotal: undefined,
+            errorMessage: undefined,
+          }
+        : message
+    )));
+
+    if (!selectedOption.rawOptionJson) {
+      setMessages((current) => current.map((message) => (
+        message.id === messageId && message.type === 'ecom_planner_options'
+          ? {
+              ...message,
+              status: 'error' as const,
+              errorMessage: `方案 ${optionId} 缺少完整 JSON，无法按 skill 第 5 步生成 Markdown prompt，请重新生成方案。`,
+            }
+          : message
+      )));
+      setBusyMode(null);
+      return;
+    }
+
+    void requestAgentEcomPlannerPromptMarkdown({
+      request: plannerMessage.userRequest ?? '',
+      plannerMessage,
+      option: selectedOption,
+      provider,
+      model,
+      onProgress: (event) => {
+        setMessages((current) => current.map((message) => {
+          if (message.id !== messageId || message.type !== 'ecom_planner_options') {
+            return message;
+          }
+
+          return {
+            ...message,
+            summary: event.message || message.summary,
+            promptCurrentStatus: event.message || message.promptCurrentStatus,
+            promptProgressCurrent: event.type !== 'error' && typeof event.current === 'number'
+              ? event.current
+              : message.promptProgressCurrent,
+            promptProgressTotal: event.type !== 'error' && typeof event.total === 'number' && event.total > 0
+              ? event.total
+              : message.promptProgressTotal,
+          };
+        }));
+      },
+    })
+      .then((promptResult) => {
+        setMessages((current) => [
+          ...current.map((message) => (
+            message.id === messageId && message.type === 'ecom_planner_options'
+              ? {
+                  ...message,
+                  status: 'completed' as const,
+                  summary: `已选择方案 ${optionId}，已按 skill 第 5 步生成 ${promptResult.promptBlockCount} 个图位 prompt。`,
+                  promptCurrentStatus: `全部完成，已生成 ${promptResult.promptBlockCount} 个图位 prompt。`,
+                  promptProgressCurrent: promptResult.promptBlockCount,
+                  promptProgressTotal: promptResult.promptBlockCount,
+                }
+              : message
+          )),
+          {
+            id: createPanelId('ecom-planner-prompt'),
+            role: 'agent',
+            type: 'ecom_planner_prompt_markdown',
+            optionId: promptResult.optionId,
+            title: promptResult.title,
+            productName: promptResult.productName,
+            platform: promptResult.platform,
+            taskType: promptResult.taskType,
+            markdown: promptResult.markdown,
+            promptBlockCount: promptResult.promptBlockCount,
+            imageSlots: promptResult.imageSlots,
+            attachments: plannerMessage.attachments.map((attachment) => ({ ...attachment })),
+            status: 'waiting_confirmation',
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      })
+      .catch((error) => {
+        setMessages((current) => current.map((message) => (
+          message.id === messageId && message.type === 'ecom_planner_options'
+            ? {
+                ...message,
+                status: 'error' as const,
+                promptCurrentStatus: error instanceof Error ? error.message : '套图企划生图 Prompt 生成失败',
+                errorMessage: error instanceof Error ? error.message : '套图企划生图 Prompt 生成失败',
+              }
+            : message
+        )));
+      })
+      .finally(() => {
+        setBusyMode(null);
+      });
+  }, [busy, messages, model, provider]);
+
+  const handleRetryEcomPlannerOptions = useCallback((messageId: string) => {
+    if (busy) {
+      return;
+    }
+
+    const plannerMessage = messages.find((
+      message,
+    ): message is Extract<AgentPanelMessage, { type: 'ecom_planner_options' }> => (
+      message.id === messageId && message.type === 'ecom_planner_options'
+    ));
+
+    if (!plannerMessage?.userRequest) {
+      return;
+    }
+
+    const retryRequest = plannerMessage.userRequest;
+    const retryAttachments = plannerMessage.attachments.map((attachment) => ({ ...attachment }));
+    const productImageCount = retryAttachments.filter((attachment) => (
+      getAgentEcomPlannerAttachmentRole(attachment) === 'product'
+    )).length;
+    const benchmarkImageCount = retryAttachments.filter((attachment) => (
+      getAgentEcomPlannerAttachmentRole(attachment) === 'benchmark'
+    )).length;
+    const optionErrors: string[] = [];
+    let sharedPlannerContext: AgentEcomPlannerSharedContext | undefined;
+
+    setBusyMode('mcp');
+    setMessages((current) => current.map((message) => (
+      message.id === messageId && message.type === 'ecom_planner_options'
+        ? {
+            ...message,
+            summary: '正在重新按套图企划规则生成 3 套方案。',
+            productImageCount,
+            benchmarkImageCount,
+            options: [],
+            selectedOptionId: undefined,
+            promptCurrentStatus: undefined,
+            promptProgressCurrent: undefined,
+            promptProgressTotal: undefined,
+            status: 'generating' as const,
+            errorMessage: undefined,
+          }
+        : message
+    )));
+
+    void (async () => {
+      for (const optionId of ECOM_PLANNER_OPTION_IDS) {
+        try {
+          const planner = await requestAgentEcomPlannerOptions({
+            message: retryRequest,
+            attachments: retryAttachments,
+            optionId,
+            sharedPlannerContext,
+            provider,
+            model,
+          });
+          sharedPlannerContext = planner.sharedPlannerContext ?? sharedPlannerContext;
+
+          setMessages((current) => current.map((message) => {
+            if (message.id !== messageId || message.type !== 'ecom_planner_options') {
+              return message;
+            }
+
+            const nextOptions = mergeAgentEcomPlannerOptions(message.options, planner.options);
+
+            return {
+              ...message,
+              summary: `已重新生成 ${nextOptions.length}/3 套方案。${nextOptions.length < 3 ? '正在继续生成下一套。' : '请选择一套继续生成生图 Prompt。'}`,
+              productName: planner.productName || message.productName,
+              platform: planner.platform || message.platform,
+              taskType: planner.taskType || message.taskType,
+              productImageCount: planner.productImageCount,
+              benchmarkImageCount: planner.benchmarkImageCount,
+              options: nextOptions,
+              sharedPlannerContext,
+              errorMessage: optionErrors.length ? optionErrors.join('\n') : undefined,
+            };
+          }));
+        } catch (error) {
+          const errorText = formatAgentChatErrorText(
+            error instanceof Error ? error.message : undefined,
+            `方案 ${optionId} 生成失败。`,
+          );
+
+          optionErrors.push(`方案 ${optionId}：${errorText}`);
+          setMessages((current) => current.map((message) => (
+            message.id === messageId && message.type === 'ecom_planner_options'
+              ? {
+                  ...message,
+                  summary: `方案 ${optionId} 重新生成失败，正在继续尝试其他方案。`,
+                  errorMessage: optionErrors.join('\n'),
+                }
+              : message
+          )));
+        }
+      }
+
+      setMessages((current) => current.map((message) => {
+        if (message.id !== messageId || message.type !== 'ecom_planner_options') {
+          return message;
+        }
+
+        const hasOptions = message.options.length > 0;
+
+        return {
+          ...message,
+          summary: hasOptions
+            ? `已重新生成 ${message.options.length}/3 套方案。${optionErrors.length ? '部分方案失败，可先选择已生成方案继续。' : '请选择一套继续生成生图 Prompt。'}`
+            : '套图企划生成失败，请稍后重试。',
+          status: hasOptions ? 'waiting' as const : 'error' as const,
+          errorMessage: optionErrors.length ? optionErrors.join('\n') : undefined,
+        };
+      }));
+    })()
+      .finally(() => {
+        setBusyMode(null);
+      });
+  }, [busy, messages, model, provider]);
+
+  const handleConfirmEcomPlannerPrompt = useCallback((messageId: string) => {
+    if (busy) {
+      return;
+    }
+
+    const promptMessage = messages.find((
+      message,
+    ): message is Extract<AgentPanelMessage, { type: 'ecom_planner_prompt_markdown' }> => (
+      message.id === messageId && message.type === 'ecom_planner_prompt_markdown'
+    ));
+
+    if (!promptMessage || promptMessage.status !== 'waiting_confirmation') {
+      return;
+    }
+
+    setMessages((current) => current.map((message) => (
+      message.id === messageId && message.type === 'ecom_planner_prompt_markdown'
+        ? { ...message, status: 'submitted' as const, errorMessage: undefined }
+        : message
+    )));
+
+    const imageActions: CanvasAgentAction[] = promptMessage.imageSlots.map((slot) => ({
+      type: 'create_image_generation_node',
+      clientActionId: createPanelId(`ecom-planner-image-${slot.index}`),
+      prompt: slot.prompt,
+      options: {
+        provider: resolvedImagePreference.provider,
+        model: resolvedImagePreference.model,
+        runningHubChannel: resolvedImagePreference.provider === 'runninghub'
+          ? resolvedImagePreference.runningHubChannel
+          : undefined,
+        aspectRatio: resolveAgentActionAspectRatio({
+          actionAspectRatio: slot.ratio,
+          preference: resolvedImagePreference,
+        }),
+        quality: resolvedImagePreference.quality,
+      },
+    }));
+    const productAttachments = getAgentEcomPlannerProductAttachments(promptMessage.attachments);
+    const executionActions = attachReferencesToImageActions(imageActions, productAttachments);
+    const attachmentsForExecution = productAttachments.map((attachment) => ({ ...attachment }));
+    const plan: AgentExecutionPlan = {
+      stageLabel: '套图企划',
+      title: `${promptMessage.productName} · 方案 ${promptMessage.optionId} 生图节点`,
+      brief: [
+        { label: '来源', value: '套图企划 Step 5' },
+        { label: '平台', value: promptMessage.platform },
+        { label: '任务', value: promptMessage.taskType },
+        { label: '图位', value: `${promptMessage.imageSlots.length} 张` },
+      ],
+      steps: promptMessage.imageSlots.map((slot) => `${slot.index}. ${slot.slot}：${slot.intent}`),
+      promptPreview: promptMessage.imageSlots[0]?.prompt,
+      confirmationLabel: '确认生成',
+    };
+    const executionResult = onConfirmPlan?.({
+      actions: executionActions,
+      attachments: attachmentsForExecution,
+      plan,
+    }) ?? { ok: false };
+
+    setMessages((current) => [
+      ...current.map((message) => (
+        message.id === messageId && message.type === 'ecom_planner_prompt_markdown'
+          ? { ...message, status: executionResult.ok ? 'completed' as const : 'error' as const }
+          : message
+      )),
+      {
+        id: createPanelId('agent-plan'),
+        role: 'agent',
+        type: 'execution_plan',
+        summary: `已创建方案 ${promptMessage.optionId} 的 ${promptMessage.imageSlots.length} 个图像生成节点，等待确认生成。`,
+        plan,
+        actions: executionActions,
+        attachments: attachmentsForExecution,
+        trace: [
+          {
+            id: createPanelId('agent-trace'),
+            type: 'thinking',
+            content: '套图企划 Step 5 图位 prompt 已转换为画布图片生成节点。',
+          },
+        ],
+        meta: {
+          usedModel: true,
+          usedFallback: false,
+          model: 'ecommerce-image-planner',
+        },
+        imageGenerationNodeId: executionResult.imageGenerationNodeId,
+        imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
+        groupId: executionResult.groupId,
+        groupName: executionResult.groupName,
+        status: executionResult.ok ? 'waiting_generation_confirmation' : 'error',
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }, [busy, messages, onConfirmPlan, resolvedImagePreference]);
 
   const handleConfirmPlanfEcomPlan = useCallback((messageId: string) => {
     if (busy) {
@@ -2570,6 +3430,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       taskAttachments: selectionMessage.attachments,
       selectedAttachments: [selectedAttachment],
       userMessageCreatedAt: new Date().toISOString(),
+      selectedPlanfPresetId: null,
+      planfRouteMode: 'auto',
     }).finally(() => {
       setBusyMode(null);
     });
@@ -3246,6 +4108,270 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               );
             }
 
+            if (message.type === 'ecom_planner_options') {
+              return (
+                <div key={message.id} className="rounded-lg bg-transparent px-1 py-2">
+                  <div className="mb-3 flex items-start gap-3">
+                    <AgentAvatarMark />
+                    <div className="min-w-0 flex-1 rounded-[18px] bg-[#1f2023] p-4 shadow-[0_12px_32px_rgba(0,0,0,0.26)]">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-[13px] font-semibold text-white/62">
+                            <Sparkles size={15} />
+                            套图企划
+                          </div>
+                          <div className="mt-3 text-[16px] font-semibold text-white">
+                            {message.productName} · 3 套方向
+                          </div>
+                        </div>
+                        <div className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-[#75e2b8]">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#75e2b8]" />
+                          {message.status === 'waiting'
+                            ? '待选择'
+                            : message.status === 'generating'
+                              ? '生成中'
+                              : message.status === 'submitted'
+                                ? '生成 Prompt'
+                                : message.status === 'completed'
+                                  ? '已选择'
+                                  : '出错'}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 text-xs leading-5 text-white/54">
+                        {message.summary}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-medium text-white/50">
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">{message.platform}</span>
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">{message.taskType}</span>
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">产品图 {message.productImageCount}</span>
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">对标图 {message.benchmarkImageCount}</span>
+                      </div>
+
+                      <div className="mt-4 space-y-3">
+                        {message.options.map((option) => {
+                          const optionKey = `${message.id}:${option.id}`;
+                          const expanded = expandedPlanSlotKeys.has(optionKey);
+                          const selected = message.selectedOptionId === option.id;
+                          const summaryRows = buildPlannerSummaryRows(option);
+
+                          return (
+                            <div
+                              key={option.id}
+                              className={[
+                                'rounded-xl border p-3',
+                                selected
+                                  ? 'border-[#19d3ff]/45 bg-[#123744]/45'
+                                  : 'border-white/10 bg-white/[0.035]',
+                              ].join(' ')}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#19d3ff] text-xs font-bold text-[#061019]">
+                                  {option.id}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-sm font-semibold leading-5 text-white">
+                                    {option.title}
+                                  </div>
+                                  <div className="mt-1 text-xs leading-5 text-white/58">
+                                    {option.positioning}
+                                  </div>
+                                  <div className="mt-1 text-xs leading-5 text-white/46">
+                                    {option.visualDirection}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {expanded ? (
+                                <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/18 p-3 text-xs leading-5 text-white/62">
+                                  <div className="overflow-hidden rounded-lg border border-white/[0.07]">
+                                    {summaryRows.map((row) => (
+                                      <div
+                                        key={row.label}
+                                        className="grid grid-cols-[82px_minmax(0,1fr)] border-b border-white/[0.06] last:border-b-0"
+                                      >
+                                        <div className="bg-white/[0.035] px-3 py-2 font-semibold text-white/68">
+                                          {row.label}
+                                        </div>
+                                        <div className="min-w-0 break-words px-3 py-2 text-white/62">
+                                          {row.value}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="h-8 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-white/62 transition hover:bg-white/[0.08] hover:text-white/82"
+                                  onClick={() => {
+                                    setExpandedPlanSlotKeys((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(optionKey)) {
+                                        next.delete(optionKey);
+                                      } else {
+                                        next.add(optionKey);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  {expanded ? '收起详情' : '查看详情'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busy || message.status !== 'waiting'}
+                                  className="h-8 rounded-lg bg-[#19d3ff] px-3 text-xs font-semibold text-[#061019] transition hover:bg-[#6ee7ff] disabled:cursor-not-allowed disabled:opacity-45"
+                                  onClick={() => handleSelectEcomPlannerOption(message.id, option.id)}
+                                >
+                                  选这套生成生图 Prompt
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {message.status === 'generating'
+                          ? ECOM_PLANNER_OPTION_IDS.filter((optionId) => (
+                              !message.options.some((option) => option.id === optionId)
+                            )).map((optionId) => (
+                              <div
+                                key={`${message.id}:${optionId}:loading`}
+                                className="rounded-xl border border-white/10 bg-white/[0.025] p-3"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.08] text-xs font-bold text-white/42">
+                                    {optionId}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="h-3 w-32 rounded-full bg-white/[0.08]" />
+                                    <div className="mt-2 h-2.5 w-full max-w-[260px] rounded-full bg-white/[0.055]" />
+                                  </div>
+                                  <Loader2 size={15} className="animate-spin text-[#19d3ff]" />
+                                </div>
+                              </div>
+                            ))
+                          : null}
+                      </div>
+
+                      {message.errorMessage ? (
+                        <div className="mt-3 space-y-3">
+                          <div className="text-xs leading-5 text-[#ffb4a8]">
+                            {formatAgentChatErrorText(message.errorMessage, '套图企划生成失败，请稍后重试。')}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="flex h-8 items-center gap-2 rounded-lg border border-[#19d3ff]/35 bg-[#19d3ff]/12 px-3 text-xs font-semibold text-[#7eeaff] transition hover:bg-[#19d3ff]/18 disabled:cursor-not-allowed disabled:opacity-45"
+                            onClick={() => handleRetryEcomPlannerOptions(message.id)}
+                          >
+                            <Sparkles size={13} />
+                            重新生成方案
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            if (message.type === 'ecom_planner_prompt_markdown') {
+              const statusLabel = message.status === 'waiting_confirmation'
+                ? '待创建'
+                : message.status === 'submitted'
+                  ? '创建中'
+                  : message.status === 'completed'
+                    ? '已创建'
+                    : '出错';
+              const promptDisplayBlocks = buildAgentEcomPlannerPromptDisplayBlocks(message.imageSlots);
+
+              return (
+                <div key={message.id} className="rounded-lg bg-transparent px-1 py-2">
+                  <div className="mb-3 flex items-start gap-3">
+                    <AgentAvatarMark />
+                    <div className="min-w-0 flex-1 rounded-[18px] bg-[#1f2023] p-4 shadow-[0_12px_32px_rgba(0,0,0,0.26)]">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-[13px] font-semibold text-white/62">
+                            <Sparkles size={15} />
+                            套图企划 · 生图 Prompt
+                          </div>
+                          <div className="mt-3 text-[16px] font-semibold leading-6 text-white">
+                            方案 {message.optionId} · {message.productName} 图位编排
+                          </div>
+                        </div>
+                        <div className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-[#75e2b8]">
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#75e2b8]" />
+                          {statusLabel}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-medium text-white/50">
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">{message.productName}</span>
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">{message.platform}</span>
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">{message.taskType}</span>
+                        <span className="rounded-md bg-white/[0.05] px-2 py-1">
+                          {message.promptBlockCount} 段 prompt
+                        </span>
+                      </div>
+
+                      <div className="mt-4 space-y-5">
+                        {promptDisplayBlocks.map((block) => (
+                          <section key={`${message.id}:${block.index}`} className="min-w-0">
+                            <div className="mb-2 flex items-center justify-between gap-3">
+                              <h4 className="min-w-0 text-[15px] font-semibold leading-6 text-white">
+                                {block.heading}
+                              </h4>
+                              <span className="shrink-0 rounded-md bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-white/58">
+                                {block.ratio}
+                              </span>
+                            </div>
+                            <div className="overflow-hidden rounded-xl bg-[#ebebec] text-[#16181d]">
+                              <div className="flex h-8 items-center justify-between border-b border-black/[0.06] px-3 text-[11px] text-black/48">
+                                <span>text</span>
+                                <button
+                                  type="button"
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-black/42 transition hover:bg-black/[0.06] hover:text-black/72"
+                                  title="复制 prompt"
+                                  aria-label={`复制 ${block.heading} prompt`}
+                                  onClick={() => {
+                                    void navigator.clipboard?.writeText(block.prompt);
+                                  }}
+                                >
+                                  <Copy size={13} />
+                                </button>
+                              </div>
+                              <pre className="max-h-56 overflow-auto px-3 py-3 text-[12px] leading-6">
+                                <code className="whitespace-pre font-mono">{block.prompt}</code>
+                              </pre>
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+
+                      {message.errorMessage ? (
+                        <div className="mt-3 text-xs leading-5 text-[#ffb4a8]">
+                          {formatAgentChatErrorText(message.errorMessage, '套图企划生图 Prompt 生成失败，请稍后重试。')}
+                        </div>
+                      ) : null}
+
+                      <button
+                        type="button"
+                        disabled={busy || message.status !== 'waiting_confirmation'}
+                        className="mt-4 flex h-9 items-center gap-2 rounded-lg bg-[#19d3ff] px-4 text-sm font-semibold text-[#061019] transition hover:bg-[#6ee7ff] disabled:cursor-not-allowed disabled:opacity-45"
+                        onClick={() => handleConfirmEcomPlannerPrompt(message.id)}
+                      >
+                        <Sparkles size={15} />
+                        创建到画布
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
             if (message.type === 'planf_ecom_plan') {
               const protocolLabel = `creative-doc / ${message.plan.type}`;
               const summaryText = sanitizeAgentChatText(message.summary);
@@ -3573,12 +4699,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-semibold text-[#19d3ff]">
                   <span className="agent-busy-shimmer">
-                    {busyMode === 'mcp' ? '正在准备画布节点' : '正在思考中...'}
+                    {activeEcomPlannerPromptStatus ? '正在生成生图 Prompt' : busyMode === 'mcp' ? '正在准备画布节点' : '正在思考中...'}
                   </span>
                   <span className="text-[11px] font-normal text-white/38">请稍等</span>
                 </div>
                 <div className="mt-1 text-xs leading-5 text-white/45">
-                  {busyMode === 'mcp'
+                  {activeEcomPlannerPromptStatus?.type === 'ecom_planner_options'
+                    ? activeEcomPlannerPromptStatus.promptCurrentStatus
+                    : busyMode === 'mcp'
                     ? '正在校验编排，并转换成画布动作。'
                     : '正在理解需求，读取规则，并准备下一步响应。'}
                 </div>
@@ -3589,7 +4717,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     <span />
                   </span>
                   <span className="agent-busy-shimmer">
-                    {busyMode === 'mcp' ? '正在创建节点...' : '正在生成回复...'}
+                    {activeEcomPlannerPromptStatus?.type === 'ecom_planner_options' &&
+                    activeEcomPlannerPromptStatus.promptProgressTotal
+                      ? `进度 ${activeEcomPlannerPromptStatus.promptProgressCurrent ?? 0}/${activeEcomPlannerPromptStatus.promptProgressTotal}`
+                      : busyMode === 'mcp' ? '正在创建节点...' : '正在生成回复...'}
                   </span>
                 </div>
               </div>
@@ -3813,6 +4944,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         setSelectedPlanfPresetId(preset.id);
                         setPlanfRouteMode(preset.routeMode);
                         setDraft(preset.prompt);
+                        setReferenceUploadNudgeRequested(preset.id === ECOM_PLANNER_PRESET_ID);
                       }}
                     >
                       {preset.label}
@@ -3863,7 +4995,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
               {attachments.length ? (
                 <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pr-1">
-                  {attachments.map((attachment, index) => (
+                  {attachments.map((attachment, index) => {
+                    const plannerRole = getAgentEcomPlannerAttachmentRole(attachment);
+
+                    return (
                     <div
                       key={attachment.id}
                       className="group/reference-thumb relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-white/14 bg-white/[0.04] shadow-[0_8px_18px_rgba(0,0,0,0.26)]"
@@ -3890,8 +5025,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         className="object-cover"
                         unoptimized
                       />
-                      <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[11px] font-semibold leading-none text-white">
-                        {index + 1}
+                      <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[10px] font-semibold leading-none text-white">
+                        {ecomPlannerActive ? (plannerRole === 'benchmark' ? '对标' : '产品') : index + 1}
                       </span>
                       <button
                         type="button"
@@ -3903,33 +5038,66 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         <X size={12} />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null}
 
-              <button
-                type="button"
-                className={[
-                  'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.035] text-white/42 transition hover:bg-white/[0.07] hover:text-white/66',
-                  showReferenceUploadNudge ? 'agent-reference-upload-nudge' : '',
-                ].join(' ')}
-                aria-label="上传图片"
-                title="添加参考图"
-                onClick={handleUploadClick}
-              >
-                {showReferenceUploadNudge ? (
-                  <span className="pointer-events-none absolute -top-7 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#c9ff1a] px-2 py-1 text-[11px] font-semibold leading-none text-[#182000] shadow-[0_8px_22px_rgba(0,0,0,0.32)]">
-                    建议上传图片
-                  </span>
-                ) : null}
-                <ImagePlus size={16} />
-              </button>
+              {ecomPlannerActive ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex flex-col items-center gap-1">
+                    <button
+                      type="button"
+                      className={[
+                        'flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-white/[0.055] px-3 text-xs font-semibold text-white/72 transition hover:bg-white/[0.09] hover:text-white',
+                        showReferenceUploadNudge ? 'agent-reference-upload-nudge' : '',
+                      ].join(' ')}
+                      aria-label="上传产品图"
+                      title="上传产品图"
+                      onClick={() => handleUploadClick('product')}
+                    >
+                      <ImagePlus size={16} />
+                      产品图
+                    </button>
+                  </div>
+                  <div className="flex flex-col items-center gap-1">
+                    <button
+                      type="button"
+                      className="flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-white/[0.055] px-3 text-xs font-semibold text-white/72 transition hover:bg-white/[0.09] hover:text-white"
+                      aria-label="上传竞品对标图"
+                      title="上传竞品对标图：参考风格、光影、版式，不复制竞品产品"
+                      onClick={() => handleUploadClick('benchmark')}
+                    >
+                      <ImagePlus size={16} />
+                      对标图（可选）
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className={[
+                    'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/[0.035] text-white/42 transition hover:bg-white/[0.07] hover:text-white/66',
+                    showReferenceUploadNudge ? 'agent-reference-upload-nudge' : '',
+                  ].join(' ')}
+                  aria-label="上传图片"
+                  title="添加参考图"
+                  onClick={() => handleUploadClick('product')}
+                >
+                  {showReferenceUploadNudge ? (
+                    <span className="pointer-events-none absolute -top-7 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#c9ff1a] px-2 py-1 text-[11px] font-semibold leading-none text-[#182000] shadow-[0_8px_22px_rgba(0,0,0,0.32)]">
+                      建议上传图片
+                    </span>
+                  ) : null}
+                  <ImagePlus size={16} />
+                </button>
+              )}
             </div>
             <PromptMentionInput
               value={draft}
               connectedImages={mentionImages}
               placeholder="描述你希望 Agent 在画布上完成什么，可以用 @ 引用上传图片。"
-              className="agent-mention-input scrollbar-hide min-h-[64px] max-h-32 flex-1 overflow-y-auto px-1 py-1 text-sm leading-6 text-white outline-none"
+              className="prompt-mention-input agent-mention-input scrollbar-hide min-h-[64px] max-h-32 flex-1 overflow-y-auto px-1 py-1 text-sm leading-6 text-white outline-none"
               mentionMenuVariant="agent"
               onChange={setDraft}
             />
