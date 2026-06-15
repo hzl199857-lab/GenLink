@@ -271,6 +271,25 @@ export function getAgentEcomPlannerProductAttachments(
   ));
 }
 
+export function shouldSendImagesForEcomPlannerOption(input: {
+  hasSharedPlannerContext: boolean;
+}): boolean {
+  return !input.hasSharedPlannerContext;
+}
+
+export function hasParsedEcomPlannerOption(
+  planner: AgentEcomPlannerOptionsResult,
+  optionId?: AgentEcomPlannerOption["id"],
+): boolean {
+  const parsedOptions = planner.options.filter((option) => Boolean(option.rawOptionJson));
+
+  if (!optionId) {
+    return parsedOptions.length > 0;
+  }
+
+  return parsedOptions.some((option) => option.id === optionId);
+}
+
 export function getAgentEcomPlannerSubmitBlockReason(input: {
   active: boolean;
   attachments: AgentTaskAttachment[];

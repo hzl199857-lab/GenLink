@@ -33,9 +33,11 @@ const {
   getAgentEcomPlannerAttachmentRole,
   getAgentEcomPlannerProductAttachments,
   getAgentEcomPlannerSubmitBlockReason,
+  hasParsedEcomPlannerOption,
   hasAgentEcomPlannerProductImage,
   limitAgentEcomPlannerPromptSlots,
   parseAgentEcomPlannerModelResponse,
+  shouldSendImagesForEcomPlannerOption,
 } = require("./agent-ecom-planner.ts") as typeof import("./agent-ecom-planner");
 
 function attachment(
@@ -84,6 +86,41 @@ test("filters ecommerce planner final generation attachments to product images",
     getAgentEcomPlannerProductAttachments([product, benchmark, untagged]),
     [product, untagged],
   );
+});
+
+test("sends planner images only before the shared context exists", () => {
+  assert.equal(
+    shouldSendImagesForEcomPlannerOption({ hasSharedPlannerContext: false }),
+    true,
+  );
+  assert.equal(
+    shouldSendImagesForEcomPlannerOption({ hasSharedPlannerContext: true }),
+    false,
+  );
+});
+
+test("requires a parsed raw option JSON before accepting a staged planner option", () => {
+  const fallback = buildAgentEcomPlannerSingleOptionResult({
+    optionId: "B",
+    prompt: "浜у搧锛歔濡傦細AOC鏄剧ず鍣╙",
+    attachments: [attachment("product", "product")],
+  });
+
+  assert.equal(hasParsedEcomPlannerOption(fallback, "B"), false);
+
+  const parsed = parseAgentEcomPlannerModelResponse({
+    text: JSON.stringify({
+      _option_label: "方案 B - Scene Extension",
+      option: {
+        title: "Scene Extension",
+        productName: "AOC Monitor",
+      },
+    }),
+    fallback,
+  });
+
+  assert.equal(hasParsedEcomPlannerOption(parsed, "B"), true);
+  assert.equal(hasParsedEcomPlannerOption(parsed, "A"), false);
 });
 
 test("builds prompt display blocks with title and full prompt text", () => {

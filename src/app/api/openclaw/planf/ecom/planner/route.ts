@@ -5,7 +5,9 @@ import path from "node:path";
 import {
   buildAgentEcomPlannerOptions,
   buildAgentEcomPlannerSingleOptionResult,
+  hasParsedEcomPlannerOption,
   parseAgentEcomPlannerModelResponse,
+  shouldSendImagesForEcomPlannerOption,
   type AgentEcomPlannerOption,
   type AgentEcomPlannerOptionsResult,
   type AgentEcomPlannerSharedContext,
@@ -20,6 +22,7 @@ const PLANNER_MAX_MODEL_IMAGES = 2;
 const PLANNER_SINGLE_OPTION_MAX_TOKENS = 8_000;
 const PLANNER_MULTI_OPTION_MAX_TOKENS = 12_000;
 const PLANNER_UI_SUMMARY_MAX_TOKENS = 900;
+const PLANNER_JSON_REPAIR_MAX_TOKENS = 4_000;
 
 const PLANNER_SKILL_DIR = path.join(
   process.cwd(),
@@ -249,6 +252,68 @@ async function generatePlannerText(params: {
   ]);
 }
 
+function buildPlannerJsonRepairPrompt(params: {
+  optionId?: AgentEcomPlannerOption["id"];
+  rawText: string;
+  fallback: AgentEcomPlannerOptionsResult;
+}): string {
+  const expectedOptionId = params.optionId ?? params.fallback.options[0]?.id ?? "A";
+
+  return [
+    "The previous ecommerce planner model response was not accepted by the app parser.",
+    "Repair it into one valid JSON object only. Do not add markdown, comments, or code fences.",
+    `Expected option id: ${expectedOptionId}.`,
+    "Required top-level shape:",
+    "{\"_option_label\":\"方案 <ID> - <style name>\",\"option\":{\"目标平台\":\"...\",\"任务类型\":\"...\",\"期望图片数量\":\"...\",\"文案语调指引\":\"...\",\"风格名称\":\"...\",\"视觉风格与光影\":{},\"版式语言与排版哲学\":{},\"产品信息\":{},\"产品参数\":\"...\",\"全局色彩资产\":{},\"下游执行注意事项\":{},\"用户需求原文\":\"...\"}}",
+    "Preserve the commercial strategy and visual direction from the previous response. If a field is missing, infer it from the fallback planner below.",
+    "Fallback planner for missing fields:",
+    JSON.stringify(params.fallback, null, 2),
+    "Previous response to repair:",
+    params.rawText,
+  ].join("\n");
+}
+
+async function parsePlannerOrRepair(params: {
+  resultContent: string;
+  fallback: AgentEcomPlannerOptionsResult;
+  optionId?: AgentEcomPlannerOption["id"];
+  provider?: ImageApiProvider;
+  model?: string;
+  apiKey?: string;
+}): Promise<AgentEcomPlannerOptionsResult> {
+  const parsed = parseAgentEcomPlannerModelResponse({
+    text: params.resultContent,
+    fallback: params.fallback,
+  });
+
+  if (hasParsedEcomPlannerOption(parsed, params.optionId)) {
+    return parsed;
+  }
+
+  const repaired = await generatePlannerText({
+    prompt: buildPlannerJsonRepairPrompt({
+      optionId: params.optionId,
+      rawText: params.resultContent,
+      fallback: params.fallback,
+    }),
+    systemPrompt: [
+      "You repair ecommerce planner model output into strict JSON for an API parser.",
+      "Return JSON only. The first character must be { and the last character must be }.",
+      "Do not use markdown. Do not explain.",
+    ].join("\n"),
+    provider: params.provider,
+    model: params.model,
+    apiKey: params.apiKey,
+    maxTokens: PLANNER_JSON_REPAIR_MAX_TOKENS,
+    temperature: 0.1,
+  });
+
+  return parseAgentEcomPlannerModelResponse({
+    text: repaired.content,
+    fallback: params.fallback,
+  });
+}
+
 async function summarizePlannerOption(params: {
   option: AgentEcomPlannerOption;
   provider?: ImageApiProvider;
@@ -373,6 +438,9 @@ export async function POST(request: Request) {
     const model = typeof body.model === "string" ? body.model : undefined;
     const apiKey = typeof body.apiKey === "string" ? body.apiKey : undefined;
     const plannerSystemPrompt = await readPlannerSystemPrompt();
+    const shouldSendImages = shouldSendImagesForEcomPlannerOption({
+      hasSharedPlannerContext: Boolean(sharedPlannerContext),
+    });
     const result = await generatePlannerText({
       prompt: buildPlannerPrompt({ request: userRequest, attachments, optionId, sharedPlannerContext }),
       systemPrompt: plannerSystemPrompt,
@@ -381,21 +449,22 @@ export async function POST(request: Request) {
       apiKey,
       maxTokens: optionId ? PLANNER_SINGLE_OPTION_MAX_TOKENS : PLANNER_MULTI_OPTION_MAX_TOKENS,
       temperature: 0.65,
-      images: getModelImages(attachments),
+      images: shouldSendImages ? getModelImages(attachments) : undefined,
     });
 
-    const planner: AgentEcomPlannerOptionsResult = parseAgentEcomPlannerModelResponse({
-      text: result.content,
+    const planner = await parsePlannerOrRepair({
+      resultContent: result.content,
       fallback,
+      optionId,
+      provider,
+      model,
+      apiKey,
     });
-    const parsedOptions = planner.options.filter((option) => Boolean(option.rawOptionJson));
-    const parsedOptionIds = new Set(parsedOptions.map((option) => option.id));
-
-    if (optionId && !parsedOptionIds.has(optionId)) {
+    if (optionId && !hasParsedEcomPlannerOption(planner, optionId)) {
       throw new Error(`套图企划模型没有返回方案 ${optionId} 的有效 JSON，请重试。`);
     }
 
-    if (!parsedOptions.length) {
+    if (!hasParsedEcomPlannerOption(planner)) {
       throw new Error("套图企划模型没有返回有效方案 JSON，请重试。");
     }
     const summarizedPlanner = await attachPlannerUiSummaries(planner, {
