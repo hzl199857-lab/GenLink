@@ -68,6 +68,7 @@ import {
 } from '@/lib/agent-ecom-planner';
 import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
 import {
+  formatEcomPlannerOptionErrorText,
   formatAgentChatErrorText,
   sanitizeAgentChatText,
   shouldShowAgentInternalText,
@@ -2389,7 +2390,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             };
           }));
         } catch (error) {
-          const errorText = formatAgentChatErrorText(
+          const errorText = formatEcomPlannerOptionErrorText(
             error instanceof Error ? error.message : undefined,
             `方案 ${optionId} 生成失败。`,
           );
@@ -3114,7 +3115,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             };
           }));
         } catch (error) {
-          const errorText = formatAgentChatErrorText(
+          const errorText = formatEcomPlannerOptionErrorText(
             error instanceof Error ? error.message : undefined,
             `方案 ${optionId} 生成失败。`,
           );

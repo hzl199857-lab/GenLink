@@ -21,6 +21,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 };
 
 const {
+  formatEcomPlannerOptionErrorText,
   formatAgentChatErrorText,
   sanitizeAgentChatText,
   shouldShowAgentInternalText,
@@ -39,6 +40,15 @@ test("hides internal agent protocol text from user-facing chat", () => {
   for (const text of internalTexts) {
     assert.equal(shouldShowAgentInternalText(text), false);
   }
+});
+
+test("keeps actionable ecommerce planner JSON errors visible", () => {
+  const text = "Planner model did not return valid option A JSON.";
+
+  assert.equal(
+    formatEcomPlannerOptionErrorText(text, "Option A failed."),
+    text,
+  );
 });
 
 test("sanitizes ecom summaries to GenLink user-facing text", () => {

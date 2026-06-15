@@ -65,3 +65,21 @@ export function formatAgentChatErrorText(text: string | undefined, fallback: str
 
   return sanitizeAgentChatText(value) || fallback;
 }
+
+export function formatEcomPlannerOptionErrorText(text: string | undefined, fallback: string): string {
+  const value = text?.trim();
+
+  if (!value) {
+    return fallback;
+  }
+
+  if (
+    INTERNAL_AGENT_TEXT_PATTERNS.some((pattern) => pattern.test(value)) ||
+    /\b(first|repair|previousOpenClawText|create_workflow|fence)=/i.test(value) ||
+    /failed validation|exited with code|terminated/i.test(value)
+  ) {
+    return fallback;
+  }
+
+  return sanitizeAgentChatText(value) || fallback;
+}
