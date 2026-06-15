@@ -21,6 +21,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 };
 
 const {
+  getAgentPlanfPresetPanelOpenState,
   getAgentReferenceUploadNudgeRequestForPlanfPanel,
   shouldShowAgentReferenceUploadNudge,
 } = require("./agent-reference-upload-nudge.ts") as typeof import("./agent-reference-upload-nudge");
@@ -73,4 +74,40 @@ test("dismisses the reference upload nudge when the ecommerce panel closes", () 
     }),
     false,
   );
+});
+
+test("opening the ecommerce direction panel selects the default preset and fills its prompt", () => {
+  const result = getAgentPlanfPresetPanelOpenState({
+    attachmentCount: 0,
+    currentSelectedPresetId: null,
+    presets: [
+      { id: "full-set-8", prompt: "default prompt", routeMode: "default" },
+      { id: "detail-page-pack", prompt: "detail prompt", routeMode: "detail-page" },
+    ],
+  });
+
+  assert.deepEqual(result, {
+    selectedPresetId: "full-set-8",
+    routeMode: "default",
+    draft: "default prompt",
+    referenceUploadNudgeRequested: true,
+  });
+});
+
+test("opening the ecommerce direction panel preserves an existing preset selection", () => {
+  const result = getAgentPlanfPresetPanelOpenState({
+    attachmentCount: 1,
+    currentSelectedPresetId: "detail-page-pack",
+    presets: [
+      { id: "full-set-8", prompt: "default prompt", routeMode: "default" },
+      { id: "detail-page-pack", prompt: "detail prompt", routeMode: "detail-page" },
+    ],
+  });
+
+  assert.deepEqual(result, {
+    selectedPresetId: "detail-page-pack",
+    routeMode: "detail-page",
+    draft: "detail prompt",
+    referenceUploadNudgeRequested: false,
+  });
 });

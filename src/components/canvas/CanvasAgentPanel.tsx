@@ -79,6 +79,7 @@ import {
   resolveStoredAgentPanelWidth,
 } from '@/lib/agent-panel-layout';
 import {
+  getAgentPlanfPresetPanelOpenState,
   getAgentReferenceUploadNudgeRequestForPlanfPanel,
   shouldShowAgentReferenceUploadNudge,
 } from '@/lib/agent-reference-upload-nudge';
@@ -1831,6 +1832,12 @@ function resolveActivePlanfPresetId(
   return draftValue.trim().startsWith(preset.prompt) ? selectedPresetId : null;
 }
 
+function isPlanfPresetPromptDraft(draftValue: string): boolean {
+  const trimmedDraft = draftValue.trim();
+
+  return PLANF_ECOM_PRESETS.some((preset) => trimmedDraft === preset.prompt.trim());
+}
+
 export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   open,
   projectId,
@@ -2027,13 +2034,32 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
   const setPlanfPresetPanelOpen = useCallback((nextOpen: boolean) => {
     setPlanfPresetOpen(nextOpen);
+
+    if (nextOpen) {
+      const nextPanelState = getAgentPlanfPresetPanelOpenState({
+        attachmentCount: attachmentsRef.current.length,
+        currentSelectedPresetId: selectedPlanfPresetId,
+        presets: PLANF_ECOM_PRESETS,
+      });
+
+      setSelectedPlanfPresetId(nextPanelState.selectedPresetId);
+      setPlanfRouteMode(nextPanelState.routeMode ?? 'auto');
+      setDraft(nextPanelState.draft);
+      setReferenceUploadNudgeRequested(nextPanelState.referenceUploadNudgeRequested);
+      return;
+    }
+
+    setSelectedPlanfPresetId(null);
+    setPlanfRouteMode('auto');
     setReferenceUploadNudgeRequested(
       getAgentReferenceUploadNudgeRequestForPlanfPanel({
         panelOpen: nextOpen,
         attachmentCount: attachmentsRef.current.length,
       }),
     );
-  }, []);
+
+    setDraft((currentDraft) => (isPlanfPresetPromptDraft(currentDraft) ? '' : currentDraft));
+  }, [selectedPlanfPresetId]);
 
   const handleOpenHistory = useCallback(() => {
     setHistoryThreads(listAgentThreads(projectId, projectName));
@@ -4986,7 +5012,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         setSelectedPlanfPresetId(preset.id);
                         setPlanfRouteMode(preset.routeMode);
                         setDraft(preset.prompt);
-                        setReferenceUploadNudgeRequested(preset.id === ECOM_PLANNER_PRESET_ID);
+                        setReferenceUploadNudgeRequested(
+                          getAgentReferenceUploadNudgeRequestForPlanfPanel({
+                            panelOpen: true,
+                            attachmentCount: attachmentsRef.current.length,
+                          }),
+                        );
                       }}
                     >
                       {preset.label}
