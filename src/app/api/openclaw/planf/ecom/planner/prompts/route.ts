@@ -9,6 +9,7 @@ import {
 } from "@/lib/agent-ecom-planner";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const PLANNER_PROMPT_MODEL_TIMEOUT_MS = 5 * 60_000;
 const PLANNER_PROMPT_SLOT_MAX_TOKENS = 2_200;
@@ -533,6 +534,8 @@ function wantsNdjsonStream(request: Request): boolean {
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = Date.now();
+
   try {
     const body = (await request.json()) as PlannerPromptRequestBody;
     const userRequest = typeof body.request === "string" ? body.request.trim() : "";
@@ -686,6 +689,11 @@ export async function POST(request: Request) {
       model: result.model,
     });
   } catch (error) {
+    console.error("[openclaw/planf/ecom/planner/prompts] failed", {
+      elapsedMs: Date.now() - requestStartedAt,
+      error: error instanceof Error ? error.message : error,
+    });
+
     const isTimeout = (
       error instanceof VibeApiError &&
       error.status === 504

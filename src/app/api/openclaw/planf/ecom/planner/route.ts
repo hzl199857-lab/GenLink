@@ -13,6 +13,7 @@ import {
 import { generateText, type ImageApiProvider } from "@/lib/vibe";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const PLANNER_MODEL_TIMEOUT_MS = 5 * 60_000;
 const PLANNER_MAX_MODEL_IMAGES = 2;
@@ -341,6 +342,8 @@ async function readPlannerSystemPrompt(): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = Date.now();
+
   try {
     const body = (await request.json()) as PlannerRequestBody;
     const userRequest = typeof body.request === "string" ? body.request.trim() : "";
@@ -407,6 +410,11 @@ export async function POST(request: Request) {
       model: result.model,
     });
   } catch (error) {
+    console.error("[openclaw/planf/ecom/planner] failed", {
+      elapsedMs: Date.now() - requestStartedAt,
+      error: error instanceof Error ? error.message : error,
+    });
+
     return NextResponse.json(
       {
         ok: false,

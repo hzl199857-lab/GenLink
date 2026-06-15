@@ -48,6 +48,7 @@ import {
   attachExistingSourceReferencesToImageActions,
   restoreReferenceMentionLabelsInActions,
 } from '@/lib/agent-actions';
+import { fetchAgentApi } from '@/lib/agent-api-fetch';
 import {
   type AgentImageAttachmentUploadKind,
   type AgentImageDerivativeOptions,
@@ -999,27 +1000,31 @@ async function requestAgentEcomPlannerOptions(params: {
   model: string;
 }): Promise<AgentEcomPlannerApiPlanner> {
   const textRunConfig = resolveAgentTextRunConfig(params.provider);
-  const response = await fetch('/api/openclaw/planf/ecom/planner', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const response = await fetchAgentApi(
+    '/api/openclaw/planf/ecom/planner',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        request: params.message,
+        optionId: params.optionId,
+        sharedPlannerContext: params.sharedPlannerContext,
+        attachments: params.attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          imageUrl: attachment.imageUrl,
+          previewUrl: attachment.previewUrl,
+          ecomPlannerRole: getAgentEcomPlannerAttachmentRole(attachment),
+        })),
+        provider: textRunConfig.provider,
+        model: params.model,
+        apiKey: textRunConfig.apiKey,
+      }),
     },
-    body: JSON.stringify({
-      request: params.message,
-      optionId: params.optionId,
-      sharedPlannerContext: params.sharedPlannerContext,
-      attachments: params.attachments.map((attachment) => ({
-        id: attachment.id,
-        name: attachment.name,
-        imageUrl: attachment.imageUrl,
-        previewUrl: attachment.previewUrl,
-        ecomPlannerRole: getAgentEcomPlannerAttachmentRole(attachment),
-      })),
-      provider: textRunConfig.provider,
-      model: params.model,
-      apiKey: textRunConfig.apiKey,
-    }),
-  });
+    '套图企划生成失败',
+  );
   const json = await readJsonResponse<AgentEcomPlannerApiResponse>(
     response,
     '套图企划生成失败',
@@ -1054,33 +1059,37 @@ async function requestAgentEcomPlannerPromptMarkdown(params: {
         params.option.visualDirection,
         params.option.sellingPointStrategy,
       ].filter(Boolean).join(' / ');
-  const response = await fetch('/api/openclaw/planf/ecom/planner/prompts', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/x-ndjson',
+  const response = await fetchAgentApi(
+    '/api/openclaw/planf/ecom/planner/prompts',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/x-ndjson',
+      },
+      body: JSON.stringify({
+        request: params.request,
+        productName: params.plannerMessage.productName,
+        platform: params.plannerMessage.platform,
+        taskType: params.plannerMessage.taskType,
+        optionId: params.option.id,
+        optionTitle: params.option.title,
+        optionJson: params.option.rawOptionJson,
+        optionSummary,
+        attachments: params.plannerMessage.attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          imageUrl: attachment.imageUrl,
+          previewUrl: attachment.previewUrl,
+          ecomPlannerRole: getAgentEcomPlannerAttachmentRole(attachment),
+        })),
+        provider: textRunConfig.provider,
+        model: params.model,
+        apiKey: textRunConfig.apiKey,
+      }),
     },
-    body: JSON.stringify({
-      request: params.request,
-      productName: params.plannerMessage.productName,
-      platform: params.plannerMessage.platform,
-      taskType: params.plannerMessage.taskType,
-      optionId: params.option.id,
-      optionTitle: params.option.title,
-      optionJson: params.option.rawOptionJson,
-      optionSummary,
-      attachments: params.plannerMessage.attachments.map((attachment) => ({
-        id: attachment.id,
-        name: attachment.name,
-        imageUrl: attachment.imageUrl,
-        previewUrl: attachment.previewUrl,
-        ecomPlannerRole: getAgentEcomPlannerAttachmentRole(attachment),
-      })),
-      provider: textRunConfig.provider,
-      model: params.model,
-      apiKey: textRunConfig.apiKey,
-    }),
-  });
+    '套图企划生图 Prompt 生成失败',
+  );
 
   if (response.headers.get('content-type')?.includes('application/x-ndjson')) {
     if (!response.ok || !response.body) {
