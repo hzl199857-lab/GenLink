@@ -35,8 +35,14 @@ import {
   getImageModelLabel,
   IMAGE_MODEL_OPTIONS_BY_PROVIDER,
   IMAGE_SIZE_OPTIONS,
-  type RunningHubChannel,
 } from '@/lib/image-generation-options';
+import {
+  DEFAULT_AGENT_IMAGE_ASPECT_RATIO,
+  DEFAULT_AGENT_IMAGE_QUALITY,
+  DEFAULT_AGENT_RUNNING_HUB_CHANNEL,
+  getImageModelDefault,
+  resolveAgentImageGenerationPreference,
+} from '@/lib/agent-image-preference';
 import { stripReferenceMentionTokens } from '@/lib/prompt-mentions';
 import {
   getApiProviderLabel,
@@ -117,9 +123,6 @@ import {
   useReferenceImageHoverPreview,
 } from '../nodes/ReferenceImageHoverPreview';
 
-const DEFAULT_IMAGE_ASPECT_RATIO = 'auto';
-const DEFAULT_IMAGE_QUALITY = '1K';
-const DEFAULT_RUNNING_HUB_CHANNEL: RunningHubChannel = 'official';
 const SHOW_AGENT_TRACE_IN_CHAT = false;
 const SHOW_PLANF_ECOM_RUNTIME_IN_CHAT = false;
 
@@ -1729,12 +1732,6 @@ function resolveAutoImageProvider(): ApiProvider {
   return providerWithKey ?? readStoredSelectedApiProvider('image');
 }
 
-function getImageModelDefault(provider: ApiProvider): string {
-  const options = IMAGE_MODEL_OPTIONS_BY_PROVIDER[provider];
-
-  return options.find((option) => option.id === 'gpt-image-2')?.id ?? options[0]?.id ?? 'gpt-image-2';
-}
-
 type AgentPanelSelectOption<TValue extends string> = {
   value: TValue;
   label: string;
@@ -1871,6 +1868,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const pendingAttachmentRoleRef = useRef<AgentEcomPlannerAttachmentRole>('product');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const attachmentsRef = useRef<AgentTaskAttachment[]>([]);
+  const planfPresetOpenBeforeOverlayRef = useRef(false);
   const resizeDragRef = useRef<{
     startClientX: number;
     startWidth: number;
@@ -1905,32 +1903,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const [referenceUploadNudgeRequested, setReferenceUploadNudgeRequested] = useState(false);
   const [imagePreference, setImagePreference] = useState<AgentImageGenerationPreference>({
     mode: 'auto',
-    aspectRatio: DEFAULT_IMAGE_ASPECT_RATIO,
-    quality: DEFAULT_IMAGE_QUALITY,
-    runningHubChannel: DEFAULT_RUNNING_HUB_CHANNEL,
+    aspectRatio: DEFAULT_AGENT_IMAGE_ASPECT_RATIO,
+    quality: DEFAULT_AGENT_IMAGE_QUALITY,
+    runningHubChannel: DEFAULT_AGENT_RUNNING_HUB_CHANNEL,
   });
   const [expandedPlanSlotKeys, setExpandedPlanSlotKeys] = useState<Set<string>>(() => new Set());
 
   const resolvedImagePreference = useMemo((): Required<AgentImageGenerationPreference> => {
-    const autoProvider = resolveAutoImageProvider();
-    const selectedProvider = imagePreference.mode === 'manual'
-      ? imagePreference.provider ?? autoProvider
-      : autoProvider;
-    const modelOptions = IMAGE_MODEL_OPTIONS_BY_PROVIDER[selectedProvider];
-    const selectedModel = modelOptions.some((option) => option.id === imagePreference.model)
-      ? imagePreference.model as string
-      : getImageModelDefault(selectedProvider);
-
-    return {
-      mode: imagePreference.mode,
-      provider: selectedProvider,
-      model: selectedModel,
-      runningHubChannel: selectedProvider === 'runninghub'
-        ? imagePreference.runningHubChannel ?? DEFAULT_RUNNING_HUB_CHANNEL
-        : DEFAULT_RUNNING_HUB_CHANNEL,
-      aspectRatio: imagePreference.aspectRatio ?? DEFAULT_IMAGE_ASPECT_RATIO,
-      quality: imagePreference.quality ?? DEFAULT_IMAGE_QUALITY,
-    };
+    return resolveAgentImageGenerationPreference({
+      preference: imagePreference,
+      autoProvider: resolveAutoImageProvider(),
+    });
   }, [imagePreference]);
 
   const mentionImages = useMemo(
@@ -3703,7 +3686,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
   const activeImageModels = IMAGE_MODEL_OPTIONS_BY_PROVIDER[resolvedImagePreference.provider];
   const showAgentSuggestions = messages.length === 0 && !busy;
-  const imagePreferenceControlsDisabled = imagePreference.mode === 'auto';
+  const aspectRatioControlsDisabled = imagePreference.mode === 'auto';
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sync generation message status from external canvas node updates
@@ -4878,7 +4861,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               <div
                 className={[
                   'mb-3 grid grid-cols-3 gap-1.5 transition-opacity',
-                  imagePreferenceControlsDisabled ? 'opacity-35' : 'opacity-100',
+                  aspectRatioControlsDisabled ? 'opacity-35' : 'opacity-100',
                 ].join(' ')}
               >
                 {['auto', '1:1', '16:9', '9:16', '4:3', '3:4'].map((ratio) => {
@@ -4890,14 +4873,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       type="button"
                       className={[
                         'h-8 rounded-md px-2 text-xs transition',
-                        imagePreferenceControlsDisabled
+                        aspectRatioControlsDisabled
                           ? 'cursor-not-allowed'
                           : 'hover:bg-white/[0.09]',
                         selected
                           ? 'bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]'
                           : 'bg-white/[0.05] text-white/54',
                       ].join(' ')}
-                      disabled={imagePreferenceControlsDisabled}
+                      disabled={aspectRatioControlsDisabled}
                       onClick={() => {
                         setImagePreference((current) => ({
                           ...current,
@@ -4913,8 +4896,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               </div>
               <div
                 className={[
-                  'mb-3 flex gap-1.5 transition-opacity',
-                  imagePreferenceControlsDisabled ? 'opacity-35' : 'opacity-100',
+                  'mb-3 flex gap-1.5',
                 ].join(' ')}
               >
                 {IMAGE_SIZE_OPTIONS.map((option) => {
@@ -4925,19 +4907,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       key={option}
                       type="button"
                       className={[
-                        'h-8 rounded-md px-3 text-xs font-medium transition',
-                        imagePreferenceControlsDisabled
-                          ? 'cursor-not-allowed'
-                          : 'hover:bg-white/[0.09]',
+                        'h-8 rounded-md px-3 text-xs font-medium transition hover:bg-white/[0.09]',
                         selected
                           ? 'bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]'
                           : 'bg-white/[0.05] text-white/54',
                       ].join(' ')}
-                      disabled={imagePreferenceControlsDisabled}
                       onClick={() => {
                         setImagePreference((current) => ({
                           ...current,
-                          mode: 'manual',
                           quality: option,
                         }));
                       }}
@@ -4949,14 +4926,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               </div>
               <div
                 className={[
-                  'grid grid-cols-2 gap-2 transition-opacity',
-                  imagePreferenceControlsDisabled ? 'opacity-35' : 'opacity-100',
+                  'grid grid-cols-2 gap-2',
                 ].join(' ')}
               >
                 <AgentPanelSelect
                   label="Provider"
                   value={resolvedImagePreference.provider}
-                  disabled={imagePreferenceControlsDisabled}
                   options={API_PROVIDERS.map((option) => ({
                     value: option,
                     label: getApiProviderLabel(option),
@@ -4964,7 +4939,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   onChange={(nextProvider) => {
                     setImagePreference((current) => ({
                       ...current,
-                      mode: 'manual',
                       provider: nextProvider,
                       model: getImageModelDefault(nextProvider),
                     }));
@@ -4973,7 +4947,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 <AgentPanelSelect
                   label="Model"
                   value={resolvedImagePreference.model}
-                  disabled={imagePreferenceControlsDisabled}
                   options={activeImageModels.map((option) => ({
                     value: option.id,
                     label: option.label,
@@ -4981,7 +4954,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   onChange={(nextModel) => {
                     setImagePreference((current) => ({
                       ...current,
-                      mode: 'manual',
                       provider: resolvedImagePreference.provider,
                       model: nextModel,
                     }));
@@ -5204,9 +5176,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 aria-label="Agent 模型设置"
                 aria-expanded={settingsOpen}
                 onClick={() => {
-                  setSettingsOpen((current) => !current);
+                  const nextOpen = !settingsOpen;
+                  if (nextOpen) {
+                    planfPresetOpenBeforeOverlayRef.current = planfPresetOpen;
+                  }
+                  setSettingsOpen(nextOpen);
+                  setPlanfPresetOpen(nextOpen ? false : planfPresetOpenBeforeOverlayRef.current);
                   setGenerationPreferenceOpen(false);
-                  setPlanfPresetPanelOpen(false);
                 }}
               >
                 <Sparkles size={13} />
@@ -5244,9 +5220,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 aria-expanded={generationPreferenceOpen}
                 title={`${getImageModelLabel(resolvedImagePreference.model)} / ${resolvedImagePreference.aspectRatio} / ${resolvedImagePreference.quality}`}
                 onClick={() => {
-                  setGenerationPreferenceOpen((current) => !current);
+                  const nextOpen = !generationPreferenceOpen;
+                  if (nextOpen) {
+                    planfPresetOpenBeforeOverlayRef.current = planfPresetOpen;
+                  }
+                  setGenerationPreferenceOpen(nextOpen);
+                  setPlanfPresetOpen(nextOpen ? false : planfPresetOpenBeforeOverlayRef.current);
                   setSettingsOpen(false);
-                  setPlanfPresetPanelOpen(false);
                 }}
               >
                 <SlidersHorizontal size={15} />
