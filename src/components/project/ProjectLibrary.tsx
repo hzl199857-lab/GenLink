@@ -25,6 +25,12 @@ import {
   type CreateProjectDraft,
 } from './CreateProjectDialog';
 import { DeleteProjectDialog } from './DeleteProjectDialog';
+import {
+  projectLibraryCardClassName,
+  projectLibraryCardSurfaceStyle,
+  projectLibraryCardStyle,
+  projectLibraryThumbnailStyle,
+} from '@/lib/project-library-layout';
 
 interface ProjectLibraryProps {
   onOpenProject: () => void;
@@ -125,9 +131,15 @@ function ProjectCard({
   const thumbnailUrl = project.thumbnailUrl?.trim();
 
   return (
-    <article className="relative grid h-[182px] w-[220px] grid-rows-[124px_1fr]">
-      <button type="button" onClick={onCardClick} className="block w-full self-start text-left">
-        <div className="relative h-[124px] w-full overflow-hidden rounded-[12px] border border-white/10 bg-[linear-gradient(180deg,#35393f_0%,#2b3036_52%,#23282e_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition duration-150 hover:border-white/18 hover:bg-[linear-gradient(180deg,#3a3f46_0%,#30353c_52%,#272c33_100%)]">
+    <article
+      className={`relative ${projectLibraryCardClassName}`}
+      style={{
+        ...projectLibraryCardStyle,
+        ...projectLibraryCardSurfaceStyle,
+      }}
+    >
+      <button type="button" onClick={onCardClick} className="block w-full text-left">
+        <div className="relative overflow-hidden rounded-[15px] bg-[#17191d]" style={projectLibraryThumbnailStyle}>
           {thumbnailUrl ? (
             <Image
               src={thumbnailUrl}
@@ -141,12 +153,12 @@ function ProjectCard({
         </div>
       </button>
 
-      <div className="mt-2.5 flex items-start justify-between gap-2">
-        <div className="min-w-0 pt-0.5">
-          <div className="truncate text-[13px] font-medium leading-none text-white/88">
+      <div className="flex items-start justify-between gap-2 px-3 pb-3 pt-3">
+        <div className="min-w-0">
+          <div className="truncate text-[14px] font-semibold leading-none text-white/92">
             {project.name}
           </div>
-          <div className="mt-2 text-[11px] leading-none text-white/36">
+          <div className="mt-2 text-[12px] font-semibold leading-none text-white/86">
             {formatDate(project.updatedAt)}
           </div>
         </div>
@@ -164,7 +176,7 @@ function ProjectCard({
         >
           <button
             type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-[9px] text-white/44 transition hover:bg-white/7 hover:text-white/84"
+            className="flex h-7 w-7 items-center justify-center rounded-[9px] text-white/70 transition hover:bg-white/8 hover:text-white/92"
             onClick={(event) => {
               event.stopPropagation();
               onOpenMenu();
@@ -189,14 +201,18 @@ function CreateProjectCard({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
-      className="grid h-[182px] w-[220px] grid-rows-[124px_1fr] text-left"
+      className={projectLibraryCardClassName}
+      style={{
+        ...projectLibraryCardStyle,
+        ...projectLibraryCardSurfaceStyle,
+      }}
       onClick={onClick}
     >
-      <div className="flex h-[124px] w-full flex-col items-center justify-center rounded-[12px] border border-dashed border-white/14 bg-[linear-gradient(180deg,#17191d,#131417)] text-white/84 transition duration-150 hover:border-white/28 hover:bg-[linear-gradient(180deg,#1b1d22,#15171a)]">
+      <div className="flex flex-col items-center justify-center rounded-[15px] border border-dashed border-white/18 bg-[linear-gradient(180deg,#17191d,#101114)] text-white/84 transition duration-150 hover:border-white/30 hover:bg-[linear-gradient(180deg,#1b1d22,#15171a)]" style={projectLibraryThumbnailStyle}>
         <Plus size={24} strokeWidth={1.8} />
-        <div className="mt-2.5 text-[14px] font-medium">开始创作</div>
+        <div className="mt-2.5 text-[14px] font-semibold">开始创作</div>
       </div>
-      <div className="mt-2.5 text-[12px] leading-none text-white/46">创建新项目</div>
+      <div className="px-3 pb-3 pt-3 text-[12px] leading-none text-white/50">创建新项目</div>
     </button>
   );
 }
