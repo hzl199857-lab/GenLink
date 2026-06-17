@@ -8,6 +8,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
+import { getCompleteRegisterCode } from "@/lib/register-code";
 
 const emptyCode = () => ["", "", "", "", "", ""];
 const registerInputBaseClass =
@@ -90,8 +91,14 @@ export function RegisterFlow() {
     }
   };
 
-  const handleCreateAccount = async () => {
+  const handleCreateAccount = async (completedCode?: string) => {
     if (submitting) {
+      return;
+    }
+
+    const codeValue = completedCode ?? getCompleteRegisterCode(code);
+    if (!codeValue) {
+      setError("\u9a8c\u8bc1\u7801\u9519\u8bef");
       return;
     }
 
@@ -99,7 +106,6 @@ export function RegisterFlow() {
     setError(null);
 
     try {
-      const codeValue = code.join("");
       const verifyResponse = await fetch("/api/auth/verify-register-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,9 +161,10 @@ export function RegisterFlow() {
       codeInputRefs.current[index + 1]?.focus();
     }
 
-    if (index === 5 && value && newCode.every((digit) => digit.length === 1)) {
+    const completeCode = getCompleteRegisterCode(newCode);
+    if (index === 5 && completeCode) {
       successTimerRef.current = setTimeout(() => {
-        void handleCreateAccount();
+        void handleCreateAccount(completeCode);
       }, 250);
     }
   };
