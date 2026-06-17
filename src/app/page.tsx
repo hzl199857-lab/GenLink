@@ -1,15 +1,17 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { GenLinkHero } from '@/components/hero/GenLinkHero';
 import { InfiniteCanvas } from '@/components/canvas/InfiniteCanvas';
 import { ProjectLibrary } from '@/components/project/ProjectLibrary';
 import UniqueLoading from '@/components/ui/grid-loading';
+import { authClient } from '@/lib/auth-client';
+import { getHomeEntryDecision } from '@/lib/auth-entry';
 import {
   shouldKeepEntryLoaderVisible,
   shouldShowProjectLibraryEntryLoader,
 } from '@/lib/project-open-transition';
-import { getStoredProjectRecordCount } from '@/lib/project-storage';
 
 type Mode = 'hero' | 'library' | 'canvas';
 
@@ -18,15 +20,19 @@ const ENTRY_LOADER_MIN_MS = 650;
 const ENTRY_LOADER_EXIT_MS = 420;
 const ENTRY_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
-export default function HomePage() {
+function HomePageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const session = authClient.useSession();
   const [mode, setMode] = useState<Mode>('hero');
-  const [heroLeaving, setHeroLeaving] = useState(false);
+  const [heroLeaving] = useState(false);
   const [appVisible, setAppVisible] = useState(false);
   const [entryLoader, setEntryLoader] = useState<null | 'library' | 'canvas'>(null);
   const [entryLoaderLeaving, setEntryLoaderLeaving] = useState(false);
   const [knownProjectCount, setKnownProjectCount] = useState<number | null>(null);
   const entryLoaderStartedAtRef = useRef<number | null>(null);
   const entryLoaderTimerRef = useRef<number | null>(null);
+  const handledAppEntryRef = useRef(false);
 
   const clearEntryLoaderTimer = useCallback(() => {
     if (entryLoaderTimerRef.current !== null) {
@@ -84,10 +90,55 @@ export default function HomePage() {
 
   useEffect(() => clearEntryLoaderTimer, [clearEntryLoaderTimer]);
 
-  const showAppMode = (nextMode: Exclude<Mode, 'hero'>) => {
+  useEffect(() => {
+    if (searchParams.get('app') !== 'library') {
+      handledAppEntryRef.current = false;
+    }
+  }, [searchParams]);
+
+  const showAppMode = useCallback((nextMode: Exclude<Mode, 'hero'>) => {
     setAppVisible(false);
     setMode(nextMode);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (session.isPending || handledAppEntryRef.current) return;
+
+    const decision = getHomeEntryDecision({
+      appParam: searchParams.get('app'),
+      isAuthenticated: Boolean(session.data?.user),
+    });
+
+    if (decision.action === 'redirect-login') {
+      handledAppEntryRef.current = true;
+      router.replace('/login');
+      return;
+    }
+
+    if (decision.action !== 'open-library') {
+      return;
+    }
+
+    handledAppEntryRef.current = true;
+
+    const timer = window.setTimeout(() => {
+      if (mode !== 'library') {
+        showEntryLoader('library');
+        showAppMode('library');
+      }
+      router.replace('/');
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    mode,
+    router,
+    searchParams,
+    session.data?.user,
+    session.isPending,
+    showAppMode,
+    showEntryLoader,
+  ]);
 
   const showCanvasAfterProjectOpen = () => {
     showEntryLoader('canvas');
@@ -95,33 +146,23 @@ export default function HomePage() {
   };
 
   const enterApp = () => {
-    if (heroLeaving) return;
-    setHeroLeaving(true);
+    if (session.data?.user) {
+      router.push('/?app=library');
+      return;
+    }
 
-    void getStoredProjectRecordCount()
-      .then((projectCount) => {
-        setKnownProjectCount(projectCount);
-        if (shouldShowProjectLibraryEntryLoader(projectCount)) {
-          showEntryLoader('library');
-        }
-      })
-      .catch(() => {
-        showEntryLoader('library');
-      });
-
-    window.setTimeout(() => {
-      showAppMode('library');
-      setHeroLeaving(false);
-    }, FADE_MS);
+    router.push('/login');
   };
 
   const backToHero = () => {
+    handledAppEntryRef.current = false;
     setAppVisible(false);
     clearEntryLoaderTimer();
     setEntryLoader(null);
     setEntryLoaderLeaving(false);
     entryLoaderStartedAtRef.current = null;
     setMode('hero');
+    router.replace('/');
   };
 
   return (
@@ -205,5 +246,13 @@ export default function HomePage() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <HomePageContent />
+    </Suspense>
   );
 }

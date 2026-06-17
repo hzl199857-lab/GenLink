@@ -1,0 +1,27 @@
+{
+  "name": "signin-next-4500-preview",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 4500"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.4.2",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.23.24",
+    "next": "16.2.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "tailwind-merge": "^3.4.0",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.184.1",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5"
+  }
+}
