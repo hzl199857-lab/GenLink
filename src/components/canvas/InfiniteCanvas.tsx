@@ -6355,9 +6355,18 @@ function loadAnnotationImage(imageUrl: string): Promise<HTMLImageElement> {
 
     image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Failed to load annotation image'));
+    image.onerror = () => reject(new Error('标注原图加载失败，请稍后重试'));
     image.src = imageUrl;
   });
+}
+
+async function saveAnnotationImageDataUrl(dataUrl: string, fileName: string): Promise<string> {
+  try {
+    return await uploadCanvasImageAssetDataUrl(dataUrl, fileName, 'original', 'images');
+  } catch (error) {
+    console.warn('[GenLink] annotation image hosting failed; using embedded data URL fallback', error);
+    return dataUrl;
+  }
 }
 
 function estimateAnnotationTextPixelWidth(value: string, fontSize: number) {
@@ -8863,7 +8872,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         flipY: data.flipY,
       });
       const fileName = `annotation-${Date.now()}.png`;
-      const hostedImageUrl = await uploadCanvasImageAssetDataUrl(result.dataUrl, fileName, 'original', 'images');
+      const hostedImageUrl = await saveAnnotationImageDataUrl(result.dataUrl, fileName);
       const annotatedTitle = createAnnotatedImageNodeTitle(sourceNode);
       const nextNode = createImportedImageNode(
         {
