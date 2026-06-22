@@ -13,6 +13,7 @@ interface BuildProjectSnapshotParams {
   edges: CanvasEdge[];
   groups?: NodeGroup[];
   materials?: MaterialLibraryItem[];
+  thumbnailFileName?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -28,6 +29,7 @@ export function buildProjectSnapshot({
   edges,
   groups,
   materials,
+  thumbnailFileName,
   createdAt,
   updatedAt,
 }: BuildProjectSnapshotParams): ProjectSnapshot {
@@ -41,6 +43,7 @@ export function buildProjectSnapshot({
     edges,
     groups: groups && groups.length > 0 ? groups : undefined,
     materials: materials && materials.length > 0 ? materials : undefined,
+    thumbnailFileName: thumbnailFileName?.trim() || undefined,
     createdAt: nextCreatedAt,
     updatedAt: nextUpdatedAt,
   };

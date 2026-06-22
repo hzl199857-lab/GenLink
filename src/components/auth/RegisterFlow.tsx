@@ -8,6 +8,11 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
+import {
+  getRegisterAccountErrorMessage,
+  getRegisterFlowErrorMessage,
+  getLoginErrorMessage,
+} from "@/lib/auth-error-message";
 import { getCompleteRegisterCode } from "@/lib/register-code";
 
 const emptyCode = () => ["", "", "", "", "", ""];
@@ -77,7 +82,7 @@ export function RegisterFlow() {
       };
 
       if (!response.ok || !result.ok) {
-        setError(result.error || "\u9a8c\u8bc1\u7801\u53d1\u9001\u5931\u8d25");
+        setError(getRegisterFlowErrorMessage(result.error));
         return;
       }
 
@@ -117,7 +122,7 @@ export function RegisterFlow() {
       };
 
       if (!verifyResponse.ok || !verifyResult.ok) {
-        setError(verifyResult.error || "\u9a8c\u8bc1\u7801\u9519\u8bef");
+        setError(getRegisterFlowErrorMessage(verifyResult.error));
         return;
       }
 
@@ -128,7 +133,7 @@ export function RegisterFlow() {
       });
 
       if (result.error) {
-        setError(result.error.message || "\u6ce8\u518c\u5931\u8d25");
+        setError(getRegisterAccountErrorMessage(result.error.message));
         return;
       }
 
@@ -138,7 +143,7 @@ export function RegisterFlow() {
       });
 
       if (signInResult.error) {
-        setError(signInResult.error.message || "\u767b\u5f55\u5931\u8d25");
+        setError(getLoginErrorMessage());
         return;
       }
 

@@ -2,6 +2,7 @@
 
 export type NodeType =
   | "text"
+  | "storyboard_script"
   | "image_generation"
   | "video_generation"
   | "video_upscale"
@@ -35,6 +36,48 @@ export interface TextNodeData {
   errorMessage?: string;
 }
 
+export type StoryboardRow = {
+  "镜号": string;
+  "时长": string;
+  "景别": string;
+  "场景": string;
+  "画面描述": string;
+  "角色": string;
+  "角色描述": string;
+  "角色动作": string;
+  "情绪": string;
+  "角色图": string;
+  "参考": string;
+  "图片提示词": string;
+  "视频提示词": string;
+  "对白": string;
+  "音效": string;
+};
+
+export interface StoryboardReferenceImage {
+  label: string;
+  url: string;
+  previewUrl?: string;
+  sourceNodeId: string;
+  alt?: string;
+}
+
+export interface StoryboardScriptNodeData {
+  title?: string;
+  prompt: string;
+  rows: StoryboardRow[];
+  rawJson?: string;
+  cardWidth?: number;
+  cardHeight?: number;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
+  viewMode: "list" | "card";
+  focusMode: "imagePrompt" | "videoPrompt";
+  provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
+  model?: string;
+  referenceImages?: StoryboardReferenceImage[];
+}
+
 export interface ImageGenerationResultItem {
   status: "completed" | "error";
   imageUrl?: string;
@@ -46,6 +89,26 @@ export interface ImageGenerationResultItem {
   sizeBytes?: number;
   generatedAt: string;
   errorMessage?: string;
+}
+
+export interface ImageAnnotation {
+  id: string;
+  kind?: "text" | "rect" | "path" | "number";
+  name: string;
+  number?: number;
+  rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  points?: Array<{ x: number; y: number }>;
+  color?: string;
+  strokeWidth?: number;
+  fontSize?: number;
+  rotation?: number;
+  visible?: boolean;
+  createdAt: string;
 }
 
 export interface ImageGenerationNodeData {
@@ -98,6 +161,7 @@ export interface ImageGenerationNodeData {
   generatedImageSizeBytes?: number;
   generatedAt?: string;
   generationResults?: ImageGenerationResultItem[];
+  annotations?: ImageAnnotation[];
   status?: "idle" | "generating" | "error";
   errorMessage?: string;
 }
@@ -204,6 +268,7 @@ export interface ImageNodeData {
   sourcePromptNodeId?: string;
   sourceImageNodeId?: string;
   generatedOutputFileName?: string;
+  annotations?: ImageAnnotation[];
   cameraAngle?: {
     rotation: number;
     pitch: number;
@@ -224,6 +289,7 @@ export interface UploadedImageNodeData {
   displayWidth?: number;
   displayHeight?: number;
   sizeBytes?: number;
+  annotations?: ImageAnnotation[];
 }
 
 export interface VideoNodeData {
@@ -282,6 +348,7 @@ export interface Panorama360NodeData {
 
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
+  | { type: "storyboard_script"; data: StoryboardScriptNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "video_generation"; data: VideoGenerationNodeData }
   | { type: "video_upscale"; data: VideoUpscaleNodeData }
@@ -293,6 +360,7 @@ export type CanvasNodeData =
 
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
+  | BaseCanvasNode<"storyboard_script", StoryboardScriptNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
   | BaseCanvasNode<"video_upscale", VideoUpscaleNodeData>
@@ -351,6 +419,7 @@ export interface ProjectSnapshot {
   edges: CanvasEdge[];
   groups?: NodeGroup[];
   materials?: MaterialLibraryItem[];
+  thumbnailFileName?: string;
   createdAt: string;
   updatedAt: string;
 }

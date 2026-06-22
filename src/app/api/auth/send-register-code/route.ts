@@ -26,7 +26,7 @@ export async function POST(request: Request) {
 
   if (!isEmail(email)) {
     return NextResponse.json(
-      { ok: false, error: "Invalid email" },
+      { ok: false, error: "邮箱格式不正确，请重新输入" },
       { status: 400 },
     );
   }
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
 
   if (existingUser) {
     return NextResponse.json(
-      { ok: false, error: "Email already registered" },
+      { ok: false, error: "这个邮箱已经注册过，请直接登录" },
       { status: 409 },
     );
   }

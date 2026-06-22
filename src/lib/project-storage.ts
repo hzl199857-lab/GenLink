@@ -757,18 +757,57 @@ async function readProjectSnapshotInternal(
   return {
     ...parsed,
     materials: normalizeMaterialLibraryItems(parsed.materials),
+    thumbnailFileName:
+      typeof parsed.thumbnailFileName === "string" && parsed.thumbnailFileName.trim()
+        ? parsed.thumbnailFileName
+        : undefined,
   };
+}
+
+type ThumbnailFileCandidate = {
+  file: File;
+  fileName: string;
+};
+
+async function findImageFileByPath(
+  directoryHandle: FileSystemDirectoryHandle,
+  fileName: string,
+): Promise<File | null> {
+  const segments = fileName
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return null;
+  }
+
+  let currentHandle = directoryHandle;
+  const leafFileName = segments[segments.length - 1];
+
+  for (const segment of segments.slice(0, -1)) {
+    currentHandle = await currentHandle.getDirectoryHandle(segment);
+  }
+
+  const fileHandle = await currentHandle.getFileHandle(leafFileName);
+  const file = await fileHandle.getFile();
+
+  return isThumbnailImageFile(file) ? file : null;
 }
 
 async function findFirstImageFileRecursive(
   directoryHandle: FileSystemDirectoryHandle,
-): Promise<File | null> {
+  relativePath = "",
+): Promise<ThumbnailFileCandidate | null> {
   for await (const [entryName, entryHandle] of directoryHandle.entries()) {
     if (entryHandle.kind === "file") {
       const file = await entryHandle.getFile();
 
       if (isThumbnailImageFile(file)) {
-        return file;
+        return {
+          file,
+          fileName: relativePath ? `${relativePath}/${entryName}` : entryName,
+        };
       }
 
       continue;
@@ -778,7 +817,10 @@ async function findFirstImageFileRecursive(
       continue;
     }
 
-    const nestedFile = await findFirstImageFileRecursive(entryHandle);
+    const nestedFile = await findFirstImageFileRecursive(
+      entryHandle,
+      relativePath ? `${relativePath}/${entryName}` : entryName,
+    );
 
     if (nestedFile) {
       return nestedFile;
@@ -790,10 +832,47 @@ async function findFirstImageFileRecursive(
 
 async function readProjectThumbnailUrl(
   projectHandle: FileSystemDirectoryHandle,
+  snapshot: ProjectSnapshot,
 ): Promise<string | undefined> {
   try {
-    const file = await findFirstImageFileRecursive(projectHandle);
-    return file ? URL.createObjectURL(file) : undefined;
+    if (snapshot.thumbnailFileName?.trim()) {
+      const file = await findImageFileByPath(
+        projectHandle,
+        snapshot.thumbnailFileName,
+      ).catch(() => null);
+
+      if (file) {
+        return URL.createObjectURL(file);
+      }
+    }
+
+    const candidate = await findFirstImageFileRecursive(projectHandle);
+
+    if (!candidate) {
+      return undefined;
+    }
+
+    if (candidate.fileName !== snapshot.thumbnailFileName) {
+      try {
+        await requestDirectoryPermission(projectHandle);
+        await writeTextFile(
+          projectHandle,
+          PROJECT_FILE_NAME,
+          JSON.stringify(
+            {
+              ...snapshot,
+              thumbnailFileName: candidate.fileName,
+            },
+            null,
+            2,
+          ),
+        );
+      } catch {
+        // Keep showing the selected thumbnail even if the project file cannot be updated yet.
+      }
+    }
+
+    return URL.createObjectURL(candidate.file);
   } catch {
     return undefined;
   }
@@ -969,12 +1048,15 @@ export async function loadProjectSnapshot(
 export async function saveProjectSnapshot(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
-): Promise<ProjectHandleRecord> {
+): Promise<{ project: ProjectHandleRecord; snapshot: ProjectSnapshot }> {
   await requestDirectoryPermission(project.projectHandle);
+  const existingSnapshot = await readProjectSnapshotInternal(project.projectHandle).catch(() => null);
+  const thumbnailFileName = snapshot.thumbnailFileName ?? existingSnapshot?.thumbnailFileName;
 
   const nextSnapshot = buildProjectSnapshot({
     ...snapshot,
     name: project.name,
+    thumbnailFileName,
     updatedAt: new Date().toISOString(),
   });
 
@@ -993,9 +1075,12 @@ export async function saveProjectSnapshot(
   await persistProjectRecord(nextRecord);
 
   return {
-    ...toProjectLibraryItem(nextRecord),
-    projectHandle: project.projectHandle,
-    parentHandle: project.parentHandle,
+    project: {
+      ...toProjectLibraryItem(nextRecord),
+      projectHandle: project.projectHandle,
+      parentHandle: project.parentHandle,
+    },
+    snapshot: nextSnapshot,
   };
 }
 
@@ -1007,8 +1092,8 @@ export async function listProjectLibrary(): Promise<ProjectHandleRecord[]> {
   for (const record of sortProjects(records)) {
     try {
       await requestDirectoryPermission(record.projectHandle, false);
-      await readProjectSnapshotInternal(record.projectHandle);
-      const thumbnailUrl = await readProjectThumbnailUrl(record.projectHandle);
+      const snapshot = await readProjectSnapshotInternal(record.projectHandle);
+      const thumbnailUrl = await readProjectThumbnailUrl(record.projectHandle, snapshot);
       validProjects.push({
         ...toProjectLibraryItem(record),
         thumbnailUrl,

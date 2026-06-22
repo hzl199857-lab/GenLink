@@ -7,6 +7,7 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
+import { getLoginErrorMessage } from "@/lib/auth-error-message";
 
 export function LoginForm() {
   const router = useRouter();
@@ -27,7 +28,7 @@ export function LoginForm() {
       });
 
       if (result.error) {
-        setError(result.error.message || "\u767b\u5f55\u5931\u8d25");
+        setError(getLoginErrorMessage());
         return;
       }
 

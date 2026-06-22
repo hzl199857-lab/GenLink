@@ -2287,7 +2287,7 @@ export async function generateTextStream(
     body,
     params.apiKey,
     isClaude ? createAnthropicHeaders : createHeaders,
-    DEFAULT_REQUEST_TIMEOUT_MS,
+    params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     providerLabel,
   );
   const reader = upstreamResponse.body!.getReader();

@@ -18,6 +18,7 @@ export interface ImageGenerationInfoPopoverProps {
   open: boolean;
   data: ImageGenerationInfoPopoverData | null;
   onClose?: () => void;
+  rightOffset?: number;
 }
 
 function InfoRow({
@@ -41,13 +42,21 @@ export function ImageGenerationInfoPopover({
   open,
   data,
   onClose,
+  rightOffset,
 }: ImageGenerationInfoPopoverProps) {
   if (!open || !data) {
     return null;
   }
 
+  const resolvedRightOffset = rightOffset ?? 24;
+
   return (
-    <div className="pointer-events-none fixed right-6 top-6 z-[70]">
+    <div
+      className="pointer-events-none fixed top-6 z-[70]"
+      style={{
+        right: `max(12px, min(${resolvedRightOffset}px, calc(100vw - 244px)))`,
+      }}
+    >
       <div className="pointer-events-auto w-[220px] rounded-[12px] border border-white/10 bg-[#111214]/96 p-2.5 shadow-[0_14px_36px_rgba(0,0,0,0.45)] backdrop-blur-xl">
         <div className="mb-2 flex items-start justify-between gap-2">
           <div className="min-w-0">

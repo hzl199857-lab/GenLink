@@ -346,6 +346,7 @@ type CanvasAgentPanelProps = {
   nodes?: CanvasNode[];
   edges?: CanvasEdge[];
   onClose: () => void;
+  onLayoutChange?: (layout: { open: boolean; width: number }) => void;
   onCreateSourceNodes?: (attachments: AgentTaskAttachment[]) => Record<string, string>;
   onQuickReferenceSelect?: (
     onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
@@ -1859,6 +1860,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   nodes = [],
   edges = [],
   onClose,
+  onLayoutChange,
   onCreateSourceNodes,
   onQuickReferenceSelect,
   onConfirmPlan,
@@ -1960,6 +1962,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     message.status === 'submitted' &&
     Boolean(message.promptCurrentStatus)
   ));
+
+  useEffect(() => {
+    onLayoutChange?.({ open, width: panelWidth });
+  }, [onLayoutChange, open, panelWidth]);
 
   useEffect(() => {
     const handleWindowResize = () => {

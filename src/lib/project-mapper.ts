@@ -8,6 +8,8 @@ import type {
   NodeType,
   Panorama360NodeData,
   ProjectSnapshot,
+  StoryboardReferenceImage,
+  StoryboardScriptNodeData,
   TextNodeData,
   UploadedImageNodeData,
   VideoNodeData,
@@ -16,6 +18,15 @@ import type {
   VideoGenerationNodeData,
   VideoUpscaleNodeData,
 } from "@/types/canvas";
+import {
+  STORYBOARD_NODE_DEFAULT_CARD_HEIGHT,
+  STORYBOARD_NODE_DEFAULT_CARD_WIDTH,
+  normalizeStoryboardCardSize,
+} from "@/lib/storyboard/layout";
+import {
+  isStoryboardRecord,
+  normalizeStoryboardRow,
+} from "@/lib/storyboard/normalize";
 
 interface DbProjectRecord {
   id: string;
@@ -45,9 +56,16 @@ interface DbCanvasEdgeRecord {
   createdAt: Date;
 }
 
+type StoryboardReferenceImageRecord = Record<string, unknown> & {
+  label: string;
+  url: string;
+  sourceNodeId: string;
+};
+
 function isNodeType(value: string): value is NodeType {
   return (
     value === "text" ||
+    value === "storyboard_script" ||
     value === "image_generation" ||
     value === "video_generation" ||
     value === "video_upscale" ||
@@ -239,6 +257,64 @@ function normalizeTextNodeData(value: unknown): TextNodeData {
   }
 
   return { text: "" };
+}
+
+function normalizeStoryboardReferenceImages(value: unknown): StoryboardReferenceImage[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is StoryboardReferenceImageRecord =>
+    isStoryboardRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.url === "string" &&
+    typeof item.sourceNodeId === "string",
+  ).map((item) => ({
+    label: item.label.trim(),
+    url: item.url.trim(),
+    previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
+    sourceNodeId: item.sourceNodeId.trim(),
+    alt: typeof item.alt === "string" ? item.alt : undefined,
+  })).filter((item) => item.label && item.url && item.sourceNodeId);
+}
+
+function normalizeStoryboardScriptNodeData(value: unknown): StoryboardScriptNodeData {
+  const record = isStoryboardRecord(value) ? value : {};
+  const cardSize = normalizeStoryboardCardSize(record.cardWidth, record.cardHeight);
+
+  return {
+    title: typeof record.title === "string" ? record.title : "Storyboard script",
+    prompt: typeof record.prompt === "string" ? record.prompt : "",
+    rows: Array.isArray(record.rows)
+      ? record.rows.map(normalizeStoryboardRow)
+      : [],
+    rawJson: typeof record.rawJson === "string" ? record.rawJson : undefined,
+    cardWidth: cardSize.width || STORYBOARD_NODE_DEFAULT_CARD_WIDTH,
+    cardHeight: cardSize.height || STORYBOARD_NODE_DEFAULT_CARD_HEIGHT,
+    status:
+      record.status === "generating" || record.status === "error" || record.status === "idle"
+        ? record.status
+        : "idle",
+    errorMessage:
+      typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+    viewMode: record.viewMode === "card" || record.viewMode === "list"
+      ? record.viewMode
+      : "list",
+    focusMode: record.focusMode === "videoPrompt" || record.focusMode === "imagePrompt"
+      ? record.focusMode
+      : "imagePrompt",
+    provider:
+      record.provider === "vibe" ||
+      record.provider === "fucheers" ||
+      record.provider === "comfly" ||
+      record.provider === "zhenzhen" ||
+      record.provider === "runninghub" ||
+      record.provider === "grsai"
+        ? record.provider
+        : undefined,
+    model: typeof record.model === "string" ? record.model : undefined,
+    referenceImages: normalizeStoryboardReferenceImages(record.referenceImages),
+  };
 }
 
 function normalizeAITextResultNodeData(value: unknown): AITextResultNodeData {
@@ -764,6 +840,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "text",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeTextNodeData(parsed),
+      };
+    case "storyboard_script":
+      return {
+        id: record.id,
+        type: "storyboard_script",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeStoryboardScriptNodeData(parsed),
       };
     case "image_generation":
       return {

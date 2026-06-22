@@ -65,6 +65,9 @@ graphify-out/
 
 # generated local images
 /img/
+.codex-video-frames/
+.tmp-annotation-video/
+.tmp-ffmpeg/
 
 # local scaffold residue
 genlink-scaffold/

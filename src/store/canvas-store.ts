@@ -43,12 +43,23 @@ import type {
   Panorama360ViewState,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
+  StoryboardReferenceImage,
+  StoryboardRow,
+  StoryboardScriptNodeData,
   TextNodeData,
   VideoNodeData,
   VideoGenerationMediaReference,
   VideoGenerationNodeData,
   VideoUpscaleNodeData,
 } from "@/types/canvas";
+import {
+  STORYBOARD_NODE_DEFAULT_CARD_HEIGHT,
+  STORYBOARD_NODE_DEFAULT_CARD_WIDTH,
+} from "@/lib/storyboard/layout";
+import {
+  isStoryboardRecord,
+  normalizeStoryboardRow,
+} from "@/lib/storyboard/normalize";
 
 type ApiErrorResponse = {
   ok: false;
@@ -149,6 +160,18 @@ type VideoUpscaleResponse =
         videoUrl: string;
         outputType?: string;
       };
+    };
+
+type StoryboardGenerationResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      data: {
+        title: string;
+        rows: StoryboardRow[];
+      };
+      rawJson: string;
+      model?: string;
     };
 
 type ImageGenerationRunResult = {
@@ -816,6 +839,72 @@ function createTextNodeData(): TextNodeData {
     provider,
     model: readStoredSelectedModel("text", "gpt-5.4"),
     status: "idle",
+  };
+}
+
+function createStoryboardScriptNodeData(): StoryboardScriptNodeData {
+  const provider = readStoredSelectedApiProvider("text");
+
+  return {
+    title: "分镜脚本",
+    prompt: "",
+    rows: [],
+    cardWidth: STORYBOARD_NODE_DEFAULT_CARD_WIDTH,
+    cardHeight: STORYBOARD_NODE_DEFAULT_CARD_HEIGHT,
+    provider,
+    model: readStoredSelectedModel("text", "gpt-5.4"),
+    status: "idle",
+    viewMode: "list",
+    focusMode: "imagePrompt",
+    referenceImages: [],
+  };
+}
+
+function normalizeStoryboardScriptNodeData(data: unknown): StoryboardScriptNodeData {
+  const defaults = createStoryboardScriptNodeData();
+  const record = isStoryboardRecord(data) ? data : {};
+  const rows = Array.isArray(record.rows)
+    ? record.rows.map(normalizeStoryboardRow)
+    : [];
+  const referenceImages = Array.isArray(record.referenceImages)
+    ? record.referenceImages.filter((item): item is StoryboardReferenceImage => {
+        if (!isStoryboardRecord(item)) {
+          return false;
+        }
+
+        return typeof item.label === "string" &&
+          typeof item.url === "string" &&
+          typeof item.sourceNodeId === "string";
+      })
+    : [];
+  const viewMode = record.viewMode === "card" || record.viewMode === "list"
+    ? record.viewMode
+    : defaults.viewMode;
+  const focusMode = record.focusMode === "videoPrompt" || record.focusMode === "imagePrompt"
+    ? record.focusMode
+    : defaults.focusMode;
+  const status = record.status === "generating" || record.status === "error" || record.status === "idle"
+    ? record.status
+    : defaults.status;
+
+  return {
+    ...defaults,
+    ...record,
+    title: typeof record.title === "string" ? record.title : defaults.title,
+    prompt: typeof record.prompt === "string" ? record.prompt : defaults.prompt,
+    rows,
+    rawJson: typeof record.rawJson === "string" ? record.rawJson : undefined,
+    cardWidth: typeof record.cardWidth === "number" ? record.cardWidth : defaults.cardWidth,
+    cardHeight: typeof record.cardHeight === "number" ? record.cardHeight : defaults.cardHeight,
+    status,
+    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+    viewMode,
+    focusMode,
+    provider: typeof record.provider === "string"
+      ? record.provider as StoryboardScriptNodeData["provider"]
+      : defaults.provider,
+    model: typeof record.model === "string" ? record.model : defaults.model,
+    referenceImages,
   };
 }
 
@@ -1655,6 +1744,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         position,
         data: createTextNodeData(),
       };
+    case "storyboard_script":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createStoryboardScriptNodeData(),
+      };
     case "ai_text_result":
       return {
         id: crypto.randomUUID(),
@@ -1718,6 +1814,7 @@ function createSnapshot(state: {
   projectId: string | null;
   projectName: string;
   projectCreatedAt?: string | null;
+  currentProjectThumbnailFileName?: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
@@ -1730,6 +1827,7 @@ function createSnapshot(state: {
     edges: state.edges,
     groups: state.groups,
     materials: sanitizeMaterialsForPersistence(state.materials),
+    thumbnailFileName: state.currentProjectThumbnailFileName,
     createdAt: state.projectCreatedAt ?? undefined,
     updatedAt: nowIso(),
   });
@@ -2063,6 +2161,19 @@ function sanitizeImageGenerationNodeDataForPersistence(
   data: ImageGenerationNodeData,
 ): ImageGenerationNodeData {
   return stripEmbeddedImageDataFromNodeData(data);
+}
+
+function normalizeLoadedCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
+  return nodes.map((node) => {
+    if (node.type !== "storyboard_script") {
+      return node;
+    }
+
+    return {
+      ...node,
+      data: normalizeStoryboardScriptNodeData(node.data),
+    };
+  });
 }
 
 function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
@@ -2675,6 +2786,38 @@ function setTextNodeStatus(
   );
 }
 
+function setStoryboardNodeStatus(
+  nodes: CanvasNode[],
+  storyboardNodeId: string,
+  status: NonNullable<StoryboardScriptNodeData["status"]>,
+  errorMessage?: string,
+): CanvasNode[] {
+  return nodes.map((node) =>
+    node.id === storyboardNodeId && node.type === "storyboard_script"
+      ? {
+          ...node,
+          data: {
+            ...node.data,
+            status,
+            errorMessage,
+          },
+        }
+      : node,
+  );
+}
+
+function toStoryboardReferenceImages(
+  images: ConnectedImagePayload[],
+): StoryboardReferenceImage[] {
+  return images.map((image, index) => ({
+    label: `@图片${index + 1}`,
+    url: image.imageUrl,
+    previewUrl: image.previewUrl,
+    sourceNodeId: image.id,
+    alt: image.alt,
+  }));
+}
+
 function isRemoteRequestUrl(value?: string): boolean {
   const trimmed = value?.trim() || "";
 
@@ -3265,6 +3408,7 @@ export interface CanvasState {
   projectName: string;
   projectCreatedAt: string | null;
   currentProject: ProjectHandleRecord | null;
+  currentProjectThumbnailFileName?: string;
   currentProjectPreviewUrls: string[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];
@@ -3308,6 +3452,7 @@ export interface CanvasState {
   deleteMaterial: (id: string) => void;
 
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
+  generateStoryboardFromStoryboardNode: (storyboardNodeId: string) => Promise<void>;
   generateImageFromImageGenerationNode: (
     imageGenerationNodeId: string,
     promptOverride?: string,
@@ -3402,6 +3547,7 @@ export interface CanvasState {
     media: VideoGenerationMediaReference[],
   ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
+  getConnectedImagesForStoryboardNode: (storyboardNodeId: string) => ConnectedImagePayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
   ) => ConnectedImagePayload[];
@@ -3456,6 +3602,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   projectName: "Untitled",
   projectCreatedAt: null,
   currentProject: null,
+  currentProjectThumbnailFileName: undefined,
   currentProjectPreviewUrls: [],
   nodes: [],
   edges: [],
@@ -3974,6 +4121,111 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
+  generateStoryboardFromStoryboardNode: async (storyboardNodeId) => {
+    const state = get();
+    const storyboardNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
+        node.id === storyboardNodeId && node.type === "storyboard_script",
+    );
+
+    if (!storyboardNode) {
+      throw new Error("Storyboard node not found");
+    }
+
+    const connectedImages = selectPromptReferences(
+      getConnectedImagesForTargetNode(
+        state.nodes,
+        state.edges,
+        storyboardNodeId,
+      ),
+      storyboardNode.data.prompt,
+    );
+    const storyboardPrompt = stripReferenceMentionTokens(
+      storyboardNode.data.prompt,
+      connectedImages,
+    );
+    const referenceImages = toStoryboardReferenceImages(connectedImages);
+
+    if (!storyboardPrompt.trim() && referenceImages.length === 0) {
+      throw new Error("Prompt or reference images are required");
+    }
+
+    set((state) => ({
+      error: null,
+      dirty: true,
+      nodes: state.nodes.map((node) =>
+        node.id === storyboardNodeId && node.type === "storyboard_script"
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                status: "generating",
+                errorMessage: undefined,
+                referenceImages,
+              },
+            }
+          : node,
+      ),
+    }));
+
+    try {
+      const textProvider =
+        storyboardNode.data.provider ?? readStoredSelectedApiProvider("text");
+      const apiKey = assertStoredApiKey("text", textProvider);
+      const response = await fetch("/api/ai/storyboard", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: storyboardPrompt || storyboardNode.data.prompt,
+          model: storyboardNode.data.model,
+          provider: textProvider,
+          apiKey,
+          referenceImages: referenceImages.map((image) => ({
+            label: image.label,
+            url: image.url,
+          })),
+        }),
+      });
+      const payload = (await response.json()) as StoryboardGenerationResponse;
+
+      if (!payload.ok) {
+        throw new Error(payload.error);
+      }
+
+      set((state) => ({
+        error: null,
+        dirty: true,
+        nodes: state.nodes.map((node) =>
+          node.id === storyboardNodeId && node.type === "storyboard_script"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  rows: payload.data.rows,
+                  rawJson: payload.rawJson,
+                  title: payload.data.title || node.data.title,
+                  model: payload.model || node.data.model,
+                  status: "idle",
+                  errorMessage: undefined,
+                  referenceImages,
+                },
+              }
+            : node,
+        ),
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((state) => ({
+        error: message,
+        dirty: true,
+        nodes: setStoryboardNodeStatus(state.nodes, storyboardNodeId, "error", message),
+      }));
+    }
+  },
+
   setProjectName: (name) => {
     set((state) => ({
       ...createUndoHistoryUpdate(state, { coalesce: true }),
@@ -4074,6 +4326,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       state.nodes,
       state.edges,
       textNodeId,
+    );
+  },
+
+  getConnectedImagesForStoryboardNode: (storyboardNodeId) => {
+    const state = get();
+    return getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      storyboardNodeId,
     );
   },
 
@@ -6692,6 +6953,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectName: nextName,
       projectCreatedAt: null,
       currentProject: null,
+      currentProjectThumbnailFileName: undefined,
       currentProjectPreviewUrls: [],
       nodes: [],
       edges: [],
@@ -6725,18 +6987,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       const snapshot = createSnapshot(state);
-      const updatedProject = await saveProjectSnapshot(state.currentProject, snapshot);
-      const savedSnapshot = {
-        ...snapshot,
-        name: updatedProject.name,
-        updatedAt: updatedProject.updatedAt,
-      };
+      const { project: updatedProject, snapshot: savedSnapshot } = await saveProjectSnapshot(state.currentProject, snapshot);
 
       set({
         projectId: savedSnapshot.id,
         projectName: savedSnapshot.name,
         projectCreatedAt: savedSnapshot.createdAt,
         currentProject: updatedProject,
+        currentProjectThumbnailFileName: savedSnapshot.thumbnailFileName,
         currentProjectPreviewUrls: state.currentProjectPreviewUrls,
         loading: false,
         error: null,
@@ -6760,6 +7018,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const previousPreviewUrls = get().currentProjectPreviewUrls;
       const snapshot = await loadProjectSnapshotFromDisk(project);
       const hydrated = await hydrateProjectSnapshotPreviewUrls(project, snapshot);
+      const loadedNodes = normalizeLoadedCanvasNodes(hydrated.snapshot.nodes);
 
       revokeObjectUrls(previousPreviewUrls);
 
@@ -6768,8 +7027,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         projectName: hydrated.snapshot.name,
         projectCreatedAt: hydrated.snapshot.createdAt,
         currentProject: project,
+        currentProjectThumbnailFileName: hydrated.snapshot.thumbnailFileName,
         currentProjectPreviewUrls: hydrated.previewUrls,
-        nodes: hydrated.snapshot.nodes,
+        nodes: loadedNodes,
         edges: hydrated.snapshot.edges,
         groups: hydrated.snapshot.groups ?? [],
         materials: hydrated.snapshot.materials ?? [],
@@ -6777,7 +7037,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         error: null,
         dirty: false,
         lastSavedAt: hydrated.snapshot.updatedAt,
-        lastSavedSignature: getPersistentProjectSnapshotSignature(hydrated.snapshot),
+        lastSavedSignature: getPersistentProjectSnapshotSignature({
+          ...hydrated.snapshot,
+          nodes: loadedNodes,
+        }),
         undoStack: [],
         redoStack: [],
       });
@@ -6868,15 +7131,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   attachProject: (project, snapshot) => {
     const previousPreviewUrls = get().currentProjectPreviewUrls;
     revokeObjectUrls(previousPreviewUrls);
-    const nextPreviewUrls = collectPreviewUrlsFromNodes(snapshot.nodes);
+    const loadedNodes = normalizeLoadedCanvasNodes(snapshot.nodes);
+    const nextPreviewUrls = collectPreviewUrlsFromNodes(loadedNodes);
 
     set({
       projectId: snapshot.id,
       projectName: snapshot.name,
       projectCreatedAt: snapshot.createdAt,
       currentProject: project,
+      currentProjectThumbnailFileName: snapshot.thumbnailFileName,
       currentProjectPreviewUrls: nextPreviewUrls,
-      nodes: snapshot.nodes,
+      nodes: loadedNodes,
       edges: snapshot.edges,
       groups: snapshot.groups ?? [],
       materials: snapshot.materials ?? [],
@@ -6884,7 +7149,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       error: null,
       dirty: false,
       lastSavedAt: snapshot.updatedAt,
-      lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
+      lastSavedSignature: getPersistentProjectSnapshotSignature({
+        ...snapshot,
+        nodes: loadedNodes,
+      }),
       saveMessage: null,
       undoStack: [],
       redoStack: [],

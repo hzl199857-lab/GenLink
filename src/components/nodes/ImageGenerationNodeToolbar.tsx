@@ -16,10 +16,12 @@ import {
   Scissors,
   X,
   Camera,
+  Pencil,
 } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 export type ImageGenerationToolbarAction =
+  | 'annotate'
   | 'crop'
   | 'variations'
   | 'split-2x2-crop'
@@ -93,6 +95,7 @@ function HdIcon({
 }
 
 const GENERATED_IMAGE_ACTIONS: ToolbarActionConfig[] = [
+  { id: 'annotate', title: '标注', icon: Pencil },
   { id: 'variations', title: '分割', icon: Grid3x3 },
   { id: 'panorama-360', title: '360全景图', icon: Orbit },
   { id: 'pan', title: '3D视角', icon: Box },
@@ -196,7 +199,7 @@ export function ImageGenerationNodeToolbar({
   const cropButtonTitle = videoFrameCapture ? '视频裁剪' : '裁剪';
   const CropButtonIcon = videoFrameCapture ? Scissors : CropIcon;
   const generatedActions = videoFrameCapture
-    ? GENERATED_IMAGE_ACTIONS.map((action) =>
+    ? GENERATED_IMAGE_ACTIONS.filter((action) => action.id !== 'annotate').map((action) =>
         action.id === 'panorama-360'
           ? { ...action, id: 'video-upscale' as const, title: '视频超清', icon: HdIcon }
           : action,

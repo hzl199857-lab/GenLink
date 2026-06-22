@@ -25,6 +25,18 @@ import {
   Download,
   ListOrdered,
   Ungroup,
+  Pencil,
+  Square,
+  Type as TypeIcon,
+  Eraser,
+  Trash2,
+  Save,
+  Undo2,
+  Redo2,
+  RotateCw,
+  CircleDot,
+  FlipHorizontal2,
+  FlipVertical2,
 } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
@@ -89,6 +101,7 @@ import type {
   MaterialLibraryItem,
   NodeGroup,
   NodeType,
+  StoryboardScriptNodeData,
   TextNodeData,
   ImageGenerationNodeData,
   AITextResultNodeData,
@@ -99,7 +112,9 @@ import type {
   VideoNodeData,
   VideoGenerationNodeData,
   VideoUpscaleNodeData,
+  ImageAnnotation,
 } from '@/types/canvas';
+import { getStoryboardCardSize } from '@/lib/storyboard/layout';
 import type {
   AgentActionNodeRef,
   AgentExecutionPlan,
@@ -109,6 +124,7 @@ import type {
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
 import { TextNode } from '../nodes/TextNode';
+import { StoryboardScriptNode } from '../nodes/StoryboardScriptNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
 import {
   VideoGenerationNode,
@@ -143,6 +159,7 @@ import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLibraryDialog';
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { AGENT_PANEL_FLOATING_INSET } from '@/lib/agent-panel-layout';
 import { downloadImageGenerationResult } from '@/lib/image-download';
 import { createVideoClipJob, pollVideoClipJob } from '@/lib/video/clip-client';
 import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
@@ -166,7 +183,7 @@ let notifyUploadedImageToolbarAction:
   | ((action: ImageGenerationToolbarAction, nodeId: string, data: UploadedImageNodeData, cardLayout: { left: number; top: number; width: number; height: number } | null) => void)
   | null = null;
 let notifyImageNodeCropRequest:
-  | ((nodeId: string, data: ImageNodeData, cardDimensions: { width: number; height: number }, imageUrl: string) => void)
+  | ((nodeId: string, data: ImageNodeData, cardDimensions: { width: number; height: number }, imageUrl: string, mode?: 'crop' | 'annotate') => void)
   | null = null;
 let notifyMaterialLibraryRequest:
   | ((source: PendingMaterialSource) => void)
@@ -412,7 +429,7 @@ function inferVideoFormatFromData(data: VideoNodeData): string {
 
 function toVideoInfoPopoverData(data: VideoNodeData): ImageGenerationInfoPopoverData {
   return {
-    title: '视频信息',
+    title: 'Video',
     model: '-',
     format: inferVideoFormatFromData(data),
     size: formatImageSize(data.sizeBytes),
@@ -429,7 +446,7 @@ function toVideoGenerationInfoPopoverData(data: VideoGenerationNodeData): ImageG
   }
 
   return {
-    title: '视频信息',
+    title: 'Generated video',
     model: getVideoModelLabel(data.generatedModel?.trim() || data.model?.trim() || '-'),
     format: inferVideoFormatFromData({
       videoUrl,
@@ -455,8 +472,8 @@ function toVideoUpscaleInfoPopoverData(
   }
 
   return {
-    title: '视频信息',
-    model: 'RunningHub 视频超清',
+    title: 'RunningHub video',
+    model: 'RunningHub video',
     format: inferVideoFormatFromData({
       videoUrl,
       width: 0,
@@ -955,6 +972,18 @@ function resolveMiniMapVisibleNodeRect(
     };
   }
 
+  if (node.type === 'storyboard_script') {
+    const dimensions = getStoryboardCardSize(node.data as StoryboardScriptNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: dimensions.width,
+      height: dimensions.height,
+      radius: 18,
+    };
+  }
+
   if (node.type === 'image_generation') {
     const data = node.data as ImageGenerationNodeData;
     const referenceImages = data.aspectRatio === 'auto'
@@ -1103,6 +1132,17 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     };
   }
 
+  if (node.type === 'storyboard_script') {
+    const dimensions = getStoryboardCardSize(node.data as StoryboardScriptNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: dimensions.width,
+      height: dimensions.height + 36,
+    };
+  }
+
   if (node.type === 'image_generation') {
     const data = node.data as ImageGenerationNodeData;
     const referenceImages = data.aspectRatio === 'auto'
@@ -1244,10 +1284,10 @@ function getBoundsForNodes(nodes: CanvasNode[], padding = 56): MultiNodeSelectio
 }
 
 function getAgentGroupName(plan: AgentExecutionPlan, generationCount: number): string {
-  const title = plan.title?.trim() || 'Agent 批量生成';
+  const title = plan.title?.trim() || 'Agent batch generation';
 
-  if (generationCount > 1 && !/批量|组/.test(title)) {
-    return `${title}批量生成`;
+  if (generationCount > 1 && !title.includes('batch') && !title.includes('group') && !title.includes('??') && !title.includes('?')) {
+    return title + ' batch generation';
   }
 
   return title;
@@ -1909,7 +1949,7 @@ function createAgentSourceImageNodes(params: {
         y: params.startPosition.y + index * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + 48),
       },
       data: {
-        title: attachment.name || `图片${index + 1}`,
+        title: attachment.name || `Image ${index + 1}`,
         imageUrl: attachment.imageUrl,
         hostedImageUrl: attachment.hostedImageUrl ?? attachment.imageUrl,
         previewUrl: attachment.thumbnailUrl ?? attachment.previewUrl,
@@ -2058,7 +2098,7 @@ function createMaterialSourceFromImageGenerationData(
   }
 
   return {
-    defaultName: data.title?.trim() || '未命名素材',
+    defaultName: data.title?.trim() || 'Untitled material',
     imageUrl: data.generatedOutputFileName ? `output:${data.generatedOutputFileName}` : imageUrl,
     hostedImageUrl: imageUrl,
     outputFileName: data.generatedOutputFileName,
@@ -2079,7 +2119,7 @@ function createMaterialSourceFromImageNodeData(data: ImageNodeData): PendingMate
   }
 
   return {
-    defaultName: data.title?.trim() || '未命名素材',
+    defaultName: data.title?.trim() || 'Untitled material',
     imageUrl,
     hostedImageUrl: data.hostedImageUrl,
     sourceNodeType: 'image',
@@ -2099,7 +2139,7 @@ function createMaterialSourceFromUploadedImageData(
   }
 
   return {
-    defaultName: data.title?.trim() || data.fileName?.trim() || '未命名素材',
+    defaultName: data.title?.trim() || data.fileName?.trim() || 'Untitled material',
     imageUrl,
     hostedImageUrl: data.hostedImageUrl,
     fileName: data.fileName,
@@ -2158,6 +2198,56 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
       }}
       onEndEdit={() => setEditing(false)}
       onRun={() => generateText(id)}
+      onPromptPointerDown={() => {
+        handleSelectNode();
+        notifyPromptBarInteraction?.();
+      }}
+      onPromptFocusWithinChange={(focused) => {
+        if (focused) {
+          handleSelectNode();
+        }
+        setPromptFocused(focused);
+      }}
+    />
+  );
+});
+
+const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ id, data, selected, dragging }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateStoryboard = useCanvasStore((s) => s.generateStoryboardFromStoryboardNode);
+  const connectedImages = useCanvasStore((s) => s.getConnectedImagesForStoryboardNode(id));
+  const renderData = data as CanvasNodeRenderData;
+  const [editing, setEditing] = useState(false);
+  const [promptFocused, setPromptFocused] = useState(false);
+  const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
+  const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+
+  useEffect(() => {
+    const handleClearNodeUi = () => {
+      setPromptFocused(false);
+      setEditing(false);
+    };
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
+
+  return (
+    <StoryboardScriptNode
+      id={id}
+      data={data as StoryboardScriptNodeData}
+      selected={isActive}
+      dragging={!!dragging}
+      editing={editing}
+      connectedImages={connectedImages}
+      onChange={(next) => updateNodeData<'storyboard_script'>(id, next)}
+      onTitleChange={(nextTitle) => updateNodeData<'storyboard_script'>(id, { title: nextTitle })}
+      onStartEdit={() => {
+        handleSelectNode();
+        setEditing(true);
+      }}
+      onEndEdit={() => setEditing(false)}
+      onRun={() => generateStoryboard(id)}
       onPromptPointerDown={() => {
         handleSelectNode();
         notifyPromptBarInteraction?.();
@@ -2331,7 +2421,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
     video: HTMLVideoElement,
   ) => {
     if (!video.videoWidth || !video.videoHeight) {
-      useCanvasStore.getState().setSaveMessage('视频尚未加载完成');
+      useCanvasStore.getState().setSaveMessage('Video is not ready');
       window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
       return;
     }
@@ -2374,10 +2464,10 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
 
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const frameTitle = position === 'first'
-        ? '首帧'
+        ? 'First frame'
         : position === 'last'
-          ? '尾帧'
-          : '当前帧';
+          ? 'Last frame'
+          : 'current';
       const nextNodeId = await createImageNodeFromVideoFrame({
         sourceNodeId: id,
         dataUrl: canvas.toDataURL('image/png'),
@@ -2396,7 +2486,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
 
       notifyCanvasNodeSelect?.(nextNodeId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : '提取视频帧失败';
+      const message = error instanceof Error ? error.message : 'extract video frame failed';
       useCanvasStore.getState().setSaveMessage(message);
       window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
     }
@@ -2422,7 +2512,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       }
       case 'video-upscale': {
         if (!videoUrl) {
-          useCanvasStore.getState().setSaveMessage('当前视频生成节点还没有可超清的视频');
+          useCanvasStore.getState().setSaveMessage('No video is available for upscale');
           window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
           break;
         }
@@ -2625,6 +2715,16 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
         }
 
         notifyImageNodeCropRequest?.(id, imageData, cardDimensions, imageUrl);
+        break;
+      }
+      case 'annotate': {
+        const imageUrl = imageData.hostedImageUrl?.trim() || imageData.imageUrl?.trim();
+
+        if (!imageUrl) {
+          break;
+        }
+
+        notifyImageNodeCropRequest?.(id, imageData, cardDimensions, imageUrl, 'annotate');
         break;
       }
       case 'split-2x2-crop':
@@ -3179,16 +3279,16 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
   const runCut = async () => {
     if (!(clipEnd > clipStart)) {
-      setClipMessage('结束时间必须大于开始时间');
+      setClipMessage('End time must be greater than start time');
       return;
     }
 
     setClipBusy(true);
-    setClipMessage('正在准备视频源...');
+    setClipMessage('Preparing video...');
 
     try {
       const sourceUrl = await ensureVideoProcessingSourceUrl(videoData);
-      setClipMessage('正在创建裁剪任务...');
+      setClipMessage('Creating clip job...');
       const jobId = await createVideoClipJob({
         kind: 'cut',
         sourceUrl,
@@ -3198,18 +3298,18 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       });
       const done = await pollVideoClipJob(jobId, (status) => {
         if (status.ok) {
-          setClipMessage(`处理中 ${Math.round((status.progress || 0) * 100)}%`);
+          setClipMessage(`Processing ${Math.round((status.progress || 0) * 100)}%`);
         }
       });
       const segment = done.segments?.[0];
 
       if (!segment?.url) {
-        throw new Error('裁剪任务没有返回视频结果');
+        throw new Error('No clipped video segment was returned');
       }
 
       const nextNodeId = await createProcessedVideoNode({
         sourceNodeId: id,
-        title: `剪辑自 ${videoData.title || videoData.fileName || '视频'}`,
+        title: `Clip ${videoData.title || videoData.fileName || 'video'}`,
         resultUrl: segment.url,
         durationSeconds: segment.duration ?? clipEnd - clipStart,
         width: segment.width ?? videoData.width,
@@ -3222,11 +3322,11 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
         },
       });
 
-      setClipMessage('裁剪完成');
+      setClipMessage('Clip created');
       setClipOpen(false);
       notifyCanvasNodeSelect?.(nextNodeId);
     } catch (error) {
-      setClipMessage(error instanceof Error ? error.message : '裁剪失败');
+      setClipMessage(error instanceof Error ? error.message : 'Video clipping failed');
     } finally {
       setClipBusy(false);
     }
@@ -3234,11 +3334,11 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
   const runSmartClip = async () => {
     setClipBusy(true);
-    setClipMessage('正在准备视频源...');
+    setClipMessage('Preparing video...');
 
     try {
       const sourceUrl = await ensureVideoProcessingSourceUrl(videoData);
-      setClipMessage('正在创建智能剪辑任务...');
+      setClipMessage('Analyzing video...');
       const jobId = await createVideoClipJob({
         kind: 'smart_clip',
         sourceUrl,
@@ -3246,13 +3346,13 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       });
       const done = await pollVideoClipJob(jobId, (status) => {
         if (status.ok) {
-          setClipMessage(`智能剪辑 ${status.doneCount ?? 0}/${status.total ?? '?'} ${Math.round((status.progress || 0) * 100)}%`);
+          setClipMessage(`Clipping ${status.doneCount ?? 0}/${status.total ?? '?'} ${Math.round((status.progress || 0) * 100)}%`);
         }
       });
       const segments = done.segments?.filter((segment) => segment.url) ?? [];
 
       if (!segments.length) {
-        throw new Error('未检测到可生成的剪辑片段');
+        throw new Error('No smart clip segments were returned');
       }
 
       const nextNodeIds: string[] = [];
@@ -3260,7 +3360,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       for (const [index, segment] of segments.entries()) {
         const nextNodeId = await createProcessedVideoNode({
           sourceNodeId: id,
-          title: `智能剪辑 ${index + 1}`,
+          title: `Clip ${index + 1}`,
           resultUrl: segment.url,
           durationSeconds: segment.duration,
           width: segment.width ?? videoData.width,
@@ -3275,11 +3375,11 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
         nextNodeIds.push(nextNodeId);
       }
 
-      setClipMessage('智能剪辑完成');
+      setClipMessage('Smart clips created');
       setClipOpen(false);
       if (nextNodeIds[0]) notifyCanvasNodeSelect?.(nextNodeIds[0]);
     } catch (error) {
-      setClipMessage(error instanceof Error ? error.message : '智能剪辑失败');
+      setClipMessage(error instanceof Error ? error.message : 'Smart clipping failed');
     } finally {
       setClipBusy(false);
     }
@@ -3289,7 +3389,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     const video = videoRef.current;
 
     if (!video || !video.videoWidth || !video.videoHeight) {
-      setClipMessage('视频尚未加载完成');
+      setClipMessage('Video is not ready');
       setClipOpen(true);
       return;
     }
@@ -3327,16 +3427,16 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       const context = canvas.getContext('2d');
 
       if (!context) {
-        throw new Error('Canvas 不可用');
+        throw new Error('Canvas is unavailable');
       }
 
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/png');
       const frameTitle = position === 'first'
-        ? '首帧'
+        ? 'First frame'
         : position === 'last'
-          ? '尾帧'
-          : '当前帧';
+          ? 'Last frame'
+          : 'current';
       const nextNodeId = await createImageNodeFromVideoFrame({
         sourceNodeId: id,
         dataUrl,
@@ -3355,7 +3455,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
       notifyCanvasNodeSelect?.(nextNodeId);
     } catch (error) {
-      setClipMessage(error instanceof Error ? error.message : '提取视频帧失败，可能是视频源不允许浏览器截帧');
+      setClipMessage(error instanceof Error ? error.message : 'Extract frame failed');
       setClipOpen(true);
     }
   };
@@ -3381,7 +3481,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
               void extractFrame('last');
             } else if (action === 'video-upscale') {
               if (!hasVideo) {
-                setClipMessage('当前视频节点没有可超清的视频');
+                setClipMessage('No video is available for upscale');
                 setClipOpen(true);
                 return;
               }
@@ -3428,7 +3528,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
             <div className="flex w-full items-center justify-center gap-1">
               <button
                 type="button"
-                aria-label="取消裁剪"
+                aria-label="Cancel clip"
                 disabled={clipBusy}
                 onClick={() => setClipOpen(false)}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1b1d21]/95 text-gl-text-secondary shadow-[0_10px_24px_rgba(0,0,0,0.34)] transition hover:text-white disabled:opacity-50"
@@ -3478,7 +3578,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
               <button
                 type="button"
-                aria-label="确认裁剪"
+                aria-label="Confirm clip"
                 disabled={clipBusy || !(clipEnd > clipStart)}
                 onClick={() => void runCut()}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-[0_10px_24px_rgba(255,255,255,0.2)] transition hover:bg-white/90 disabled:opacity-50"
@@ -3498,11 +3598,11 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                   className="flex h-6 items-center justify-center gap-1 rounded-full border border-white/10 bg-[#24262b]/95 px-2.5 py-0 text-[9px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
                 >
                   <Box size={11} strokeWidth={1.9} className="text-white/86" />
-                  智能剪辑
+                  Upscale
                 </button>
                 <button
                   type="button"
-                  aria-label="提取帧"
+                  aria-label="Extract frame"
                   disabled={clipBusy}
                   onClick={() => void extractFrame()}
                   className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-[#24262b]/95 p-0 text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
@@ -3570,7 +3670,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
         .then((nextNodeId) => notifyCanvasNodeSelect?.(nextNodeId))
         .catch((error) => {
           console.error('create panorama screenshot node failed', error);
-      const message = error instanceof Error ? error.message : '创建截图失败';
+          const message = error instanceof Error ? error.message : 'Create panorama screenshot failed';
           useCanvasStore.getState().setSaveMessage(message);
           window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
         })}
@@ -3581,6 +3681,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
 
 const nodeTypes = {
   text: TextNodeAdapter,
+  storyboard_script: StoryboardScriptNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
   video_generation: VideoGenerationNodeAdapter,
   video_upscale: VideoUpscaleNodeAdapter,
@@ -3603,6 +3704,7 @@ const CANVAS_EDGE_STYLE_STORAGE_KEY = 'genlink.canvasEdgeStyle';
 const CANVAS_EDGE_STYLE_CHANGE_EVENT = 'genlink:canvas-edge-style-change';
 const TEXT_NODE_CARD_WIDTH = 511;
 const TEXT_NODE_CARD_HEIGHT = 289;
+const CANVAS_READY_MEDIA_TIMEOUT_MS = 2500;
 const IMAGE_GENERATION_MAX_CARD_EDGE = 540;
 const IMAGE_GENERATION_MIN_CARD_EDGE = 220;
 const IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE = 64;
@@ -3658,6 +3760,7 @@ const LIGHTBOX_MIN_ZOOM = 0.5;
 const LIGHTBOX_MAX_ZOOM = 5;
 const LIGHTBOX_WHEEL_ZOOM_STEP = 0.0018;
 const LIGHTBOX_RESET_ZOOM_EPSILON = 0.03;
+const CANVAS_CTRL_WHEEL_ZOOM_STEP = 0.0015;
 const CONNECTION_MENU_ANCHOR_NODE_ID = '__connection-menu-anchor__';
 const BLANK_CONNECTION_DROP_EVENT = 'genlink:connection-blank-drop';
 const CANVAS_NODE_UI_CLEAR_EVENT = 'genlink:canvas-node-ui-clear';
@@ -3853,6 +3956,16 @@ function cloneNodeData<T>(data: T): T {
 
 function resetCopiedNodeData(node: CanvasNode): CanvasNode['data'] {
   if (node.type === 'text') {
+    const data = cloneNodeData(node.data);
+
+    return {
+      ...data,
+      status: 'idle',
+      errorMessage: undefined,
+    };
+  }
+
+  if (node.type === 'storyboard_script') {
     const data = cloneNodeData(node.data);
 
     return {
@@ -4289,6 +4402,19 @@ function isTypingTarget(target: EventTarget | null): boolean {
     target instanceof HTMLTextAreaElement ||
     target.isContentEditable
   );
+}
+
+function hasEditableTextSelection(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    return target.selectionStart !== target.selectionEnd;
+  }
+
+  if (target instanceof HTMLElement && target.isContentEditable) {
+    const selection = window.getSelection();
+    return Boolean(selection && !selection.isCollapsed && target.contains(selection.anchorNode));
+  }
+
+  return false;
 }
 
 function isNodeCardFocusTarget(target: EventTarget | null): boolean {
@@ -4974,7 +5100,7 @@ function GroupFrame({
   const screenH = group.height * viewport.zoom;
 
   const nodeCount = group.nodeIds.length;
-  const defaultName = `分组 · ${nodeCount} 个节点`;
+  const defaultName = 'Group - ' + nodeCount + ' nodes';
   const frameColorStyle = getGroupFrameColorStyle(group.backgroundColor, selected);
   const showResizeHandles = selected || hovered || resizing;
   const showSourceHandle = selected || hovered;
@@ -5355,13 +5481,13 @@ function GroupFrame({
                 onChange={onUpdateBackgroundColor}
               />
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Group}>布局</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Group}>Group</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Play}>整组执行</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Play}>Run</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>解组</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>Ungroup</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Download} onClick={onDownload}>批量下载</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Download} onClick={onDownload}>Download</MultiNodeSelectionToolbarButton>
             </div>
           </GroupExecutionMenuContext.Provider>
         </GroupLayoutMenuContext.Provider>
@@ -5492,7 +5618,7 @@ function GroupBackgroundColorButton({
     <div className="relative mr-1">
       <button
         type="button"
-        aria-label="选择分组背景色"
+        aria-label="Select group background"
         aria-expanded={open}
         className="nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill transition-colors hover:bg-gl-panel-hover"
         onPointerDown={(event) => {
@@ -5514,7 +5640,7 @@ function GroupBackgroundColorButton({
       {open ? (
         <div
           role="menu"
-          aria-label="分组背景色"
+          aria-label="Group background"
           className="absolute bottom-[calc(100%+8px)] left-1/2 z-30 grid -translate-x-1/2 place-items-center gap-3 rounded-[18px] border border-white/10 bg-gl-panel/95 px-3 py-3 shadow-gl-toolbar backdrop-blur-md"
           style={{
             width: 156,
@@ -5527,7 +5653,7 @@ function GroupBackgroundColorButton({
           onClick={(event) => event.stopPropagation()}
         >
           <GroupBackgroundColorMenuItem
-            label="默认"
+            label="Default"
             color="#ffffff"
             selected={!activeColor}
             onClick={() => {
@@ -5654,7 +5780,7 @@ function MultiNodeSelectionToolbarButton({
           >
             <GroupExecuteMenuItem
               icon={Grid2x2}
-              label="网格"
+              label="Grid"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('grid');
@@ -5662,7 +5788,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={Columns3}
-              label="横向"
+              label="Horizontal"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('horizontal');
@@ -5670,7 +5796,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={Rows3}
-              label="纵向"
+              label="Vertical"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('vertical');
@@ -5698,7 +5824,7 @@ function MultiNodeSelectionToolbarButton({
           >
             <GroupExecuteMenuItem
               icon={Play}
-              label="并行运行"
+              label="Parallel"
               onClick={() => {
                 setExecuteMenuOpen(false);
                 groupExecute?.('parallel');
@@ -5706,7 +5832,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={ListOrdered}
-              label="顺序运行"
+              label="Sequential"
               onClick={() => {
                 setExecuteMenuOpen(false);
                 groupExecute?.('sequence');
@@ -5880,11 +6006,11 @@ function MultiNodeSelectionOverlay({
         <MultiNodeSelectionToolbarButton icon={Group} compact />
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={FolderPlus}>
-           加入素材库
+          Add to group
         </MultiNodeSelectionToolbarButton>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Copy}>
-           复制
+          Duplicate
         </MultiNodeSelectionToolbarButton>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Plus} compact />
@@ -5893,7 +6019,7 @@ function MultiNodeSelectionOverlay({
           icon={Group}
           onClick={() => onGroup(selectedNodes.map((n) => n.id))}
         >
-          打组
+          Group
         </MultiNodeSelectionToolbarButton>
         <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
       </div>
@@ -6033,7 +6159,7 @@ function CanvasViewportControls({
     ? '\u5207\u6362\u4e3a\u66f2\u7ebf'
     : '\u5207\u6362\u4e3a\u76f4\u7ebf';
   const resetLabel = '\u91cd\u7f6e (G)';
-  const minimapLabel = isMiniMapVisible ? '关闭小地图' : '开启小地图';
+  const minimapLabel = isMiniMapVisible ? 'Hide minimap' : 'Show minimap';
 
   return (
     <>
@@ -6108,7 +6234,7 @@ function CanvasViewportControls({
               className="canvas-zoom-icon-button"
               onClick={onSmartReset}
               title={resetLabel}
-              aria-label="重置视图"
+              aria-label={resetLabel}
             >
               <Expand size={15} />
             </button>
@@ -6125,7 +6251,7 @@ function CanvasViewportControls({
               void zoomTo(Number(event.target.value), { duration: 120 });
             }}
             className="canvas-zoom-slider"
-            aria-label="????"
+            aria-label="Empty canvas"
           />
         </div>
 
@@ -6138,7 +6264,7 @@ type CropRect = { x: number; y: number; width: number; height: number };
 type CropAspectRatio = null | number;
 
 const CROP_ASPECT_RATIOS: Array<{ label: string; value: CropAspectRatio }> = [
-  { label: '自由裁剪', value: null },
+  { label: 'Free', value: null },
   { label: '1 : 1', value: 1 },
   { label: '4 : 3', value: 4 / 3 },
   { label: '3 : 4', value: 3 / 4 },
@@ -6170,6 +6296,263 @@ type CropOverlayData = {
   imageNaturalWidth: number;
   imageNaturalHeight: number;
 };
+
+type ImageAnnotationNodeType = 'image_generation' | 'uploaded_image' | 'image';
+
+type ImageAnnotationOverlayData = {
+  nodeId: string;
+  nodeType: ImageAnnotationNodeType;
+  imageUrl: string;
+  nodePosition: { x: number; y: number };
+  cardLeft: number;
+  cardTop: number;
+  cardWidth: number;
+  cardHeight: number;
+  annotations: ImageAnnotation[];
+  flipX?: boolean;
+  flipY?: boolean;
+};
+
+type AnnotationExportResult = {
+  dataUrl: string;
+  width: number;
+  height: number;
+};
+
+function createAnnotatedImageNodeTitle(sourceNode: CanvasNode): string {
+  const data = sourceNode.data as Partial<ImageNodeData & UploadedImageNodeData & ImageGenerationNodeData>;
+  const sourceTitle =
+    data.title?.trim() ||
+    data.fileName?.trim() ||
+    data.prompt?.trim() ||
+    '\u56fe\u7247';
+  const baseTitle = sourceTitle.replace(/(?:[-_\s]*(?:\u6807\u6ce8|Annotated image))+$/i, '').trim();
+
+  return `${baseTitle || '\u56fe\u7247'}-\u6807\u6ce8`;
+}
+
+function clampAnnotationRect(rect: CropRect): CropRect {
+  const x1 = Math.max(0, Math.min(1, rect.x));
+  const y1 = Math.max(0, Math.min(1, rect.y));
+  const x2 = Math.max(0, Math.min(1, rect.x + rect.width));
+  const y2 = Math.max(0, Math.min(1, rect.y + rect.height));
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  const right = Math.max(x1, x2);
+  const bottom = Math.max(y1, y2);
+
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function loadAnnotationImage(imageUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.crossOrigin = 'anonymous';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to load annotation image'));
+    image.src = imageUrl;
+  });
+}
+
+function estimateAnnotationTextPixelWidth(value: string, fontSize: number) {
+  const characters = Array.from(value || 'Text');
+  const units = characters.reduce((total, character) => {
+    if (/[\u2e80-\uffff]/.test(character)) {
+      return total + 1;
+    }
+
+    if (/[A-Z0-9]/.test(character)) {
+      return total + 0.72;
+    }
+
+    if (/\s/.test(character)) {
+      return total + 0.34;
+    }
+
+    return total + 0.62;
+  }, 0);
+
+  return Math.ceil(units * fontSize + 8);
+}
+
+function resolveAnnotationTextDisplayRect(
+  annotation: ImageAnnotation,
+  displaySize: { width: number; height: number },
+): CropRect {
+  const rect = annotation.rect;
+  const displayFontSize = annotation.fontSize ?? 32;
+  const measuredWidth = Math.min(
+    0.95,
+    Math.max(
+      0.055,
+      estimateAnnotationTextPixelWidth(annotation.name, displayFontSize) /
+        Math.max(displaySize.width, 1),
+    ),
+  );
+  const measuredHeight = Math.min(
+    0.25,
+    Math.max(
+      0.035,
+      (displayFontSize * 1.25 + 8) / Math.max(displaySize.height, 1),
+    ),
+  );
+
+  return {
+    ...rect,
+    width: Math.max(rect.width, measuredWidth),
+    height: Math.max(rect.height, measuredHeight),
+  };
+}
+
+function resolveAnnotationNumberRadius(displaySize: { width: number; height: number }): number {
+  return Math.max(12, Math.min(22, Math.min(displaySize.width, displaySize.height) * 0.038));
+}
+
+function resolveNextAnnotationNumber(annotations: ImageAnnotation[]): number {
+  const numbers = annotations
+    .filter((annotation) => annotation.visible !== false && annotation.kind === 'number')
+    .map((annotation) => annotation.number ?? Number(annotation.name))
+    .filter((value) => Number.isFinite(value));
+
+  return numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+}
+
+async function createAnnotatedImageDataUrl(
+  imageUrl: string,
+  annotations: ImageAnnotation[],
+  displaySize: { width: number; height: number },
+  options?: { flipX?: boolean; flipY?: boolean },
+): Promise<AnnotationExportResult> {
+  const image = await loadAnnotationImage(imageUrl);
+  const width = image.naturalWidth || image.width || 1;
+  const height = image.naturalHeight || image.height || 1;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error('Failed to create annotation canvas');
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+
+  const applyFlipTransform = () => {
+    context.translate(options?.flipX ? width : 0, options?.flipY ? height : 0);
+    context.scale(options?.flipX ? -1 : 1, options?.flipY ? -1 : 1);
+  };
+
+  context.save();
+  applyFlipTransform();
+  context.drawImage(image, 0, 0, width, height);
+  context.restore();
+
+  const scaleX = width / Math.max(displaySize.width, 1);
+  const scaleY = height / Math.max(displaySize.height, 1);
+  const averageScale = (scaleX + scaleY) / 2;
+
+  context.save();
+  applyFlipTransform();
+  annotations
+    .filter((annotation) => annotation.visible !== false)
+    .forEach((annotation) => {
+      const rect = annotation.rect;
+      const color = annotation.color ?? '#111111';
+      const flipScaleX = options?.flipX ? -1 : 1;
+      const flipScaleY = options?.flipY ? -1 : 1;
+
+      if (annotation.kind === 'path' && annotation.points?.length) {
+        context.save();
+        context.strokeStyle = color;
+        context.lineWidth = (annotation.strokeWidth ?? 4) * averageScale;
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+        context.beginPath();
+        annotation.points.forEach((point, index) => {
+          const x = point.x * width;
+          const y = point.y * height;
+
+          if (index === 0) {
+            context.moveTo(x, y);
+          } else {
+            context.lineTo(x, y);
+          }
+        });
+        context.stroke();
+        context.restore();
+        return;
+      }
+
+      if (annotation.kind === 'text') {
+        const displayFontSize = annotation.fontSize ?? 32;
+        const displayRect = resolveAnnotationTextDisplayRect(annotation, displaySize);
+        const fontSize = displayFontSize * averageScale;
+        const textWidth = displayRect.width * width;
+        const textHeight = displayRect.height * height;
+        const x = displayRect.x * width;
+        const y = displayRect.y * height;
+        const fontFamily = window.getComputedStyle(document.body).fontFamily || 'sans-serif';
+
+        context.save();
+        context.translate(x + textWidth / 2, y + textHeight / 2);
+        context.rotate(((annotation.rotation ?? 0) * Math.PI) / 180);
+        context.scale(flipScaleX, flipScaleY);
+        context.fillStyle = color;
+        context.font = `600 ${fontSize}px ${fontFamily}`;
+        context.textBaseline = 'middle';
+        context.textAlign = 'left';
+        context.shadowColor = 'rgba(255,255,255,0.35)';
+        context.shadowBlur = 2 * averageScale;
+        context.shadowOffsetY = 1 * scaleY;
+        context.fillText(annotation.name, -textWidth / 2 + 2 * scaleX, 0);
+        context.restore();
+        return;
+      }
+
+      if (annotation.kind === 'number') {
+        const centerX = (rect.x + rect.width / 2) * width;
+        const centerY = (rect.y + rect.height / 2) * height;
+        const radius = ((rect.width * width) + (rect.height * height)) / 4;
+        const number = annotation.number ?? (Number(annotation.name) || 1);
+
+        context.save();
+        context.translate(centerX, centerY);
+        context.scale(flipScaleX, flipScaleY);
+        context.fillStyle = '#ffffff';
+        context.strokeStyle = color;
+        context.lineWidth = Math.max(2, 2.4 * averageScale);
+        context.beginPath();
+        context.arc(0, 0, radius, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+        context.fillStyle = color;
+        context.font = `700 ${Math.max(11, radius * 1.1)}px sans-serif`;
+        context.textBaseline = 'middle';
+        context.textAlign = 'center';
+        context.fillText(String(number), 0, radius * 0.03);
+        context.restore();
+        return;
+      }
+
+      context.save();
+      context.strokeStyle = color;
+      context.lineWidth = (annotation.strokeWidth ?? 3) * averageScale;
+      context.strokeRect(rect.x * width, rect.y * height, rect.width * width, rect.height * height);
+      context.restore();
+    });
+  context.restore();
+
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    width,
+    height,
+  };
+}
 
 function CropOverlay({
   data,
@@ -6351,7 +6734,7 @@ function CropOverlay({
           }}
           onPointerDown={(e) => handlePointerDown(e, 'move')}
         >
-          {/* 娑撳鐡戦崚鍡欑秹閺嶈偐鍤?*/}
+          {/* Crop grid */}
           <div className="absolute inset-0 pointer-events-none" style={{ borderRight: '1px solid rgba(255,255,255,0.25)', borderLeft: '1px solid rgba(255,255,255,0.25)', backgroundImage: 'linear-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)', backgroundSize: `100% ${cropScreenH / 3}px`, backgroundPosition: `0 ${cropScreenH / 3}px` }} />
 
           {/* Corner markers */}
@@ -6380,13 +6763,13 @@ function CropOverlay({
         ))}
       </div>
 
-      {/* 鎼存洟鍎村銉ュ徔閺?*/}
+      {/* Crop controls */}
       <div className="fixed bottom-0 left-0 right-0 z-[82] flex items-center justify-center gap-3 py-5 pointer-events-none">
         <div className="flex items-center gap-3 pointer-events-auto">
           <button
             type="button"
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 backdrop-blur-md transition-colors hover:bg-white/16 hover:text-white"
-            aria-label="关闭"
+            aria-label="Close crop"
             onClick={onClose}
           >
             <X size={18} strokeWidth={2.2} />
@@ -6408,7 +6791,7 @@ function CropOverlay({
               }}
             >
               <CropIcon size={14} strokeWidth={2} />
-              <span>宽高比</span>
+              <span>Aspect</span>
             </button>
             {aspectMenuOpen ? (
               <div className="absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 z-10 w-[148px] rounded-[14px] border border-white/10 bg-[#17181B]/95 p-1.5 shadow-[0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl">
@@ -6435,14 +6818,14 @@ function CropOverlay({
                     ].join(' ')}
                     onClick={() => { setCustomMode(true); setAspectRatio(null); }}
                   >
-                    自定义比例...
+                    Custom
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5 px-2 py-2">
                     <input
                       type="number"
                       min="1"
-                      placeholder="宽"
+                      placeholder="Width"
                       value={customW}
                       className="w-0 flex-1 rounded-[8px] bg-white/10 px-2 py-1.5 text-center text-[13px] text-white outline-none placeholder:text-white/30 focus:bg-white/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       onChange={(e) => {
@@ -6462,7 +6845,7 @@ function CropOverlay({
                     <input
                       type="number"
                       min="1"
-                      placeholder="高"
+                      placeholder="Height"
                       value={customH}
                       className="w-0 flex-1 rounded-[8px] bg-white/10 px-2 py-1.5 text-center text-[13px] text-white outline-none placeholder:text-white/30 focus:bg-white/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       onChange={(e) => {
@@ -6490,7 +6873,7 @@ function CropOverlay({
             onClick={() => onConfirm(data.nodeId, cropRect)}
           >
             <Check size={14} strokeWidth={2.5} />
-            <span>确认裁剪</span>
+            <span>Apply</span>
           </button>
         </div>
       </div>
@@ -6498,6 +6881,1058 @@ function CropOverlay({
   );
 }
 
+type AnnotationTool = 'text' | 'pen' | 'rect' | 'number' | 'eraser';
+const TEXT_ANNOTATION_PLACEHOLDER = '\u8f93\u5165\u6587\u5b57';
+type TextTransformMode = 'move' | 'resize' | 'rotate';
+type TextTransformDrag = {
+  annotationId: string;
+  mode: TextTransformMode;
+  startClientX: number;
+  startClientY: number;
+  startRect: CropRect;
+  startFontSize: number;
+  startRotation: number;
+  centerX: number;
+  centerY: number;
+  startAngle: number;
+};
+
+function AnnotationToolbarButton({
+  active,
+  disabled,
+  label,
+  onClick,
+  children,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="group/tooltip relative">
+      <button
+        type="button"
+        aria-label={label}
+        disabled={disabled}
+        className={[
+          'flex h-9 w-9 items-center justify-center rounded-[9px] transition-colors',
+          active
+            ? 'bg-indigo-500/35 text-white ring-1 ring-indigo-300/45'
+            : 'text-white/70 hover:bg-white/[0.08] hover:text-white',
+          disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-white/70' : '',
+        ].join(' ')}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+      <Tooltip label={label} side="top" />
+    </div>
+  );
+}
+
+function AnnotationOverlay({
+  data,
+  onClose,
+  onChange,
+  onSave,
+}: {
+  data: ImageAnnotationOverlayData | null;
+  onClose: () => void;
+  onChange: (nodeId: string, nodeType: ImageAnnotationNodeType, annotations: ImageAnnotation[]) => void;
+  onSave: (data: ImageAnnotationOverlayData) => Promise<void>;
+}) {
+  const viewport = useViewport();
+  const [tool, setTool] = useState<AnnotationTool>('text');
+  const [color, setColor] = useState('#111111');
+  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [fontSize, setFontSize] = useState(32);
+  const [numberSize, setNumberSize] = useState(() =>
+    Math.round(resolveAnnotationNumberRadius({
+      width: data?.cardWidth ?? IMAGE_GENERATION_MAX_CARD_EDGE,
+      height: data?.cardHeight ?? IMAGE_GENERATION_MAX_CARD_EDGE,
+    }) * 2),
+  );
+  const [draftRect, setDraftRect] = useState<CropRect | null>(null);
+  const [draftPath, setDraftPath] = useState<Array<{ x: number; y: number }> | null>(null);
+  const [textEditor, setTextEditor] = useState<{ x: number; y: number; value: string; annotationId?: string } | null>(null);
+  const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [flipState, setFlipState] = useState(() => ({
+    x: Boolean(data?.flipX),
+    y: Boolean(data?.flipY),
+  }));
+  const [historyState, setHistoryState] = useState<{ key: string | null; undoCount: number; redoCount: number }>({
+    key: null,
+    undoCount: 0,
+    redoCount: 0,
+  });
+  const historyKey = data ? `${data.nodeType}:${data.nodeId}` : null;
+  const historyKeyRef = useRef<string | null>(null);
+  const undoStackRef = useRef<ImageAnnotation[][]>([]);
+  const redoStackRef = useRef<ImageAnnotation[][]>([]);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const textTransformRef = useRef<TextTransformDrag | null>(null);
+
+  const { x: vpX, y: vpY, zoom } = viewport;
+  const screenX = data ? vpX + (data.nodePosition.x + data.cardLeft) * zoom : 0;
+  const screenY = data ? vpY + (data.nodePosition.y + data.cardTop) * zoom : 0;
+  const screenW = data ? data.cardWidth * zoom : 1;
+  const screenH = data ? data.cardHeight * zoom : 1;
+
+  const getRelativePoint = (event: React.PointerEvent<HTMLDivElement>) => ({
+    x: flipState.x
+      ? 1 - Math.max(0, Math.min(1, (event.clientX - screenX) / screenW))
+      : Math.max(0, Math.min(1, (event.clientX - screenX) / screenW)),
+    y: flipState.y
+      ? 1 - Math.max(0, Math.min(1, (event.clientY - screenY) / screenH))
+      : Math.max(0, Math.min(1, (event.clientY - screenY) / screenH)),
+  });
+
+  const estimateTextPixelWidth = (value: string, nextFontSize: number) => {
+    const characters = Array.from(value || TEXT_ANNOTATION_PLACEHOLDER);
+    const units = characters.reduce((total, character) => {
+      if (/[\u2e80-\uffff]/.test(character)) {
+        return total + 1;
+      }
+
+      if (/[A-Z0-9]/.test(character)) {
+        return total + 0.72;
+      }
+
+      if (/\s/.test(character)) {
+        return total + 0.34;
+      }
+
+      return total + 0.62;
+    }, 0);
+
+    return Math.ceil(units * nextFontSize + 8);
+  };
+
+  const estimateTextRect = (value: string, nextFontSize: number, x: number, y: number): CropRect => ({
+    x,
+    y,
+    width: Math.min(0.95, Math.max(0.055, estimateTextPixelWidth(value, nextFontSize) / Math.max(screenW, 1))),
+    height: Math.min(0.25, Math.max(0.035, (nextFontSize * 1.25 + 8) / Math.max(screenH, 1))),
+  });
+
+  const toVisualRect = (rect: CropRect): CropRect => ({
+    x: flipState.x ? 1 - rect.x - rect.width : rect.x,
+    y: flipState.y ? 1 - rect.y - rect.height : rect.y,
+    width: rect.width,
+    height: rect.height,
+  });
+
+  const toVisualPoint = (point: { x: number; y: number }) => ({
+    x: flipState.x ? 1 - point.x : point.x,
+    y: flipState.y ? 1 - point.y : point.y,
+  });
+
+  const clampRectToFrame = (rect: CropRect): CropRect => ({
+    ...rect,
+    x: Math.max(0, Math.min(1 - rect.width, rect.x)),
+    y: Math.max(0, Math.min(1 - rect.height, rect.y)),
+  });
+
+  const estimateNewTextRect = (value: string, nextFontSize: number, x: number, y: number): CropRect => {
+    const measured = estimateTextRect(value, nextFontSize, x, y);
+
+    return clampRectToFrame({
+      ...measured,
+      x: flipState.x ? x - measured.width : x,
+      y: flipState.y ? y - measured.height : y,
+    });
+  };
+
+  const getTextVisualRotation = (rotation: number | undefined) =>
+    flipState.x !== flipState.y ? -(rotation ?? 0) : (rotation ?? 0);
+
+  const activateHistory = useCallback((key: string) => {
+    if (historyKeyRef.current === key) {
+      return;
+    }
+
+    historyKeyRef.current = key;
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+  }, []);
+
+  const syncHistoryState = useCallback((key: string) => {
+    setHistoryState({
+      key,
+      undoCount: undoStackRef.current.length,
+      redoCount: redoStackRef.current.length,
+    });
+  }, []);
+
+  const commitAnnotations = useCallback((nextAnnotations: ImageAnnotation[]) => {
+    if (!data) {
+      return;
+    }
+
+    const nextHistoryKey = `${data.nodeType}:${data.nodeId}`;
+    activateHistory(nextHistoryKey);
+    undoStackRef.current = [...undoStackRef.current.slice(-19), data.annotations];
+    redoStackRef.current = [];
+    syncHistoryState(nextHistoryKey);
+    onChange(data.nodeId, data.nodeType, nextAnnotations);
+  }, [activateHistory, data, onChange, syncHistoryState]);
+
+  const updateAnnotations = useCallback((nextAnnotations: ImageAnnotation[]) => {
+    if (!data) {
+      return;
+    }
+
+    onChange(data.nodeId, data.nodeType, nextAnnotations);
+  }, [data, onChange]);
+
+  const pushUndoSnapshot = useCallback(() => {
+    if (!data) {
+      return;
+    }
+
+    const nextHistoryKey = `${data.nodeType}:${data.nodeId}`;
+    activateHistory(nextHistoryKey);
+    undoStackRef.current = [...undoStackRef.current.slice(-19), data.annotations];
+    redoStackRef.current = [];
+    syncHistoryState(nextHistoryKey);
+  }, [activateHistory, data, syncHistoryState]);
+
+  const handleUndo = () => {
+    if (!data) {
+      return;
+    }
+
+    const nextHistoryKey = `${data.nodeType}:${data.nodeId}`;
+    activateHistory(nextHistoryKey);
+    const previous = undoStackRef.current.pop();
+
+    if (!previous) {
+      syncHistoryState(nextHistoryKey);
+      return;
+    }
+
+    setSelectedTextId(null);
+    redoStackRef.current = [...redoStackRef.current, data.annotations];
+    syncHistoryState(nextHistoryKey);
+    onChange(data.nodeId, data.nodeType, previous);
+  };
+
+  const handleRedo = () => {
+    if (!data) {
+      return;
+    }
+
+    const nextHistoryKey = `${data.nodeType}:${data.nodeId}`;
+    activateHistory(nextHistoryKey);
+    const next = redoStackRef.current.pop();
+
+    if (!next) {
+      syncHistoryState(nextHistoryKey);
+      return;
+    }
+
+    setSelectedTextId(null);
+    undoStackRef.current = [...undoStackRef.current, data.annotations];
+    syncHistoryState(nextHistoryKey);
+    onChange(data.nodeId, data.nodeType, next);
+  };
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (textEditor) {
+          setTextEditor(null);
+          return;
+        }
+
+        if (selectedTextId) {
+          setSelectedTextId(null);
+          return;
+        }
+
+        onClose();
+      }
+
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedTextId && !textEditor) {
+        event.preventDefault();
+        commitAnnotations(data.annotations.filter((annotation) => annotation.id !== selectedTextId));
+        setSelectedTextId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [commitAnnotations, data, onClose, selectedTextId, textEditor]);
+
+  if (!data) {
+    return null;
+  }
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (textEditor) {
+      handleConfirmText();
+      return;
+    }
+
+    const point = getRelativePoint(event);
+    setSelectedTextId(null);
+
+    if (tool === 'text') {
+      setTextEditor({ x: point.x, y: point.y, value: '' });
+      return;
+    }
+
+    if (tool === 'number') {
+      const radius = numberSize / 2;
+      const rect = {
+        x: Math.max(0, Math.min(1 - (radius * 2) / screenW, point.x - radius / screenW)),
+        y: Math.max(0, Math.min(1 - (radius * 2) / screenH, point.y - radius / screenH)),
+        width: (radius * 2) / screenW,
+        height: (radius * 2) / screenH,
+      };
+      const number = resolveNextAnnotationNumber(data.annotations);
+
+      commitAnnotations([
+        ...data.annotations,
+        {
+          id: crypto.randomUUID(),
+          kind: 'number',
+          name: String(number),
+          number,
+          rect,
+          color: '#111111',
+          strokeWidth: Math.max(2, Math.round(numberSize * 0.06)),
+          visible: true,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      return;
+    }
+
+    if (tool === 'eraser') {
+      const hit = data.annotations.findLast((annotation) => {
+        const rect = annotation.rect;
+        return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+      });
+
+      if (hit) {
+        commitAnnotations(data.annotations.filter((annotation) => annotation.id !== hit.id));
+      }
+      return;
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = point;
+
+    if (tool === 'pen') {
+      setDraftPath([point]);
+      return;
+    }
+
+    setDraftRect({ x: point.x, y: point.y, width: 0, height: 0 });
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (textTransformRef.current) {
+      return;
+    }
+
+    if (!dragRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    const point = getRelativePoint(event);
+
+    if (tool === 'pen') {
+      setDraftPath((current) => current ? [...current, point] : [point]);
+      return;
+    }
+
+    setDraftRect(clampAnnotationRect({
+      x: dragRef.current.x,
+      y: dragRef.current.y,
+      width: point.x - dragRef.current.x,
+      height: point.y - dragRef.current.y,
+    }));
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (textTransformRef.current) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    dragRef.current = null;
+
+    if (tool === 'pen') {
+      const points = draftPath ?? [];
+      setDraftPath(null);
+
+      if (points.length < 2) {
+        return;
+      }
+
+      const minX = Math.min(...points.map((point) => point.x));
+      const minY = Math.min(...points.map((point) => point.y));
+      const maxX = Math.max(...points.map((point) => point.x));
+      const maxY = Math.max(...points.map((point) => point.y));
+
+      commitAnnotations([
+        ...data.annotations,
+        {
+          id: crypto.randomUUID(),
+          kind: 'path',
+          name: 'path',
+          points,
+          rect: { x: minX, y: minY, width: Math.max(0.001, maxX - minX), height: Math.max(0.001, maxY - minY) },
+          color,
+          strokeWidth,
+          visible: true,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      return;
+    }
+
+    const rect = draftRect;
+    setDraftRect(null);
+
+    if (!rect || rect.width < 0.01 || rect.height < 0.01) {
+      return;
+    }
+
+    commitAnnotations([
+      ...data.annotations,
+      {
+        id: crypto.randomUUID(),
+        kind: 'rect',
+        name: 'rect',
+        rect,
+        color,
+        strokeWidth,
+        visible: true,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  };
+
+  const resolveTextEditorAnnotations = (): ImageAnnotation[] | null => {
+    const value = textEditor?.value.trim();
+
+    if (!textEditor || !value) {
+      return null;
+    }
+
+    if (textEditor.annotationId) {
+      return data.annotations.map((annotation) =>
+        annotation.id === textEditor.annotationId
+          ? { ...annotation, name: value, rect: estimateNewTextRect(value, annotation.fontSize ?? fontSize, textEditor.x, textEditor.y) }
+          : annotation,
+      );
+    }
+
+    const nextId = crypto.randomUUID();
+    return [
+      ...data.annotations,
+      {
+        id: nextId,
+        kind: 'text',
+        name: value,
+        rect: estimateNewTextRect(value, fontSize, textEditor.x, textEditor.y),
+        color,
+        fontSize,
+        rotation: 0,
+        visible: true,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  };
+
+  const handleConfirmText = () => {
+    const nextAnnotations = resolveTextEditorAnnotations();
+
+    if (!nextAnnotations) {
+      setTextEditor(null);
+      return;
+    }
+
+    if (textEditor?.annotationId) {
+      commitAnnotations(nextAnnotations);
+      setSelectedTextId(textEditor.annotationId);
+      setTextEditor(null);
+      return;
+    }
+
+    commitAnnotations(nextAnnotations);
+    setSelectedTextId(nextAnnotations[nextAnnotations.length - 1]?.id ?? null);
+    setTextEditor(null);
+  };
+
+  const handleSave = async () => {
+    if (!data || saving) {
+      return;
+    }
+
+    const annotationsToSave = resolveTextEditorAnnotations() ?? data.annotations;
+
+    if (textEditor) {
+      commitAnnotations(annotationsToSave);
+      setTextEditor(null);
+    }
+
+    setSaving(true);
+    try {
+      await onSave({ ...data, annotations: annotationsToSave, flipX: flipState.x, flipY: flipState.y });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const beginTextTransform = (
+    event: React.PointerEvent<HTMLElement>,
+    annotation: ImageAnnotation,
+    mode: TextTransformMode,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedTextId(annotation.id);
+    pushUndoSnapshot();
+
+    const rect = annotation.rect;
+    const visualRect = toVisualRect(rect);
+    const centerX = screenX + (visualRect.x + visualRect.width / 2) * screenW;
+    const centerY = screenY + (visualRect.y + visualRect.height / 2) * screenH;
+    textTransformRef.current = {
+      annotationId: annotation.id,
+      mode,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startRect: rect,
+      startFontSize: annotation.fontSize ?? fontSize,
+      startRotation: annotation.rotation ?? 0,
+      centerX,
+      centerY,
+      startAngle: Math.atan2(event.clientY - centerY, event.clientX - centerX),
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleTextTransformMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = textTransformRef.current;
+
+    if (!drag) {
+      return;
+    }
+
+    event.preventDefault();
+    const dx = (event.clientX - drag.startClientX) / Math.max(screenW, 1);
+    const dy = (event.clientY - drag.startClientY) / Math.max(screenH, 1);
+    const sourceDx = flipState.x ? -dx : dx;
+    const sourceDy = flipState.y ? -dy : dy;
+
+    updateAnnotations(data.annotations.map((annotation) => {
+      if (annotation.id !== drag.annotationId) {
+        return annotation;
+      }
+
+      if (drag.mode === 'move') {
+        return {
+          ...annotation,
+          rect: {
+            ...annotation.rect,
+            x: Math.max(0, Math.min(1 - annotation.rect.width, drag.startRect.x + sourceDx)),
+            y: Math.max(0, Math.min(1 - annotation.rect.height, drag.startRect.y + sourceDy)),
+          },
+        };
+      }
+
+      if (drag.mode === 'resize') {
+        const scale = Math.max(0.45, Math.min(4, 1 + (event.clientX - drag.startClientX + event.clientY - drag.startClientY) / 160));
+        const nextFontSize = Math.max(12, Math.min(96, Math.round(drag.startFontSize * scale)));
+
+        return {
+          ...annotation,
+          fontSize: nextFontSize,
+          rect: estimateNewTextRect(
+            annotation.name,
+            nextFontSize,
+            flipState.x ? drag.startRect.x + drag.startRect.width : drag.startRect.x,
+            flipState.y ? drag.startRect.y + drag.startRect.height : drag.startRect.y,
+          ),
+        };
+      }
+
+      const nextAngle = Math.atan2(event.clientY - drag.centerY, event.clientX - drag.centerX);
+      const rotationSign = flipState.x !== flipState.y ? -1 : 1;
+      const rotation = drag.startRotation + rotationSign * ((nextAngle - drag.startAngle) * 180) / Math.PI;
+
+      return {
+        ...annotation,
+        rotation,
+      };
+    }));
+  };
+
+  const endTextTransform = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!textTransformRef.current) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    textTransformRef.current = null;
+  };
+
+  const handleTextColorChange = (nextColor: string) => {
+    setColor(nextColor);
+
+    if (!selectedTextId) {
+      return;
+    }
+
+    commitAnnotations(data.annotations.map((annotation) =>
+      annotation.id === selectedTextId && annotation.kind === 'text'
+        ? { ...annotation, color: nextColor }
+        : annotation,
+    ));
+  };
+
+  const handleSizeChange = (nextValue: number) => {
+    if (tool === 'text') {
+      setFontSize(nextValue);
+
+      if (selectedTextId) {
+        commitAnnotations(data.annotations.map((annotation) =>
+          annotation.id === selectedTextId && annotation.kind === 'text'
+            ? {
+                ...annotation,
+                fontSize: nextValue,
+                rect: estimateNewTextRect(
+                  annotation.name,
+                  nextValue,
+                  flipState.x ? annotation.rect.x + annotation.rect.width : annotation.rect.x,
+                  flipState.y ? annotation.rect.y + annotation.rect.height : annotation.rect.y,
+                ),
+              }
+            : annotation,
+        ));
+      }
+      return;
+    }
+
+    if (tool === 'number') {
+      setNumberSize(nextValue);
+      return;
+    }
+
+    setStrokeWidth(nextValue);
+  };
+
+  const pathPointsToSvg = (points: Array<{ x: number; y: number }>) =>
+    points.map((point) => {
+      const visualPoint = toVisualPoint(point);
+
+      return `${visualPoint.x * screenW},${visualPoint.y * screenH}`;
+    }).join(' ');
+
+  const maskLeftWidth = Math.max(0, screenX);
+  const maskRightLeft = Math.max(0, screenX + screenW);
+  const maskTopHeight = Math.max(0, screenY);
+  const maskBottomTop = Math.max(0, screenY + screenH);
+  const maskMiddleTop = Math.max(0, screenY);
+  const maskMiddleHeight = Math.max(0, screenH);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[80] pointer-events-none">
+        <div
+          className="absolute bg-black/70 pointer-events-auto"
+          style={{ left: 0, top: 0, right: 0, height: maskTopHeight }}
+          onPointerDown={onClose}
+        />
+        <div
+          className="absolute bg-black/70 pointer-events-auto"
+          style={{ left: 0, top: maskBottomTop, right: 0, bottom: 0 }}
+          onPointerDown={onClose}
+        />
+        <div
+          className="absolute bg-black/70 pointer-events-auto"
+          style={{ left: 0, top: maskMiddleTop, width: maskLeftWidth, height: maskMiddleHeight }}
+          onPointerDown={onClose}
+        />
+        <div
+          className="absolute bg-black/70 pointer-events-auto"
+          style={{ left: maskRightLeft, top: maskMiddleTop, right: 0, height: maskMiddleHeight }}
+          onPointerDown={onClose}
+        />
+      </div>
+      <div
+        className="fixed z-[81] rounded-[inherit]"
+        style={{ left: screenX, top: screenY, width: screenW, height: screenH }}
+      >
+        <NextImage
+          src={data.imageUrl}
+          alt=""
+          fill
+          unoptimized
+          sizes={`${Math.max(1, Math.round(screenW))}px`}
+          draggable={false}
+          className="pointer-events-none absolute inset-0 rounded-[inherit] object-cover"
+          style={{
+            transform: `scale(${flipState.x ? -1 : 1}, ${flipState.y ? -1 : 1})`,
+          }}
+        />
+        <div
+          className="absolute left-1/2 top-[-64px] z-20 flex -translate-x-1/2 items-center gap-1 rounded-[13px] border border-white/10 bg-[#141519]/95 px-2 py-1.5 text-white shadow-[0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <AnnotationToolbarButton active={tool === 'text'} label={'\u6587\u5b57'} onClick={() => setTool('text')}><TypeIcon size={17} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton active={tool === 'pen'} label={'\u753b\u7b14'} onClick={() => setTool('pen')}><Pencil size={17} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton active={tool === 'rect'} label={'\u77e9\u5f62'} onClick={() => setTool('rect')}><Square size={17} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton active={tool === 'number'} label={'\u7f16\u53f7'} onClick={() => setTool('number')}><CircleDot size={17} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton active={tool === 'eraser'} label={'\u6a61\u76ae\u64e6'} onClick={() => setTool('eraser')}><Eraser size={17} /></AnnotationToolbarButton>
+          <div className="mx-1 h-6 w-px bg-white/10" />
+          {['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#ffffff', '#111111'].map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-label={`\u989c\u8272 ${option}`}
+              className="h-6 w-6 rounded-full border transition-transform hover:scale-110"
+              style={{ backgroundColor: option, borderColor: color === option ? '#fff' : 'rgba(255,255,255,0.25)' }}
+              onClick={() => handleTextColorChange(option)}
+            />
+          ))}
+          <input
+            type="range"
+            min={tool === 'text' ? 18 : tool === 'number' ? 24 : 2}
+            max={tool === 'text' ? 60 : tool === 'number' ? 64 : 14}
+            value={tool === 'text' ? fontSize : tool === 'number' ? numberSize : strokeWidth}
+            className="mx-2 w-[118px] accent-indigo-400"
+            aria-label={tool === 'text' ? '\u6587\u5b57\u5927\u5c0f' : tool === 'number' ? '\u7f16\u53f7\u5927\u5c0f' : '\u7ebf\u6761\u7c97\u7ec6'}
+            onChange={(event) => {
+              const value = Number(event.target.value);
+              handleSizeChange(value);
+            }}
+          />
+          <AnnotationToolbarButton label={'\u64a4\u9500'} disabled={historyState.key !== historyKey || historyState.undoCount === 0} onClick={handleUndo}><Undo2 size={16} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton label={'\u91cd\u505a'} disabled={historyState.key !== historyKey || historyState.redoCount === 0} onClick={handleRedo}><Redo2 size={16} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton label={'\u6c34\u5e73\u7ffb\u8f6c'} active={flipState.x} onClick={() => setFlipState((current) => ({ ...current, x: !current.x }))}><FlipHorizontal2 size={16} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton label={'\u5782\u76f4\u7ffb\u8f6c'} active={flipState.y} onClick={() => setFlipState((current) => ({ ...current, y: !current.y }))}><FlipVertical2 size={16} /></AnnotationToolbarButton>
+          <AnnotationToolbarButton label={'\u6e05\u7a7a'} disabled={data.annotations.length === 0} onClick={() => commitAnnotations([])}><Trash2 size={16} /></AnnotationToolbarButton>
+          <button
+            type="button"
+            disabled={saving}
+            className="ml-1 flex h-9 min-w-[72px] items-center justify-center gap-2 whitespace-nowrap rounded-[10px] bg-white px-3 text-[13px] font-semibold text-black transition-colors hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
+            onClick={() => void handleSave()}
+          >
+            <Save size={15} />
+            {saving ? '\u4fdd\u5b58\u4e2d' : '\u4fdd\u5b58'}
+          </button>
+          <button
+            type="button"
+            aria-label={'\u9000\u51fa\u6807\u6ce8'}
+            className="ml-1 flex h-9 w-9 items-center justify-center rounded-[10px] bg-red-500/18 text-red-300 ring-1 ring-red-400/35 transition-colors hover:bg-red-500/28 hover:text-red-100"
+            onClick={onClose}
+          >
+            <X size={17} strokeWidth={2.4} />
+          </button>
+        </div>
+
+        <div
+          className={[
+            'absolute inset-0 z-10 touch-none overflow-hidden rounded-[inherit]',
+            tool === 'text' ? 'cursor-text' : tool === 'eraser' ? 'cursor-not-allowed' : 'cursor-crosshair',
+          ].join(' ')}
+          onPointerDown={handlePointerDown}
+          onPointerMove={(event) => {
+            handleTextTransformMove(event);
+            handlePointerMove(event);
+          }}
+          onPointerUp={(event) => {
+            endTextTransform(event);
+            handlePointerUp(event);
+          }}
+          onPointerCancel={() => {
+            textTransformRef.current = null;
+            dragRef.current = null;
+            setDraftPath(null);
+            setDraftRect(null);
+          }}
+        >
+          <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+            {data.annotations.filter((annotation) => annotation.visible !== false && annotation.kind === 'path' && annotation.points?.length).map((annotation) => (
+              <polyline
+                key={annotation.id}
+                points={pathPointsToSvg(annotation.points ?? [])}
+                fill="none"
+                stroke={annotation.color ?? '#ef4444'}
+                strokeWidth={annotation.strokeWidth ?? 4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ))}
+            {draftPath ? (
+              <polyline
+                points={pathPointsToSvg(draftPath)}
+                fill="none"
+                stroke={color}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ) : null}
+          </svg>
+
+          {data.annotations.filter((annotation) => annotation.visible !== false && annotation.kind !== 'path').map((annotation) => {
+            const kind = annotation.kind ?? 'rect';
+            const rect = annotation.rect;
+
+            if (kind === 'text') {
+              if (textEditor?.annotationId === annotation.id) {
+                return null;
+              }
+
+              const selected = selectedTextId === annotation.id;
+              const displayRect = resolveAnnotationTextDisplayRect(annotation, {
+                width: screenW,
+                height: screenH,
+              });
+              const visualRect = toVisualRect(displayRect);
+
+              return (
+                <div
+                  key={annotation.id}
+                  className="absolute"
+                  style={{
+                    left: `${visualRect.x * 100}%`,
+                    top: `${visualRect.y * 100}%`,
+                    width: `${visualRect.width * 100}%`,
+                    height: `${visualRect.height * 100}%`,
+                    transform: `rotate(${getTextVisualRotation(annotation.rotation)}deg)`,
+                    transformOrigin: 'center',
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="absolute inset-0 flex cursor-move select-none items-center bg-transparent px-0.5 py-0 text-left font-semibold leading-none"
+                    style={{
+                      color: annotation.color ?? '#111111',
+                      fontSize: `${annotation.fontSize ?? 32}px`,
+                      textShadow: '0 1px 2px rgba(255,255,255,0.35)',
+                      whiteSpace: 'nowrap',
+                    }}
+                    onPointerDown={(event) => beginTextTransform(event, annotation, 'move')}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedTextId(annotation.id);
+                      setTool('text');
+                      setColor(annotation.color ?? '#111111');
+                      setFontSize(annotation.fontSize ?? fontSize);
+                    }}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setSelectedTextId(annotation.id);
+                      setColor(annotation.color ?? '#111111');
+                      setFontSize(annotation.fontSize ?? fontSize);
+                      setTextEditor({
+                        x: flipState.x ? displayRect.x + displayRect.width : displayRect.x,
+                        y: flipState.y ? displayRect.y + displayRect.height : displayRect.y,
+                        value: annotation.name,
+                        annotationId: annotation.id,
+                      });
+                    }}
+                  >
+                    {annotation.name}
+                  </button>
+                  {selected ? (
+                    <>
+                      <div className="pointer-events-none absolute inset-[-2px] rounded-[2px] border border-[#7aa7ff]" />
+                      {[
+                        'left-[-6px] top-[-6px]',
+                        'right-[-6px] top-[-6px]',
+                        'left-[-6px] bottom-[-6px]',
+                        'right-[-6px] bottom-[-6px]',
+                      ].map((className) => (
+                        <span
+                          key={className}
+                          className={`pointer-events-none absolute h-3 w-3 rounded-full border border-[#7aa7ff] bg-white ${className}`}
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        aria-label={'\u5220\u9664\u6587\u5b57'}
+                        className="absolute left-[-20px] top-[-20px] flex h-4 w-4 items-center justify-center rounded-full bg-white text-[#111111] shadow-[0_1px_4px_rgba(0,0,0,0.28)]"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          commitAnnotations(data.annotations.filter((candidate) => candidate.id !== annotation.id));
+                          setSelectedTextId(null);
+                        }}
+                      >
+                        <X size={12} strokeWidth={2.4} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={'\u65cb\u8f6c\u6587\u5b57'}
+                        className="absolute right-[-22px] top-[-22px] flex h-4 w-4 cursor-grab items-center justify-center rounded-full bg-white text-[#111111] shadow-[0_1px_4px_rgba(0,0,0,0.28)] active:cursor-grabbing"
+                        onPointerDown={(event) => beginTextTransform(event, annotation, 'rotate')}
+                      >
+                        <RotateCw size={11} strokeWidth={2.4} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={'\u8c03\u6574\u6587\u5b57\u5927\u5c0f'}
+                        className="absolute bottom-[-22px] right-[-22px] flex h-4 w-4 cursor-nwse-resize items-center justify-center rounded-full bg-white text-[#111111] shadow-[0_1px_4px_rgba(0,0,0,0.28)]"
+                        onPointerDown={(event) => beginTextTransform(event, annotation, 'resize')}
+                      >
+                        <Expand size={11} strokeWidth={2.4} />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              );
+            }
+
+            if (kind === 'number') {
+              const number = annotation.number ?? (Number(annotation.name) || 1);
+              const visualRect = toVisualRect(rect);
+
+              return (
+                <button
+                  key={annotation.id}
+                  type="button"
+                  className="absolute flex cursor-pointer select-none items-center justify-center rounded-full border bg-white font-bold leading-none text-[#111111] shadow-[0_1px_3px_rgba(0,0,0,0.24)]"
+                  style={{
+                    left: `${visualRect.x * 100}%`,
+                    top: `${visualRect.y * 100}%`,
+                    width: `${visualRect.width * 100}%`,
+                    height: `${visualRect.height * 100}%`,
+                    borderColor: annotation.color ?? '#111111',
+                    borderWidth: annotation.strokeWidth ?? 2,
+                    fontSize: `${Math.max(11, Math.min(rect.width * screenW, rect.height * screenH) * 0.52)}px`,
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setTool('eraser');
+                  }}
+                >
+                  {number}
+                </button>
+              );
+            }
+
+            const visualRect = toVisualRect(rect);
+
+            return (
+              <button
+                key={annotation.id}
+                type="button"
+                className="absolute border bg-transparent"
+                style={{
+                  left: `${visualRect.x * 100}%`,
+                  top: `${visualRect.y * 100}%`,
+                  width: `${visualRect.width * 100}%`,
+                  height: `${visualRect.height * 100}%`,
+                  borderColor: annotation.color ?? '#ef4444',
+                  borderWidth: annotation.strokeWidth ?? 3,
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => setTool('eraser')}
+              />
+            );
+          })}
+
+          {draftRect ? (
+            (() => {
+              const visualRect = toVisualRect(draftRect);
+
+              return (
+                <div
+                  className="absolute border bg-transparent"
+                  style={{
+                    left: `${visualRect.x * 100}%`,
+                    top: `${visualRect.y * 100}%`,
+                    width: `${visualRect.width * 100}%`,
+                    height: `${visualRect.height * 100}%`,
+                    borderColor: color,
+                    borderWidth: strokeWidth,
+                  }}
+                />
+              );
+            })()
+          ) : null}
+
+          {textEditor ? (
+            (() => {
+              const editorFontSize = textEditor.annotationId
+                ? data.annotations.find((annotation) => annotation.id === textEditor.annotationId)?.fontSize ?? fontSize
+                : fontSize;
+              const editorRect = estimateNewTextRect(
+                textEditor.value || TEXT_ANNOTATION_PLACEHOLDER,
+                editorFontSize,
+                textEditor.x,
+                textEditor.y,
+              );
+              const visualRect = toVisualRect(editorRect);
+
+              return (
+                <input
+                  autoFocus
+                  value={textEditor.value}
+                  placeholder={TEXT_ANNOTATION_PLACEHOLDER}
+                  className="absolute rounded-[4px] border border-[#7aa7ff] bg-transparent px-1 py-0 font-semibold leading-none outline-none"
+                  style={{
+                    left: `${visualRect.x * 100}%`,
+                    top: `${visualRect.y * 100}%`,
+                    width: `${Math.max(96, estimateTextPixelWidth(textEditor.value, editorFontSize) + 10)}px`,
+                    color,
+                    fontSize: `${editorFontSize}px`,
+                    textShadow: '0 1px 2px rgba(255,255,255,0.35)',
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onChange={(event) => setTextEditor((current) => current ? { ...current, value: event.target.value } : current)}
+                  onBlur={handleConfirmText}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      handleConfirmText();
+                    }
+
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      setTextEditor(null);
+                    }
+                  }}
+                />
+              );
+            })()
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
 function ImageLightbox({
   data,
   onClose,
@@ -6684,13 +8119,13 @@ function ImageLightbox({
         <button
           type="button"
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
-          aria-label="关闭"
+          aria-label="Close crop"
           onMouseDown={(event) => event.stopPropagation()}
           onClick={onClose}
         >
           <X size={18} strokeWidth={2.2} />
         </button>
-        <Tooltip label="关闭" side="left" />
+        <Tooltip label="Close" />
       </div>
       <div
         className={[
@@ -6734,10 +8169,10 @@ function EmptyCanvasWelcome({
       <div className="flex flex-wrap items-center justify-center gap-3 text-center">
         <span className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/12 bg-white/[0.08] px-4 text-[14px] font-semibold text-gl-text-primary shadow-[0_12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl">
           <MousePointer2 size={16} className="text-gl-text-secondary" />
-          空画布
+          Click a target node
         </span>
         <span className="text-[18px] font-medium text-gl-text-secondary">
-          从这里开始创建
+          to connect it here
         </span>
       </div>
 
@@ -6750,7 +8185,7 @@ function EmptyCanvasWelcome({
           className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
         >
           <Type size={15} strokeWidth={2} />
-          文本
+          Text node
         </button>
         <button
           type="button"
@@ -6760,7 +8195,7 @@ function EmptyCanvasWelcome({
           className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
         >
           <ImageIcon size={15} strokeWidth={2} />
-          图片生成
+          Image node
         </button>
       </div>
     </div>
@@ -6857,6 +8292,7 @@ type CanvasAgentDockProps = {
     groupName?: string;
   }) => { ok: true; imageGenerationNodeId?: string; imageGenerationNodeIds?: string[]; groupId?: string } | { ok: false; error?: string };
   onConfirmGeneration: (payload: { nodeId?: string; nodeIds?: string[]; groupId?: string }) => boolean;
+  onLayoutChange?: (layout: { open: boolean; width: number }) => void;
 };
 
 const CanvasAgentDock = memo(function CanvasAgentDock({
@@ -6871,6 +8307,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
+  onLayoutChange,
 }: CanvasAgentDockProps) {
   const [open, setOpen] = useState(false);
 
@@ -6902,7 +8339,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
       {!open ? (
         <button
           type="button"
-          aria-label="打开 Canvas Agent"
+          aria-label="Close crop"
           className="nodrag nopan fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center text-[#d8dadd] transition hover:scale-105 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
           onPointerDown={(event) => {
             event.stopPropagation();
@@ -6929,6 +8366,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         onQuickReferenceSelect={handleQuickReferenceSelect}
         onConfirmPlan={onConfirmPlan}
         onConfirmGeneration={onConfirmGeneration}
+        onLayoutChange={onLayoutChange}
       />
     </>
   );
@@ -7012,8 +8450,16 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const closeAddMenuTimeoutRef = useRef<number | null>(null);
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
+  const [agentPanelLayout, setAgentPanelLayout] = useState({
+    open: false,
+    width: 0,
+  });
+  const imageInfoPopoverRightOffset = agentPanelLayout.open
+    ? agentPanelLayout.width + AGENT_PANEL_FLOATING_INSET + 16
+    : 24;
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
   const [cropMode, setCropMode] = useState<CropOverlayData | null>(null);
+  const [annotationMode, setAnnotationMode] = useState<ImageAnnotationOverlayData | null>(null);
   const [historyAnchor, setHistoryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [materialLibraryAnchor, setMaterialLibraryAnchor] = useState<{ x: number; y: number } | null>(null);
@@ -7089,6 +8535,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       dragHandle:
         n.type === 'text'
           ? '.text-node-drag-handle'
+          : n.type === 'storyboard_script'
+            ? '.storyboard-script-node-drag-handle'
           : n.type === 'image_generation' || n.type === 'video_generation' || n.type === 'video_upscale'
             ? '.image-generation-node-drag-handle'
           : undefined,
@@ -7170,7 +8618,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const videos = root
         ? Array.from(root.querySelectorAll('video'))
         : [];
-      const pendingImages = images.filter((image) => !image.complete);
+      const pendingImages = images.filter((image) => image.loading !== 'lazy' && !image.complete);
       const pendingVideos = videos.filter((video) => video.readyState < 2);
       const pendingMediaCount = pendingImages.length + pendingVideos.length;
 
@@ -7180,10 +8628,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       }
 
       let settledCount = 0;
+      const timeoutId = window.setTimeout(notifyReady, CANVAS_READY_MEDIA_TIMEOUT_MS);
+      cleanups.push(() => window.clearTimeout(timeoutId));
       const handleSettled = () => {
         settledCount += 1;
 
         if (settledCount >= pendingMediaCount) {
+          window.clearTimeout(timeoutId);
           notifyReady();
         }
       };
@@ -7333,6 +8784,178 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }, 2200);
   }, [setSaveMessage]);
 
+  const openImageAnnotationMode = useCallback((data: ImageAnnotationOverlayData) => {
+    cropPrevViewportRef.current = getViewport();
+
+    const targetZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM,
+      Math.min(
+        (window.innerWidth * 0.72) / data.cardWidth,
+        (window.innerHeight * 0.72) / data.cardHeight,
+      ),
+    ));
+    const cardCenterX = data.nodePosition.x + data.cardLeft + data.cardWidth / 2;
+    const cardCenterY = data.nodePosition.y + data.cardTop + data.cardHeight / 2;
+
+    void setViewport({
+      x: window.innerWidth / 2 - cardCenterX * targetZoom,
+      y: window.innerHeight / 2 - cardCenterY * targetZoom,
+      zoom: targetZoom,
+    }, { duration: 520 });
+
+    setImageInfoPopover(null);
+    setImageLightbox(null);
+    setCropMode(null);
+    setAnnotationMode(data);
+  }, [getViewport, setViewport]);
+
+  const handleCloseAnnotationMode = useCallback(() => {
+    setAnnotationMode(null);
+    const prev = cropPrevViewportRef.current;
+    if (prev) {
+      cropPrevViewportRef.current = null;
+      void setViewport(prev, { duration: 320 });
+    }
+  }, [setViewport]);
+
+  const handleChangeAnnotations = useCallback((
+    nodeId: string,
+    nodeType: ImageAnnotationNodeType,
+    annotations: ImageAnnotation[],
+  ) => {
+    if (nodeType === 'image_generation') {
+      updateNodeData<'image_generation'>(nodeId, { annotations });
+    } else if (nodeType === 'uploaded_image') {
+      updateNodeData<'uploaded_image'>(nodeId, { annotations });
+    } else {
+      updateNodeData<'image'>(nodeId, { annotations });
+    }
+
+    setAnnotationMode((current) =>
+      current?.nodeId === nodeId ? { ...current, annotations } : current,
+    );
+  }, [updateNodeData]);
+
+  const clearSourceAnnotations = useCallback((nodeId: string, nodeType: ImageAnnotationNodeType) => {
+    if (nodeType === 'image_generation') {
+      updateNodeData<'image_generation'>(nodeId, { annotations: [] });
+    } else if (nodeType === 'uploaded_image') {
+      updateNodeData<'uploaded_image'>(nodeId, { annotations: [] });
+    } else {
+      updateNodeData<'image'>(nodeId, { annotations: [] });
+    }
+  }, [updateNodeData]);
+
+  const handleSaveAnnotationMode = useCallback(async (data: ImageAnnotationOverlayData) => {
+    const sourceNode = useCanvasStore.getState().nodes.find((node) => node.id === data.nodeId);
+
+    if (!sourceNode) {
+      showProjectMessage('\u627e\u4e0d\u5230\u6e90\u56fe\u7247');
+      return;
+    }
+
+    try {
+      const annotationZoom = getViewport().zoom;
+      const result = await createAnnotatedImageDataUrl(data.imageUrl, data.annotations, {
+        width: data.cardWidth * annotationZoom,
+        height: data.cardHeight * annotationZoom,
+      }, {
+        flipX: data.flipX,
+        flipY: data.flipY,
+      });
+      const fileName = `annotation-${Date.now()}.png`;
+      const hostedImageUrl = await uploadCanvasImageAssetDataUrl(result.dataUrl, fileName, 'original', 'images');
+      const annotatedTitle = createAnnotatedImageNodeTitle(sourceNode);
+      const nextNode = createImportedImageNode(
+        {
+          title: annotatedTitle,
+          imageUrl: hostedImageUrl,
+          hostedImageUrl,
+          prompt: annotatedTitle,
+          width: result.width,
+          height: result.height,
+          displayWidth: data.cardWidth,
+          displayHeight: data.cardHeight,
+          generatedAt: new Date().toISOString(),
+          sourceImageNodeId: data.nodeId,
+        },
+        {
+          x: data.nodePosition.x + data.cardLeft + data.cardWidth + 80,
+          y: data.nodePosition.y + data.cardTop,
+        },
+      );
+
+      addNodes([nextNode]);
+      clearSourceAnnotations(data.nodeId, data.nodeType);
+      setSelectedNodeIds(new Set([nextNode.id]));
+      setActiveNodeId(nextNode.id);
+      setSelectedGroupId(null);
+      setSelectedEdgeId(null);
+      setEdgeDeleteButtonPosition(null);
+      setAnnotationMode(null);
+      const prev = cropPrevViewportRef.current;
+
+      if (prev) {
+        cropPrevViewportRef.current = null;
+        void setViewport(prev, { duration: 320 });
+      }
+
+      setNodeFocusRequest({
+        nodeId: nextNode.id,
+        requestId: Date.now(),
+      });
+      showProjectMessage('\u5df2\u521b\u5efa\u6807\u6ce8\u56fe\u7247');
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '\u4fdd\u5b58\u6807\u6ce8\u56fe\u7247\u5931\u8d25');
+    }
+  }, [addNodes, clearSourceAnnotations, getViewport, setViewport, showProjectMessage]);
+
+  useEffect(() => {
+    const root = canvasReadyRootRef.current;
+
+    if (!root) {
+      return;
+    }
+
+    const handleCtrlWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const viewport = getViewport();
+      const nextZoom = clampZoomLevel(
+        viewport.zoom * (1 - event.deltaY * CANVAS_CTRL_WHEEL_ZOOM_STEP),
+      );
+
+      if (nextZoom === viewport.zoom) {
+        return;
+      }
+
+      const rect = root.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const canvasX = (pointerX - viewport.x) / viewport.zoom;
+      const canvasY = (pointerY - viewport.y) / viewport.zoom;
+
+      void setViewport({
+        x: pointerX - canvasX * nextZoom,
+        y: pointerY - canvasY * nextZoom,
+        zoom: nextZoom,
+      }, { duration: 0 });
+    };
+
+    root.addEventListener('wheel', handleCtrlWheel, {
+      capture: true,
+      passive: false,
+    });
+
+    return () => {
+      root.removeEventListener('wheel', handleCtrlWheel, true);
+    };
+  }, [getViewport, setViewport]);
+
   const animateFocusToBounds = useCallback((bounds: { x: number; y: number; width: number; height: number }, padding: number) => {
     const width = window.innerWidth;
     const height = window.innerHeight;
@@ -7406,7 +9029,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     setImageInfoPopover(null);
     setImageLightbox(null);
     clearEdgeSelection();
-    showProjectMessage('请选择一个可作为参考素材的上游节点');
+    showProjectMessage('Select an image node to connect');
   }, [clearConnectionMenu, clearEdgeSelection, showProjectMessage]);
 
   const stopQuickReferenceConnect = useCallback(() => {
@@ -7501,7 +9124,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const source = createMaterialSourceFromImageGenerationData(data);
 
         if (!source) {
-          showProjectMessage('当前节点没有可加入素材库的图片');
+          showProjectMessage('Current node has no image for the material library');
           return;
         }
 
@@ -7509,7 +9132,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         return;
       }
 
-      if (action === 'crop') {
+      if (action === 'crop' || action === 'annotate') {
         const targetNode = storeNodes.find(
           (node): node is Extract<CanvasNode, { type: 'image_generation' }> =>
             node.type === 'image_generation' &&
@@ -7562,6 +9185,23 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const cardStageH = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
         const cardTopOffset = cardStageH - cardH;
         const cardLeftOffset = Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - cardW) / 2);
+
+        if (action === 'annotate') {
+          openImageAnnotationMode({
+            nodeId: targetNode.id,
+            nodeType: 'image_generation',
+            imageUrl,
+            nodePosition: targetNode.position,
+            cardLeft: cardLeftOffset,
+            cardTop: cardTopOffset,
+            cardWidth: cardW,
+            cardHeight: cardH,
+            annotations: targetNode.data.annotations ?? [],
+            flipX: false,
+            flipY: false,
+          });
+          return;
+        }
 
         cropPrevViewportRef.current = getViewport();
 
@@ -7634,14 +9274,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         void downloadImageGenerationResult(data)
           .then((status) => {
             if (status === 'saved') {
-              setSaveMessage('图片已下载');
+              setSaveMessage('Image downloaded');
               window.setTimeout(() => {
                 setSaveMessage(null);
               }, 2200);
             }
           })
           .catch((error) => {
-            setSaveMessage(error instanceof Error ? error.message : '图片下载失败');
+            setSaveMessage(error instanceof Error ? error.message : 'Download failed');
             window.setTimeout(() => {
               setSaveMessage(null);
             }, 2200);
@@ -7681,6 +9321,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     createPanorama360FromImageNode,
     cropImageGenerationNode,
     getViewport,
+    openImageAnnotationMode,
     setCropMode,
     setSaveMessage,
     setViewport,
@@ -7691,7 +9332,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
   useEffect(() => {
     notifyUploadedImageToolbarAction = (action, nodeId, data, cardLayout) => {
-      if (action === 'crop') {
+      if (action === 'crop' || action === 'annotate') {
         const targetNode = storeNodes.find(
           (node): node is Extract<CanvasNode, { type: 'uploaded_image' }> =>
             node.id === nodeId && node.type === 'uploaded_image',
@@ -7706,6 +9347,23 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const cardH = cardLayout?.height ?? data.displayHeight ?? Math.round(cardW * (data.height || 320) / (data.width || 320));
         const cardLeft = cardLayout?.left ?? 0;
         const cardTop = ADAPTER_PADDING_TOP + (cardLayout?.top ?? 22);
+
+        if (action === 'annotate') {
+          openImageAnnotationMode({
+            nodeId: targetNode.id,
+            nodeType: 'uploaded_image',
+            imageUrl,
+            nodePosition: targetNode.position,
+            cardLeft,
+            cardTop,
+            cardWidth: cardW,
+            cardHeight: cardH,
+            annotations: targetNode.data.annotations ?? [],
+            flipX: false,
+            flipY: false,
+          });
+          return;
+        }
 
         cropPrevViewportRef.current = getViewport();
 
@@ -7745,7 +9403,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const source = createMaterialSourceFromUploadedImageData(data);
 
         if (!source) {
-          showProjectMessage('当前节点没有可加入素材库的图片');
+          showProjectMessage('Current node has no image for the material library');
           return;
         }
 
@@ -7808,6 +9466,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [
     createPanorama360FromImageNode,
     getViewport,
+    openImageAnnotationMode,
     setCropMode,
     setSaveMessage,
     setViewport,
@@ -7817,7 +9476,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   ]);
 
   useEffect(() => {
-    notifyImageNodeCropRequest = (nodeId, data, cardDimensions, imageUrl) => {
+    notifyImageNodeCropRequest = (nodeId, data, cardDimensions, imageUrl, mode = 'crop') => {
       const targetNode = storeNodes.find(
         (node): node is Extract<CanvasNode, { type: 'image' }> =>
           node.id === nodeId && node.type === 'image',
@@ -7832,6 +9491,23 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const cardH = cardDimensions.height;
       const cardLeft = 0;
       const cardTop = ADAPTER_PADDING_TOP + 22;
+
+      if (mode === 'annotate') {
+        openImageAnnotationMode({
+          nodeId: targetNode.id,
+          nodeType: 'image',
+          imageUrl,
+          nodePosition: targetNode.position,
+          cardLeft,
+          cardTop,
+          cardWidth: cardW,
+          cardHeight: cardH,
+          annotations: targetNode.data.annotations ?? [],
+          flipX: false,
+          flipY: false,
+        });
+        return;
+      }
 
       cropPrevViewportRef.current = getViewport();
 
@@ -7871,6 +9547,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     };
   }, [
     getViewport,
+    openImageAnnotationMode,
     setCropMode,
     setViewport,
     storeNodes,
@@ -7940,7 +9617,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         setActiveNodeId(nodeId);
         clearEdgeSelection();
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : '创建图片节点失败');
+        setSaveMessage(error instanceof Error ? error.message : 'Connect failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     };
@@ -8122,7 +9799,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
 
     if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
-      showProjectMessage('这个节点不能作为当前节点的参考素材');
+      showProjectMessage('This node cannot be used as a reference');
       return;
     }
 
@@ -8130,12 +9807,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const attachment = createAgentAttachmentFromCanvasImageNode(sourceNode);
 
       if (!attachment) {
-        showProjectMessage('这个节点不能作为当前节点的参考素材');
+        showProjectMessage('This node cannot be used as a reference');
         return;
       }
 
       const result = quickReferenceConnect.onSelect(attachment);
-      showProjectMessage(result === 'duplicate' ? '参考图已添加' : '已添加为 Agent 参考图');
+      showProjectMessage(result === 'duplicate' ? 'Reference image already added' : 'Added as Agent reference image');
       setQuickReferenceConnect(null);
       clearEdgeSelection();
       setSelectedGroupId(null);
@@ -8149,14 +9826,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
 
     if (alreadyConnected) {
-      showProjectMessage('参考连接已存在');
+      showProjectMessage('Already connected');
     } else {
       addEdgeStore({
         id: crypto.randomUUID(),
         source: sourceNode.id,
         target: quickReferenceConnect.targetNodeId,
       });
-      showProjectMessage('已连接为参考素材');
+      showProjectMessage('Connected as reference');
     }
 
     setQuickReferenceConnect(null);
@@ -8197,7 +9874,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
 
     if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
-      showProjectMessage('这个节点不能作为当前节点的参考素材');
+      showProjectMessage('This node cannot be used as a reference');
       return;
     }
 
@@ -8206,14 +9883,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
 
     if (alreadyConnected) {
-      showProjectMessage('参考连接已存在');
+      showProjectMessage('Already connected');
     } else {
       addEdgeStore({
         id: crypto.randomUUID(),
         source: sourceNode.id,
         target: quickReferenceConnect.targetNodeId,
       });
-      showProjectMessage('已连接为参考素材');
+      showProjectMessage('Connected as reference');
     }
 
     setQuickReferenceConnect(null);
@@ -8247,7 +9924,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const sourceNode = storeNodes.find((candidate) => candidate.id === node.id);
 
       if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
-        showProjectMessage('这个节点不能作为当前节点的参考素材');
+        showProjectMessage('This node cannot be used as a reference');
         return;
       }
 
@@ -8256,14 +9933,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       );
 
       if (alreadyConnected) {
-        showProjectMessage('参考连接已存在');
+        showProjectMessage('Already connected');
       } else {
         addEdgeStore({
           id: crypto.randomUUID(),
           source: sourceNode.id,
           target: quickReferenceConnect.targetNodeId,
         });
-        showProjectMessage('已连接为参考素材');
+        showProjectMessage('Connected as reference');
       }
 
       setQuickReferenceConnect(null);
@@ -8878,79 +10555,55 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
   }, [addNodes, clearEdgeSelection]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && quickReferenceConnect) {
-        event.preventDefault();
-        stopQuickReferenceConnect();
-        return;
-      }
-
-      if (isTypingTarget(event.target)) {
-        return;
-      }
-
-      const key = event.key.toLowerCase();
-      const isModifierPressed = event.ctrlKey || event.metaKey;
-
-      if (isModifierPressed && !event.altKey && key === 'z') {
-        event.preventDefault();
-
-        if (event.shiftKey) {
-          redo();
-        } else {
-          undo();
-        }
-
-        return;
-      }
-
-      if (isModifierPressed && !event.altKey && !event.shiftKey && key === 'c') {
-        if (handleCopySelectedNodes()) {
-          event.preventDefault();
-        }
-        return;
-      }
-
-      if (isModifierPressed && event.shiftKey && key === 'v') {
-        event.preventDefault();
-        handlePasteNodesWithUpstream();
-        return;
-      }
-
-      if (!isModifierPressed && !event.altKey && !event.shiftKey && key === 'g') {
-        event.preventDefault();
-        handleSmartResetViewport();
-        return;
-      }
-
-      if (event.key !== 'Delete' && event.key !== 'Backspace') {
-        return;
-      }
-
-      if (!selectedEdgeId && selectedNodeIds.size === 0) {
-        return;
-      }
-
-      event.preventDefault();
-      if (selectedNodeIds.size > 0) {
-        handleDeleteSelectedNodes();
-        clearEdgeSelection();
-        return;
-      }
-
-      handleDeleteSelectedEdge();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
+  const clipboardShortcutRef = useRef({
+    addUploadedImages,
+    clearConnectionMenu,
     clearEdgeSelection,
     handleCopySelectedNodes,
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
+    handlePasteNodes,
     handlePasteNodesWithUpstream,
     handleSmartResetViewport,
+    project,
+    quickReferenceConnect,
+    redo,
+    selectedEdgeId,
+    selectedNodeIds,
+    stopQuickReferenceConnect,
+    undo,
+  });
+
+  useEffect(() => {
+    clipboardShortcutRef.current = {
+      addUploadedImages,
+      clearConnectionMenu,
+      clearEdgeSelection,
+      handleCopySelectedNodes,
+      handleDeleteSelectedEdge,
+      handleDeleteSelectedNodes,
+      handlePasteNodes,
+      handlePasteNodesWithUpstream,
+      handleSmartResetViewport,
+      project,
+      quickReferenceConnect,
+      redo,
+      selectedEdgeId,
+      selectedNodeIds,
+      stopQuickReferenceConnect,
+      undo,
+    };
+  }, [
+    addUploadedImages,
+    clearConnectionMenu,
+    clearEdgeSelection,
+    handleCopySelectedNodes,
+    handleDeleteSelectedEdge,
+    handleDeleteSelectedNodes,
+    handlePasteNodes,
+    handlePasteNodesWithUpstream,
+    handleSmartResetViewport,
+    project,
     quickReferenceConnect,
     redo,
     selectedEdgeId,
@@ -8960,35 +10613,127 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   ]);
 
   useEffect(() => {
-    const handlePaste = (event: ClipboardEvent) => {
-      const imageFiles = getClipboardImageFiles(event.clipboardData);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const shortcuts = clipboardShortcutRef.current;
 
-      if (imageFiles.length > 0) {
+      if (event.key === 'Escape' && shortcuts.quickReferenceConnect) {
         event.preventDefault();
-        clearEdgeSelection();
-        setAddMenu(null);
-        clearConnectionMenu();
-        setImageInfoPopover(null);
-        const center = project({
-          x: window.innerWidth / 2,
-          y: window.innerHeight / 2,
-        });
-        void addUploadedImages(imageFiles, center);
+        shortcuts.stopQuickReferenceConnect();
         return;
+      }
+
+      const key = event.key.toLowerCase();
+      const isModifierPressed = event.ctrlKey || event.metaKey;
+      const canvasHasSelection =
+        shortcuts.selectedNodeIds.size > 0 || shortcuts.selectedEdgeId !== null;
+      const editableTextSelected = hasEditableTextSelection(event.target);
+
+      if (isModifierPressed && !event.altKey && key === 'z') {
+        event.preventDefault();
+
+        if (event.shiftKey) {
+          shortcuts.redo();
+        } else {
+          shortcuts.undo();
+        }
+
+        return;
+      }
+
+      if (isModifierPressed && !event.altKey && !event.shiftKey && key === 'c') {
+        if (canvasHasSelection && !editableTextSelected && shortcuts.handleCopySelectedNodes()) {
+          event.preventDefault();
+          return;
+        }
+      }
+
+      if (isModifierPressed && !event.altKey && key === 'v') {
+        if (!editableTextSelected) {
+          const pasted = event.shiftKey
+            ? shortcuts.handlePasteNodesWithUpstream()
+            : shortcuts.handlePasteNodes();
+
+          if (pasted) {
+            event.preventDefault();
+            return;
+          }
+        }
       }
 
       if (isTypingTarget(event.target)) {
         return;
       }
 
-      if (handlePasteNodes()) {
+      if (!isModifierPressed && !event.altKey && !event.shiftKey && key === 'g') {
         event.preventDefault();
+        shortcuts.handleSmartResetViewport();
+        return;
+      }
+
+      if (event.key !== 'Delete' && event.key !== 'Backspace') {
+        return;
+      }
+
+      if (!shortcuts.selectedEdgeId && shortcuts.selectedNodeIds.size === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      if (shortcuts.selectedNodeIds.size > 0) {
+        shortcuts.handleDeleteSelectedNodes();
+        shortcuts.clearEdgeSelection();
+        return;
+      }
+
+      shortcuts.handleDeleteSelectedEdge();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      const shortcuts = clipboardShortcutRef.current;
+      const editableTextSelected = hasEditableTextSelection(event.target);
+      const canvasHasSelection =
+        shortcuts.selectedNodeIds.size > 0 || shortcuts.selectedEdgeId !== null;
+      const shouldPrioritizeCanvasPaste = canvasHasSelection && !editableTextSelected;
+
+      if (shouldPrioritizeCanvasPaste && shortcuts.handlePasteNodesWithUpstream()) {
+        event.preventDefault();
+        return;
+      }
+
+      if (isTypingTarget(event.target) && !shouldPrioritizeCanvasPaste) {
+        return;
+      }
+
+      if (shortcuts.handlePasteNodes()) {
+        event.preventDefault();
+        return;
+      }
+
+      const imageFiles = getClipboardImageFiles(event.clipboardData);
+
+      if (imageFiles.length > 0) {
+        event.preventDefault();
+        shortcuts.clearEdgeSelection();
+        setAddMenu(null);
+        shortcuts.clearConnectionMenu();
+        setImageInfoPopover(null);
+        const center = shortcuts.project({
+          x: window.innerWidth / 2,
+          y: window.innerHeight / 2,
+        });
+        void shortcuts.addUploadedImages(imageFiles, center);
+        return;
       }
     };
 
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [addUploadedImages, clearConnectionMenu, clearEdgeSelection, handlePasteNodes, project]);
+  }, []);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setRfNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
@@ -9300,7 +11045,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
         addReferenceMediaToVideoGenerationNode(videoReferenceUploadNodeId, media);
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : '上传视频参考失败');
+        setSaveMessage(error instanceof Error ? error.message : 'Upload video reference failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     } else if (files.length > 0 && referenceUploadNodeId) {
@@ -9337,7 +11082,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           : position;
         await addUploadedVideos(videoFiles, videoPosition);
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : '上传媒体失败');
+        setSaveMessage(error instanceof Error ? error.message : 'Import failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     }
@@ -9426,7 +11171,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         : position;
       await addUploadedVideos(videoFiles, videoPosition);
     })().catch((error) => {
-      setSaveMessage(error instanceof Error ? error.message : '上传媒体失败');
+      setSaveMessage(error instanceof Error ? error.message : 'Import failed');
       window.setTimeout(() => setSaveMessage(null), 2200);
     });
   }, [addUploadedImages, addUploadedVideos, handleSelectMaterial, materials, project, setSaveMessage]);
@@ -9518,7 +11263,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       clearEdgeSelection();
       setAddMenu(null);
       clearConnectionMenu();
-      showProjectMessage('Agent 已创建图像节点，正在准备执行计划');
+      showProjectMessage('Agent nodes created');
     }
 
     return result.nodeIdsByAttachmentId;
@@ -9590,7 +11335,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     };
 
     if (result.nodes.length === 0) {
-      showProjectMessage('Agent 没有可执行的画布动作');
+      showProjectMessage('Agent returned no nodes');
       return { ok: false };
     }
 
@@ -9631,7 +11376,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     clearEdgeSelection();
     setAddMenu(null);
     clearConnectionMenu();
-    showProjectMessage('Agent 已创建生成节点，请确认后触发生成');
+    showProjectMessage('Agent nodes created');
     return {
       ok: true,
       imageGenerationNodeId: focusNodeId ?? undefined,
@@ -9672,7 +11417,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
 
     if (imageGenerationNodeIds.length === 0) {
-      showProjectMessage('找不到需要生成的图片生成节点');
+      showProjectMessage('No image generation nodes selected');
       return false;
     }
 
@@ -9682,13 +11427,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const failedCount = results.filter((result) => result.status === 'rejected').length;
 
       if (failedCount > 0) {
-        showProjectMessage(`${failedCount} 个图片生成任务失败`);
+        showProjectMessage(`${failedCount} image generation jobs failed`);
       }
     });
     showProjectMessage(
       imageGenerationNodeIds.length > 1
-        ? `已并发触发 ${imageGenerationNodeIds.length} 个图片生成任务`
-        : '已触发图片生成',
+        ? `Started ${imageGenerationNodeIds.length} image generation jobs`
+        : 'Image generation started',
     );
     return true;
   }, [generateImageFromImageGenerationNode, showProjectMessage]);
@@ -9701,6 +11446,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     if (action === 'text' && addMenu) {
       const node = addNodeAtCenter('text', addMenu.canvas);
+      focusCreatedNode(node.id);
+    }
+
+    if (action === 'storyboard_script' && addMenu) {
+      const node = addNodeAtCenter('storyboard_script', addMenu.canvas);
       focusCreatedNode(node.id);
     }
 
@@ -9791,7 +11541,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
 
     if (runnableNodes.length === 0) {
-      showProjectMessage('分组内没有可执行节点');
+      showProjectMessage('No runnable nodes in group');
       return;
     }
 
@@ -9809,7 +11559,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const failedCount = results.filter((result) => result.status === 'rejected').length;
 
         if (failedCount > 0) {
-          showProjectMessage(`${failedCount} 个节点运行失败`);
+          showProjectMessage(`${failedCount} nodes failed to run`);
         }
         return;
       }
@@ -9825,7 +11575,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       }
 
       if (failedCount > 0) {
-        showProjectMessage(`${failedCount} 个节点运行失败`);
+        showProjectMessage(`${failedCount} nodes failed to run`);
       }
     })();
   }, [
@@ -9845,20 +11595,20 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const zipItems = getGroupZipItems(group, state.nodes);
 
     if (zipItems.length === 0) {
-      showProjectMessage('分组内没有可下载图片');
+      showProjectMessage('No images to download');
       return;
     }
 
     const zipFileName = group.name?.trim() || `group-${group.id.slice(0, 8)}`;
-    showProjectMessage('正在打包下载...');
+    showProjectMessage('Downloading group images...');
 
     void import('@/lib/image-zip-download')
       .then(({ downloadImagesAsZip }) => downloadImagesAsZip(zipItems, zipFileName))
       .then((count) => {
-        showProjectMessage(`已下载 ${count} 张图片`);
+        showProjectMessage(`Downloaded ${count} images`);
       })
       .catch((error) => {
-        showProjectMessage(error instanceof Error ? error.message : '下载失败');
+        showProjectMessage(error instanceof Error ? error.message : 'Download failed');
       });
   }, [showProjectMessage]);
 
@@ -9876,7 +11626,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const sources = getGroupConnectionSourcesFromDom(group);
 
     if (sources.length === 0) {
-      showProjectMessage('分组内没有可连接的源节点');
+      showProjectMessage('No source nodes found');
       return;
     }
 
@@ -9968,7 +11718,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         );
 
         if (addedCount === 0) {
-          showProjectMessage('没有新增连接');
+          showProjectMessage('No new connections added');
         }
       } else {
         suppressNextPaneClearRef.current = true;
@@ -10040,7 +11790,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
     addMaterial(item);
     setPendingMaterialSource(null);
-    showProjectMessage(existing ? '素材已存在' : '已加入素材库');
+    showProjectMessage(existing ? 'Material already exists' : 'Added to material library');
   }, [addMaterial, materials, showProjectMessage]);
 
   const handleSelectHistoryImage = useCallback(async (item: ImageHistoryItem) => {
@@ -10051,7 +11801,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     try {
       resolvedImage = await resolveHistoryImageUrls(item);
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '载入历史图片失败');
+      showProjectMessage(error instanceof Error ? error.message : 'Image is unavailable');
       return;
     }
 
@@ -10115,7 +11865,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return;
     }
 
-    if (action !== 'text' && action !== 'image_generation' && action !== 'video_generation' && action !== 'panorama-360' && action !== 'video') {
+    if (action !== 'text' && action !== 'storyboard_script' && action !== 'image_generation' && action !== 'video_generation' && action !== 'panorama-360' && action !== 'video') {
       clearConnectionMenu();
       return;
     }
@@ -10128,6 +11878,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const nodeType: NodeType =
       action === 'text'
         ? 'text'
+        : action === 'storyboard_script'
+          ? 'storyboard_script'
         : action === 'video_generation'
           ? 'video_generation'
         : action === 'panorama-360'
@@ -10221,7 +11973,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         await cropImageGenerationNode(nodeId, cropRect);
       }
     } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : '裁剪失败');
+      setSaveMessage(error instanceof Error ? error.message : 'Crop failed');
       window.setTimeout(() => setSaveMessage(null), 2200);
     }
   }, [cropImageGenerationNode, cropImageNode, cropUploadedImageNode, cropMode?.nodeType, setSaveMessage]);
@@ -10262,13 +12014,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const changed = layoutGroupNodes(groupId, mode);
 
     if (!changed) {
-      showProjectMessage('分组内没有可布局的节点');
+      showProjectMessage('No layoutable nodes in group');
     }
   }, [showProjectMessage]);
 
   const handleSaveProject = useCallback(async () => {
     await saveProject();
-    setSaveMessage('保存成功');
+    setSaveMessage('Project saved');
     window.setTimeout(() => {
       setSaveMessage(null);
     }, 2200);
@@ -10297,15 +12049,15 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
-      showProjectMessage('当前没有打开的项目');
+      showProjectMessage('No project is currently open');
       return;
     }
 
     try {
       await renameProject(project, nextName);
-      showProjectMessage('重命名成功');
+      showProjectMessage('Renamed successfully');
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '下载失败');
+      showProjectMessage(error instanceof Error ? error.message : 'Rename failed');
     }
   }, [renameProject, showProjectMessage]);
 
@@ -10327,7 +12079,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         parentDirectoryLabel: getProjectDirectoryLabel(parentHandle),
       }));
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '下载失败');
+      showProjectMessage(error instanceof Error ? error.message : 'Select folder failed');
     }
   }, [showProjectMessage]);
 
@@ -10351,9 +12103,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         parentHandle: null,
         parentDirectoryLabel: '',
       });
-      showProjectMessage('创建成功');
+      showProjectMessage('Project folder cleared');
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '下载失败');
+      showProjectMessage(error instanceof Error ? error.message : 'Update project folder failed');
     } finally {
       setProjectDialogBusy(false);
     }
@@ -10363,7 +12115,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
-      showProjectMessage('当前没有打开的项目');
+      showProjectMessage('No project is currently open');
       return;
     }
 
@@ -10374,7 +12126,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
-      showProjectMessage('当前没有打开的项目');
+      showProjectMessage('No project is currently open');
       setDeleteProjectDialogOpen(false);
       return;
     }
@@ -10382,10 +12134,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     try {
       await deleteProject(project);
       setDeleteProjectDialogOpen(false);
-      showProjectMessage('删除成功');
+      showProjectMessage('Project deleted');
       onBackToLibrary?.();
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : '下载失败');
+      showProjectMessage(error instanceof Error ? error.message : 'Delete failed');
     }
   }, [deleteProject, onBackToLibrary, showProjectMessage]);
 
@@ -10601,6 +12353,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         }}
         onConfirmPlan={handleConfirmAgentPlan}
         onConfirmGeneration={handleConfirmAgentGeneration}
+        onLayoutChange={setAgentPanelLayout}
       />
       <MaterialLibraryPanel
         open={materialLibraryAnchor !== null}
@@ -10621,6 +12374,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         open={imageInfoPopover !== null}
         data={imageInfoPopover}
         onClose={() => setImageInfoPopover(null)}
+        rightOffset={imageInfoPopoverRightOffset}
       />
       <ImageLightbox
         key={imageLightbox?.imageUrl ?? 'image-lightbox-closed'}
@@ -10637,6 +12391,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         data={cropMode}
         onClose={handleCloseCrop}
         onConfirm={(nodeId, cropRect) => void handleConfirmCrop(nodeId, cropRect)}
+      />
+      <AnnotationOverlay
+        key={annotationMode ? `${annotationMode.nodeId}:${annotationMode.imageUrl}` : 'annotation-closed'}
+        data={annotationMode}
+        onClose={handleCloseAnnotationMode}
+        onChange={handleChangeAnnotations}
+        onSave={handleSaveAnnotationMode}
       />
       <input
         ref={uploadInputRef}
