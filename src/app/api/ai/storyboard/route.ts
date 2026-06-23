@@ -1,5 +1,8 @@
-import { NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 
+import { after, NextResponse } from 'next/server';
+
+import { prisma } from '@/lib/prisma';
 import {
   VibeApiError,
   generateTextStream,
@@ -18,6 +21,8 @@ import {
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
+const STORYBOARD_JOB_RETENTION_MS = 60 * 60_000;
+
 interface StoryboardRequestBody {
   prompt?: unknown;
   model?: unknown;
@@ -27,9 +32,17 @@ interface StoryboardRequestBody {
 }
 
 type TextStoryboardProvider = Exclude<ImageApiProvider, 'runninghub'>;
-type StoryboardStreamPayload = Record<string, unknown>;
-
-const STORYBOARD_STREAM_HEARTBEAT_MS = 10_000;
+type StoryboardJobStatus = 'pending' | 'completed' | 'error';
+type StoryboardJobResult = {
+  ok: true;
+  data: ReturnType<typeof normalizeStoryboardResponse> extends infer Result
+    ? Result extends { ok: true; data: infer Data }
+      ? Data
+      : never
+    : never;
+  rawJson: string;
+  model?: string;
+};
 
 function parseProvider(value: unknown): TextStoryboardProvider | undefined {
   if (
@@ -65,6 +78,19 @@ function parseReferenceImages(value: unknown): Array<{ label: string; url: strin
     label: image.label.trim(),
     url: image.url.trim(),
   }));
+}
+
+async function cleanupExpiredJobs() {
+  await prisma.imageJob.deleteMany({
+    where: {
+      id: {
+        startsWith: 'storyboard-',
+      },
+      createdAt: {
+        lt: new Date(Date.now() - STORYBOARD_JOB_RETENTION_MS),
+      },
+    },
+  });
 }
 
 async function readStoryboardTextStream(
@@ -127,129 +153,100 @@ async function readStoryboardTextStream(
   return content;
 }
 
-function encodeStoryboardStreamEvent(payload: StoryboardStreamPayload): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+function parseStoryboardJobResult(result: string | null): StoryboardJobResult | undefined {
+  if (!result) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(result) as StoryboardJobResult;
+  } catch {
+    return undefined;
+  }
 }
 
-function createStoryboardStreamResponse(params: {
-  prompt: string;
-  model?: string;
-  provider?: TextStoryboardProvider;
-  apiKey?: string;
-  referenceImages: Array<{ label: string; url: string }>;
-}) {
-  let cleanup: (() => void) | undefined;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let isClosed = false;
-      const enqueue = (payload: StoryboardStreamPayload) => {
-        if (isClosed) {
-          return;
-        }
+async function runStoryboardJob(
+  jobId: string,
+  params: {
+    prompt: string;
+    model?: string;
+    provider?: TextStoryboardProvider;
+    apiKey?: string;
+    referenceImages: Array<{ label: string; url: string }>;
+  },
+) {
+  try {
+    const storyboardPrompt = buildStoryboardGenerationPrompt({
+      prompt: params.prompt,
+      referenceImages: params.referenceImages,
+    });
+    const stream = await generateTextStream({
+      prompt: storyboardPrompt.userPrompt,
+      model: params.model,
+      systemPrompt: storyboardPrompt.systemPrompt,
+      temperature: 0.4,
+      provider: params.provider,
+      apiKey: params.apiKey,
+      timeoutMs: getStoryboardGenerationTimeoutMs(params.provider),
+      images: params.referenceImages.map((image) => ({
+        url: image.url,
+      })),
+    });
+    const content = await readStoryboardTextStream(stream);
+    const normalized = normalizeStoryboardResponse(content);
 
-        controller.enqueue(encodeStoryboardStreamEvent(payload));
-      };
-      const close = () => {
-        if (isClosed) {
-          return;
-        }
+    if (!normalized.ok) {
+      await prisma.imageJob.updateMany({
+        where: { id: jobId, result: null },
+        data: {
+          status: 'error',
+          error: normalized.error,
+        },
+      });
+      return;
+    }
 
-        isClosed = true;
-        clearInterval(heartbeatId);
-        controller.close();
-      };
-      const fail = (error: unknown) => {
-        if (error instanceof VibeApiError) {
-          enqueue({
-            type: 'error',
-            error: getStoryboardGenerationErrorMessage({
-              message: error.message,
-              status: error.status,
-              provider: params.provider,
-              model: params.model,
-            }),
-          });
-          close();
-          return;
-        }
+    const result: StoryboardJobResult = {
+      ok: true,
+      data: normalized.data,
+      rawJson: normalized.rawJson,
+      model: params.model,
+    };
 
-        enqueue({
-          type: 'error',
-          error: error instanceof Error ? error.message : 'Internal error',
-        });
-        close();
-      };
-      const heartbeatId = setInterval(() => {
-        enqueue({ type: 'heartbeat' });
-      }, STORYBOARD_STREAM_HEARTBEAT_MS);
-      cleanup = () => {
-        isClosed = true;
-        clearInterval(heartbeatId);
-      };
+    await prisma.imageJob.update({
+      where: { id: jobId },
+      data: {
+        status: 'completed',
+        result: JSON.stringify(result),
+        error: null,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof VibeApiError
+      ? getStoryboardGenerationErrorMessage({
+          message: error.message,
+          status: error.status,
+          provider: params.provider,
+          model: params.model,
+        })
+      : error instanceof Error
+        ? error.message
+        : 'Internal error';
 
-      enqueue({ type: 'heartbeat' });
-
-      void (async () => {
-        try {
-          const storyboardPrompt = buildStoryboardGenerationPrompt({
-            prompt: params.prompt,
-            referenceImages: params.referenceImages,
-          });
-          const textStream = await generateTextStream({
-            prompt: storyboardPrompt.userPrompt,
-            model: params.model,
-            systemPrompt: storyboardPrompt.systemPrompt,
-            temperature: 0.4,
-            provider: params.provider,
-            apiKey: params.apiKey,
-            timeoutMs: getStoryboardGenerationTimeoutMs(params.provider),
-            images: params.referenceImages.map((image) => ({
-              url: image.url,
-            })),
-          });
-          const content = await readStoryboardTextStream(textStream);
-          const normalized = normalizeStoryboardResponse(content);
-
-          if (!normalized.ok) {
-            enqueue({
-              type: 'error',
-              error: normalized.error,
-            });
-            close();
-            return;
-          }
-
-          enqueue({
-            type: 'done',
-            result: {
-              ok: true,
-              data: normalized.data,
-              rawJson: normalized.rawJson,
-              model: params.model,
-            },
-          });
-          close();
-        } catch (error) {
-          fail(error);
-        }
-      })();
-    },
-    cancel() {
-      cleanup?.();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-    },
-  });
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: 'error',
+        error: message,
+      },
+    });
+  }
 }
 
 export async function POST(request: Request) {
   try {
+    await cleanupExpiredJobs();
+
     const body = (await request.json()) as StoryboardRequestBody;
 
     if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
@@ -260,15 +257,33 @@ export async function POST(request: Request) {
     }
 
     const referenceImages = parseReferenceImages(body.referenceImages);
-    const requestProvider = parseProvider(body.provider);
-    const requestModel = typeof body.model === 'string' ? body.model : undefined;
+    const provider = parseProvider(body.provider);
+    const model = typeof body.model === 'string' ? body.model : undefined;
+    const jobId = `storyboard-${randomUUID()}`;
 
-    return createStoryboardStreamResponse({
-      prompt: body.prompt,
-      model: requestModel,
-      provider: requestProvider,
-      apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
-      referenceImages,
+    await prisma.imageJob.create({
+      data: {
+        id: jobId,
+        status: 'pending',
+        provider: provider ?? null,
+        historyNodeData: model ? JSON.stringify({ model }) : null,
+      },
+    });
+
+    after(async () => {
+      await runStoryboardJob(jobId, {
+        prompt: body.prompt as string,
+        model,
+        provider,
+        apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+        referenceImages,
+      });
+    });
+
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      status: 'pending' satisfies StoryboardJobStatus,
     });
   } catch (error) {
     if (error instanceof VibeApiError) {
@@ -283,4 +298,76 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(request: Request) {
+  await cleanupExpiredJobs();
+
+  const { searchParams } = new URL(request.url);
+  const jobId = searchParams.get('jobId')?.trim();
+
+  if (!jobId) {
+    return NextResponse.json(
+      { ok: false, error: 'jobId is required' },
+      { status: 400 },
+    );
+  }
+
+  const job = await prisma.imageJob.findUnique({
+    where: { id: jobId },
+  });
+
+  if (!job) {
+    return NextResponse.json(
+      { ok: false, error: 'Storyboard job not found' },
+      { status: 404 },
+    );
+  }
+
+  const result = parseStoryboardJobResult(job.result);
+
+  if (result) {
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      status: 'completed' satisfies StoryboardJobStatus,
+      result,
+    });
+  }
+
+  if (job.status === 'error') {
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      status: 'error' satisfies StoryboardJobStatus,
+      error: job.error || 'Storyboard generation failed',
+    });
+  }
+
+  const jobAgeMs = Date.now() - new Date(job.createdAt).getTime();
+
+  if (jobAgeMs > getStoryboardGenerationTimeoutMs(parseProvider(job.provider))) {
+    const error = 'Storyboard generation timed out';
+
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: 'error',
+        error,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      status: 'error' satisfies StoryboardJobStatus,
+      error,
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    jobId,
+    status: 'pending' satisfies StoryboardJobStatus,
+  });
 }

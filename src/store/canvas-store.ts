@@ -174,16 +174,23 @@ type StoryboardGenerationResponse =
       model?: string;
     };
 
-type StoryboardStreamEvent =
+type StoryboardJobPollResponse =
+  | ApiErrorResponse
   | {
-      type: "heartbeat";
+      ok: true;
+      jobId: string;
+      status: "pending";
     }
   | {
-      type: "done";
-      result?: Extract<StoryboardGenerationResponse, { ok: true }>;
+      ok: true;
+      jobId: string;
+      status: "completed";
+      result: Extract<StoryboardGenerationResponse, { ok: true }>;
     }
   | {
-      type: "error";
+      ok: true;
+      jobId: string;
+      status: "error";
       error?: string;
     };
 
@@ -212,6 +219,8 @@ const IMAGE_JOB_POLL_INTERVAL_MS = 1_000;
 const IMAGE_JOB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const IMAGE_JOB_SUBMIT_RETRY_COUNT = 3;
 const IMAGE_JOB_SUBMIT_RETRY_DELAY_MS = 800;
+const STORYBOARD_JOB_POLL_TIMEOUT_MS = 8 * 60_000;
+const STORYBOARD_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_OSS_UPLOAD_CACHE_LIMIT = 80;
 const VIDEO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const VIDEO_JOB_POLL_INTERVAL_MS = 2_000;
@@ -2474,6 +2483,40 @@ async function pollImageGenerationJob(
   throw new Error("Image generation polling timed out");
 }
 
+async function pollStoryboardGenerationJob(
+  jobId: string,
+): Promise<Extract<StoryboardGenerationResponse, { ok: true }>> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < STORYBOARD_JOB_POLL_TIMEOUT_MS) {
+    const query = new URLSearchParams({ jobId });
+    const response = await fetch(`/api/ai/storyboard?${query.toString()}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    const json = await readJsonResponse<StoryboardJobPollResponse>(
+      response,
+      "Storyboard polling failed",
+    );
+
+    if (!response.ok || ("ok" in json && json.ok === false)) {
+      throw new Error("error" in json ? json.error : "Storyboard polling failed");
+    }
+
+    if (json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.status === "error") {
+      throw new Error(json.error || "Storyboard generation failed");
+    }
+
+    await sleep(STORYBOARD_JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Storyboard generation polling timed out");
+}
+
 async function submitImageGenerationJob(params: {
   prompt: string;
   model?: string;
@@ -2782,85 +2825,6 @@ async function readTextStreamResponse(
 
   if (!finalResult) {
     throw new Error("Stream ended before the final result was received");
-  }
-
-  return finalResult;
-}
-
-async function readStoryboardStreamResponse(
-  response: Response,
-): Promise<Extract<StoryboardGenerationResponse, { ok: true }>> {
-  if (!response.ok) {
-    const text = await response.text();
-
-    try {
-      const json = JSON.parse(text) as ApiErrorResponse;
-      throw new Error(json.error || "Request failed");
-    } catch {
-      throw new Error(text || "Request failed");
-    }
-  }
-
-  if (!response.body) {
-    throw new Error("Stream response body is missing");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalResult: Extract<StoryboardGenerationResponse, { ok: true }> | null =
-    null;
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-
-      while (true) {
-        const separatorIndex = buffer.indexOf("\n\n");
-
-        if (separatorIndex === -1) {
-          break;
-        }
-
-        const rawEvent = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
-
-        const dataLines = rawEvent
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trimStart());
-
-        if (dataLines.length === 0) {
-          continue;
-        }
-
-        const event = JSON.parse(dataLines.join("\n")) as StoryboardStreamEvent;
-
-        if (event.type === "heartbeat") {
-          continue;
-        }
-
-        if (event.type === "error") {
-          throw new Error(event.error || "Storyboard stream failed");
-        }
-
-        if (event.type === "done" && event.result?.ok) {
-          finalResult = event.result;
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (!finalResult) {
-    throw new Error("Stream ended before the storyboard result was received");
   }
 
   return finalResult;
@@ -4362,7 +4326,38 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           })),
         }),
       });
-      const payload = await readStoryboardStreamResponse(response);
+      const submitted = await readJsonResponse<
+        | {
+            ok: true;
+            jobId: string;
+            status: "pending";
+          }
+        | {
+            ok: true;
+            jobId: string;
+            status: "completed";
+            result: Extract<StoryboardGenerationResponse, { ok: true }>;
+          }
+        | {
+            ok: true;
+            jobId: string;
+            status: "error";
+            error?: string;
+          }
+        | ApiErrorResponse
+      >(response, "Storyboard generation request failed");
+
+      if (!response.ok || !("ok" in submitted) || submitted.ok === false) {
+        throw new Error("error" in submitted ? submitted.error : "Request failed");
+      }
+
+      if (submitted.status === "error") {
+        throw new Error(submitted.error || "Storyboard generation failed");
+      }
+
+      const payload = submitted.status === "completed"
+        ? submitted.result
+        : await pollStoryboardGenerationJob(submitted.jobId);
 
       set((state) => ({
         error: null,
