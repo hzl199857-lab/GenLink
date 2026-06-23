@@ -1455,9 +1455,11 @@ function rememberReferenceOssUpload(
 
 async function normalizeReferenceImagesViaOss(
   images: ConnectedImagePayload[],
+  options?: { dedupe?: boolean },
 ): Promise<Array<{ url: string; fileName?: string }>> {
   const requestImages: Array<{ url: string; fileName?: string }> = [];
   const seenRequestUrls = new Set<string>();
+  const shouldDedupe = options?.dedupe ?? true;
 
   console.info("[GenLink] reference image upload step", {
     step: "normalize-start",
@@ -1513,11 +1515,13 @@ async function normalizeReferenceImagesViaOss(
     }
     const requestUrl = normalized.url.trim();
 
-    if (!requestUrl || seenRequestUrls.has(requestUrl)) {
+    if (!requestUrl || (shouldDedupe && seenRequestUrls.has(requestUrl))) {
       continue;
     }
 
-    seenRequestUrls.add(requestUrl);
+    if (shouldDedupe) {
+      seenRequestUrls.add(requestUrl);
+    }
     requestImages.push(normalized);
   }
 
@@ -1622,10 +1626,12 @@ async function hostReferenceImageForRequest(image: {
 
 async function normalizeReferenceImagesForRequest(
   images: ConnectedImagePayload[],
+  options?: { dedupe?: boolean },
 ): Promise<Array<{ url: string; fileName?: string }>> {
   const uploadCache = new Map<string, Promise<string>>();
   const requestImages: Array<{ url: string; fileName?: string }> = [];
   const seenRequestUrls = new Set<string>();
+  const shouldDedupe = options?.dedupe ?? true;
 
   for (const image of images) {
     const cacheKey =
@@ -1645,11 +1651,13 @@ async function normalizeReferenceImagesForRequest(
 
     const requestUrl = (await normalizedPromise).trim();
 
-    if (!requestUrl || seenRequestUrls.has(requestUrl)) {
+    if (!requestUrl || (shouldDedupe && seenRequestUrls.has(requestUrl))) {
       continue;
     }
 
-    seenRequestUrls.add(requestUrl);
+    if (shouldDedupe) {
+      seenRequestUrls.add(requestUrl);
+    }
     requestImages.push({
       url: requestUrl,
       fileName: image.fileName,
@@ -2808,14 +2816,56 @@ function setStoryboardNodeStatus(
 
 function toStoryboardReferenceImages(
   images: ConnectedImagePayload[],
+  requestImages?: Array<{ url: string; fileName?: string }>,
 ): StoryboardReferenceImage[] {
   return images.map((image, index) => ({
     label: `@图片${index + 1}`,
-    url: image.imageUrl,
+    url: requestImages?.[index]?.url || image.imageUrl,
     previewUrl: image.previewUrl,
     sourceNodeId: image.id,
     alt: image.alt,
   }));
+}
+
+function getStoryboardReferenceRequestUrl(image: ConnectedImagePayload): string {
+  return (
+    image.semanticImageUrl?.trim() ||
+    image.hostedImageUrl?.trim() ||
+    image.imageUrl.trim()
+  );
+}
+
+function toStoryboardRequestImages(
+  images: ConnectedImagePayload[],
+): ConnectedImagePayload[] {
+  return images.map((image) => {
+    const requestUrl = getStoryboardReferenceRequestUrl(image);
+
+    return {
+      ...image,
+      imageUrl: requestUrl,
+      originalImageUrl: requestUrl,
+      hostedImageUrl: isAliyunOssUrl(requestUrl) ? requestUrl : undefined,
+    };
+  });
+}
+
+async function normalizeStoryboardReferenceImagesForRequest(
+  images: ConnectedImagePayload[],
+): Promise<Array<{ url: string; fileName?: string }>> {
+  if (images.length === 0) {
+    return [];
+  }
+
+  try {
+    return await normalizeReferenceImagesViaOss(images, { dedupe: false });
+  } catch (error) {
+    if (!(error instanceof Error) || !/oss is not configured/i.test(error.message)) {
+      throw error;
+    }
+
+    return normalizeReferenceImagesForRequest(images, { dedupe: false });
+  }
 }
 
 function isRemoteRequestUrl(value?: string): boolean {
@@ -4144,9 +4194,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       storyboardNode.data.prompt,
       connectedImages,
     );
-    const referenceImages = toStoryboardReferenceImages(connectedImages);
+    const initialReferenceImages = toStoryboardReferenceImages(connectedImages);
 
-    if (!storyboardPrompt.trim() && referenceImages.length === 0) {
+    if (!storyboardPrompt.trim() && initialReferenceImages.length === 0) {
       throw new Error("Prompt or reference images are required");
     }
 
@@ -4161,7 +4211,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 ...node.data,
                 status: "generating",
                 errorMessage: undefined,
-                referenceImages,
+                referenceImages: initialReferenceImages,
               },
             }
           : node,
@@ -4172,6 +4222,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const textProvider =
         storyboardNode.data.provider ?? readStoredSelectedApiProvider("text");
       const apiKey = assertStoredApiKey("text", textProvider);
+      const requestImages = await normalizeStoryboardReferenceImagesForRequest(
+        toStoryboardRequestImages(connectedImages),
+      );
+      const referenceImages = toStoryboardReferenceImages(
+        connectedImages,
+        requestImages,
+      );
       const response = await fetch("/api/ai/storyboard", {
         method: "POST",
         headers: {
@@ -4216,7 +4273,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
     } catch (error) {
-      const message = toErrorMessage(error);
+      const message = isFetchNetworkError(error)
+        ? "分镜请求发送失败：参考图上传或网络连接中断，请重试。"
+        : toErrorMessage(error);
 
       set((state) => ({
         error: message,
