@@ -16,6 +16,7 @@ import {
 } from '@/lib/storyboard/error-message';
 
 export const runtime = 'nodejs';
+export const maxDuration = 300;
 
 interface StoryboardRequestBody {
   prompt?: unknown;

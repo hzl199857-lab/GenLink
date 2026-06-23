@@ -2876,6 +2876,14 @@ async function normalizeStoryboardReferenceImagesForRequest(
   return requestImages;
 }
 
+function getStoryboardGenerationErrorMessage(error: unknown): string {
+  if (isFetchNetworkError(error)) {
+    return "分镜接口连接被中断：服务可能超时或网络断开，请稍后重试。";
+  }
+
+  return toErrorMessage(error);
+}
+
 function isRemoteRequestUrl(value?: string): boolean {
   const trimmed = value?.trim() || "";
 
@@ -4230,9 +4238,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const textProvider =
         storyboardNode.data.provider ?? readStoredSelectedApiProvider("text");
       const apiKey = assertStoredApiKey("text", textProvider);
-      const requestImages = await normalizeStoryboardReferenceImagesForRequest(
-        toStoryboardRequestImages(connectedImages),
-      );
+      let requestImages: Array<{ url: string; fileName?: string }>;
+
+      try {
+        requestImages = await normalizeStoryboardReferenceImagesForRequest(
+          toStoryboardRequestImages(connectedImages),
+        );
+      } catch (error) {
+        throw new Error(
+          `分镜参考图处理失败：${getStoryboardGenerationErrorMessage(error)}`,
+        );
+      }
+
       const referenceImages = toStoryboardReferenceImages(
         connectedImages,
         requestImages,
@@ -4281,9 +4298,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
     } catch (error) {
-      const message = isFetchNetworkError(error)
-        ? "分镜请求发送失败：参考图上传或网络连接中断，请重试。"
-        : toErrorMessage(error);
+      const message = getStoryboardGenerationErrorMessage(error);
 
       set((state) => ({
         error: message,
