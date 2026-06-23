@@ -6740,10 +6740,6 @@ function getStoryboardGridImageFromNode(node: CanvasNode): StoryboardGridCellIma
   return null;
 }
 
-function getStoryboardGridImageUrl(image: StoryboardGridCellImage): string {
-  return image.hostedImageUrl?.trim() || image.imageUrl.trim() || image.previewUrl?.trim() || '';
-}
-
 function getStoryboardGridNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSelectionBounds {
   const data = node.data as StoryboardGridNodeData;
   const size = getStoryboardGridNodeSize(data);
@@ -6821,34 +6817,62 @@ async function readRemoteImageAsObjectUrl(imageUrl: string): Promise<string> {
   return URL.createObjectURL(await response.blob());
 }
 
-async function loadStoryboardGridImage(image: StoryboardGridCellImage): Promise<{
+async function loadStoryboardGridImageFromUrl(imageUrl: string): Promise<{
   element: HTMLImageElement;
   cleanup: () => void;
 }> {
-  const url = getStoryboardGridImageUrl(image);
-
-  if (!url) {
-    throw new Error('Image is unavailable');
-  }
-
-  if (url.startsWith('blob:') || url.startsWith('data:')) {
+  if (imageUrl.startsWith('blob:') || imageUrl.startsWith('data:')) {
     return {
-      element: await loadImageForCanvas(url),
+      element: await loadImageForCanvas(imageUrl),
       cleanup: () => {},
     };
   }
 
-  const objectUrl = await readRemoteImageAsObjectUrl(url);
-
   try {
     return {
-      element: await loadImageForCanvas(objectUrl),
-      cleanup: () => URL.revokeObjectURL(objectUrl),
+      element: await loadImageForCanvas(imageUrl),
+      cleanup: () => {},
     };
-  } catch (error) {
-    URL.revokeObjectURL(objectUrl);
-    throw error;
+  } catch {
+    const objectUrl = await readRemoteImageAsObjectUrl(imageUrl);
+
+    try {
+      return {
+        element: await loadImageForCanvas(objectUrl),
+        cleanup: () => URL.revokeObjectURL(objectUrl),
+      };
+    } catch (error) {
+      URL.revokeObjectURL(objectUrl);
+      throw error;
+    }
   }
+}
+
+async function loadStoryboardGridImage(image: StoryboardGridCellImage): Promise<{
+  element: HTMLImageElement;
+  cleanup: () => void;
+}> {
+  const urls = Array.from(new Set([
+    image.previewUrl?.trim(),
+    image.hostedImageUrl?.trim(),
+    image.imageUrl?.trim(),
+  ].filter((url): url is string => Boolean(url))));
+
+  if (urls.length === 0) {
+    throw new Error('Image is unavailable');
+  }
+
+  let lastError: unknown = null;
+
+  for (const url of urls) {
+    try {
+      return await loadStoryboardGridImageFromUrl(url);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Failed to load image');
 }
 
 function drawImageCover(
@@ -6919,12 +6943,15 @@ async function createStoryboardGridImageDataUrl(data: StoryboardGridNodeData): P
         return;
       }
 
-      const loadedImage = await loadStoryboardGridImage(image);
+      let loadedImage: { element: HTMLImageElement; cleanup: () => void } | null = null;
 
       try {
+        loadedImage = await loadStoryboardGridImage(image);
         drawImageCover(context, loadedImage.element, x, y, cellWidth, cellHeight);
+      } catch (error) {
+        console.warn('storyboard grid image skipped during compose', error);
       } finally {
-        loadedImage.cleanup();
+        loadedImage?.cleanup();
       }
     }),
   );
