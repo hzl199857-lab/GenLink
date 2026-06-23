@@ -6366,7 +6366,7 @@ function clampAnnotationRect(rect: CropRect): CropRect {
   };
 }
 
-function loadAnnotationImage(imageUrl: string): Promise<HTMLImageElement> {
+function loadAnnotationImageElement(imageUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new window.Image();
 
@@ -6375,6 +6375,46 @@ function loadAnnotationImage(imageUrl: string): Promise<HTMLImageElement> {
     image.onerror = () => reject(new Error('标注原图加载失败，请稍后重试'));
     image.src = imageUrl;
   });
+}
+
+async function loadAnnotationImage(imageUrl: string): Promise<{
+  image: HTMLImageElement;
+  cleanup: () => void;
+}> {
+  try {
+    return {
+      image: await loadAnnotationImageElement(imageUrl),
+      cleanup: () => {},
+    };
+  } catch (directError) {
+    if (!/^https?:\/\//i.test(imageUrl) && !imageUrl.startsWith('/')) {
+      throw directError;
+    }
+
+    const response = await fetch('/api/image-hosting/read', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ imageUrl }),
+    });
+
+    if (!response.ok) {
+      throw new Error('标注原图加载失败，请稍后重试');
+    }
+
+    const objectUrl = URL.createObjectURL(await response.blob());
+
+    try {
+      return {
+        image: await loadAnnotationImageElement(objectUrl),
+        cleanup: () => URL.revokeObjectURL(objectUrl),
+      };
+    } catch (proxyError) {
+      URL.revokeObjectURL(objectUrl);
+      throw proxyError;
+    }
+  }
 }
 
 async function saveAnnotationImageDataUrl(dataUrl: string, fileName: string): Promise<string> {
@@ -6455,32 +6495,34 @@ async function createAnnotatedImageDataUrl(
   displaySize: { width: number; height: number },
   options?: { flipX?: boolean; flipY?: boolean },
 ): Promise<AnnotationExportResult> {
-  const image = await loadAnnotationImage(imageUrl);
+  const loaded = await loadAnnotationImage(imageUrl);
+  const image = loaded.image;
   const width = image.naturalWidth || image.width || 1;
   const height = image.naturalHeight || image.height || 1;
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
 
-  if (!context) {
-    throw new Error('Failed to create annotation canvas');
-  }
+  try {
+    if (!context) {
+      throw new Error('Failed to create annotation canvas');
+    }
 
-  canvas.width = width;
-  canvas.height = height;
+    canvas.width = width;
+    canvas.height = height;
 
-  const applyFlipTransform = () => {
-    context.translate(options?.flipX ? width : 0, options?.flipY ? height : 0);
-    context.scale(options?.flipX ? -1 : 1, options?.flipY ? -1 : 1);
-  };
+    const applyFlipTransform = () => {
+      context.translate(options?.flipX ? width : 0, options?.flipY ? height : 0);
+      context.scale(options?.flipX ? -1 : 1, options?.flipY ? -1 : 1);
+    };
 
-  context.save();
-  applyFlipTransform();
-  context.drawImage(image, 0, 0, width, height);
-  context.restore();
+    context.save();
+    applyFlipTransform();
+    context.drawImage(image, 0, 0, width, height);
+    context.restore();
 
-  const scaleX = width / Math.max(displaySize.width, 1);
-  const scaleY = height / Math.max(displaySize.height, 1);
-  const averageScale = (scaleX + scaleY) / 2;
+    const scaleX = width / Math.max(displaySize.width, 1);
+    const scaleY = height / Math.max(displaySize.height, 1);
+    const averageScale = (scaleX + scaleY) / 2;
 
   context.save();
   applyFlipTransform();
@@ -6573,11 +6615,14 @@ async function createAnnotatedImageDataUrl(
     });
   context.restore();
 
-  return {
-    dataUrl: canvas.toDataURL('image/png'),
-    width,
-    height,
-  };
+    return {
+      dataUrl: canvas.toDataURL('image/png'),
+      width,
+      height,
+    };
+  } finally {
+    loaded.cleanup();
+  }
 }
 
 function CropOverlay({
