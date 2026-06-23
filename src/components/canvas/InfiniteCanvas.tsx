@@ -1497,24 +1497,41 @@ async function uploadCanvasImageAssetDataUrl(
     preview: `${baseFolder}/previews`,
     semantic: `${baseFolder}/semantic`,
   };
-  const response = await fetch('/api/image-hosting/upload', {
+  const blob = await fetch(dataUrl).then((response) => response.blob());
+  const response = await fetch('/api/image-hosting/upload-url', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      dataUrl,
+      contentType: blob.type || 'image/png',
       fileName,
       folder: folderByKind[kind],
-      forceOss: true,
     }),
   });
   const json = (await response.json()) as
-    | { ok: true; result: { imageUrl: string } }
+    | {
+        ok: true;
+        result: {
+          uploadUrl: string;
+          imageUrl: string;
+          headers: Record<string, string>;
+        };
+      }
     | { ok: false; error: string };
 
   if (!response.ok || !json.ok) {
-    throw new Error('error' in json ? json.error : 'Failed to host image');
+    throw new Error('error' in json ? json.error : 'Failed to create image upload URL');
+  }
+
+  const uploadResponse = await fetch(json.result.uploadUrl, {
+    method: 'PUT',
+    headers: json.result.headers,
+    body: blob,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
   }
 
   return json.result.imageUrl;
