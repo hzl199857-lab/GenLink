@@ -61,7 +61,7 @@ export function GenLinkHero({ onEnter, isLeaving = false }: GenLinkHeroProps) {
               </p>
               <div className="mt-9 flex justify-center">
                 <ShinyButton onClick={onEnter}>
-                  Generate image <span aria-hidden="true">→</span>
+                  开始创作
                 </ShinyButton>
               </div>
             </div>
