@@ -2838,34 +2838,42 @@ function getStoryboardReferenceRequestUrl(image: ConnectedImagePayload): string 
 function toStoryboardRequestImages(
   images: ConnectedImagePayload[],
 ): ConnectedImagePayload[] {
-  return images.map((image) => {
-    const requestUrl = getStoryboardReferenceRequestUrl(image);
-
-    return {
-      ...image,
-      imageUrl: requestUrl,
-      originalImageUrl: requestUrl,
-      hostedImageUrl: isAliyunOssUrl(requestUrl) ? requestUrl : undefined,
-    };
-  });
+  return images.map((image) => ({
+    ...image,
+    imageUrl: getStoryboardReferenceRequestUrl(image),
+  }));
 }
 
 async function normalizeStoryboardReferenceImagesForRequest(
   images: ConnectedImagePayload[],
 ): Promise<Array<{ url: string; fileName?: string }>> {
-  if (images.length === 0) {
-    return [];
-  }
+  const requestImages: Array<{ url: string; fileName?: string }> = [];
 
-  try {
-    return await normalizeReferenceImagesViaOss(images, { dedupe: false });
-  } catch (error) {
-    if (!(error instanceof Error) || !/oss is not configured/i.test(error.message)) {
-      throw error;
+  for (const image of images) {
+    const url = image.imageUrl.trim();
+
+    if (!url) {
+      continue;
     }
 
-    return normalizeReferenceImagesForRequest(images, { dedupe: false });
+    if (/^https?:\/\//i.test(url) && !isSameOriginUrl(url)) {
+      requestImages.push({
+        url,
+        fileName: image.fileName,
+      });
+      continue;
+    }
+
+    const [normalized] = await normalizeReferenceImagesViaOss([image], {
+      dedupe: false,
+    });
+
+    if (normalized?.url?.trim()) {
+      requestImages.push(normalized);
+    }
   }
+
+  return requestImages;
 }
 
 function isRemoteRequestUrl(value?: string): boolean {
