@@ -95,6 +95,9 @@ export function UploadedImageNode({
   const displayAlt = displayTitle || ('prompt' in data ? data.prompt : undefined) || 'Image';
   const isGenerating = 'status' in data && data.status === 'generating';
   const isError = 'status' in data && data.status === 'error';
+  const statusMessage = 'statusMessage' in data && typeof data.statusMessage === 'string'
+    ? data.statusMessage
+    : undefined;
   const errorMessage = 'errorMessage' in data && typeof data.errorMessage === 'string'
     ? data.errorMessage
     : undefined;
@@ -166,7 +169,7 @@ export function UploadedImageNode({
 
         {isGenerating ? (
           <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-black/70 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
-            Uploading...
+            {statusMessage || 'Uploading...'}
           </div>
         ) : null}
 

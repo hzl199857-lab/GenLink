@@ -598,18 +598,6 @@ export function StoryboardGridNode({
             })}
           </div>
         )}
-
-        {data.status === 'generating' ? (
-          <div className="absolute inset-x-5 bottom-5 z-20 rounded-[9px] bg-black/72 px-3 py-2 text-center text-[12px] font-semibold text-white shadow-[0_12px_24px_rgba(0,0,0,0.3)]">
-            合成中...
-          </div>
-        ) : null}
-
-        {data.status === 'error' ? (
-          <div className="absolute inset-x-5 bottom-5 z-20 rounded-[9px] bg-red-600/86 px-3 py-2 text-center text-[12px] font-semibold text-white shadow-[0_12px_24px_rgba(0,0,0,0.3)]">
-            {data.errorMessage || '合成失败'}
-          </div>
-        ) : null}
       </div>
 
       <div className="h-[34px] select-none text-center text-[12px] font-medium leading-[34px] text-gl-text-muted">

@@ -11190,31 +11190,50 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
 
     updateNodeData<'storyboard_grid'>(nodeId, {
-      status: 'generating',
+      status: 'idle',
       errorMessage: undefined,
     });
+
+    const placeholderWidth = 1440;
+    const placeholderHeight = Math.round(placeholderWidth / getStoryboardGridAspectValue(node.data.aspectRatio));
+    const outputPosition = {
+      x: node.position.x + getStoryboardGridNodeSize(node.data).width + 72,
+      y: node.position.y + 28,
+    };
+    const imageNode = createImportedImageNode(
+      {
+        title: '分镜格子合成',
+        imageUrl: '',
+        prompt: '分镜格子合成图',
+        width: placeholderWidth,
+        height: placeholderHeight,
+        generatedAt: new Date().toISOString(),
+        status: 'generating',
+        statusMessage: '合成中...',
+      },
+      outputPosition,
+    );
+
+    addNodes([imageNode]);
+    setSelectedNodeIds(new Set([imageNode.id]));
+    setActiveNodeId(imageNode.id);
+    clearEdgeSelection();
 
     try {
       const result = await createStoryboardGridImageDataUrl(node.data);
       const fileName = `storyboard-grid-${Date.now()}.png`;
       const hostedImageUrl = await uploadImageDataUrl(result.dataUrl, fileName);
-      const imageNode = createImportedImageNode(
-        {
-          title: '分镜格子合成',
-          imageUrl: hostedImageUrl,
-          hostedImageUrl,
-          prompt: '分镜格子合成图',
-          width: result.width,
-          height: result.height,
-          generatedAt: new Date().toISOString(),
-        },
-        {
-          x: node.position.x + getStoryboardGridNodeSize(node.data).width + 72,
-          y: node.position.y + 28,
-        },
-      );
 
-      addNodes([imageNode]);
+      updateNodeData<'image'>(imageNode.id, {
+        imageUrl: hostedImageUrl,
+        hostedImageUrl,
+        width: result.width,
+        height: result.height,
+        status: 'idle',
+        statusMessage: undefined,
+        errorMessage: undefined,
+        generatedOutputFileName: fileName,
+      });
       updateNodeData<'storyboard_grid'>(nodeId, {
         status: 'idle',
         outputImageUrl: hostedImageUrl,
@@ -11223,14 +11242,16 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         outputWidth: result.width,
         outputHeight: result.height,
       });
-      setSelectedNodeIds(new Set([imageNode.id]));
-      setActiveNodeId(imageNode.id);
-      clearEdgeSelection();
       showProjectMessage('已合成图像节点');
     } catch (error) {
-      updateNodeData<'storyboard_grid'>(nodeId, {
+      updateNodeData<'image'>(imageNode.id, {
         status: 'error',
+        statusMessage: undefined,
         errorMessage: error instanceof Error ? error.message : 'Compose failed',
+      });
+      updateNodeData<'storyboard_grid'>(nodeId, {
+        status: 'idle',
+        errorMessage: undefined,
       });
       showProjectMessage(error instanceof Error ? error.message : 'Compose failed');
     }

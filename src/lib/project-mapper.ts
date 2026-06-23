@@ -649,6 +649,14 @@ function normalizeImageNodeData(value: unknown): ImageNodeData {
         typeof record.generatedOutputFileName === "string"
           ? record.generatedOutputFileName
           : undefined,
+      status:
+        record.status === "generating" || record.status === "error" || record.status === "idle"
+          ? record.status
+          : undefined,
+      statusMessage:
+        typeof record.statusMessage === "string" ? record.statusMessage : undefined,
+      errorMessage:
+        typeof record.errorMessage === "string" ? record.errorMessage : undefined,
       cameraAngle:
         record.cameraAngle && typeof record.cameraAngle === "object"
           ? {

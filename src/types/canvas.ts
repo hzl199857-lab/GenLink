@@ -297,6 +297,7 @@ export interface ImageNodeData {
   sizeBytes?: number;
   generatedAt: string;
   status?: 'idle' | 'generating' | 'error';
+  statusMessage?: string;
   errorMessage?: string;
   sourcePromptNodeId?: string;
   sourceImageNodeId?: string;
