@@ -174,6 +174,19 @@ type StoryboardGenerationResponse =
       model?: string;
     };
 
+type StoryboardStreamEvent =
+  | {
+      type: "heartbeat";
+    }
+  | {
+      type: "done";
+      result?: Extract<StoryboardGenerationResponse, { ok: true }>;
+    }
+  | {
+      type: "error";
+      error?: string;
+    };
+
 type ImageGenerationRunResult = {
   model: string;
   images: Array<{
@@ -2774,6 +2787,85 @@ async function readTextStreamResponse(
   return finalResult;
 }
 
+async function readStoryboardStreamResponse(
+  response: Response,
+): Promise<Extract<StoryboardGenerationResponse, { ok: true }>> {
+  if (!response.ok) {
+    const text = await response.text();
+
+    try {
+      const json = JSON.parse(text) as ApiErrorResponse;
+      throw new Error(json.error || "Request failed");
+    } catch {
+      throw new Error(text || "Request failed");
+    }
+  }
+
+  if (!response.body) {
+    throw new Error("Stream response body is missing");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult: Extract<StoryboardGenerationResponse, { ok: true }> | null =
+    null;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      while (true) {
+        const separatorIndex = buffer.indexOf("\n\n");
+
+        if (separatorIndex === -1) {
+          break;
+        }
+
+        const rawEvent = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+
+        const dataLines = rawEvent
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart());
+
+        if (dataLines.length === 0) {
+          continue;
+        }
+
+        const event = JSON.parse(dataLines.join("\n")) as StoryboardStreamEvent;
+
+        if (event.type === "heartbeat") {
+          continue;
+        }
+
+        if (event.type === "error") {
+          throw new Error(event.error || "Storyboard stream failed");
+        }
+
+        if (event.type === "done" && event.result?.ok) {
+          finalResult = event.result;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!finalResult) {
+    throw new Error("Stream ended before the storyboard result was received");
+  }
+
+  return finalResult;
+}
+
 function setTextNodeStatus(
   nodes: CanvasNode[],
   textNodeId: string,
@@ -4270,11 +4362,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           })),
         }),
       });
-      const payload = (await response.json()) as StoryboardGenerationResponse;
-
-      if (!payload.ok) {
-        throw new Error(payload.error);
-      }
+      const payload = await readStoryboardStreamResponse(response);
 
       set((state) => ({
         error: null,

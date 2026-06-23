@@ -27,6 +27,9 @@ interface StoryboardRequestBody {
 }
 
 type TextStoryboardProvider = Exclude<ImageApiProvider, 'runninghub'>;
+type StoryboardStreamPayload = Record<string, unknown>;
+
+const STORYBOARD_STREAM_HEARTBEAT_MS = 10_000;
 
 function parseProvider(value: unknown): TextStoryboardProvider | undefined {
   if (
@@ -124,10 +127,128 @@ async function readStoryboardTextStream(
   return content;
 }
 
-export async function POST(request: Request) {
-  let requestProvider: TextStoryboardProvider | undefined;
-  let requestModel: string | undefined;
+function encodeStoryboardStreamEvent(payload: StoryboardStreamPayload): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
 
+function createStoryboardStreamResponse(params: {
+  prompt: string;
+  model?: string;
+  provider?: TextStoryboardProvider;
+  apiKey?: string;
+  referenceImages: Array<{ label: string; url: string }>;
+}) {
+  let cleanup: (() => void) | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let isClosed = false;
+      const enqueue = (payload: StoryboardStreamPayload) => {
+        if (isClosed) {
+          return;
+        }
+
+        controller.enqueue(encodeStoryboardStreamEvent(payload));
+      };
+      const close = () => {
+        if (isClosed) {
+          return;
+        }
+
+        isClosed = true;
+        clearInterval(heartbeatId);
+        controller.close();
+      };
+      const fail = (error: unknown) => {
+        if (error instanceof VibeApiError) {
+          enqueue({
+            type: 'error',
+            error: getStoryboardGenerationErrorMessage({
+              message: error.message,
+              status: error.status,
+              provider: params.provider,
+              model: params.model,
+            }),
+          });
+          close();
+          return;
+        }
+
+        enqueue({
+          type: 'error',
+          error: error instanceof Error ? error.message : 'Internal error',
+        });
+        close();
+      };
+      const heartbeatId = setInterval(() => {
+        enqueue({ type: 'heartbeat' });
+      }, STORYBOARD_STREAM_HEARTBEAT_MS);
+      cleanup = () => {
+        isClosed = true;
+        clearInterval(heartbeatId);
+      };
+
+      enqueue({ type: 'heartbeat' });
+
+      void (async () => {
+        try {
+          const storyboardPrompt = buildStoryboardGenerationPrompt({
+            prompt: params.prompt,
+            referenceImages: params.referenceImages,
+          });
+          const textStream = await generateTextStream({
+            prompt: storyboardPrompt.userPrompt,
+            model: params.model,
+            systemPrompt: storyboardPrompt.systemPrompt,
+            temperature: 0.4,
+            provider: params.provider,
+            apiKey: params.apiKey,
+            timeoutMs: getStoryboardGenerationTimeoutMs(params.provider),
+            images: params.referenceImages.map((image) => ({
+              url: image.url,
+            })),
+          });
+          const content = await readStoryboardTextStream(textStream);
+          const normalized = normalizeStoryboardResponse(content);
+
+          if (!normalized.ok) {
+            enqueue({
+              type: 'error',
+              error: normalized.error,
+            });
+            close();
+            return;
+          }
+
+          enqueue({
+            type: 'done',
+            result: {
+              ok: true,
+              data: normalized.data,
+              rawJson: normalized.rawJson,
+              model: params.model,
+            },
+          });
+          close();
+        } catch (error) {
+          fail(error);
+        }
+      })();
+    },
+    cancel() {
+      cleanup?.();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
+export async function POST(request: Request) {
   try {
     const body = (await request.json()) as StoryboardRequestBody;
 
@@ -139,52 +260,20 @@ export async function POST(request: Request) {
     }
 
     const referenceImages = parseReferenceImages(body.referenceImages);
-    requestProvider = parseProvider(body.provider);
-    requestModel = typeof body.model === 'string' ? body.model : undefined;
-    const storyboardPrompt = buildStoryboardGenerationPrompt({
+    const requestProvider = parseProvider(body.provider);
+    const requestModel = typeof body.model === 'string' ? body.model : undefined;
+
+    return createStoryboardStreamResponse({
       prompt: body.prompt,
-      referenceImages,
-    });
-    const stream = await generateTextStream({
-      prompt: storyboardPrompt.userPrompt,
       model: requestModel,
-      systemPrompt: storyboardPrompt.systemPrompt,
-      temperature: 0.4,
       provider: requestProvider,
       apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
-      timeoutMs: getStoryboardGenerationTimeoutMs(requestProvider),
-      images: referenceImages.map((image) => ({
-        url: image.url,
-      })),
-    });
-    const content = await readStoryboardTextStream(stream);
-    const normalized = normalizeStoryboardResponse(content);
-
-    if (!normalized.ok) {
-      return NextResponse.json(
-        normalized,
-        { status: 422 },
-      );
-    }
-
-    return NextResponse.json({
-      ok: true,
-      data: normalized.data,
-      rawJson: normalized.rawJson,
-      model: requestModel,
+      referenceImages,
     });
   } catch (error) {
     if (error instanceof VibeApiError) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: getStoryboardGenerationErrorMessage({
-            message: error.message,
-            status: error.status,
-            provider: requestProvider,
-            model: requestModel,
-          }),
-        },
+        { ok: false, error: error.message },
         { status: error.status },
       );
     }
