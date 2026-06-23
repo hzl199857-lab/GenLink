@@ -113,6 +113,9 @@ import type {
   VideoGenerationNodeData,
   VideoUpscaleNodeData,
   ImageAnnotation,
+  StoryboardGridCellImage,
+  StoryboardGridNodeData,
+  StoryboardGridSize,
 } from '@/types/canvas';
 import { getStoryboardCardSize } from '@/lib/storyboard/layout';
 import type {
@@ -125,6 +128,16 @@ import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
 import { TextNode } from '../nodes/TextNode';
 import { StoryboardScriptNode } from '../nodes/StoryboardScriptNode';
+import {
+  getStoryboardGridCellCount,
+  getStoryboardGridNodeSize,
+  getStoryboardGridAspectValue,
+  parseStoryboardGridSize,
+  StoryboardGridNode,
+  STORYBOARD_GRID_EMPTY_HINT_HEIGHT,
+  STORYBOARD_GRID_TITLE_HEIGHT,
+  type StoryboardGridDropTarget,
+} from '../nodes/StoryboardGridNode';
 import { ImageGenerationNode } from '../nodes/ImageGenerationNode';
 import {
   VideoGenerationNode,
@@ -206,6 +219,15 @@ let notifyImageGenerationReferenceUpload:
 let notifyVideoGenerationReferenceUpload:
   | ((nodeId: string) => void)
   | null = null;
+let notifyStoryboardGridCellUpload:
+  | ((nodeId: string, cellIndex: number, file: File) => Promise<void>)
+  | null = null;
+let notifyStoryboardGridCompose:
+  | ((nodeId: string) => Promise<void>)
+  | null = null;
+let notifyStoryboardGridCellPreview:
+  | ((data: ImageLightboxData) => void)
+  | null = null;
 let notifyQuickReferenceConnectRequest:
   | ((mode: QuickReferenceConnectMode) => void)
   | null = null;
@@ -216,6 +238,32 @@ let notifyPanorama360NavigationActiveChange:
 let notifyPanorama360UploadRequest:
   | ((nodeId: string, file: File) => void)
   | null = null;
+
+function createStoryboardGridDropTargetStore() {
+  let snapshot: StoryboardGridDropTarget | null = null;
+  const listeners = new Set<() => void>();
+
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    setSnapshot: (next: StoryboardGridDropTarget | null) => {
+      if (
+        snapshot?.nodeId === next?.nodeId &&
+        snapshot?.cellIndex === next?.cellIndex
+      ) {
+        return;
+      }
+
+      snapshot = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}
+
+const storyboardGridDropTargetStore = createStoryboardGridDropTargetStore();
 
 function formatImageSize(bytes?: number): string {
   if (!bytes || bytes <= 0) {
@@ -378,6 +426,26 @@ function toImageNodeLightboxData(
   return {
     imageUrl,
     alt: data.title || data.prompt || 'image',
+    width: data.width,
+    height: data.height,
+  };
+}
+
+function toStoryboardGridCellLightboxData(
+  data: StoryboardGridCellImage,
+): ImageLightboxData | null {
+  const imageUrl =
+    data.hostedImageUrl?.trim() ||
+    data.previewUrl?.trim() ||
+    data.imageUrl?.trim();
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return {
+    imageUrl,
+    alt: data.title || data.fileName || 'storyboard grid image',
     width: data.width,
     height: data.height,
   };
@@ -984,6 +1052,19 @@ function resolveMiniMapVisibleNodeRect(
     };
   }
 
+  if (node.type === 'storyboard_grid') {
+    const data = node.data as StoryboardGridNodeData;
+    const size = getStoryboardGridNodeSize(data);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: size.width,
+      height: size.height,
+      radius: 14,
+    };
+  }
+
   if (node.type === 'image_generation') {
     const data = node.data as ImageGenerationNodeData;
     const referenceImages = data.aspectRatio === 'auto'
@@ -1141,6 +1222,10 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
       width: dimensions.width,
       height: dimensions.height + 36,
     };
+  }
+
+  if (node.type === 'storyboard_grid') {
+    return getStoryboardGridNodeBounds(node);
   }
 
   if (node.type === 'image_generation') {
@@ -3700,9 +3785,84 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
   );
 });
 
+const StoryboardGridNodeAdapter = memo(function StoryboardGridNodeAdapter({ id, data, selected }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const dropTarget = useSyncExternalStore(
+    storyboardGridDropTargetStore.subscribe,
+    storyboardGridDropTargetStore.getSnapshot,
+    storyboardGridDropTargetStore.getSnapshot,
+  );
+  const gridData = data as StoryboardGridNodeData;
+
+  return (
+    <StoryboardGridNode
+      id={id}
+      data={gridData}
+      selected={selected}
+      dropTarget={dropTarget}
+      onAspectRatioChange={(aspectRatio) => {
+        updateNodeData<'storyboard_grid'>(id, { aspectRatio });
+      }}
+      onGridChange={(grid) => {
+        updateNodeData<'storyboard_grid'>(id, {
+          grid,
+          cells: getStoryboardGridCellsForGrid(gridData.cells, grid),
+        });
+      }}
+      onEditingChange={(isEditing) => updateNodeData<'storyboard_grid'>(id, { isEditing })}
+      onClear={() => {
+        updateNodeData<'storyboard_grid'>(id, {
+          cells: Array.from({ length: getStoryboardGridCellCount(gridData.grid) }, () => null),
+          status: 'idle',
+          errorMessage: undefined,
+        });
+      }}
+      onCollapseChange={(isCollapsed) => updateNodeData<'storyboard_grid'>(id, {
+        isCollapsed,
+        isEditing: isCollapsed ? false : gridData.isEditing,
+      })}
+      onUploadCell={(cellIndex, file) => {
+        void notifyStoryboardGridCellUpload?.(id, cellIndex, file);
+      }}
+      onMoveCell={(fromIndex, toIndex) => {
+        if (fromIndex === toIndex) {
+          return;
+        }
+
+        const cells = getStoryboardGridCellsForGrid(gridData.cells, gridData.grid);
+        const nextCells = cells.slice();
+        const source = nextCells[fromIndex] ?? null;
+        nextCells[fromIndex] = nextCells[toIndex] ?? null;
+        nextCells[toIndex] = source;
+        updateNodeData<'storyboard_grid'>(id, { cells: nextCells });
+      }}
+      onPreviewCell={(image) => {
+        const lightboxData = toStoryboardGridCellLightboxData(image);
+
+        if (!lightboxData) {
+          return;
+        }
+
+        notifyCanvasNodeSelect?.(id);
+        notifyStoryboardGridCellPreview?.(lightboxData);
+      }}
+      onDeleteCell={(cellIndex) => {
+        const cells = getStoryboardGridCellsForGrid(gridData.cells, gridData.grid);
+        cells[cellIndex] = null;
+        updateNodeData<'storyboard_grid'>(id, { cells });
+      }}
+      onCompose={() => {
+        void notifyStoryboardGridCompose?.(id);
+      }}
+      onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+    />
+  );
+});
+
 const nodeTypes = {
   text: TextNodeAdapter,
   storyboard_script: StoryboardScriptNodeAdapter,
+  storyboard_grid: StoryboardGridNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
   video_generation: VideoGenerationNodeAdapter,
   video_upscale: VideoUpscaleNodeAdapter,
@@ -3993,6 +4153,22 @@ function resetCopiedNodeData(node: CanvasNode): CanvasNode['data'] {
       ...data,
       status: 'idle',
       errorMessage: undefined,
+    };
+  }
+
+  if (node.type === 'storyboard_grid') {
+    const data = cloneNodeData(node.data);
+
+    return {
+      ...data,
+      isEditing: false,
+      status: 'idle',
+      errorMessage: undefined,
+      outputImageUrl: undefined,
+      outputHostedImageUrl: undefined,
+      outputFileName: undefined,
+      outputWidth: undefined,
+      outputHeight: undefined,
     };
   }
 
@@ -6381,6 +6557,17 @@ function loadAnnotationImageElement(imageUrl: string): Promise<HTMLImageElement>
   });
 }
 
+function loadImageForCanvas(imageUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+
+    image.crossOrigin = 'anonymous';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to load image'));
+    image.src = imageUrl;
+  });
+}
+
 async function loadAnnotationImage(imageUrl: string): Promise<{
   image: HTMLImageElement;
   cleanup: () => void;
@@ -6477,6 +6664,275 @@ function resolveAnnotationTextDisplayRect(
     ...rect,
     width: Math.max(rect.width, measuredWidth),
     height: Math.max(rect.height, measuredHeight),
+  };
+}
+
+function getStoryboardGridCellsForGrid(
+  cells: Array<StoryboardGridCellImage | null>,
+  grid: StoryboardGridSize,
+): Array<StoryboardGridCellImage | null> {
+  const count = getStoryboardGridCellCount(grid);
+
+  return Array.from({ length: count }, (_, index) => cells[index] ?? null);
+}
+
+function getStoryboardGridImageFromNode(node: CanvasNode): StoryboardGridCellImage | null {
+  if (node.type === 'uploaded_image') {
+    const imageUrl = node.data.hostedImageUrl?.trim() || node.data.imageUrl.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      imageUrl,
+      hostedImageUrl: node.data.hostedImageUrl,
+      previewUrl: node.data.previewUrl,
+      semanticImageUrl: node.data.semanticImageUrl,
+      fileName: node.data.fileName,
+      title: node.data.title,
+      width: node.data.width,
+      height: node.data.height,
+      sourceNodeId: node.id,
+    };
+  }
+
+  if (node.type === 'image') {
+    const imageUrl = node.data.hostedImageUrl?.trim() || node.data.imageUrl.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      imageUrl,
+      hostedImageUrl: node.data.hostedImageUrl,
+      previewUrl: node.data.previewUrl,
+      semanticImageUrl: node.data.semanticImageUrl,
+      fileName: node.data.fileName,
+      title: node.data.title,
+      width: node.data.width,
+      height: node.data.height,
+      sourceNodeId: node.id,
+    };
+  }
+
+  if (node.type === 'image_generation') {
+    const imageUrl = node.data.generatedHostedImageUrl?.trim() || node.data.generatedImageUrl?.trim();
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: crypto.randomUUID(),
+      imageUrl,
+      hostedImageUrl: node.data.generatedHostedImageUrl,
+      title: node.data.title,
+      width: node.data.generatedImageWidth,
+      height: node.data.generatedImageHeight,
+      sourceNodeId: node.id,
+    };
+  }
+
+  return null;
+}
+
+function getStoryboardGridImageUrl(image: StoryboardGridCellImage): string {
+  return image.hostedImageUrl?.trim() || image.imageUrl.trim() || image.previewUrl?.trim() || '';
+}
+
+function getStoryboardGridNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSelectionBounds {
+  const data = node.data as StoryboardGridNodeData;
+  const size = getStoryboardGridNodeSize(data);
+
+  return {
+    x: node.position.x,
+    y: node.position.y - 8,
+    width: size.width,
+    height: STORYBOARD_GRID_TITLE_HEIGHT + size.height + STORYBOARD_GRID_EMPTY_HINT_HEIGHT + 8,
+  };
+}
+
+function findStoryboardGridDropTarget(
+  point: { x: number; y: number },
+  nodes: CanvasNode[],
+  excludeNodeId?: string,
+): StoryboardGridDropTarget | null {
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index];
+
+    if (node.id === excludeNodeId || node.type !== 'storyboard_grid') {
+      continue;
+    }
+
+    const bounds = getStoryboardGridNodeBounds(node);
+
+    if (
+      point.x < bounds.x ||
+      point.x > bounds.x + bounds.width ||
+      point.y < bounds.y ||
+      point.y > bounds.y + bounds.height
+    ) {
+      continue;
+    }
+
+    const data = node.data as StoryboardGridNodeData;
+    const size = getStoryboardGridNodeSize(data);
+    const grid = parseStoryboardGridSize(data.grid);
+    const gridLeft = node.position.x;
+    const gridTop = node.position.y + STORYBOARD_GRID_TITLE_HEIGHT;
+    const relativeX = point.x - gridLeft;
+    const relativeY = point.y - gridTop;
+
+    if (
+      relativeX < 0 ||
+      relativeX > size.width ||
+      relativeY < 0 ||
+      relativeY > size.height
+    ) {
+      continue;
+    }
+
+    const column = Math.min(grid.columns - 1, Math.max(0, Math.floor(relativeX / (size.width / grid.columns))));
+    const row = Math.min(grid.rows - 1, Math.max(0, Math.floor(relativeY / (size.height / grid.rows))));
+
+    return { nodeId: node.id, cellIndex: row * grid.columns + column };
+  }
+
+  return null;
+}
+
+async function readRemoteImageAsObjectUrl(imageUrl: string): Promise<string> {
+  const response = await fetch('/api/image-hosting/read', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ imageUrl }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to read image (${response.status})`);
+  }
+
+  return URL.createObjectURL(await response.blob());
+}
+
+async function loadStoryboardGridImage(image: StoryboardGridCellImage): Promise<{
+  element: HTMLImageElement;
+  cleanup: () => void;
+}> {
+  const url = getStoryboardGridImageUrl(image);
+
+  if (!url) {
+    throw new Error('Image is unavailable');
+  }
+
+  if (url.startsWith('blob:') || url.startsWith('data:')) {
+    return {
+      element: await loadImageForCanvas(url),
+      cleanup: () => {},
+    };
+  }
+
+  const objectUrl = await readRemoteImageAsObjectUrl(url);
+
+  try {
+    return {
+      element: await loadImageForCanvas(objectUrl),
+      cleanup: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+function drawImageCover(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const sourceAspect = sourceWidth / sourceHeight;
+  const targetAspect = width / height;
+  let sx = 0;
+  let sy = 0;
+  let sw = sourceWidth;
+  let sh = sourceHeight;
+
+  if (sourceAspect > targetAspect) {
+    sw = sourceHeight * targetAspect;
+    sx = (sourceWidth - sw) / 2;
+  } else {
+    sh = sourceWidth / targetAspect;
+    sy = (sourceHeight - sh) / 2;
+  }
+
+  context.drawImage(image, sx, sy, sw, sh, x, y, width, height);
+}
+
+async function createStoryboardGridImageDataUrl(data: StoryboardGridNodeData): Promise<{
+  dataUrl: string;
+  width: number;
+  height: number;
+}> {
+  const width = 1440;
+  const height = Math.round(width / getStoryboardGridAspectValue(data.aspectRatio));
+  const grid = parseStoryboardGridSize(data.grid);
+  const gap = 12;
+  const unitWidth = (width - gap * (grid.columns - 1)) / grid.columns;
+  const unitHeight = (height - gap * (grid.rows - 1)) / grid.rows;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error('Canvas is unavailable');
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  context.fillStyle = '#202226';
+  context.fillRect(0, 0, width, height);
+
+  await Promise.all(
+    Array.from({ length: grid.columns * grid.rows }, async (_, index) => {
+      const image = data.cells[index];
+      const column = index % grid.columns;
+      const row = Math.floor(index / grid.columns);
+      const x = Math.round(column * (unitWidth + gap));
+      const y = Math.round(row * (unitHeight + gap));
+      const cellWidth = Math.round(unitWidth);
+      const cellHeight = Math.round(unitHeight);
+
+      context.fillStyle = '#2a2d33';
+      context.fillRect(x, y, cellWidth, cellHeight);
+
+      if (!image) {
+        return;
+      }
+
+      const loadedImage = await loadStoryboardGridImage(image);
+
+      try {
+        drawImageCover(context, loadedImage.element, x, y, cellWidth, cellHeight);
+      } finally {
+        loadedImage.cleanup();
+      }
+    }),
+  );
+
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    width,
+    height,
   };
 }
 
@@ -8514,6 +8970,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [groupConnectionPreview, setGroupConnectionPreview] = useState<GroupConnectionPreview | null>(null);
   const [quickReferenceConnect, setQuickReferenceConnect] = useState<QuickReferenceConnectMode | null>(null);
   const draggingNodeIdRef = useRef<string | null>(null);
+  const dragStartPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [edgeDeleteButtonPosition, setEdgeDeleteButtonPosition] = useState<{
     x: number;
     y: number;
@@ -9814,6 +10271,22 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [selectSingleNode, storeNodes]);
 
   useEffect(() => {
+    notifyStoryboardGridCellPreview = (lightboxData) => {
+      suppressNextPaneClearRef.current = true;
+      window.setTimeout(() => {
+        suppressNextPaneClearRef.current = false;
+      }, 0);
+
+      setImageInfoPopover(null);
+      setImageLightbox(lightboxData);
+    };
+
+    return () => {
+      notifyStoryboardGridCellPreview = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const handleBlankConnectionDrop = (event: Event) => {
       const detail = (event as CustomEvent<BlankConnectionDropEventDetail>).detail;
 
@@ -10630,6 +11103,149 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
   }, [addNodes, clearEdgeSelection]);
 
+  const updateStoryboardGridCell = useCallback((
+    nodeId: string,
+    cellIndex: number,
+    image: StoryboardGridCellImage,
+  ) => {
+    const node = useCanvasStore.getState().nodes.find(
+      (candidate): candidate is Extract<CanvasNode, { type: 'storyboard_grid' }> =>
+        candidate.id === nodeId && candidate.type === 'storyboard_grid',
+    );
+
+    if (!node) {
+      return;
+    }
+
+    const cells = getStoryboardGridCellsForGrid(node.data.cells, node.data.grid);
+    cells[cellIndex] = image;
+    updateNodeData<'storyboard_grid'>(nodeId, {
+      cells,
+      status: 'idle',
+      errorMessage: undefined,
+    });
+  }, [updateNodeData]);
+
+  const uploadStoryboardGridCell = useCallback(async (
+    nodeId: string,
+    cellIndex: number,
+    file: File,
+  ) => {
+    if (!file.type.startsWith('image/')) {
+      showProjectMessage('Please select an image file');
+      return;
+    }
+
+    const localPreviewUrl = URL.createObjectURL(file);
+
+    try {
+      const dimensions = await readImageDimensionsFromUrl(localPreviewUrl);
+      updateStoryboardGridCell(nodeId, cellIndex, {
+        id: crypto.randomUUID(),
+        imageUrl: localPreviewUrl,
+        previewUrl: localPreviewUrl,
+        fileName: file.name,
+        title: file.name,
+        width: dimensions.width,
+        height: dimensions.height,
+      });
+
+      const uploaded = await readImageFile(file);
+      updateStoryboardGridCell(nodeId, cellIndex, {
+        id: crypto.randomUUID(),
+        imageUrl: uploaded.imageUrl,
+        hostedImageUrl: uploaded.hostedImageUrl,
+        previewUrl: uploaded.previewUrl,
+        semanticImageUrl: uploaded.semanticImageUrl,
+        fileName: uploaded.fileName,
+        title: uploaded.title,
+        width: uploaded.width,
+        height: uploaded.height,
+      });
+      URL.revokeObjectURL(localPreviewUrl);
+    } catch (error) {
+      URL.revokeObjectURL(localPreviewUrl);
+      updateNodeData<'storyboard_grid'>(nodeId, {
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Upload failed',
+      });
+    }
+  }, [showProjectMessage, updateNodeData, updateStoryboardGridCell]);
+
+  const composeStoryboardGrid = useCallback(async (nodeId: string) => {
+    const node = useCanvasStore.getState().nodes.find(
+      (candidate): candidate is Extract<CanvasNode, { type: 'storyboard_grid' }> =>
+        candidate.id === nodeId && candidate.type === 'storyboard_grid',
+    );
+
+    if (!node) {
+      return;
+    }
+
+    const hasImage = node.data.cells.some(Boolean);
+
+    if (!hasImage) {
+      showProjectMessage('分镜格子里还没有图片');
+      return;
+    }
+
+    updateNodeData<'storyboard_grid'>(nodeId, {
+      status: 'generating',
+      errorMessage: undefined,
+    });
+
+    try {
+      const result = await createStoryboardGridImageDataUrl(node.data);
+      const fileName = `storyboard-grid-${Date.now()}.png`;
+      const hostedImageUrl = await uploadImageDataUrl(result.dataUrl, fileName);
+      const imageNode = createImportedImageNode(
+        {
+          title: '分镜格子合成',
+          imageUrl: hostedImageUrl,
+          hostedImageUrl,
+          prompt: '分镜格子合成图',
+          width: result.width,
+          height: result.height,
+          generatedAt: new Date().toISOString(),
+        },
+        {
+          x: node.position.x + getStoryboardGridNodeSize(node.data).width + 72,
+          y: node.position.y + 28,
+        },
+      );
+
+      addNodes([imageNode]);
+      updateNodeData<'storyboard_grid'>(nodeId, {
+        status: 'idle',
+        outputImageUrl: hostedImageUrl,
+        outputHostedImageUrl: hostedImageUrl,
+        outputFileName: fileName,
+        outputWidth: result.width,
+        outputHeight: result.height,
+      });
+      setSelectedNodeIds(new Set([imageNode.id]));
+      setActiveNodeId(imageNode.id);
+      clearEdgeSelection();
+      showProjectMessage('已合成图像节点');
+    } catch (error) {
+      updateNodeData<'storyboard_grid'>(nodeId, {
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Compose failed',
+      });
+      showProjectMessage(error instanceof Error ? error.message : 'Compose failed');
+    }
+  }, [addNodes, clearEdgeSelection, showProjectMessage, updateNodeData]);
+
+  useEffect(() => {
+    notifyStoryboardGridCellUpload = uploadStoryboardGridCell;
+    notifyStoryboardGridCompose = composeStoryboardGrid;
+
+    return () => {
+      notifyStoryboardGridCellUpload = null;
+      notifyStoryboardGridCompose = null;
+    };
+  }, [composeStoryboardGrid, uploadStoryboardGridCell]);
+
   const clipboardShortcutRef = useRef({
     addUploadedImages,
     clearConnectionMenu,
@@ -10825,6 +11441,24 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
         if (change.dragging === true) {
           draggingNodeIdRef.current = change.id;
+          const currentNode = useCanvasStore.getState().nodes.find((candidate) => candidate.id === change.id);
+
+          if (currentNode && !dragStartPositionsRef.current.has(change.id)) {
+            dragStartPositionsRef.current.set(change.id, currentNode.position);
+          }
+
+          if (currentNode && change.position && getStoryboardGridImageFromNode(currentNode)) {
+            storyboardGridDropTargetStore.setSnapshot(
+              findStoryboardGridDropTarget(
+                getRectCenter(getEstimatedNodeBounds({
+                  ...currentNode,
+                  position: change.position,
+                } as CanvasNode)),
+                useCanvasStore.getState().nodes,
+                change.id,
+              ),
+            );
+          }
         } else if (change.dragging === false) {
           const stillDragging = changes.some((candidate) =>
             candidate !== change &&
@@ -10834,6 +11468,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
           if (!stillDragging) {
             draggingNodeIdRef.current = null;
+            storyboardGridDropTargetStore.setSnapshot(null);
           }
           syncNodeGroupMembership(change.id, change.position);
         }
@@ -10888,12 +11523,45 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const nodesToSync = draggedNodes.length > 0 ? draggedNodes : [node];
 
     for (const draggedNode of nodesToSync) {
+      const canvasNode = useCanvasStore.getState().nodes.find((candidate) => candidate.id === draggedNode.id);
+      const dropTarget = canvasNode && getStoryboardGridImageFromNode(canvasNode)
+        ? findStoryboardGridDropTarget(
+            getRectCenter(getEstimatedNodeBounds({
+              ...canvasNode,
+              position: draggedNode.position,
+            } as CanvasNode)),
+            useCanvasStore.getState().nodes,
+            draggedNode.id,
+          )
+        : null;
+
+      if (canvasNode && dropTarget) {
+        const image = getStoryboardGridImageFromNode(canvasNode);
+
+        if (image) {
+          updateStoryboardGridCell(dropTarget.nodeId, dropTarget.cellIndex, image);
+          const startPosition = dragStartPositionsRef.current.get(draggedNode.id) ?? canvasNode.position;
+          updateNodePosition(draggedNode.id, startPosition);
+          setRfNodes((currentNodes) =>
+            currentNodes.map((candidate) =>
+              candidate.id === draggedNode.id
+                ? { ...candidate, position: startPosition }
+                : candidate,
+            ),
+          );
+          showProjectMessage('已复制到分镜格子');
+          continue;
+        }
+      }
+
       updateNodePosition(draggedNode.id, draggedNode.position);
       syncNodeGroupMembership(draggedNode.id, draggedNode.position);
     }
 
     draggingNodeIdRef.current = null;
-  }, [updateNodePosition]);
+    dragStartPositionsRef.current.clear();
+    storyboardGridDropTargetStore.setSnapshot(null);
+  }, [showProjectMessage, updateNodePosition, updateStoryboardGridCell]);
 
   const handleEdgeClick = useCallback((
     event: React.MouseEvent,
@@ -11526,6 +12194,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     if (action === 'storyboard_script' && addMenu) {
       const node = addNodeAtCenter('storyboard_script', addMenu.canvas);
+      focusCreatedNode(node.id);
+    }
+
+    if (action === 'storyboard_grid' && addMenu) {
+      const node = addNodeAtCenter('storyboard_grid', addMenu.canvas);
       focusCreatedNode(node.id);
     }
 

@@ -8,8 +8,11 @@ import type {
   NodeType,
   Panorama360NodeData,
   ProjectSnapshot,
+  StoryboardGridNodeData,
   StoryboardReferenceImage,
   StoryboardScriptNodeData,
+  StoryboardGridAspectRatio,
+  StoryboardGridSize,
   TextNodeData,
   UploadedImageNodeData,
   VideoNodeData,
@@ -62,10 +65,26 @@ type StoryboardReferenceImageRecord = Record<string, unknown> & {
   sourceNodeId: string;
 };
 
+const STORYBOARD_GRID_ASPECT_RATIOS = new Set<StoryboardGridAspectRatio>([
+  "16:9",
+  "9:16",
+  "3:4",
+  "4:3",
+  "1:1",
+]);
+
+const STORYBOARD_GRID_SIZES = new Set<StoryboardGridSize>([
+  "2x2",
+  "3x3",
+  "4x4",
+  "5x5",
+]);
+
 function isNodeType(value: string): value is NodeType {
   return (
     value === "text" ||
     value === "storyboard_script" ||
+    value === "storyboard_grid" ||
     value === "image_generation" ||
     value === "video_generation" ||
     value === "video_upscale" ||
@@ -314,6 +333,83 @@ function normalizeStoryboardScriptNodeData(value: unknown): StoryboardScriptNode
         : undefined,
     model: typeof record.model === "string" ? record.model : undefined,
     referenceImages: normalizeStoryboardReferenceImages(record.referenceImages),
+  };
+}
+
+function normalizeStoryboardGridNodeData(value: unknown): StoryboardGridNodeData {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const aspectRatio = typeof record.aspectRatio === "string" &&
+    STORYBOARD_GRID_ASPECT_RATIOS.has(record.aspectRatio as StoryboardGridAspectRatio)
+      ? record.aspectRatio as StoryboardGridAspectRatio
+      : "16:9";
+  const grid = typeof record.grid === "string" &&
+    STORYBOARD_GRID_SIZES.has(record.grid as StoryboardGridSize)
+      ? record.grid as StoryboardGridSize
+      : "3x3";
+  const [columns, rows] = grid.split("x").map((item) => Number(item));
+  const cellCount = (columns || 3) * (rows || 3);
+  const sourceCells = Array.isArray(record.cells) ? record.cells : [];
+  const cells = Array.from({ length: cellCount }, (_, index) => {
+    const cell = sourceCells[index];
+
+    if (!cell || typeof cell !== "object" || Array.isArray(cell)) {
+      return null;
+    }
+
+    const cellRecord = cell as Record<string, unknown>;
+    const imageUrl = typeof cellRecord.imageUrl === "string" ? cellRecord.imageUrl : "";
+
+    if (!imageUrl) {
+      return null;
+    }
+
+    return {
+      id: typeof cellRecord.id === "string" ? cellRecord.id : `${index}`,
+      imageUrl,
+      hostedImageUrl:
+        typeof cellRecord.hostedImageUrl === "string" ? cellRecord.hostedImageUrl : undefined,
+      previewUrl:
+        typeof cellRecord.previewUrl === "string" ? cellRecord.previewUrl : undefined,
+      semanticImageUrl:
+        typeof cellRecord.semanticImageUrl === "string" ? cellRecord.semanticImageUrl : undefined,
+      fileName:
+        typeof cellRecord.fileName === "string" ? cellRecord.fileName : undefined,
+      title:
+        typeof cellRecord.title === "string" ? cellRecord.title : undefined,
+      width:
+        typeof cellRecord.width === "number" ? cellRecord.width : undefined,
+      height:
+        typeof cellRecord.height === "number" ? cellRecord.height : undefined,
+      sourceNodeId:
+        typeof cellRecord.sourceNodeId === "string" ? cellRecord.sourceNodeId : undefined,
+    };
+  });
+
+  return {
+    title: typeof record.title === "string" ? record.title : "分镜格子",
+    aspectRatio,
+    grid,
+    cells,
+    isEditing: Boolean(record.isEditing),
+    isCollapsed: Boolean(record.isCollapsed),
+    outputImageUrl:
+      typeof record.outputImageUrl === "string" ? record.outputImageUrl : undefined,
+    outputHostedImageUrl:
+      typeof record.outputHostedImageUrl === "string" ? record.outputHostedImageUrl : undefined,
+    outputFileName:
+      typeof record.outputFileName === "string" ? record.outputFileName : undefined,
+    outputWidth:
+      typeof record.outputWidth === "number" ? record.outputWidth : undefined,
+    outputHeight:
+      typeof record.outputHeight === "number" ? record.outputHeight : undefined,
+    status:
+      record.status === "generating" || record.status === "error" || record.status === "idle"
+        ? record.status
+        : "idle",
+    errorMessage:
+      typeof record.errorMessage === "string" ? record.errorMessage : undefined,
   };
 }
 
@@ -847,6 +943,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "storyboard_script",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeStoryboardScriptNodeData(parsed),
+      };
+    case "storyboard_grid":
+      return {
+        id: record.id,
+        type: "storyboard_grid",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeStoryboardGridNodeData(parsed),
       };
     case "image_generation":
       return {

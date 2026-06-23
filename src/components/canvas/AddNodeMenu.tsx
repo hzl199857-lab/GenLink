@@ -6,6 +6,7 @@ import {
   Globe2,
   Image as ImageIcon,
   Clapperboard,
+  Grid2x2,
   Upload,
   Video,
   Volume2,
@@ -19,6 +20,7 @@ export type AddNodeMenuAction =
   | 'video'
   | 'audio'
   | 'storyboard_script'
+  | 'storyboard_grid'
   | 'upload';
 
 export interface AddNodeMenuProps {
@@ -79,6 +81,12 @@ const FUNCTION_ITEMS: MenuItem[] = [
     title: '\u5206\u955c\u811a\u672c',
     description: '\u955c\u5934\u3001\u63d0\u793a\u8bcd\u3001\u8282\u594f',
     icon: Clapperboard,
+  },
+  {
+    action: 'storyboard_grid',
+    title: '\u5206\u955c\u683c\u5b50',
+    description: '\u62fc\u7248\u3001\u5bab\u683c\u3001\u5408\u6210\u56fe\u50cf',
+    icon: Grid2x2,
   },
 ];
 

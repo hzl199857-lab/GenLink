@@ -43,6 +43,7 @@ import type {
   Panorama360ViewState,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
+  StoryboardGridNodeData,
   StoryboardReferenceImage,
   StoryboardRow,
   StoryboardScriptNodeData,
@@ -879,6 +880,62 @@ function createStoryboardScriptNodeData(): StoryboardScriptNodeData {
     viewMode: "list",
     focusMode: "imagePrompt",
     referenceImages: [],
+  };
+}
+
+function createStoryboardGridNodeData(): StoryboardGridNodeData {
+  return {
+    title: "分镜格子",
+    aspectRatio: "16:9",
+    grid: "3x3",
+    cells: Array.from({ length: 9 }, () => null),
+    isEditing: false,
+    isCollapsed: false,
+    status: "idle",
+  };
+}
+
+function normalizeStoryboardGridNodeData(data: unknown): StoryboardGridNodeData {
+  const defaults = createStoryboardGridNodeData();
+  const record = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const aspectRatio = record.aspectRatio === "16:9" ||
+    record.aspectRatio === "9:16" ||
+    record.aspectRatio === "3:4" ||
+    record.aspectRatio === "4:3" ||
+    record.aspectRatio === "1:1"
+      ? record.aspectRatio
+      : defaults.aspectRatio;
+  const grid = record.grid === "2x2" ||
+    record.grid === "3x3" ||
+    record.grid === "4x4" ||
+    record.grid === "5x5"
+      ? record.grid
+      : defaults.grid;
+  const [columns, rows] = grid.split("x").map((value) => Number(value));
+  const count = (columns || 3) * (rows || 3);
+  const rawCells = Array.isArray(record.cells) ? record.cells : [];
+  const cells = rawCells.length > 0
+    ? Array.from({ length: count }, (_, index) => {
+        const cell = rawCells[index];
+        return cell && typeof cell === "object" ? cell as StoryboardGridNodeData["cells"][number] : null;
+      })
+    : Array.from({ length: count }, () => null);
+
+  return {
+    ...defaults,
+    ...record,
+    title: typeof record.title === "string" ? record.title : defaults.title,
+    aspectRatio,
+    grid,
+    cells,
+    isEditing: Boolean(record.isEditing),
+    isCollapsed: Boolean(record.isCollapsed),
+    status: record.status === "generating" || record.status === "error" || record.status === "idle"
+      ? record.status
+      : defaults.status,
+    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
   };
 }
 
@@ -1781,6 +1838,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         position,
         data: createStoryboardScriptNodeData(),
       };
+    case "storyboard_grid":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createStoryboardGridNodeData(),
+      };
     case "ai_text_result":
       return {
         id: crypto.randomUUID(),
@@ -2195,14 +2259,21 @@ function sanitizeImageGenerationNodeDataForPersistence(
 
 function normalizeLoadedCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
   return nodes.map((node) => {
-    if (node.type !== "storyboard_script") {
-      return node;
+    if (node.type === "storyboard_script") {
+      return {
+        ...node,
+        data: normalizeStoryboardScriptNodeData(node.data),
+      };
     }
 
-    return {
-      ...node,
-      data: normalizeStoryboardScriptNodeData(node.data),
-    };
+    if (node.type === "storyboard_grid") {
+      return {
+        ...node,
+        data: normalizeStoryboardGridNodeData(node.data),
+      };
+    }
+
+    return node;
   });
 }
 
@@ -2232,6 +2303,30 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
     }
 
     if (node.type !== "image_generation") {
+      if (node.type === "storyboard_grid") {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            cells: node.data.cells.map((cell) => {
+              if (!cell) {
+                return null;
+              }
+
+              const persistentImageUrl = isObjectUrl(cell.imageUrl)
+                ? cell.hostedImageUrl?.trim()
+                : cell.imageUrl;
+
+              return {
+                ...cell,
+                imageUrl: persistentImageUrl || cell.imageUrl,
+                previewUrl: isObjectUrl(cell.previewUrl) ? undefined : cell.previewUrl,
+              };
+            }),
+          },
+        };
+      }
+
       if (node.type === "video" && node.data.outputFileName?.trim()) {
         return {
           ...node,
@@ -2333,6 +2428,26 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
 
         if (isObjectUrl(node.data.imageUrl)) {
           urls.add(node.data.imageUrl);
+        }
+      }
+
+      if (node.type === "storyboard_grid") {
+        for (const cell of node.data.cells) {
+          if (!cell) {
+            continue;
+          }
+
+          if (isObjectUrl(cell.imageUrl)) {
+            urls.add(cell.imageUrl);
+          }
+
+          if (isObjectUrl(cell.hostedImageUrl)) {
+            urls.add(cell.hostedImageUrl as string);
+          }
+
+          if (isObjectUrl(cell.previewUrl)) {
+            urls.add(cell.previewUrl as string);
+          }
         }
       }
 

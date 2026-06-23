@@ -3,6 +3,7 @@
 export type NodeType =
   | "text"
   | "storyboard_script"
+  | "storyboard_grid"
   | "image_generation"
   | "video_generation"
   | "video_upscale"
@@ -76,6 +77,38 @@ export interface StoryboardScriptNodeData {
   provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
   referenceImages?: StoryboardReferenceImage[];
+}
+
+export type StoryboardGridAspectRatio = "16:9" | "9:16" | "3:4" | "4:3" | "1:1";
+export type StoryboardGridSize = "2x2" | "3x3" | "4x4" | "5x5";
+
+export interface StoryboardGridCellImage {
+  id: string;
+  imageUrl: string;
+  hostedImageUrl?: string;
+  previewUrl?: string;
+  semanticImageUrl?: string;
+  fileName?: string;
+  title?: string;
+  width?: number;
+  height?: number;
+  sourceNodeId?: string;
+}
+
+export interface StoryboardGridNodeData {
+  title?: string;
+  aspectRatio: StoryboardGridAspectRatio;
+  grid: StoryboardGridSize;
+  cells: Array<StoryboardGridCellImage | null>;
+  isEditing?: boolean;
+  isCollapsed?: boolean;
+  outputImageUrl?: string;
+  outputHostedImageUrl?: string;
+  outputFileName?: string;
+  outputWidth?: number;
+  outputHeight?: number;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
 }
 
 export interface ImageGenerationResultItem {
@@ -349,6 +382,7 @@ export interface Panorama360NodeData {
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
   | { type: "storyboard_script"; data: StoryboardScriptNodeData }
+  | { type: "storyboard_grid"; data: StoryboardGridNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "video_generation"; data: VideoGenerationNodeData }
   | { type: "video_upscale"; data: VideoUpscaleNodeData }
@@ -361,6 +395,7 @@ export type CanvasNodeData =
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
   | BaseCanvasNode<"storyboard_script", StoryboardScriptNodeData>
+  | BaseCanvasNode<"storyboard_grid", StoryboardGridNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
   | BaseCanvasNode<"video_upscale", VideoUpscaleNodeData>
