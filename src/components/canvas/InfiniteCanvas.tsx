@@ -2232,6 +2232,9 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
 const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateStoryboard = useCanvasStore((s) => s.generateStoryboardFromStoryboardNode);
+  const removeReferenceImage = useCanvasStore(
+    (s) => s.removeReferenceImageFromStoryboardNode,
+  );
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForStoryboardNode(id));
   const renderData = data as CanvasNodeRenderData;
   const [editing, setEditing] = useState(false);
@@ -2265,6 +2268,7 @@ const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ 
       }}
       onEndEdit={() => setEditing(false)}
       onRun={() => generateStoryboard(id)}
+      onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
       onPromptPointerDown={() => {
         handleSelectNode();
         notifyPromptBarInteraction?.();

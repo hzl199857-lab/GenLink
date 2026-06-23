@@ -3651,6 +3651,10 @@ export interface CanvasState {
     imageGenerationNodeId: string,
     referenceImageId: string,
   ) => void;
+  removeReferenceImageFromStoryboardNode: (
+    storyboardNodeId: string,
+    referenceImageId: string,
+  ) => void;
   addReferenceImagesToImageGenerationNode: (
     imageGenerationNodeId: string,
     images: Array<{
@@ -6968,6 +6972,71 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return {
         ...createUndoHistoryUpdate(state),
         nodes: nextNodes,
+        edges: nextEdges,
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  removeReferenceImageFromStoryboardNode: (
+    storyboardNodeId,
+    referenceImageId,
+  ) => {
+    set((state) => {
+      const storyboardNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
+          node.id === storyboardNodeId && node.type === "storyboard_script",
+      );
+
+      if (!storyboardNode) {
+        return state;
+      }
+
+      const inlineReferenceImages = storyboardNode.data.referenceImages ?? [];
+      const nextInlineReferenceImages = inlineReferenceImages.filter(
+        (image) =>
+          image.sourceNodeId !== referenceImageId &&
+          image.url !== referenceImageId,
+      );
+      const removedInline =
+        nextInlineReferenceImages.length !== inlineReferenceImages.length;
+      const nextEdges = state.edges.filter(
+        (edge) =>
+          !(
+            edge.target === storyboardNodeId &&
+            edge.source === referenceImageId
+          ),
+      );
+      const removedEdge = nextEdges.length !== state.edges.length;
+
+      if (!removedInline && !removedEdge) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: state.nodes.map((node) =>
+          node.id === storyboardNodeId && node.type === "storyboard_script"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: nextInlineReferenceImages,
+                  prompt: reconcileReferenceMentionTokens(
+                    node.data.prompt,
+                    getConnectedImagesForTargetNode(
+                      state.nodes,
+                      nextEdges,
+                      storyboardNodeId,
+                    ),
+                  ),
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
         edges: nextEdges,
         dirty: true,
         error: null,

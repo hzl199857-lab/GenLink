@@ -2,17 +2,22 @@
 
 import React, { memo, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
-import { NodeToolbar, Position } from 'reactflow';
+import { NodeToolbar, Position, useReactFlow } from 'reactflow';
 import {
   Check,
   ChevronDown,
   Maximize2,
   Minimize2,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
+import {
+  ReferenceImageHoverPreviewPortal,
+  useReferenceImageHoverPreview,
+} from './ReferenceImageHoverPreview';
 import {
   getApiProviderLabel,
   persistSelectedModel,
@@ -22,6 +27,9 @@ import {
 
 const COLLAPSED_PROMPT_HEIGHT = 70;
 const EXPANDED_PROMPT_HEIGHT = 240;
+const STORYBOARD_PROMPT_CTRL_WHEEL_ZOOM_STEP = 0.0015;
+const STORYBOARD_PROMPT_CANVAS_MIN_ZOOM = 0.2;
+const STORYBOARD_PROMPT_CANVAS_MAX_ZOOM = 2;
 const MODEL_OPTIONS = [
   'gemini-3-flash',
   'gemini-3.5-flash',
@@ -41,6 +49,13 @@ const TEXT_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly string[]> = {
   grsai: [],
 };
 
+function clampStoryboardPromptCanvasZoom(value: number): number {
+  return Math.min(
+    STORYBOARD_PROMPT_CANVAS_MAX_ZOOM,
+    Math.max(STORYBOARD_PROMPT_CANVAS_MIN_ZOOM, value),
+  );
+}
+
 export interface StoryboardScriptPromptBarProps {
   nodeId?: string;
   visible: boolean;
@@ -57,6 +72,7 @@ export interface StoryboardScriptPromptBarProps {
   onPromptChange?: (next: string) => void;
   onProviderModelChange?: (next: { provider: ApiProvider; model: string }) => void;
   onRun?: () => void;
+  onRemoveReference?: (referenceImageId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
 }
@@ -72,9 +88,11 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
   onPromptChange,
   onProviderModelChange,
   onRun,
+  onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
 }: StoryboardScriptPromptBarProps) {
+  const reactFlow = useReactFlow();
   const [expanded, setExpanded] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [activeProvider, setActiveProvider] = useState<ApiProvider>(provider);
@@ -82,6 +100,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
   const [draftPrompt, setDraftPrompt] = useState(prompt);
   const [isPromptFocused, setIsPromptFocused] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  const referenceImagePreview = useReferenceImageHoverPreview();
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -100,6 +119,37 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
   const resolvedPromptValue =
     isPromptFocused || isComposing ? draftPrompt : prompt;
   const activeModels = TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
+
+  const handlePromptBarWheel = (event: React.WheelEvent<HTMLElement>) => {
+    if (!(event.ctrlKey || event.metaKey)) {
+      event.stopPropagation();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const viewport = reactFlow.getViewport();
+    const nextZoom = clampStoryboardPromptCanvasZoom(
+      viewport.zoom * (1 - event.deltaY * STORYBOARD_PROMPT_CTRL_WHEEL_ZOOM_STEP),
+    );
+
+    if (nextZoom === viewport.zoom) {
+      return;
+    }
+
+    const rect = document.documentElement.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const canvasX = (pointerX - viewport.x) / viewport.zoom;
+    const canvasY = (pointerY - viewport.y) / viewport.zoom;
+
+    void reactFlow.setViewport({
+      x: pointerX - canvasX * nextZoom,
+      y: pointerY - canvasY * nextZoom,
+      zoom: nextZoom,
+    }, { duration: 0 });
+  };
 
   const handlePromptChange = (next: string) => {
     setDraftPrompt(next);
@@ -164,8 +214,8 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
           onFocusWithinChange?.(false);
         }}
         onPointerDown={(event) => event.stopPropagation()}
-        onWheelCapture={(event) => event.stopPropagation()}
-        onWheel={(event) => event.stopPropagation()}
+        onWheelCapture={handlePromptBarWheel}
+        onWheel={handlePromptBarWheel}
         className="storyboard-script-prompt-bar relative flex w-[700px] max-w-[calc(100vw-48px)] flex-col gap-4 rounded-gl-lg border border-gl-stroke-soft bg-gl-panel/90 px-5 py-3 shadow-gl-toolbar backdrop-blur-md"
         style={{ transform: 'scale(0.9)', transformOrigin: 'top center' }}
       >
@@ -184,20 +234,48 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
           <div className="flex items-center gap-2 overflow-x-auto pb-1 nodrag nopan">
             {connectedImages.map((image, index) => (
               <div
-                key={image.id}
-                className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                key={`${image.id}-${image.imageUrl}-${index}`}
+                className="group/reference-thumb relative h-[50px] w-[50px] shrink-0"
               >
-                <NextImage
-                  src={image.previewUrl || image.imageUrl}
-                  alt={image.alt || `Connected image ${index + 1}`}
-                  fill
-                  unoptimized
-                  sizes="50px"
-                  className="object-cover"
-                />
-                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                  {index + 1}
-                </span>
+                <div
+                  className="relative h-full w-full overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                  onPointerEnter={(event) =>
+                    referenceImagePreview.showPreview(image, event.currentTarget)
+                  }
+                  onPointerLeave={referenceImagePreview.hidePreview}
+                >
+                  <NextImage
+                    src={image.previewUrl || image.imageUrl}
+                    alt={image.alt || `Connected image ${index + 1}`}
+                    fill
+                    unoptimized
+                    sizes="50px"
+                    className="object-cover"
+                  />
+                  <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                    {index + 1}
+                  </span>
+                </div>
+                {onRemoveReference ? (
+                  <button
+                    type="button"
+                    aria-label="Remove reference image"
+                    className="absolute right-0 top-0 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/35 bg-[#1b1d21] text-white opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.35)] transition hover:bg-white hover:text-[#1b1d21] focus-visible:opacity-100 group-hover/reference-thumb:opacity-100"
+                    onPointerEnter={referenceImagePreview.hidePreview}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      referenceImagePreview.hidePreview();
+                      onRemoveReference(image.id);
+                    }}
+                  >
+                    <X size={11} strokeWidth={2.4} />
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -356,6 +434,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
             onRun={onRun}
           />
         </div>
+        <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
       </div>
     </NodeToolbar>
   );

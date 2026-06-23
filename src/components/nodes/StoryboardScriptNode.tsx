@@ -37,6 +37,17 @@ const HEADER_HEIGHT = 48;
 const ROW_MIN_HEIGHT = 74;
 const REFERENCE_PATTERN = /@图片(\d+)/g;
 
+const STORYBOARD_CTRL_WHEEL_ZOOM_STEP = 0.0015;
+const STORYBOARD_CANVAS_MIN_ZOOM = 0.2;
+const STORYBOARD_CANVAS_MAX_ZOOM = 2;
+
+function clampStoryboardCanvasZoom(value: number): number {
+  return Math.min(
+    STORYBOARD_CANVAS_MAX_ZOOM,
+    Math.max(STORYBOARD_CANVAS_MIN_ZOOM, value),
+  );
+}
+
 const TABLE_COLUMNS: Array<{
   field: StoryboardRowField;
   label: string;
@@ -83,6 +94,7 @@ export interface StoryboardScriptNodeProps {
   onEndEdit?: () => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onRun?: () => void;
+  onRemoveReference?: (referenceImageId: string) => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
 }
@@ -309,6 +321,7 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
   onEndEdit,
   onTitleChange,
   onRun,
+  onRemoveReference,
   onPromptPointerDown,
   onPromptFocusWithinChange,
 }: StoryboardScriptNodeProps) {
@@ -562,6 +575,40 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
     patchData({ rows: nextRows });
   };
 
+  const handleScrollableWheel = useCallback((event: React.WheelEvent<HTMLElement>) => {
+    if (!(event.ctrlKey || event.metaKey)) {
+      event.stopPropagation();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const viewport = reactFlow.getViewport();
+    const nextZoom = clampStoryboardCanvasZoom(
+      viewport.zoom * (1 - event.deltaY * STORYBOARD_CTRL_WHEEL_ZOOM_STEP),
+    );
+
+    if (nextZoom === viewport.zoom) {
+      return;
+    }
+
+    const canvasRoot = stageRef.current?.closest('.react-flow');
+    const rect = canvasRoot instanceof HTMLElement
+      ? canvasRoot.getBoundingClientRect()
+      : document.documentElement.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const canvasX = (pointerX - viewport.x) / viewport.zoom;
+    const canvasY = (pointerY - viewport.y) / viewport.zoom;
+
+    void reactFlow.setViewport({
+      x: pointerX - canvasX * nextZoom,
+      y: pointerY - canvasY * nextZoom,
+      zoom: nextZoom,
+    }, { duration: 0 });
+  }, [reactFlow]);
+
   const activePromptField: StoryboardRowField =
     focusMode === 'imagePrompt' ? '图片提示词' : '视频提示词';
 
@@ -689,8 +736,8 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
 
         <div
           className="text-node-scrollable min-h-0 flex-1 overflow-auto"
-          onWheelCapture={(event) => event.stopPropagation()}
-          onWheel={(event) => event.stopPropagation()}
+          onWheelCapture={handleScrollableWheel}
+          onWheel={handleScrollableWheel}
           onBlur={(event) => {
             if (
               editing &&
@@ -841,6 +888,7 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
           })
         }
         onRun={onRun}
+        onRemoveReference={onRemoveReference}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={(focused) => {
           setPromptFocused(focused);
