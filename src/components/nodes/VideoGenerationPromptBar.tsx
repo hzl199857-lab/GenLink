@@ -1,7 +1,6 @@
 ﻿'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { NodeToolbar, Position } from 'reactflow';
 import { Check, ChevronDown, Maximize2, Minimize2, Play, Sparkles } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
@@ -9,7 +8,10 @@ import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceImageHoverPreviewPortal,
+  ReferenceVideoHoverPreviewPortal,
+  ReferenceVideoThumbnail,
   useReferenceImageHoverPreview,
+  useReferenceVideoHoverPreview,
 } from './ReferenceImageHoverPreview';
 import {
   getApiProviderLabel,
@@ -18,7 +20,6 @@ import {
   type ApiProvider,
 } from '@/store/canvas-store';
 import type { VideoGenerationMode } from '@/types/canvas';
-import { VideoPlayer } from './VideoPlayer';
 
 const VIDEO_MODEL_OPTIONS = [
   { id: 'doubao-seedance-2-0-260128', label: 'seedance 2.0' },
@@ -31,8 +32,6 @@ const VIDEO_RESOLUTION_OPTIONS = ['480p', '720p', '1080p'] as const;
 const VIDEO_DURATION_OPTIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const;
 const COLLAPSED_PROMPT_HEIGHT = 54;
 const EXPANDED_PROMPT_HEIGHT = 225;
-const REFERENCE_PREVIEW_MAX_EDGE = 176;
-const REFERENCE_PREVIEW_GAP = 10;
 const VIDEO_MODE_OPTIONS: Array<{ id: VideoGenerationMode; label: string }> = [
   { id: 'text-to-video', label: '文生视频' },
   { id: 'image-to-video', label: '图生视频' },
@@ -208,29 +207,6 @@ function getRatioLabel(ratio: string) {
   return ratio === VIDEO_KEEP_RATIO_VALUE ? '自适应' : ratio;
 }
 
-function getReferencePreviewDimensions(width?: number, height?: number) {
-  if (!width || !height || width <= 0 || height <= 0) {
-    return {
-      width: REFERENCE_PREVIEW_MAX_EDGE,
-      height: Math.round((REFERENCE_PREVIEW_MAX_EDGE * 9) / 16),
-    };
-  }
-
-  const aspectRatio = width / height;
-
-  if (aspectRatio >= 1) {
-    return {
-      width: REFERENCE_PREVIEW_MAX_EDGE,
-      height: Math.round(REFERENCE_PREVIEW_MAX_EDGE / aspectRatio),
-    };
-  }
-
-  return {
-    width: Math.round(REFERENCE_PREVIEW_MAX_EDGE * aspectRatio),
-    height: REFERENCE_PREVIEW_MAX_EDGE,
-  };
-}
-
 function KeepRatioIcon({ active = false }: { active?: boolean }) {
   return (
     <span
@@ -244,156 +220,6 @@ function KeepRatioIcon({ active = false }: { active?: boolean }) {
       <span className="absolute left-[8px] top-[12px] h-[10px] w-[14px] rounded-[2px] border border-current" />
       <span className="absolute left-[12px] top-[15px] h-[7px] w-[7px] border-l border-current" />
     </span>
-  );
-}
-
-function ReferenceVideoThumbnail({
-  videoUrl,
-  previewUrl,
-  alt,
-}: {
-  videoUrl: string;
-  previewUrl?: string;
-  alt: string;
-}) {
-  const fallbackVideoRef = useRef<HTMLVideoElement | null>(null);
-  const [capturedFrame, setCapturedFrame] = useState<{
-    videoUrl: string;
-    imageUrl: string;
-    width: number;
-    height: number;
-  } | null>(null);
-  const thumbnailUrl =
-    previewUrl || (capturedFrame?.videoUrl === videoUrl ? capturedFrame.imageUrl : null);
-
-  useEffect(() => {
-    if (previewUrl || !videoUrl) {
-      return;
-    }
-
-    let cancelled = false;
-    const video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-    video.src = videoUrl;
-
-    const cleanup = () => {
-      video.removeAttribute('src');
-      video.load();
-    };
-
-    const captureFrame = () => {
-      if (cancelled || video.videoWidth <= 0 || video.videoHeight <= 0) {
-        return;
-      }
-
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const context = canvas.getContext('2d');
-        if (!context) {
-          return;
-        }
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        setCapturedFrame({
-          videoUrl,
-          imageUrl: canvas.toDataURL('image/jpeg', 0.82),
-          width: canvas.width,
-          height: canvas.height,
-        });
-      } catch {
-        // Cross-origin videos may not allow canvas extraction; keep the icon fallback.
-      }
-    };
-
-    const seekToFirstVisualFrame = () => {
-      try {
-        video.currentTime = Math.min(0.1, Number.isFinite(video.duration) ? video.duration : 0.1);
-      } catch {
-        captureFrame();
-      }
-    };
-
-    const handleLoadedData = () => {
-      if (video.readyState >= 2 && video.currentTime > 0) {
-        captureFrame();
-        return;
-      }
-      seekToFirstVisualFrame();
-    };
-
-    video.addEventListener('loadedmetadata', seekToFirstVisualFrame, { once: true });
-    video.addEventListener('loadeddata', handleLoadedData, { once: true });
-    video.addEventListener('seeked', captureFrame, { once: true });
-    video.load();
-
-    return () => {
-      cancelled = true;
-      video.removeEventListener('loadedmetadata', seekToFirstVisualFrame);
-      video.removeEventListener('loadeddata', handleLoadedData);
-      video.removeEventListener('seeked', captureFrame);
-      cleanup();
-    };
-  }, [previewUrl, videoUrl]);
-
-  useEffect(() => {
-    if (thumbnailUrl || !videoUrl) {
-      return;
-    }
-
-    const video = fallbackVideoRef.current;
-    if (!video) {
-      return;
-    }
-
-    const seekToFirstVisualFrame = () => {
-      try {
-        video.currentTime = Math.min(0.1, Number.isFinite(video.duration) ? video.duration : 0.1);
-      } catch {
-        // Some remote videos reject seeking before enough metadata is available.
-      }
-    };
-
-    const pauseAtFirstFrame = () => {
-      video.pause();
-    };
-
-    video.addEventListener('loadedmetadata', seekToFirstVisualFrame, { once: true });
-    video.addEventListener('loadeddata', pauseAtFirstFrame, { once: true });
-    video.load();
-
-    return () => {
-      video.removeEventListener('loadedmetadata', seekToFirstVisualFrame);
-      video.removeEventListener('loadeddata', pauseAtFirstFrame);
-    };
-  }, [thumbnailUrl, videoUrl]);
-
-  if (thumbnailUrl) {
-    return (
-      <>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={thumbnailUrl}
-          alt={alt}
-          className="h-full w-full object-cover"
-          draggable={false}
-        />
-      </>
-    );
-  }
-
-  return (
-    <VideoPlayer
-      videoRef={fallbackVideoRef}
-      src={videoUrl}
-      muted
-      controlsVisible={false}
-      preload="auto"
-      className="h-full w-full"
-      ariaLabel={alt}
-    />
   );
 }
 
@@ -428,15 +254,8 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   const [modeRatioMenuOpen, setModeRatioMenuOpen] = useState(false);
   const [outputMenuOpen, setOutputMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [hoveredVideoPreview, setHoveredVideoPreview] = useState<{
-    id: string;
-    videoUrl: string;
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
   const referenceImagePreview = useReferenceImageHoverPreview();
+  const referenceVideoPreview = useReferenceVideoHoverPreview();
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeRatioMenuRef = useRef<HTMLDivElement | null>(null);
   const outputMenuRef = useRef<HTMLDivElement | null>(null);
@@ -490,36 +309,6 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
     ...connectedImages.map((image) => ({ type: 'image' as const, item: image })),
     ...connectedVideos.map((video) => ({ type: 'video' as const, item: video })),
   ];
-
-  const showVideoPreview = (
-    video: NonNullable<VideoGenerationPromptBarProps['connectedVideos']>[number],
-    target: HTMLElement,
-  ) => {
-    const rect = target.getBoundingClientRect();
-    const previewDimensions = getReferencePreviewDimensions(video.width, video.height);
-    const viewportWidth = window.innerWidth || previewDimensions.width;
-    const left = Math.min(
-      Math.max(8, rect.left + rect.width / 2 - previewDimensions.width / 2),
-      Math.max(8, viewportWidth - previewDimensions.width - 8),
-    );
-    const top = Math.max(
-      8,
-      rect.top - previewDimensions.height - REFERENCE_PREVIEW_GAP,
-    );
-
-    setHoveredVideoPreview({
-      id: video.id,
-      videoUrl: video.videoUrl,
-      left,
-      top,
-      width: previewDimensions.width,
-      height: previewDimensions.height,
-    });
-  };
-
-  const hideVideoPreview = () => {
-    setHoveredVideoPreview(null);
-  };
 
   return (
     <NodeToolbar isVisible={visible} position={Position.Bottom} offset={16} align="center">
@@ -583,13 +372,13 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                         className="relative h-full w-full overflow-hidden rounded-[12px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
                         onPointerEnter={(event) => {
                           if (reference.type === 'video') {
-                            showVideoPreview(reference.item, event.currentTarget);
+                            referenceVideoPreview.showPreview(reference.item, event.currentTarget);
                             return;
                           }
                           referenceImagePreview.showPreview(reference.item, event.currentTarget);
                         }}
                         onPointerLeave={() => {
-                          hideVideoPreview();
+                          referenceVideoPreview.hidePreview();
                           referenceImagePreview.hidePreview();
                         }}
                       >
@@ -937,29 +726,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
           </div>
         </div>
 
-        {hoveredVideoPreview
-          ? createPortal(
-              <div
-                className="pointer-events-none fixed z-[100] overflow-hidden rounded-[14px] bg-black shadow-[0_18px_42px_rgba(0,0,0,0.48)]"
-                style={{
-                  left: hoveredVideoPreview.left,
-                  top: hoveredVideoPreview.top,
-                  width: hoveredVideoPreview.width,
-                  height: hoveredVideoPreview.height,
-                }}
-              >
-                <VideoPlayer
-                  key={hoveredVideoPreview.id}
-                  src={hoveredVideoPreview.videoUrl}
-                  autoPlay
-                  muted
-                  loop
-                  controlsVisible={false}
-                />
-              </div>,
-              document.body,
-            )
-          : null}
+        <ReferenceVideoHoverPreviewPortal preview={referenceVideoPreview.preview} />
         <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
       </div>
     </NodeToolbar>

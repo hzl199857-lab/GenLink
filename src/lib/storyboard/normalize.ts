@@ -23,7 +23,7 @@ export type StoryboardRowField = (typeof STORYBOARD_ROW_FIELDS)[number];
 
 export type StoryboardRow = Record<StoryboardRowField, string>;
 
-export type StoryboardSourceMode = 'text' | 'image';
+export type StoryboardSourceMode = 'text' | 'image' | 'video' | 'multimodal';
 
 export interface NormalizedStoryboardData {
   schemaVersion: typeof STORYBOARD_SCHEMA_VERSION;
@@ -82,7 +82,11 @@ export function normalizeStoryboardRow(value: unknown): StoryboardRow {
 }
 
 function normalizeSourceMode(value: unknown): StoryboardSourceMode {
-  return value === 'image' ? 'image' : 'text';
+  if (value === 'image' || value === 'video' || value === 'multimodal') {
+    return value;
+  }
+
+  return 'text';
 }
 
 function normalizeDetectedIntent(value: unknown, rowCount: number): NormalizedStoryboardData['detectedIntent'] {

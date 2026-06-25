@@ -14,6 +14,7 @@ import {
   Map as MapIcon,
   MousePointer2,
   Plus,
+  Video,
   Type,
   Rows3,
   X,
@@ -2256,6 +2257,7 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateText = useCanvasStore((s) => s.generateTextFromTextNode);
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForTextNode(id));
+  const connectedVideos = useCanvasStore((s) => s.getConnectedVideosForTextNode(id));
   const renderData = data as CanvasNodeRenderData;
   const [editing, setEditing] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
@@ -2292,6 +2294,7 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
       dragging={!!dragging}
       editing={editing}
       connectedImages={connectedImages}
+      connectedVideos={connectedVideos}
       onChange={(next) => updateNodeData<'text'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'text'>(id, { title: nextTitle })}
       onStartEdit={() => {
@@ -2321,6 +2324,7 @@ const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ 
     (s) => s.removeReferenceImageFromStoryboardNode,
   );
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForStoryboardNode(id));
+  const connectedVideos = useCanvasStore((s) => s.getConnectedVideosForStoryboardNode(id));
   const renderData = data as CanvasNodeRenderData;
   const [editing, setEditing] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
@@ -2345,6 +2349,7 @@ const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ 
       dragging={!!dragging}
       editing={editing}
       connectedImages={connectedImages}
+      connectedVideos={connectedVideos}
       onChange={(next) => updateNodeData<'storyboard_script'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'storyboard_script'>(id, { title: nextTitle })}
       onStartEdit={() => {
@@ -4500,7 +4505,7 @@ type CanvasNodeRenderData = CanvasNode['data'] & {
   canvasFocusRequestId?: number;
 };
 
-type EmptyCanvasWelcomeAction = 'text' | 'image_generation';
+type EmptyCanvasWelcomeAction = 'text' | 'image_generation' | 'video_generation';
 
 function getImageImportPosition(
   basePosition: { x: number; y: number },
@@ -8727,10 +8732,10 @@ function EmptyCanvasWelcome({
       <div className="flex flex-wrap items-center justify-center gap-3 text-center">
         <span className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/12 bg-white/[0.08] px-4 text-[14px] font-semibold text-gl-text-primary shadow-[0_12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl">
           <MousePointer2 size={16} className="text-gl-text-secondary" />
-          Click a target node
+          点击下方
         </span>
         <span className="text-[18px] font-medium text-gl-text-secondary">
-          to connect it here
+          开始创作
         </span>
       </div>
 
@@ -8743,7 +8748,7 @@ function EmptyCanvasWelcome({
           className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
         >
           <Type size={15} strokeWidth={2} />
-          Text node
+          文本节点
         </button>
         <button
           type="button"
@@ -8753,7 +8758,17 @@ function EmptyCanvasWelcome({
           className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
         >
           <ImageIcon size={15} strokeWidth={2} />
-          Image node
+          图片节点
+        </button>
+        <button
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={() => onCreateNode('video_generation')}
+          className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
+        >
+          <Video size={15} strokeWidth={2} />
+          视频节点
         </button>
       </div>
     </div>

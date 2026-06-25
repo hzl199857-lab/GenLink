@@ -4,6 +4,7 @@ import React, { memo, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position, useReactFlow } from 'reactflow';
 import {
+  Play,
   Check,
   ChevronDown,
   Maximize2,
@@ -16,7 +17,10 @@ import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceImageHoverPreviewPortal,
+  ReferenceVideoHoverPreviewPortal,
+  ReferenceVideoThumbnail,
   useReferenceImageHoverPreview,
+  useReferenceVideoHoverPreview,
 } from './ReferenceImageHoverPreview';
 import {
   getApiProviderLabel,
@@ -40,11 +44,12 @@ const MODEL_OPTIONS = [
   'gpt-5.5',
 ] as const;
 const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen'];
+const VIDEO_API_PROVIDERS: ApiProvider[] = ['comfly', 'zhenzhen'];
 const TEXT_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly string[]> = {
   vibe: MODEL_OPTIONS,
   fucheers: MODEL_OPTIONS.filter((model) => !model.startsWith('gemini-')),
-  comfly: MODEL_OPTIONS.filter((model) => model !== 'gemini-3.5-flash'),
-  zhenzhen: MODEL_OPTIONS.filter((model) => model !== 'gemini-3.5-flash'),
+  comfly: MODEL_OPTIONS,
+  zhenzhen: MODEL_OPTIONS,
   runninghub: [],
   grsai: [],
 };
@@ -69,6 +74,16 @@ export interface StoryboardScriptPromptBarProps {
     previewUrl?: string;
     alt: string;
   }>;
+  connectedVideos?: Array<{
+    id: string;
+    videoUrl: string;
+    previewUrl?: string;
+    alt: string;
+    fileName?: string;
+    width?: number;
+    height?: number;
+    durationSeconds?: number;
+  }>;
   onPromptChange?: (next: string) => void;
   onProviderModelChange?: (next: { provider: ApiProvider; model: string }) => void;
   onRun?: () => void;
@@ -85,6 +100,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
   model = 'gpt-5.4',
   generating = false,
   connectedImages = [],
+  connectedVideos = [],
   onPromptChange,
   onProviderModelChange,
   onRun,
@@ -101,6 +117,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
   const [isPromptFocused, setIsPromptFocused] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
   const referenceImagePreview = useReferenceImageHoverPreview();
+  const referenceVideoPreview = useReferenceVideoHoverPreview();
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -118,7 +135,13 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
 
   const resolvedPromptValue =
     isPromptFocused || isComposing ? draftPrompt : prompt;
-  const activeModels = TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
+  const hasVideoReferences = connectedVideos.length > 0;
+  const visibleProviders = hasVideoReferences ? VIDEO_API_PROVIDERS : API_PROVIDERS;
+  const activeModels = hasVideoReferences
+    ? TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider].filter((option) =>
+        option.startsWith('gemini-'),
+      )
+    : TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
 
   const handlePromptBarWheel = (event: React.WheelEvent<HTMLElement>) => {
     if (!(event.ctrlKey || event.metaKey)) {
@@ -230,7 +253,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
           <Tooltip label={expanded ? '收起' : '展开'} side="top" />
         </div>
 
-        {connectedImages.length > 0 ? (
+        {connectedImages.length > 0 || connectedVideos.length > 0 ? (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 nodrag nopan">
             {connectedImages.map((image, index) => (
               <div
@@ -278,6 +301,32 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
                 ) : null}
               </div>
             ))}
+            {connectedVideos.map((video, index) => (
+              <div
+                key={`${video.id}-${video.videoUrl}-${index}`}
+                className="group/reference-thumb relative h-[50px] w-[68px] shrink-0"
+              >
+                <div
+                  className="relative h-full w-full overflow-hidden rounded-[14px] border border-white/10 bg-black/35 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                  onPointerEnter={(event) =>
+                    referenceVideoPreview.showPreview(video, event.currentTarget)
+                  }
+                  onPointerLeave={referenceVideoPreview.hidePreview}
+                >
+                  <ReferenceVideoThumbnail
+                    videoUrl={video.videoUrl}
+                    previewUrl={video.previewUrl}
+                    alt={video.alt || `Connected video ${index + 1}`}
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
+                    <Play size={14} fill="currentColor" strokeWidth={0} />
+                  </span>
+                  <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                    {index + 1}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         ) : null}
 
@@ -292,6 +341,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
             <PromptMentionInput
               value={resolvedPromptValue}
               connectedImages={connectedImages}
+              connectedVideos={connectedVideos}
               onChange={handlePromptChange}
               onFocus={() => {
                 setDraftPrompt(prompt);
@@ -320,7 +370,11 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
                 onClick={() => {
                   setModelMenuOpen((open) => {
                     if (!open) {
-                      setActiveProvider(provider);
+                      setActiveProvider(
+                        hasVideoReferences && !VIDEO_API_PROVIDERS.includes(provider)
+                          ? 'comfly'
+                          : provider,
+                      );
                       setProviderWarning(null);
                     }
 
@@ -359,7 +413,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
                     Provider
                   </div>
                   <div className="flex flex-col gap-0.5">
-                    {API_PROVIDERS.map((option) => {
+                    {visibleProviders.map((option) => {
                       const selected = option === activeProvider;
 
                       return (
@@ -434,6 +488,7 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
             onRun={onRun}
           />
         </div>
+        <ReferenceVideoHoverPreviewPortal preview={referenceVideoPreview.preview} />
         <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
       </div>
     </NodeToolbar>

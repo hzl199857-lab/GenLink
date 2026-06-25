@@ -8,6 +8,9 @@ import {
 } from "@/lib/vibe";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
+
+const VIDEO_TEXT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 
 interface TextRequestBody {
   prompt?: unknown;
@@ -18,6 +21,7 @@ interface TextRequestBody {
   provider?: unknown;
   apiKey?: unknown;
   images?: unknown;
+  videos?: unknown;
   stream?: unknown;
 }
 
@@ -60,6 +64,20 @@ export async function POST(request: Request) {
             url: image.url,
           }))
       : undefined;
+    const videos = Array.isArray(body.videos)
+      ? body.videos
+          .filter(
+            (video): video is { url: string } =>
+              typeof video === "object" &&
+              video !== null &&
+              "url" in video &&
+              typeof video.url === "string" &&
+              video.url.trim() !== "",
+          )
+          .map((video) => ({
+            url: video.url,
+          }))
+      : undefined;
 
     const params = {
       prompt: body.prompt,
@@ -72,6 +90,8 @@ export async function POST(request: Request) {
       provider: parseProvider(body.provider),
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
       images,
+      videos,
+      timeoutMs: videos?.length ? VIDEO_TEXT_REQUEST_TIMEOUT_MS : undefined,
     };
 
     if (body.stream === true) {

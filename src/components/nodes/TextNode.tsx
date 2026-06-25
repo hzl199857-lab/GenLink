@@ -14,6 +14,7 @@ import {
 } from '@/store/canvas-store';
 
 const TEXT_NODE_SCROLL_THRESHOLD_PX = 289;
+const DEFAULT_GEMINI_VIDEO_MODEL = 'gemini-3.1-pro';
 
 export interface TextNodeProps {
   id?: string;
@@ -24,7 +25,15 @@ export interface TextNodeProps {
   connectedImages?: Array<{
     id: string;
     imageUrl: string;
+    previewUrl?: string;
     alt: string;
+  }>;
+  connectedVideos?: Array<{
+    id: string;
+    videoUrl: string;
+    previewUrl?: string;
+    alt: string;
+    fileName?: string;
   }>;
   onChange?: (next: TextNodeData) => void;
   onStartEdit?: () => void;
@@ -42,6 +51,7 @@ export const TextNode = memo(function TextNode({
   dragging = false,
   editing = false,
   connectedImages = [],
+  connectedVideos = [],
   onChange,
   onStartEdit,
   onEndEdit,
@@ -138,9 +148,37 @@ export const TextNode = memo(function TextNode({
   const uiVisible = selected && !dragging && !suppressTransientUi;
   const showAccessories = uiVisible;
   const isGenerating = data.status === 'generating';
+  const hasVideoReferences = connectedVideos.length > 0;
   const cardStyle = data.backgroundColor
     ? { backgroundColor: data.backgroundColor }
     : undefined;
+
+  useEffect(() => {
+    if (!hasVideoReferences) {
+      return;
+    }
+
+    const currentProvider = data.provider || readStoredSelectedApiProvider('text');
+    const nextProvider =
+      currentProvider === 'comfly' || currentProvider === 'zhenzhen'
+        ? currentProvider
+        : 'comfly';
+    const nextModel = data.model?.startsWith('gemini-')
+      ? data.model
+      : DEFAULT_GEMINI_VIDEO_MODEL;
+
+    if (nextProvider === data.provider && nextModel === data.model) {
+      return;
+    }
+
+    onChange?.({
+      ...data,
+      provider: nextProvider,
+      model: nextModel,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  }, [data, hasVideoReferences, onChange]);
 
   useEffect(() => {
     if (!isComposingRef.current) {
@@ -332,6 +370,7 @@ export const TextNode = memo(function TextNode({
         provider={data.provider || readStoredSelectedApiProvider('text')}
         model={data.model || 'gpt-5.4'}
         connectedImages={connectedImages}
+        connectedVideos={connectedVideos}
         onPromptChange={handlePromptChange}
         onProviderModelChange={handleProviderModelChange}
         onModelChange={handleModelChange}

@@ -29,6 +29,7 @@ interface StoryboardRequestBody {
   provider?: unknown;
   apiKey?: unknown;
   referenceImages?: unknown;
+  referenceVideos?: unknown;
 }
 
 type TextStoryboardProvider = Exclude<ImageApiProvider, 'runninghub'>;
@@ -77,6 +78,28 @@ function parseReferenceImages(value: unknown): Array<{ label: string; url: strin
   }).map((image) => ({
     label: image.label.trim(),
     url: image.url.trim(),
+  }));
+}
+
+function parseReferenceVideos(value: unknown): Array<{ label: string; url: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((video): video is { label: string; url: string } => {
+    return (
+      typeof video === 'object' &&
+      video !== null &&
+      'label' in video &&
+      typeof video.label === 'string' &&
+      video.label.trim() !== '' &&
+      'url' in video &&
+      typeof video.url === 'string' &&
+      video.url.trim() !== ''
+    );
+  }).map((video) => ({
+    label: video.label.trim(),
+    url: video.url.trim(),
   }));
 }
 
@@ -173,12 +196,14 @@ async function runStoryboardJob(
     provider?: TextStoryboardProvider;
     apiKey?: string;
     referenceImages: Array<{ label: string; url: string }>;
+    referenceVideos: Array<{ label: string; url: string }>;
   },
 ) {
   try {
     const storyboardPrompt = buildStoryboardGenerationPrompt({
       prompt: params.prompt,
       referenceImages: params.referenceImages,
+      referenceVideos: params.referenceVideos,
     });
     const stream = await generateTextStream({
       prompt: storyboardPrompt.userPrompt,
@@ -190,6 +215,9 @@ async function runStoryboardJob(
       timeoutMs: getStoryboardGenerationTimeoutMs(params.provider),
       images: params.referenceImages.map((image) => ({
         url: image.url,
+      })),
+      videos: params.referenceVideos.map((video) => ({
+        url: video.url,
       })),
     });
     const content = await readStoryboardTextStream(stream);
@@ -257,6 +285,7 @@ export async function POST(request: Request) {
     }
 
     const referenceImages = parseReferenceImages(body.referenceImages);
+    const referenceVideos = parseReferenceVideos(body.referenceVideos);
     const provider = parseProvider(body.provider);
     const model = typeof body.model === 'string' ? body.model : undefined;
     const jobId = `storyboard-${randomUUID()}`;
@@ -277,6 +306,7 @@ export async function POST(request: Request) {
         provider,
         apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
         referenceImages,
+        referenceVideos,
       });
     });
 

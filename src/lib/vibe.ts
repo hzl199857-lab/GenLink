@@ -85,7 +85,7 @@ const DEFAULT_COMFLY_RESPONSE_FORMAT = "b64_json";
 const COMFLY_ASYNC_RESPONSE_FORMAT = "url";
 const COMFLY_TEXT_MODEL_MAP = new Map<string, string>([
   ["gemini-3-flash", "gemini-3-flash-preview"],
-  ["gemini-3.5-flash", "gemini-3.5-flash-preview"],
+  ["gemini-3.5-flash", "gemini-3.5-flash"],
   ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
   ["claude-opus-4-7", "claude-opus-4-7"],
   ["claude-opus-4-6", "claude-opus-4-6"],
@@ -155,6 +155,9 @@ export interface GenerateTextParams {
   provider?: ImageApiProvider;
   apiKey?: string;
   images?: Array<{
+    url: string;
+  }>;
+  videos?: Array<{
     url: string;
   }>;
 }
@@ -704,6 +707,10 @@ function isClaudeModel(model: string): boolean {
   return /^claude-/i.test(model);
 }
 
+function isGeminiTextModel(model: string): boolean {
+  return /^gemini-/i.test(model);
+}
+
 function parseDataUrl(url: string):
   | { mediaType: string; data: string }
   | null {
@@ -1056,6 +1063,9 @@ function createOpenAiUserContent(
   images?: Array<{
     url: string;
   }>,
+  videos?: Array<{
+    url: string;
+  }>,
 ): string | ChatMessageContentPart[] {
   const userContent: ChatMessageContentPart[] = [
     {
@@ -1077,7 +1087,40 @@ function createOpenAiUserContent(
     });
   }
 
+  for (const video of videos ?? []) {
+    if (!video.url.trim()) {
+      continue;
+    }
+
+    userContent.push({
+      type: "image_url",
+      image_url: {
+        url: video.url,
+      },
+    });
+  }
+
   return userContent.length === 1 ? prompt : userContent;
+}
+
+function hasTextVideos(params: GenerateTextParams): boolean {
+  return params.videos?.some((video) => video.url.trim()) ?? false;
+}
+
+function assertVideoTextSupport(
+  provider: ImageApiProvider,
+  requestedModel: string,
+) {
+  if (!isGeminiTextModel(requestedModel)) {
+    throw new VibeApiError(400, "Video analysis requires a Gemini model");
+  }
+
+  if (provider !== "comfly" && provider !== "zhenzhen") {
+    throw new VibeApiError(
+      400,
+      "Video analysis requires Comfly or Zhenzhen provider",
+    );
+  }
 }
 
 function isHttpImageUrl(image: { url: string }): boolean {
@@ -2237,6 +2280,9 @@ export async function generateTextStream(
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const isClaude = isClaudeModel(requestedModel);
+  if (hasTextVideos(params)) {
+    assertVideoTextSupport(textProvider, requestedModel);
+  }
   const providerModel =
     isComflyCompatibleProvider(textProvider)
       ? resolveComflyTextModel(requestedModel)
@@ -2273,7 +2319,11 @@ export async function generateTextStream(
             : []),
           {
             role: "user" as const,
-            content: createOpenAiUserContent(params.prompt, params.images),
+            content: createOpenAiUserContent(
+              params.prompt,
+              params.images,
+              params.videos,
+            ),
           },
         ],
         temperature: params.temperature ?? 0.7,
@@ -2453,6 +2503,9 @@ export async function generateText(
   }
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
+  if (hasTextVideos(params)) {
+    assertVideoTextSupport(textProvider, requestedModel);
+  }
   const providerModel =
     isComflyCompatibleProvider(textProvider)
       ? resolveComflyTextModel(requestedModel)
@@ -2519,7 +2572,11 @@ export async function generateText(
           : []),
         {
           role: "user" as const,
-          content: createOpenAiUserContent(params.prompt, params.images),
+          content: createOpenAiUserContent(
+            params.prompt,
+            params.images,
+            params.videos,
+          ),
         },
       ],
       temperature: params.temperature ?? 0.7,

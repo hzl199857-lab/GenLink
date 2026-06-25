@@ -7,11 +7,13 @@ import {
   FileDown,
   Images,
   List,
+  Play,
   Rows3,
   Video,
 } from 'lucide-react';
 import type {
   StoryboardReferenceImage,
+  StoryboardReferenceVideo,
   StoryboardRow,
   StoryboardScriptNodeData,
 } from '@/types/canvas';
@@ -26,6 +28,7 @@ import {
 } from '@/lib/storyboard/layout';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
+import { ReferenceVideoThumbnail } from './ReferenceImageHoverPreview';
 import { StoryboardScriptPromptBar } from './StoryboardScriptPromptBar';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
@@ -35,7 +38,7 @@ import {
 
 const HEADER_HEIGHT = 48;
 const ROW_MIN_HEIGHT = 74;
-const REFERENCE_PATTERN = /@图片(\d+)/g;
+const REFERENCE_PATTERN = /@(图片|视频)(\d+)/g;
 
 const STORYBOARD_CTRL_WHEEL_ZOOM_STEP = 0.0015;
 const STORYBOARD_CANVAS_MIN_ZOOM = 0.2;
@@ -89,6 +92,16 @@ export interface StoryboardScriptNodeProps {
     previewUrl?: string;
     alt: string;
   }>;
+  connectedVideos?: Array<{
+    id: string;
+    videoUrl: string;
+    previewUrl?: string;
+    alt: string;
+    fileName?: string;
+    width?: number;
+    height?: number;
+    durationSeconds?: number;
+  }>;
   onChange?: (next: StoryboardScriptNodeData) => void;
   onStartEdit?: () => void;
   onEndEdit?: () => void;
@@ -121,11 +134,48 @@ function getReferenceImageMap(
   return map;
 }
 
+type StoryboardReferenceMedia =
+  | ({ type: 'image' } & StoryboardReferenceImage)
+  | ({ type: 'video' } & StoryboardReferenceVideo);
+
+function getReferenceMediaMap(
+  referenceImages: StoryboardReferenceImage[] | undefined,
+  connectedImages: NonNullable<StoryboardScriptNodeProps['connectedImages']>,
+  referenceVideos: StoryboardReferenceVideo[] | undefined,
+  connectedVideos: NonNullable<StoryboardScriptNodeProps['connectedVideos']>,
+): Map<string, StoryboardReferenceMedia> {
+  const map = new Map<string, StoryboardReferenceMedia>();
+  const imageMap = getReferenceImageMap(referenceImages, connectedImages);
+  const resolvedVideos = referenceVideos?.length
+    ? referenceVideos
+    : connectedVideos.map((video, index) => ({
+        label: `@视频${index + 1}`,
+        url: video.videoUrl,
+        previewUrl: video.previewUrl,
+        sourceNodeId: video.id,
+        alt: video.alt,
+        fileName: video.fileName,
+        width: video.width,
+        height: video.height,
+        durationSeconds: video.durationSeconds,
+      }));
+
+  for (const [label, image] of imageMap) {
+    map.set(label, { type: 'image', ...image });
+  }
+
+  for (const video of resolvedVideos) {
+    map.set(video.label, { type: 'video', ...video });
+  }
+
+  return map;
+}
+
 function extractReferenceLabels(value: string): string[] {
   const labels: string[] = [];
 
   for (const match of value.matchAll(REFERENCE_PATTERN)) {
-    labels.push(`@图片${match[1]}`);
+    labels.push(`@${match[1]}${match[2]}`);
   }
 
   return Array.from(new Set(labels));
@@ -137,7 +187,7 @@ function ReferenceChips({
   centered = false,
 }: {
   value: string;
-  referenceMap: Map<string, StoryboardReferenceImage>;
+  referenceMap: Map<string, StoryboardReferenceMedia>;
   centered?: boolean;
 }) {
   const labels = extractReferenceLabels(value);
@@ -152,9 +202,9 @@ function ReferenceChips({
       centered ? 'h-full min-h-[58px] items-center justify-center gap-2' : 'mt-1.5',
     ].join(' ')}>
       {labels.map((label) => {
-        const image = referenceMap.get(label);
+        const reference = referenceMap.get(label);
 
-        if (!image) {
+        if (!reference) {
           return (
             <span
               key={label}
@@ -172,14 +222,27 @@ function ReferenceChips({
             title={label}
           >
             <span className="inline-flex h-full w-full overflow-hidden border border-white/12 bg-white/[0.04]">
-              {/* eslint-disable-next-line @next/next/no-img-element -- storyboard references can be blob/data/provider URLs. */}
-              <img
-                src={image.previewUrl || image.url}
-                alt={image.alt || label}
-                loading="lazy"
-                className="h-full w-full object-cover"
-                draggable={false}
-              />
+              {reference.type === 'video' ? (
+                <span className="relative block h-full w-full">
+                  <ReferenceVideoThumbnail
+                    videoUrl={reference.url}
+                    previewUrl={reference.previewUrl}
+                    alt={reference.alt || label}
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
+                    <Play size={14} fill="currentColor" strokeWidth={0} />
+                  </span>
+                </span>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element -- storyboard references can be blob/data/provider URLs.
+                <img
+                  src={reference.previewUrl || reference.url}
+                  alt={reference.alt || label}
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+              )}
             </span>
             <Tooltip
               label={label}
@@ -205,7 +268,7 @@ function StoryboardCell({
   field: StoryboardRowField;
   active: boolean;
   editing: boolean;
-  referenceMap: Map<string, StoryboardReferenceImage>;
+  referenceMap: Map<string, StoryboardReferenceMedia>;
   onChange: (next: string) => void;
 }) {
   const value = row[field] || '';
@@ -264,7 +327,7 @@ function StoryboardCardField({
   row: StoryboardRow;
   field: StoryboardRowField;
   editing: boolean;
-  referenceMap: Map<string, StoryboardReferenceImage>;
+  referenceMap: Map<string, StoryboardReferenceMedia>;
   onChange: (next: string) => void;
 }) {
   const value = row[field] || '';
@@ -302,7 +365,7 @@ function EmptyState() {
     <div className="flex h-full flex-col items-center justify-center gap-3 px-10 text-center">
       <Clapperboard size={42} className="text-gl-text-muted" />
       <div className="text-[15px] font-medium text-gl-text-secondary">还没有分镜表</div>
-      <div className="max-w-[420px] text-[12px] leading-5 text-gl-text-muted">
+      <div className="w-full max-w-[520px] text-[12px] leading-5 text-gl-text-muted">
         在下方输入剧本、镜头数量、风格或时长，也可以连接参考图后生成结构化分镜。
       </div>
     </div>
@@ -316,6 +379,7 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
   dragging = false,
   editing = false,
   connectedImages = [],
+  connectedVideos = [],
   onChange,
   onStartEdit,
   onEndEdit,
@@ -363,8 +427,18 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
     [visibleTableColumns],
   );
   const referenceMap = useMemo(
-    () => getReferenceImageMap(data.referenceImages, connectedImages),
-    [connectedImages, data.referenceImages],
+    () => getReferenceMediaMap(
+      data.referenceImages,
+      connectedImages,
+      data.referenceVideos,
+      connectedVideos,
+    ),
+    [
+      connectedImages,
+      connectedVideos,
+      data.referenceImages,
+      data.referenceVideos,
+    ],
   );
 
   useEffect(() => {
@@ -880,6 +954,7 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
         model={data.model || 'gpt-5.4'}
         generating={isGenerating}
         connectedImages={connectedImages}
+        connectedVideos={connectedVideos}
         onPromptChange={(next) => patchData({ prompt: next })}
         onProviderModelChange={(next: { provider: ApiProvider; model: string }) =>
           patchData({

@@ -1,7 +1,6 @@
 'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
 import {
   Sparkles,
@@ -9,10 +8,18 @@ import {
   Minimize2,
   ChevronDown,
   Check,
+  Play,
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
+import {
+  ReferenceImageHoverPreviewPortal,
+  ReferenceVideoHoverPreviewPortal,
+  ReferenceVideoThumbnail,
+  useReferenceImageHoverPreview,
+  useReferenceVideoHoverPreview,
+} from './ReferenceImageHoverPreview';
 import {
   getApiProviderLabel,
   persistSelectedModel,
@@ -33,11 +40,12 @@ const MODEL_OPTIONS = [
   'gpt-5.5',
 ] as const;
 const API_PROVIDERS: ApiProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen'];
+const VIDEO_API_PROVIDERS: ApiProvider[] = ['comfly', 'zhenzhen'];
 const TEXT_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly string[]> = {
   vibe: MODEL_OPTIONS,
   fucheers: MODEL_OPTIONS.filter((model) => !model.startsWith('gemini-')),
-  comfly: MODEL_OPTIONS.filter((model) => model !== 'gemini-3.5-flash'),
-  zhenzhen: MODEL_OPTIONS.filter((model) => model !== 'gemini-3.5-flash'),
+  comfly: MODEL_OPTIONS,
+  zhenzhen: MODEL_OPTIONS,
   runninghub: [],
   grsai: [],
 };
@@ -53,6 +61,18 @@ export interface TextNodePromptBarProps {
     imageUrl: string;
     previewUrl?: string;
     alt: string;
+    width?: number;
+    height?: number;
+  }>;
+  connectedVideos?: Array<{
+    id: string;
+    videoUrl: string;
+    previewUrl?: string;
+    alt: string;
+    fileName?: string;
+    width?: number;
+    height?: number;
+    durationSeconds?: number;
   }>;
   onPromptChange?: (next: string) => void;
   onProviderModelChange?: (next: { provider: ApiProvider; model: string }) => void;
@@ -69,6 +89,7 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
   provider = 'vibe',
   model = 'gpt-5.4',
   connectedImages = [],
+  connectedVideos = [],
   onPromptChange,
   onProviderModelChange,
   onModelChange,
@@ -84,6 +105,8 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
   const [isPromptFocused, setIsPromptFocused] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const referenceImagePreview = useReferenceImageHoverPreview();
+  const referenceVideoPreview = useReferenceVideoHoverPreview();
 
   useEffect(() => {
     if (!modelMenuOpen) return;
@@ -108,7 +131,13 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
 
   const resolvedPromptValue =
     isPromptFocused || isComposing ? draftPrompt : prompt;
-  const activeModels = TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
+  const hasVideoReferences = connectedVideos.length > 0;
+  const visibleProviders = hasVideoReferences ? VIDEO_API_PROVIDERS : API_PROVIDERS;
+  const activeModels = hasVideoReferences
+    ? TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider].filter((option) =>
+        option.startsWith('gemini-'),
+      )
+    : TEXT_MODEL_OPTIONS_BY_PROVIDER[activeProvider];
 
   const handleModelSelect = (nextProvider: ApiProvider, nextModel: string) => {
     if (!readStoredApiKey('text', nextProvider)) {
@@ -185,21 +214,46 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
           <Tooltip label={expanded ? '收起' : '展开'} side="top" />
         </div>
 
-        {connectedImages.length > 0 ? (
+        {connectedImages.length > 0 || connectedVideos.length > 0 ? (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 nodrag nopan">
             {connectedImages.map((image, index) => (
               <div
                 key={image.id}
                 className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                onPointerEnter={(event) =>
+                  referenceImagePreview.showPreview(image, event.currentTarget)
+                }
+                onPointerLeave={referenceImagePreview.hidePreview}
               >
-                <NextImage
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
                   src={image.previewUrl || image.imageUrl}
                   alt={image.alt || `Connected image ${index + 1}`}
-                  fill
-                  unoptimized
-                  sizes="50px"
-                  className="object-cover"
+                  className="h-full w-full object-cover"
+                  draggable={false}
                 />
+                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
+                  {index + 1}
+                </span>
+              </div>
+            ))}
+            {connectedVideos.map((video, index) => (
+              <div
+                key={video.id}
+                className="relative h-[50px] w-[68px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-black/35 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                onPointerEnter={(event) =>
+                  referenceVideoPreview.showPreview(video, event.currentTarget)
+                }
+                onPointerLeave={referenceVideoPreview.hidePreview}
+              >
+                <ReferenceVideoThumbnail
+                  videoUrl={video.videoUrl}
+                  previewUrl={video.previewUrl}
+                  alt={video.alt || `Connected video ${index + 1}`}
+                />
+                <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
+                  <Play size={14} fill="currentColor" strokeWidth={0} />
+                </span>
                 <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
                   {index + 1}
                 </span>
@@ -219,6 +273,7 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
             <PromptMentionInput
               value={resolvedPromptValue}
               connectedImages={connectedImages}
+              connectedVideos={connectedVideos}
               onChange={handlePromptChange}
               onFocus={() => {
                 setDraftPrompt(prompt);
@@ -249,7 +304,11 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
                 onClick={() => {
                   setModelMenuOpen((open) => {
                     if (!open) {
-                      setActiveProvider(provider);
+                      setActiveProvider(
+                        hasVideoReferences && !VIDEO_API_PROVIDERS.includes(provider)
+                          ? 'comfly'
+                          : provider,
+                      );
                       setProviderWarning(null);
                     }
 
@@ -288,7 +347,7 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
                     Provider
                   </div>
                   <div className="flex flex-col gap-0.5">
-                    {API_PROVIDERS.map((option) => {
+                    {visibleProviders.map((option) => {
                       const selected = option === activeProvider;
 
                       return (
@@ -357,6 +416,9 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
 
           <PromptBarRunControls label="1" labelTitle="额度" runTitle="运行" onRun={onRun} />
         </div>
+
+        <ReferenceVideoHoverPreviewPortal preview={referenceVideoPreview.preview} />
+        <ReferenceImageHoverPreviewPortal preview={referenceImagePreview.preview} />
       </div>
     </NodeToolbar>
   );

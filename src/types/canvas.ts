@@ -63,6 +63,18 @@ export interface StoryboardReferenceImage {
   alt?: string;
 }
 
+export interface StoryboardReferenceVideo {
+  label: string;
+  url: string;
+  previewUrl?: string;
+  sourceNodeId: string;
+  alt?: string;
+  fileName?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+}
+
 export interface StoryboardScriptNodeData {
   title?: string;
   prompt: string;
@@ -77,6 +89,7 @@ export interface StoryboardScriptNodeData {
   provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
   referenceImages?: StoryboardReferenceImage[];
+  referenceVideos?: StoryboardReferenceVideo[];
 }
 
 export type StoryboardGridAspectRatio = "16:9" | "9:16" | "3:4" | "4:3" | "1:1";

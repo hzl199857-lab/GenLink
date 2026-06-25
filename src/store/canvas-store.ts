@@ -45,6 +45,7 @@ import type {
   ProjectSnapshot,
   StoryboardGridNodeData,
   StoryboardReferenceImage,
+  StoryboardReferenceVideo,
   StoryboardRow,
   StoryboardScriptNodeData,
   TextNodeData,
@@ -762,6 +763,10 @@ function isClaudeModel(model?: string): boolean {
   return typeof model === "string" && /^claude-/i.test(model);
 }
 
+function isGeminiTextModel(model?: string): boolean {
+  return typeof model === "string" && /^gemini-/i.test(model);
+}
+
 function isGeminiImageModel(model?: string): boolean {
   return typeof model === "string" && /^nano-banana/i.test(model);
 }
@@ -851,6 +856,29 @@ function stripVideoReferenceMentionTokens(
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function reconcileImageVideoReferenceMentionTokens(
+  value: string | undefined,
+  images: Array<{ id: string; label?: string }> = [],
+  videos: Array<{ id: string; label?: string }> = [],
+): string {
+  if (!parseReferenceMentions(value).length) {
+    return value ?? "";
+  }
+
+  const references = [
+    ...images.map((image, index) => ({
+      id: image.id,
+      label: image.label?.trim() || `\u56fe\u7247${index + 1}`,
+    })),
+    ...videos.map((video, index) => ({
+      id: video.id,
+      label: video.label?.trim() || `\u89c6\u9891${index + 1}`,
+    })),
+  ];
+
+  return reconcileReferenceMentionTokens(value, references);
 }
 
 function createTextNodeData(): TextNodeData {
@@ -2869,13 +2897,16 @@ async function readTextStreamResponse(
 ): Promise<NonNullable<Extract<AiTextStreamEvent, { type: "done" }>["result"]>> {
   if (!response.ok) {
     const text = await response.text();
+    let errorMessage = text || "Request failed";
 
     try {
       const json = JSON.parse(text) as ApiErrorResponse;
-      throw new Error(json.error || "Request failed");
+      errorMessage = json.error || errorMessage;
     } catch {
-      throw new Error(text || "Request failed");
+      // Keep the raw response text when the body is not JSON.
     }
+
+    throw new Error(errorMessage);
   }
 
   if (!response.body) {
@@ -2995,6 +3026,23 @@ function toStoryboardReferenceImages(
     previewUrl: image.previewUrl,
     sourceNodeId: image.id,
     alt: image.alt,
+  }));
+}
+
+function toStoryboardReferenceVideos(
+  videos: ConnectedVideoPayload[],
+  requestVideos?: Array<{ url: string; fileName?: string }>,
+): StoryboardReferenceVideo[] {
+  return videos.map((video, index) => ({
+    label: `@视频${index + 1}`,
+    url: requestVideos?.[index]?.url || video.hostedVideoUrl || video.videoUrl,
+    previewUrl: video.previewUrl,
+    sourceNodeId: video.id,
+    alt: video.alt,
+    fileName: requestVideos?.[index]?.fileName || video.fileName,
+    width: video.width,
+    height: video.height,
+    durationSeconds: video.durationSeconds,
   }));
 }
 
@@ -3788,7 +3836,9 @@ export interface CanvasState {
     media: VideoGenerationMediaReference[],
   ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
+  getConnectedVideosForTextNode: (textNodeId: string) => ConnectedVideoPayload[];
   getConnectedImagesForStoryboardNode: (storyboardNodeId: string) => ConnectedImagePayload[];
+  getConnectedVideosForStoryboardNode: (storyboardNodeId: string) => ConnectedVideoPayload[];
   getConnectedImagesForImageGenerationNode: (
     imageGenerationNodeId: string,
   ) => ConnectedImagePayload[];
@@ -4249,9 +4299,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ),
       textNode.data.aiPrompt,
     );
-    const textTaskPrompt = stripReferenceMentionTokens(
+    const connectedVideos = selectPromptReferences(
+      getConnectedVideosForTargetNode(
+        state.nodes,
+        state.edges,
+        textNodeId,
+      ),
+      textNode.data.aiPrompt,
+    );
+    const textTaskPrompt = stripVideoReferenceMentionTokens(
       textNode.data.aiPrompt,
       connectedImages,
+      connectedVideos,
     );
 
     const promptSections = [
@@ -4283,9 +4342,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
 
     try {
-      const textProvider =
+      const hasVideoReferences = connectedVideos.length > 0;
+      const storedTextProvider =
         textNode.data.provider ?? readStoredSelectedApiProvider("text");
+      const textProvider =
+        hasVideoReferences && storedTextProvider !== "comfly" && storedTextProvider !== "zhenzhen"
+          ? "comfly"
+          : storedTextProvider;
+      const textModel =
+        hasVideoReferences && !isGeminiTextModel(textNode.data.model)
+          ? "gemini-3.1-pro"
+          : textNode.data.model;
       const apiKey = assertStoredApiKey("text", textProvider);
+      const requestVideos = await Promise.all(
+        connectedVideos.map((video) => normalizeVideoForProcessing(video)),
+      );
       const response = await fetch("/api/ai/text", {
         method: "POST",
         headers: {
@@ -4293,7 +4364,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         },
         body: JSON.stringify({
           prompt: promptSections.join("\n\n"),
-          model: textNode.data.model,
+          model: textModel,
           systemPrompt: TEXT_SYSTEM_PROMPT,
           temperature: 0.9,
           provider: textProvider,
@@ -4303,6 +4374,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               ? image.originalImageUrl
               : image.imageUrl,
           })),
+          videos: requestVideos,
           stream: true,
         }),
       });
@@ -4342,6 +4414,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   data: {
                     ...node.data,
                     text: result.content,
+                    provider: textProvider,
                     model: result.model,
                   },
                 }
@@ -4381,14 +4454,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ),
       storyboardNode.data.prompt,
     );
-    const storyboardPrompt = stripReferenceMentionTokens(
+    const connectedVideos = selectPromptReferences(
+      getConnectedVideosForTargetNode(
+        state.nodes,
+        state.edges,
+        storyboardNodeId,
+      ),
+      storyboardNode.data.prompt,
+    );
+    const storyboardPrompt = stripVideoReferenceMentionTokens(
       storyboardNode.data.prompt,
       connectedImages,
+      connectedVideos,
     );
     const initialReferenceImages = toStoryboardReferenceImages(connectedImages);
+    const initialReferenceVideos = toStoryboardReferenceVideos(connectedVideos);
 
-    if (!storyboardPrompt.trim() && initialReferenceImages.length === 0) {
-      throw new Error("Prompt or reference images are required");
+    if (
+      !storyboardPrompt.trim() &&
+      initialReferenceImages.length === 0 &&
+      initialReferenceVideos.length === 0
+    ) {
+      throw new Error("Prompt or reference media are required");
     }
 
     set((state) => ({
@@ -4403,6 +4490,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 status: "generating",
                 errorMessage: undefined,
                 referenceImages: initialReferenceImages,
+                referenceVideos: initialReferenceVideos,
               },
             }
           : node,
@@ -4410,8 +4498,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
 
     try {
-      const textProvider =
+      const hasVideoReferences = connectedVideos.length > 0;
+      const storedTextProvider =
         storyboardNode.data.provider ?? readStoredSelectedApiProvider("text");
+      const textProvider =
+        hasVideoReferences && storedTextProvider !== "comfly" && storedTextProvider !== "zhenzhen"
+          ? "comfly"
+          : storedTextProvider;
+      const textModel =
+        hasVideoReferences && !isGeminiTextModel(storyboardNode.data.model)
+          ? "gemini-3.5-flash"
+          : storyboardNode.data.model;
       const apiKey = assertStoredApiKey("text", textProvider);
       let requestImages: Array<{ url: string; fileName?: string }>;
 
@@ -4429,6 +4526,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         connectedImages,
         requestImages,
       );
+      const requestVideos = await Promise.all(
+        connectedVideos.map((video) => normalizeVideoForProcessing(video)),
+      );
+      const referenceVideos = toStoryboardReferenceVideos(
+        connectedVideos,
+        requestVideos,
+      );
       const response = await fetch("/api/ai/storyboard", {
         method: "POST",
         headers: {
@@ -4436,12 +4540,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         },
         body: JSON.stringify({
           prompt: storyboardPrompt || storyboardNode.data.prompt,
-          model: storyboardNode.data.model,
+          model: textModel,
           provider: textProvider,
           apiKey,
           referenceImages: referenceImages.map((image) => ({
             label: image.label,
             url: image.url,
+          })),
+          referenceVideos: referenceVideos.map((video) => ({
+            label: video.label,
+            url: video.url,
           })),
         }),
       });
@@ -4490,10 +4598,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   rows: payload.data.rows,
                   rawJson: payload.rawJson,
                   title: payload.data.title || node.data.title,
+                  provider: textProvider,
                   model: payload.model || node.data.model,
                   status: "idle",
                   errorMessage: undefined,
                   referenceImages,
+                  referenceVideos,
                 },
               }
             : node,
@@ -4613,9 +4723,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     );
   },
 
+  getConnectedVideosForTextNode: (textNodeId) => {
+    const state = get();
+    return getConnectedVideosForTargetNode(
+      state.nodes,
+      state.edges,
+      textNodeId,
+    );
+  },
+
   getConnectedImagesForStoryboardNode: (storyboardNodeId) => {
     const state = get();
     return getConnectedImagesForTargetNode(
+      state.nodes,
+      state.edges,
+      storyboardNodeId,
+    );
+  },
+
+  getConnectedVideosForStoryboardNode: (storyboardNodeId) => {
+    const state = get();
+    return getConnectedVideosForTargetNode(
       state.nodes,
       state.edges,
       storyboardNodeId,
@@ -7138,9 +7266,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 data: {
                   ...node.data,
                   referenceImages: nextInlineReferenceImages,
-                  prompt: reconcileReferenceMentionTokens(
+                  prompt: reconcileImageVideoReferenceMentionTokens(
                     node.data.prompt,
                     getConnectedImagesForTargetNode(
+                      state.nodes,
+                      nextEdges,
+                      storyboardNodeId,
+                    ),
+                    getConnectedVideosForTargetNode(
                       state.nodes,
                       nextEdges,
                       storyboardNodeId,
