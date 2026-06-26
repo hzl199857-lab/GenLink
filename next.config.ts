@@ -22,6 +22,9 @@ function getBuildVersion() {
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  experimental: {
+    cpus: 1,
+  },
   outputFileTracingIncludes: {
     "/api/openclaw/planf/ecom/start": [
       "./rules/planf-canvas/**/*",
