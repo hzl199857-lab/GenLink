@@ -39,8 +39,7 @@ export function LoginForm() {
         return;
       }
 
-      router.push(safeNextPath);
-      router.refresh();
+      window.location.assign(safeNextPath);
     } finally {
       setSubmitting(false);
     }
