@@ -155,7 +155,7 @@ function HomePageContent() {
   };
 
   const backToHero = () => {
-    handledAppEntryRef.current = false;
+    handledAppEntryRef.current = true;
     setAppVisible(false);
     clearEntryLoaderTimer();
     setEntryLoader(null);
