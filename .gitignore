@@ -85,3 +85,6 @@ api文档/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+.env*
