@@ -199,6 +199,8 @@ export interface ImageGenerationNodeData {
     width?: number;
     height?: number;
     sizeBytes?: number;
+    uploadStatus?: "uploading" | "uploaded" | "error";
+    uploadError?: string;
   }>;
   generatedImageUrl?: string;
   generatedHostedImageUrl?: string;
@@ -238,6 +240,8 @@ export interface VideoGenerationMediaReference {
   width?: number;
   height?: number;
   durationSeconds?: number;
+  uploadStatus?: "uploading" | "uploaded" | "error";
+  uploadError?: string;
 }
 
 export interface VideoGenerationNodeData {
@@ -355,6 +359,9 @@ export interface VideoNodeData {
   sizeBytes?: number;
   durationSeconds?: number;
   mimeType?: string;
+  status?: "idle" | "generating" | "error";
+  statusMessage?: string;
+  errorMessage?: string;
 }
 
 export interface Panorama360ViewState {

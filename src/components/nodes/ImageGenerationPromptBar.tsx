@@ -227,6 +227,8 @@ export interface ImageGenerationPromptBarProps {
     alt: string;
     width?: number;
     height?: number;
+    uploadStatus?: 'uploading' | 'uploaded' | 'error';
+    uploadError?: string;
   }>;
   onPromptChange?: (next: string) => void;
   onProviderModelChange?: (next: { provider: ApiProvider; model: string; runningHubChannel?: RunningHubChannel }) => void;
@@ -650,8 +652,16 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                     key={`${image.id}-${image.imageUrl}-${index}`}
                     className="group/reference-thumb relative h-11 w-11 shrink-0"
                   >
+                    {(() => {
+                      const isUploading = image.uploadStatus === 'uploading';
+                      const isError = image.uploadStatus === 'error';
+
+                      return (
                     <div
-                      className="relative h-full w-full overflow-hidden rounded-[12px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
+                      className={[
+                        'relative h-full w-full overflow-hidden rounded-[12px] border bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]',
+                        isError ? 'border-red-400/70' : 'border-white/10',
+                      ].join(' ')}
                       onPointerEnter={(event) =>
                         referenceImagePreview.showPreview(image, event.currentTarget)
                       }
@@ -668,7 +678,22 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
                         {index + 1}
                       </span>
+                      {isUploading ? (
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/50 px-1 text-center text-[10px] font-semibold leading-tight text-white">
+                          Uploading
+                        </span>
+                      ) : null}
+                      {isError ? (
+                        <span
+                          className="absolute inset-0 flex items-center justify-center bg-red-600/75 px-1 text-center text-[10px] font-semibold leading-tight text-white"
+                          title={image.uploadError || 'Upload failed'}
+                        >
+                          Failed
+                        </span>
+                      ) : null}
                     </div>
+                      );
+                    })()}
                     {onRemoveReference ? (
                       <button
                         type="button"

@@ -547,6 +547,8 @@ type ConnectedImagePayload = {
   sourceType: "image" | "uploaded_image" | "inline_reference";
   width?: number;
   height?: number;
+  uploadStatus?: "uploading" | "uploaded" | "error";
+  uploadError?: string;
 };
 
 type NormalizedReferenceImage = {
@@ -567,6 +569,14 @@ type ConnectedVideoPayload = {
   width?: number;
   height?: number;
   durationSeconds?: number;
+  uploadStatus?: "uploading" | "uploaded" | "error";
+  uploadError?: string;
+};
+
+type InlineReferenceMediaUpdate = Partial<VideoGenerationMediaReference> & {
+  imageUrl?: string;
+  hostedImageUrl?: string;
+  semanticImageUrl?: string;
 };
 
 function getConnectedImageDedupKey(image: ConnectedImagePayload): string {
@@ -3378,6 +3388,8 @@ function getInlineReferenceImagesForImageGenerationNode(
         sourceType: "inline_reference",
         width: image.width,
         height: image.height,
+        uploadStatus: image.uploadStatus,
+        uploadError: image.uploadError,
       });
       return acc;
     },
@@ -3407,6 +3419,8 @@ function getInlineReferenceImagesForTextNode(
         sourceType: "inline_reference",
         width: image.width,
         height: image.height,
+        uploadStatus: image.uploadStatus,
+        uploadError: image.uploadError,
       });
       return acc;
     },
@@ -3436,6 +3450,8 @@ function getInlineReferenceVideosForVideoGenerationNode(
         width: video.width,
         height: video.height,
         durationSeconds: video.durationSeconds,
+        uploadStatus: video.uploadStatus,
+        uploadError: video.uploadError,
       });
       return acc;
     },
@@ -3465,6 +3481,8 @@ function getInlineReferenceVideosForTextNode(
         width: video.width,
         height: video.height,
         durationSeconds: video.durationSeconds,
+        uploadStatus: video.uploadStatus,
+        uploadError: video.uploadError,
       });
       return acc;
     },
@@ -3888,6 +3906,8 @@ export interface CanvasState {
       width?: number;
       height?: number;
       sizeBytes?: number;
+      uploadStatus?: "uploading" | "uploaded" | "error";
+      uploadError?: string;
     }>,
   ) => void;
   addReferenceMediaToVideoGenerationNode: (
@@ -3897,6 +3917,11 @@ export interface CanvasState {
   addReferenceMediaToTextNode: (
     textNodeId: string,
     media: VideoGenerationMediaReference[],
+  ) => void;
+  updateInlineReferenceMedia: (
+    targetNodeId: string,
+    referenceId: string,
+    updates: InlineReferenceMediaUpdate,
   ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
   getConnectedVideosForTextNode: (textNodeId: string) => ConnectedVideoPayload[];
@@ -7593,6 +7618,132 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               }
             : node,
         ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  updateInlineReferenceMedia: (targetNodeId, referenceId, updates) => {
+    set((state) => {
+      let didUpdate = false;
+      const nextNodes = state.nodes.map((node) => {
+        if (node.id !== targetNodeId) {
+          return node;
+        }
+
+        if (node.type === "image_generation") {
+          let nodeDidUpdate = false;
+          const nextReferenceImages = (node.data.referenceImages ?? []).map((image) => {
+            if (image.id !== referenceId) {
+              return image;
+            }
+
+            didUpdate = true;
+            nodeDidUpdate = true;
+            return {
+              ...image,
+              imageUrl: updates.imageUrl ?? updates.url ?? image.imageUrl,
+              hostedImageUrl: updates.hostedImageUrl ?? updates.hostedUrl ?? image.hostedImageUrl,
+              previewUrl: updates.previewUrl ?? image.previewUrl,
+              semanticImageUrl: updates.semanticImageUrl ?? image.semanticImageUrl,
+              fileName: updates.fileName ?? image.fileName,
+              width: updates.width ?? image.width,
+              height: updates.height ?? image.height,
+              sizeBytes: updates.sizeBytes ?? image.sizeBytes,
+              uploadStatus: updates.uploadStatus ?? image.uploadStatus,
+              uploadError: updates.uploadError,
+            };
+          });
+
+          return nodeDidUpdate
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: nextReferenceImages,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node;
+        }
+
+        if (node.type === "text") {
+          let nodeDidUpdate = false;
+          const updateReference = (reference: VideoGenerationMediaReference) => {
+            if (reference.id !== referenceId) {
+              return reference;
+            }
+
+            didUpdate = true;
+            nodeDidUpdate = true;
+            return {
+              ...reference,
+              ...updates,
+            };
+          };
+          const nextReferenceImages = (node.data.referenceImages ?? []).map(updateReference);
+          const nextReferenceVideos = (node.data.referenceVideos ?? []).map(updateReference);
+
+          return nodeDidUpdate
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: nextReferenceImages,
+                  referenceVideos: nextReferenceVideos,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node;
+        }
+
+        if (node.type === "video_generation") {
+          let nodeDidUpdate = false;
+          const updateReference = (reference: VideoGenerationMediaReference) => {
+            if (reference.id !== referenceId) {
+              return reference;
+            }
+
+            didUpdate = true;
+            nodeDidUpdate = true;
+            return {
+              ...reference,
+              ...updates,
+            };
+          };
+          const nextReferenceImages = (node.data.referenceImages ?? []).map(updateReference);
+          const nextReferenceVideos = (node.data.referenceVideos ?? []).map(updateReference);
+          const nextReferenceAudio = (node.data.referenceAudio ?? []).map(updateReference);
+
+          return nodeDidUpdate
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: nextReferenceImages,
+                  referenceVideos: nextReferenceVideos,
+                  referenceAudio: nextReferenceAudio,
+                  mode: nextReferenceVideos.length > 0 ? "all-reference" : node.data.mode,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node;
+        }
+
+        return node;
+      });
+
+      if (!didUpdate) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state, { coalesce: true }),
+        nodes: nextNodes,
         dirty: true,
         error: null,
       };

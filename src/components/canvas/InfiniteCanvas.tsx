@@ -1822,6 +1822,34 @@ async function readVideoFile(file: File): Promise<ImportedVideoData> {
   };
 }
 
+async function createPendingVideoImportNode(
+  file: File,
+  position: { x: number; y: number },
+): Promise<{ node: CanvasNode; localVideoUrl: string }> {
+  const localVideoUrl = URL.createObjectURL(file);
+  const videoFrame = await captureVideoFirstFrame(file).catch(() => null);
+
+  return {
+    node: createImportedVideoNode(
+      {
+        title: file.name,
+        videoUrl: localVideoUrl,
+        previewUrl: videoFrame?.previewUrl,
+        fileName: file.name,
+        width: videoFrame?.width ?? 320,
+        height: videoFrame?.height ?? 180,
+        sizeBytes: file.size,
+        durationSeconds: videoFrame?.durationSeconds,
+        mimeType: file.type || 'application/octet-stream',
+        status: 'generating',
+        statusMessage: 'Uploading...',
+      },
+      position,
+    ),
+    localVideoUrl,
+  };
+}
+
 function isBrowserObjectUrl(value?: string): boolean {
   return typeof value === 'string' && value.startsWith('blob:');
 }
@@ -1964,6 +1992,52 @@ function getUploadUrlHost(uploadUrl: string): string {
   } catch {
     return '';
   }
+}
+
+async function createPendingMediaReference(file: File) {
+  const videoFrame = file.type.startsWith('video/')
+    ? await captureVideoFirstFrame(file).catch(() => null)
+    : null;
+  const localUrl = URL.createObjectURL(file);
+
+  return {
+    reference: {
+      id: crypto.randomUUID(),
+      url: localUrl,
+      hostedUrl: undefined,
+      previewUrl: file.type.startsWith('image/') ? localUrl : videoFrame?.previewUrl,
+      fileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      sizeBytes: file.size,
+      width: videoFrame?.width,
+      height: videoFrame?.height,
+      durationSeconds: videoFrame?.durationSeconds,
+      uploadStatus: 'uploading' as const,
+      uploadError: undefined,
+    },
+    localUrl,
+  };
+}
+
+async function createPendingImageGenerationReference(file: File) {
+  const localUrl = URL.createObjectURL(file);
+  const dimensions = await readImageDimensionsFromUrl(localUrl).catch(() => null);
+
+  return {
+    reference: {
+      id: crypto.randomUUID(),
+      imageUrl: localUrl,
+      hostedImageUrl: undefined,
+      previewUrl: localUrl,
+      fileName: file.name,
+      width: dimensions?.width,
+      height: dimensions?.height,
+      sizeBytes: file.size,
+      uploadStatus: 'uploading' as const,
+      uploadError: undefined,
+    },
+    localUrl,
+  };
 }
 
 async function resolveHistoryImageUrls(item: ImageHistoryItem): Promise<{
@@ -9050,6 +9124,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const addReferenceMediaToVideoGenerationNode = useCanvasStore(
     (s) => s.addReferenceMediaToVideoGenerationNode,
   );
+  const updateInlineReferenceMedia = useCanvasStore((s) => s.updateInlineReferenceMedia);
   const materials = useCanvasStore((s) => s.materials);
   const addMaterial = useCanvasStore((s) => s.addMaterial);
   const deleteMaterial = useCanvasStore((s) => s.deleteMaterial);
@@ -11214,13 +11289,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return;
     }
 
-    const videoDataList = await Promise.all(videoFiles.map((file) => readVideoFile(file)));
-    const nextNodes = videoDataList.map((data, index) =>
-      createImportedVideoNode(
-        data,
-        getImageImportPosition(basePosition, index),
+    const pendingImports = await Promise.all(
+      videoFiles.map((file, index) =>
+        createPendingVideoImportNode(file, getImageImportPosition(basePosition, index)),
       ),
     );
+    const nextNodes = pendingImports.map((pending) => pending.node);
     const nextNodeIds = new Set(nextNodes.map((node) => node.id));
 
     addNodes(nextNodes);
@@ -11230,7 +11304,38 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
       clearEdgeSelection();
     }
-  }, [addNodes, clearEdgeSelection]);
+
+    pendingImports.forEach(({ node, localVideoUrl }, index) => {
+      const file = videoFiles[index];
+
+      void readVideoFile(file)
+        .then((next) => {
+          updateNodeData<'video'>(node.id, {
+            title: next.title,
+            videoUrl: next.videoUrl,
+            hostedVideoUrl: next.hostedVideoUrl,
+            previewUrl: next.previewUrl,
+            fileName: next.fileName,
+            width: next.width,
+            height: next.height,
+            sizeBytes: next.sizeBytes,
+            durationSeconds: next.durationSeconds,
+            mimeType: next.mimeType,
+            status: 'idle',
+            statusMessage: undefined,
+            errorMessage: undefined,
+          });
+          URL.revokeObjectURL(localVideoUrl);
+        })
+        .catch((error) => {
+          updateNodeData<'video'>(node.id, {
+            status: 'error',
+            statusMessage: undefined,
+            errorMessage: error instanceof Error ? error.message : 'Video upload failed',
+          });
+        });
+    });
+  }, [addNodes, clearEdgeSelection, updateNodeData]);
 
   const updateStoryboardGridCell = useCallback((
     nodeId: string,
@@ -11908,71 +12013,81 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     if (files.length > 0 && textReferenceUploadNodeId) {
       void (async () => {
-        const media = await Promise.all(
-          files
-            .filter((file) =>
-              file.type.startsWith('image/') ||
-              file.type.startsWith('video/'),
-            )
-            .map(async (file) => {
-              const videoFrame = file.type.startsWith('video/')
-                ? await captureVideoFirstFrame(file).catch(() => null)
-                : null;
-              const uploaded = await uploadMediaFileToOss(file);
-              return {
-                id: crypto.randomUUID(),
+        const acceptedFiles = files.filter((file) =>
+          file.type.startsWith('image/') ||
+          file.type.startsWith('video/'),
+        );
+        const pendingReferences = await Promise.all(acceptedFiles.map(createPendingMediaReference));
+
+        addReferenceMediaToTextNode(
+          textReferenceUploadNodeId,
+          pendingReferences.map(({ reference }) => reference),
+        );
+
+        pendingReferences.forEach(({ reference, localUrl }, index) => {
+          const file = acceptedFiles[index];
+
+          void uploadMediaFileToOss(file)
+            .then((uploaded) => {
+              updateInlineReferenceMedia(textReferenceUploadNodeId, reference.id, {
                 url: uploaded.url,
                 hostedUrl: uploaded.url,
-                previewUrl: file.type.startsWith('image/')
-                  ? URL.createObjectURL(file)
-                  : videoFrame?.previewUrl,
                 fileName: uploaded.fileName,
                 mimeType: uploaded.mimeType,
                 sizeBytes: uploaded.sizeBytes,
-                width: videoFrame?.width,
-                height: videoFrame?.height,
-                durationSeconds: videoFrame?.durationSeconds,
-              };
-            }),
-        );
-
-        addReferenceMediaToTextNode(textReferenceUploadNodeId, media);
+                uploadStatus: 'uploaded',
+                uploadError: undefined,
+              });
+              URL.revokeObjectURL(localUrl);
+            })
+            .catch((error) => {
+              updateInlineReferenceMedia(textReferenceUploadNodeId, reference.id, {
+                uploadStatus: 'error',
+                uploadError: error instanceof Error ? error.message : 'Upload failed',
+              });
+            });
+        });
       })().catch((error) => {
         setSaveMessage(error instanceof Error ? error.message : 'Upload text reference failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     } else if (files.length > 0 && videoReferenceUploadNodeId) {
       void (async () => {
-        const media = await Promise.all(
-          files
-            .filter((file) =>
-              file.type.startsWith('image/') ||
-              file.type.startsWith('video/') ||
-              file.type.startsWith('audio/'),
-            )
-            .map(async (file) => {
-              const videoFrame = file.type.startsWith('video/')
-                ? await captureVideoFirstFrame(file).catch(() => null)
-                : null;
-              const uploaded = await uploadMediaFileToOss(file);
-              return {
-                id: crypto.randomUUID(),
+        const acceptedFiles = files.filter((file) =>
+          file.type.startsWith('image/') ||
+          file.type.startsWith('video/') ||
+          file.type.startsWith('audio/'),
+        );
+        const pendingReferences = await Promise.all(acceptedFiles.map(createPendingMediaReference));
+
+        addReferenceMediaToVideoGenerationNode(
+          videoReferenceUploadNodeId,
+          pendingReferences.map(({ reference }) => reference),
+        );
+
+        pendingReferences.forEach(({ reference, localUrl }, index) => {
+          const file = acceptedFiles[index];
+
+          void uploadMediaFileToOss(file)
+            .then((uploaded) => {
+              updateInlineReferenceMedia(videoReferenceUploadNodeId, reference.id, {
                 url: uploaded.url,
                 hostedUrl: uploaded.url,
-                previewUrl: file.type.startsWith('image/')
-                  ? URL.createObjectURL(file)
-                  : videoFrame?.previewUrl,
                 fileName: uploaded.fileName,
                 mimeType: uploaded.mimeType,
                 sizeBytes: uploaded.sizeBytes,
-                width: videoFrame?.width,
-                height: videoFrame?.height,
-                durationSeconds: videoFrame?.durationSeconds,
-              };
-            }),
-        );
-
-        addReferenceMediaToVideoGenerationNode(videoReferenceUploadNodeId, media);
+                uploadStatus: 'uploaded',
+                uploadError: undefined,
+              });
+              URL.revokeObjectURL(localUrl);
+            })
+            .catch((error) => {
+              updateInlineReferenceMedia(videoReferenceUploadNodeId, reference.id, {
+                uploadStatus: 'error',
+                uploadError: error instanceof Error ? error.message : 'Upload failed',
+              });
+            });
+        });
       })().catch((error) => {
         setSaveMessage(error instanceof Error ? error.message : 'Upload video reference failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
@@ -11985,10 +12100,40 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           return;
         }
 
-        const imageDataList = await Promise.all(
-          imageFiles.map((file) => readImageFile(file, { folder: 'references' })),
+        const pendingReferences = await Promise.all(
+          imageFiles.map(createPendingImageGenerationReference),
         );
-        addReferenceImagesToImageGenerationNode(referenceUploadNodeId, imageDataList);
+        addReferenceImagesToImageGenerationNode(
+          referenceUploadNodeId,
+          pendingReferences.map(({ reference }) => reference),
+        );
+
+        pendingReferences.forEach(({ reference, localUrl }, index) => {
+          const file = imageFiles[index];
+
+          void readImageFile(file, { folder: 'references' })
+            .then((uploaded) => {
+              updateInlineReferenceMedia(referenceUploadNodeId, reference.id, {
+                imageUrl: uploaded.imageUrl,
+                hostedImageUrl: uploaded.hostedImageUrl,
+                previewUrl: uploaded.previewUrl,
+                semanticImageUrl: uploaded.semanticImageUrl,
+                fileName: uploaded.fileName,
+                width: uploaded.width,
+                height: uploaded.height,
+                sizeBytes: uploaded.sizeBytes,
+                uploadStatus: 'uploaded',
+                uploadError: undefined,
+              });
+              URL.revokeObjectURL(localUrl);
+            })
+            .catch((error) => {
+              updateInlineReferenceMedia(referenceUploadNodeId, reference.id, {
+                uploadStatus: 'error',
+                uploadError: error instanceof Error ? error.message : 'Upload failed',
+              });
+            });
+        });
       })();
     } else if (files.length > 0 && position) {
       const imageFiles = files.filter((file) => file.type.startsWith('image/'));
@@ -12021,7 +12166,15 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     referenceUploadNodeIdRef.current = null;
     textReferenceUploadNodeIdRef.current = null;
     videoReferenceUploadNodeIdRef.current = null;
-  }, [addReferenceImagesToImageGenerationNode, addReferenceMediaToTextNode, addReferenceMediaToVideoGenerationNode, addUploadedImages, addUploadedVideos, setSaveMessage]);
+  }, [
+    addReferenceImagesToImageGenerationNode,
+    addReferenceMediaToTextNode,
+    addReferenceMediaToVideoGenerationNode,
+    addUploadedImages,
+    addUploadedVideos,
+    setSaveMessage,
+    updateInlineReferenceMedia,
+  ]);
 
   const handleSelectMaterial = useCallback((
     item: MaterialLibraryItem,

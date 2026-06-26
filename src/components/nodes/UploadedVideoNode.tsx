@@ -70,6 +70,8 @@ export function UploadedVideoNode({
   const canReplace = Boolean(onReplace);
   const displayTitle = getNodeDisplayTitle(data);
   const videoUrl = data.hostedVideoUrl?.trim() || data.videoUrl.trim();
+  const isUploading = data.status === 'generating';
+  const isError = data.status === 'error';
   const useTightReplaceButton = cardDimensions.width < 310 || cardDimensions.height < 140;
   const useCompactReplaceButton = cardDimensions.width < 340 || cardDimensions.height < 180;
   const replaceButtonClassName = useTightReplaceButton
@@ -105,6 +107,9 @@ export function UploadedVideoNode({
       <div
         className={[
           'node-connectable-card relative overflow-hidden rounded-gl-xl border border-transparent bg-black shadow-gl-card cursor-grab transition-all duration-150',
+          isUploading
+            ? 'text-node-running border-transparent shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_28px_rgba(255,255,255,0.26)]'
+            : '',
           selected
             ? 'border-white shadow-[0_0_0_2px_rgba(255,255,255,0.95)]'
             : 'shadow-[0_12px_34px_rgba(0,0,0,0.22)]',
@@ -129,6 +134,18 @@ export function UploadedVideoNode({
             <Video size={28} />
           </div>
         )}
+
+        {isUploading ? (
+          <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-black/70 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
+            {data.statusMessage || 'Uploading...'}
+          </div>
+        ) : null}
+
+        {isError ? (
+          <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-red-600/85 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
+            {data.errorMessage || 'Upload failed'}
+          </div>
+        ) : null}
 
         {canReplace ? (
           <>
