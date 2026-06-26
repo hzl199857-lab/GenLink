@@ -33,6 +33,12 @@ const ALIYUN_VIDEO_OSS_ACCESS_KEY_SECRET =
   '';
 const ALIYUN_VIDEO_OSS_PUBLIC_BASE_URL =
   process.env.ALIYUN_VIDEO_OSS_PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') ?? '';
+const ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT =
+  (
+    process.env.ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT?.trim() ||
+    process.env.ALIYUN_OSS_INTERNAL_ENDPOINT?.trim() ||
+    ''
+  ).replace(/\/+$/, '');
 
 function isVideoOssConfigured(): boolean {
   return Boolean(
@@ -102,6 +108,10 @@ function getVideoOssEndpoint(): string {
   return `https://${ALIYUN_VIDEO_OSS_BUCKET}.${ALIYUN_VIDEO_OSS_REGION}.aliyuncs.com`;
 }
 
+function getServerVideoOssEndpoint(): string {
+  return ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT || getVideoOssEndpoint();
+}
+
 function getVideoOssPublicBaseUrl(): string {
   return ALIYUN_VIDEO_OSS_PUBLIC_BASE_URL || getVideoOssEndpoint();
 }
@@ -130,6 +140,7 @@ export function createAliyunMediaUploadTarget(params: {
   contentType: string;
   fileName?: string;
   folder?: string;
+  useInternalEndpoint?: boolean;
 }): {
   uploadUrl: string;
   mediaUrl: string;
@@ -167,7 +178,7 @@ export function createAliyunMediaUploadTarget(params: {
     .join('/');
 
   return {
-    uploadUrl: `${getVideoOssEndpoint()}/${encodedObjectKey}?${query.toString()}`,
+    uploadUrl: `${params.useInternalEndpoint ? getServerVideoOssEndpoint() : getVideoOssEndpoint()}/${encodedObjectKey}?${query.toString()}`,
     mediaUrl: `${getVideoOssPublicBaseUrl()}/${encodedObjectKey}`,
     headers: {
       'Content-Type': contentType,

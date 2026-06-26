@@ -54,6 +54,11 @@ OSS_PUBLIC_BASE_URL = (
     or os.environ.get("ALIYUN_OSS_PUBLIC_BASE_URL")
     or ""
 ).rstrip("/")
+OSS_INTERNAL_ENDPOINT = (
+    os.environ.get("ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT")
+    or os.environ.get("ALIYUN_OSS_INTERNAL_ENDPOINT")
+    or ""
+).rstrip("/")
 
 
 class SmartClipOptions(BaseModel):
@@ -226,6 +231,10 @@ def oss_endpoint() -> str:
     return f"https://{OSS_BUCKET}.{OSS_REGION}.aliyuncs.com"
 
 
+def server_oss_endpoint() -> str:
+    return OSS_INTERNAL_ENDPOINT or oss_endpoint()
+
+
 def oss_public_base_url() -> str:
     return OSS_PUBLIC_BASE_URL or oss_endpoint()
 
@@ -246,7 +255,7 @@ def upload_to_oss(local_path: Path, object_key: str, content_type: str) -> str:
     signature = oss_signature("PUT", content_type, expires, object_key)
     encoded_key = "/".join(quote(part) for part in object_key.split("/"))
     url = (
-        f"{oss_endpoint()}/{encoded_key}"
+        f"{server_oss_endpoint()}/{encoded_key}"
         f"?OSSAccessKeyId={quote(OSS_ACCESS_KEY_ID)}"
         f"&Expires={expires}"
         f"&Signature={quote(signature)}"

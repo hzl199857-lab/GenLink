@@ -34,6 +34,8 @@ const ALIYUN_OSS_REGION = normalizeAliyunOssRegion(
 const ALIYUN_OSS_ACCESS_KEY_ID = process.env.ALIYUN_OSS_ACCESS_KEY_ID?.trim() ?? '';
 const ALIYUN_OSS_ACCESS_KEY_SECRET = process.env.ALIYUN_OSS_ACCESS_KEY_SECRET?.trim() ?? '';
 const ALIYUN_OSS_PUBLIC_BASE_URL = process.env.ALIYUN_OSS_PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') ?? '';
+const ALIYUN_OSS_INTERNAL_ENDPOINT =
+  process.env.ALIYUN_OSS_INTERNAL_ENDPOINT?.trim().replace(/\/+$/, '') ?? '';
 const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase() ?? '';
 const IMAGE_HOST_TIMING_LOG_PREFIX = '[GenLink image host timing]';
@@ -125,6 +127,10 @@ function getOssEndpoint(): string {
   return `https://${ALIYUN_OSS_BUCKET}.${ALIYUN_OSS_REGION}.aliyuncs.com`;
 }
 
+function getServerOssEndpoint(): string {
+  return ALIYUN_OSS_INTERNAL_ENDPOINT || getOssEndpoint();
+}
+
 function getOssPublicBaseUrl(): string {
   return ALIYUN_OSS_PUBLIC_BASE_URL || getOssEndpoint();
 }
@@ -153,6 +159,7 @@ export function createAliyunOssUploadTarget(params: {
   contentType: string;
   fileName?: string;
   folder?: string;
+  useInternalEndpoint?: boolean;
 }): {
   uploadUrl: string;
   imageUrl: string;
@@ -186,7 +193,7 @@ export function createAliyunOssUploadTarget(params: {
     .join('/');
 
   return {
-    uploadUrl: `${getOssEndpoint()}/${encodedObjectKey}?${query.toString()}`,
+    uploadUrl: `${params.useInternalEndpoint ? getServerOssEndpoint() : getOssEndpoint()}/${encodedObjectKey}?${query.toString()}`,
     imageUrl: `${getOssPublicBaseUrl()}/${encodedObjectKey}`,
     headers: {
       'Content-Type': contentType,
@@ -222,6 +229,7 @@ async function saveImageBytes(
       contentType: mimeType,
       fileName,
       folder,
+      useInternalEndpoint: true,
     });
     const response = await fetch(target.uploadUrl, {
       method: 'PUT',

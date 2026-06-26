@@ -22,6 +22,7 @@ ALIYUN_VIDEO_OSS_REGION=
 ALIYUN_VIDEO_OSS_ACCESS_KEY_ID=
 ALIYUN_VIDEO_OSS_ACCESS_KEY_SECRET=
 ALIYUN_VIDEO_OSS_PUBLIC_BASE_URL=
+ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT=
 ```
 
 If you already use the generic OSS variables, the worker also accepts:
@@ -32,7 +33,12 @@ ALIYUN_OSS_REGION=
 ALIYUN_OSS_ACCESS_KEY_ID=
 ALIYUN_OSS_ACCESS_KEY_SECRET=
 ALIYUN_OSS_PUBLIC_BASE_URL=
+ALIYUN_OSS_INTERNAL_ENDPOINT=
 ```
+
+`*_PUBLIC_BASE_URL` must stay browser-accessible. Use `*_INTERNAL_ENDPOINT`
+only for worker/server uploads from an Aliyun ECS or Lightweight Application
+Server in the same region as the OSS bucket.
 
 ## Local Run
 
