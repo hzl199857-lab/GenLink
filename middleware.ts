@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSessionCookie } from "better-auth/cookies";
 
 const PUBLIC_PAGE_PATHS = new Set(["/login", "/register"]);
 const PUBLIC_API_PREFIXES = [
@@ -22,28 +23,8 @@ function isPublicAssetPath(pathname: string): boolean {
   );
 }
 
-async function hasValidSession(request: NextRequest): Promise<boolean> {
-  const cookie = request.headers.get("cookie");
-
-  if (!cookie) {
-    return false;
-  }
-
-  try {
-    const response = await fetch(new URL("/api/auth/get-session", request.url), {
-      headers: { cookie },
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      return false;
-    }
-
-    const session = (await response.json()) as { user?: unknown } | null;
-    return Boolean(session?.user);
-  } catch {
-    return false;
-  }
+function hasSessionCookie(request: NextRequest): boolean {
+  return Boolean(getSessionCookie(request));
 }
 
 function redirectToLogin(request: NextRequest): NextResponse {
@@ -64,7 +45,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
-    if (await hasValidSession(request)) {
+    if (hasSessionCookie(request)) {
       return NextResponse.next();
     }
 
@@ -82,7 +63,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (await hasValidSession(request)) {
+  if (hasSessionCookie(request)) {
     return NextResponse.next();
   }
 
