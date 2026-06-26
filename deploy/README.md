@@ -7,11 +7,11 @@ the existing Aliyun Lightweight Application Server.
 
 ```txt
 zerinnai.online          -> existing blog
-genlink.zerinnai.online  -> GenLink on 127.0.0.1:3001
+genlink.zerinnai.online  -> GenLink on 127.0.0.1:3002
 ```
 
-Keep the blog on its current port. GenLink should run on a different local port,
-for example `3001`, and Nginx routes by `server_name`.
+Keep the blog on its current path. GenLink should run on a different local port,
+for example `3002`, and Nginx routes by `server_name`.
 
 ## Server Commands
 
@@ -19,11 +19,11 @@ Run these on the Aliyun server after DNS points `genlink.zerinnai.online` to the
 server public IP.
 
 ```bash
-sudo mkdir -p /var/www
-cd /var/www
-sudo git clone <your-repo-url> genlink
-sudo chown -R "$USER":"$USER" /var/www/genlink
-cd /var/www/genlink
+sudo mkdir -p /www
+cd /www
+sudo git clone <your-repo-url> GenLink
+sudo chown -R "$USER":"$USER" /www/GenLink
+cd /www/GenLink
 
 npm ci
 cp deploy/.env.production.example .env.production
@@ -74,7 +74,7 @@ The current Prisma datasource is SQLite and is fixed in `prisma/schema.prisma`
 as `file:./dev.db`, so the database file lives at:
 
 ```txt
-/var/www/genlink/prisma/dev.db
+/www/GenLink/prisma/dev.db
 ```
 
 For a fresh production database, run `npx prisma migrate deploy` before starting
