@@ -2,17 +2,17 @@
 
 import React, { memo, useEffect, useRef, useState } from 'react';
 import { NodeToolbar, Position } from 'reactflow';
-import { Check, ChevronDown, Maximize2, Minimize2, Play, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Maximize2, Minimize2, Sparkles } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceImageHoverPreviewPortal,
   ReferenceVideoHoverPreviewPortal,
-  ReferenceVideoThumbnail,
   useReferenceImageHoverPreview,
   useReferenceVideoHoverPreview,
 } from './ReferenceImageHoverPreview';
+import { ReferenceMediaStrip } from './ReferenceMediaStrip';
 import {
   getApiProviderLabel,
   persistSelectedModel,
@@ -78,68 +78,10 @@ export interface VideoGenerationPromptBarProps {
   onRun?: (promptOverride?: string) => void;
   onUpload?: () => void;
   onQuickReferenceConnect?: () => void;
+  onRemoveReference?: (referenceId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
   focusRequestId?: number;
-}
-
-function ToolSquareButton({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="group/tooltip relative">
-      <button
-        type="button"
-        onClick={onClick}
-        className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-white/[0.08] text-gl-text-secondary transition-colors hover:bg-white/[0.12] hover:text-gl-text-primary"
-        aria-label={title}
-      >
-        {children}
-      </button>
-      <Tooltip label={title} side="top" />
-    </div>
-  );
-}
-
-function ReferenceImageIcon() {
-  return (
-    <span className="relative block h-[35px] w-[35px]">
-      <svg
-        viewBox="0 0 18 18"
-        className="h-[35px] w-[35px]"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path
-          d="M4.25 3.25h7.5a1 1 0 0 1 1 1v5.2a1 1 0 0 1-1 1h-2.4"
-          stroke="currentColor"
-          strokeWidth="1.35"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M9.2 14.7 8.9 9.9l4.15 2.4-3.85 2.4Z"
-          stroke="currentColor"
-          strokeWidth="1.35"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M4.25 6.15v4.6a1 1 0 0 0 1 1h1.55"
-          stroke="currentColor"
-          strokeWidth="1.35"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  );
 }
 
 function BottomMenuButton({
@@ -246,6 +188,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   onRun,
   onUpload,
   onQuickReferenceConnect,
+  onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
   focusRequestId,
@@ -305,11 +248,6 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   const inputHint = mode === 'text-to-video'
     ? '描述你想生成的视频内容'
     : '描述你想生成的视频内容，输入@插入参考图';
-  const referenceMedia = [
-    ...connectedImages.map((image) => ({ type: 'image' as const, item: image })),
-    ...connectedVideos.map((video) => ({ type: 'video' as const, item: video })),
-  ];
-
   return (
     <NodeToolbar isVisible={visible} position={Position.Bottom} offset={16} align="center">
       <div
@@ -357,65 +295,15 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                 acceptsReferenceImages ? 'translate-y-0' : '-translate-y-1',
               ].join(' ')}
             >
-              <ToolSquareButton title="快捷连接参考素材" onClick={onQuickReferenceConnect ?? onUpload}>
-                <ReferenceImageIcon />
-              </ToolSquareButton>
-
-              {referenceMedia.length > 0 ? (
-                <div className="flex items-center gap-2 overflow-x-auto pr-1 nodrag nopan">
-                  {referenceMedia.map((reference, index) => (
-                    <div
-                      key={`${reference.type}-${reference.item.id}-${index}`}
-                      className="group/reference-thumb relative h-11 w-11 shrink-0"
-                    >
-                      <div
-                        className="relative h-full w-full overflow-hidden rounded-[12px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                        onPointerEnter={(event) => {
-                          if (reference.type === 'video') {
-                            referenceVideoPreview.showPreview(reference.item, event.currentTarget);
-                            return;
-                          }
-                          referenceImagePreview.showPreview(reference.item, event.currentTarget);
-                        }}
-                        onPointerLeave={() => {
-                          referenceVideoPreview.hidePreview();
-                          referenceImagePreview.hidePreview();
-                        }}
-                      >
-                        {reference.type === 'image' ? (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={reference.item.previewUrl || reference.item.imageUrl}
-                              alt={reference.item.alt || `Connected image ${index + 1}`}
-                              className="h-full w-full object-cover"
-                              draggable={false}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <ReferenceVideoThumbnail
-                              videoUrl={reference.item.videoUrl}
-                              previewUrl={reference.item.previewUrl}
-                              alt={reference.item.alt || `Connected video ${index + 1}`}
-                            />
-                            <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
-                              <Play size={15} fill="currentColor" strokeWidth={0} />
-                            </span>
-                          </>
-                        )}
-                        <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                          {index + 1}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              <ToolSquareButton title="添加参考素材" onClick={onUpload}>
-                <span className="text-[24px] leading-none">+</span>
-              </ToolSquareButton>
+              <ReferenceMediaStrip
+                connectedImages={connectedImages}
+                connectedVideos={connectedVideos}
+                imagePreview={referenceImagePreview}
+                videoPreview={referenceVideoPreview}
+                onQuickReferenceConnect={onQuickReferenceConnect}
+                onAddReference={onUpload}
+                onRemoveReference={onRemoveReference}
+              />
             </div>
           </div>
 

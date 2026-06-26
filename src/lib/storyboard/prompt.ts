@@ -67,6 +67,13 @@ export const STORYBOARD_BUILT_IN_PROMPTS: Record<StoryboardPromptMode, BuiltInSt
   },
 };
 
+const STORYBOARD_CHINESE_OUTPUT_RULE = [
+  '默认输出语言必须是简体中文。',
+  '除非用户明确要求其他语言，否则 rows 中所有字段内容都必须使用简体中文，包括“图片提示词”和“视频提示词”。',
+  '不要因为字段名包含“提示词”或需要给生图/生视频模型使用，就改用英文 prompt；这些生成提示词也必须写成中文。',
+  'detectedIntent.language 默认填写 "zh-CN"。',
+].join('\n');
+
 function replaceTemplateValue(template: string, key: string, value: string): string {
   return template.replace(
     new RegExp(`\\{\\{?\\s*${key}(?:\\s*\\|\\|?\\s*([^}]+))?\\s*\\}\\}?`, 'g'),
@@ -179,7 +186,7 @@ export function buildStoryboardGenerationPrompt({
   return {
     mode,
     sourceMode: builtInPrompt.sourceMode,
-    systemPrompt: builtInPrompt.systemPrompt,
+    systemPrompt: [builtInPrompt.systemPrompt, STORYBOARD_CHINESE_OUTPUT_RULE].join('\n\n'),
     userPrompt,
   };
 }

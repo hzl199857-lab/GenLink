@@ -3385,8 +3385,66 @@ function getInlineReferenceImagesForImageGenerationNode(
   );
 }
 
+function getInlineReferenceImagesForTextNode(
+  node: Extract<CanvasNode, { type: "text" }>,
+): ConnectedImagePayload[] {
+  return (node.data.referenceImages ?? []).reduce<ConnectedImagePayload[]>(
+    (acc, image, index) => {
+      const imageUrl = image.hostedUrl?.trim() || image.url.trim();
+
+      if (!imageUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: image.id || `${node.id}-image-reference-${index}`,
+        imageUrl,
+        previewUrl: image.previewUrl?.trim() || imageUrl,
+        originalImageUrl: image.url,
+        hostedImageUrl: image.hostedUrl?.trim() || undefined,
+        fileName: image.fileName,
+        alt: image.fileName?.trim() || `Reference image ${index + 1}`,
+        sourceType: "inline_reference",
+        width: image.width,
+        height: image.height,
+      });
+      return acc;
+    },
+    [],
+  );
+}
+
 function getInlineReferenceVideosForVideoGenerationNode(
   node: Extract<CanvasNode, { type: "video_generation" }>,
+): ConnectedVideoPayload[] {
+  return (node.data.referenceVideos ?? []).reduce<ConnectedVideoPayload[]>(
+    (acc, video, index) => {
+      const videoUrl = video.hostedUrl?.trim() || video.url.trim();
+
+      if (!videoUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: video.id || `${node.id}-video-reference-${index}`,
+        videoUrl,
+        hostedVideoUrl: video.hostedUrl?.trim() || undefined,
+        previewUrl: video.previewUrl,
+        fileName: video.fileName,
+        alt: video.fileName?.trim() || `Reference video ${index + 1}`,
+        sourceType: "inline_reference",
+        width: video.width,
+        height: video.height,
+        durationSeconds: video.durationSeconds,
+      });
+      return acc;
+    },
+    [],
+  );
+}
+
+function getInlineReferenceVideosForTextNode(
+  node: Extract<CanvasNode, { type: "text" }>,
 ): ConnectedVideoPayload[] {
   return (node.data.referenceVideos ?? []).reduce<ConnectedVideoPayload[]>(
     (acc, video, index) => {
@@ -3724,6 +3782,7 @@ export interface CanvasState {
   deleteNodes: (ids: string[]) => void;
   addEdge: (edge: CanvasEdge) => void;
   deleteEdge: (id: string) => void;
+  removeReferenceFromNode: (targetNodeId: string, referenceId: string) => void;
   deleteIncomingEdges: (targetNodeId: string) => void;
   deleteIncomingVideoEdges: (targetNodeId: string) => void;
   createGroup: (nodeIds: string[], bounds: { x: number; y: number; width: number; height: number }) => NodeGroup;
@@ -3833,6 +3892,10 @@ export interface CanvasState {
   ) => void;
   addReferenceMediaToVideoGenerationNode: (
     videoGenerationNodeId: string,
+    media: VideoGenerationMediaReference[],
+  ) => void;
+  addReferenceMediaToTextNode: (
+    textNodeId: string,
     media: VideoGenerationMediaReference[],
   ) => void;
   getConnectedImagesForTextNode: (textNodeId: string) => ConnectedImagePayload[];
@@ -4101,6 +4164,91 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter((edge) => edge.id !== id),
       dirty: true,
     }));
+  },
+
+  removeReferenceFromNode: (targetNodeId, referenceId) => {
+    set((state) => {
+      const nextEdges = state.edges.filter(
+        (edge) => !(edge.target === targetNodeId && edge.source === referenceId),
+      );
+      const removedEdge = nextEdges.length !== state.edges.length;
+      let removedInline = false;
+      const nextNodes = state.nodes.map((node) => {
+        if (node.id !== targetNodeId) {
+          return node;
+        }
+
+        if (node.type === "text") {
+          const referenceImages = node.data.referenceImages ?? [];
+          const referenceVideos = node.data.referenceVideos ?? [];
+          const nextReferenceImages = referenceImages.filter((item) => item.id !== referenceId);
+          const nextReferenceVideos = referenceVideos.filter((item) => item.id !== referenceId);
+          const nodeRemovedInline =
+            nextReferenceImages.length !== referenceImages.length ||
+            nextReferenceVideos.length !== referenceVideos.length;
+          removedInline = removedInline || nodeRemovedInline;
+
+          if (!nodeRemovedInline) {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              referenceImages: nextReferenceImages,
+              referenceVideos: nextReferenceVideos,
+              status: node.data.status === "error" ? "idle" : node.data.status,
+              errorMessage: undefined,
+            },
+          };
+        }
+
+        if (node.type === "video_generation") {
+          const referenceImages = node.data.referenceImages ?? [];
+          const referenceVideos = node.data.referenceVideos ?? [];
+          const referenceAudio = node.data.referenceAudio ?? [];
+          const nextReferenceImages = referenceImages.filter((item) => item.id !== referenceId);
+          const nextReferenceVideos = referenceVideos.filter((item) => item.id !== referenceId);
+          const nextReferenceAudio = referenceAudio.filter((item) => item.id !== referenceId);
+          const nodeRemovedInline =
+            nextReferenceImages.length !== referenceImages.length ||
+            nextReferenceVideos.length !== referenceVideos.length ||
+            nextReferenceAudio.length !== referenceAudio.length;
+          removedInline = removedInline || nodeRemovedInline;
+
+          if (!nodeRemovedInline) {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              referenceImages: nextReferenceImages,
+              referenceVideos: nextReferenceVideos,
+              referenceAudio: nextReferenceAudio,
+              status: node.data.status === "error" ? "idle" : node.data.status,
+              errorMessage: undefined,
+            },
+          };
+        }
+
+        return node;
+      });
+
+      if (!removedEdge && !removedInline) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: nextNodes,
+        edges: nextEdges,
+        dirty: true,
+        error: null,
+      };
+    });
   },
 
   deleteIncomingEdges: (targetNodeId) => {
@@ -4716,20 +4864,36 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   getConnectedImagesForTextNode: (textNodeId) => {
     const state = get();
-    return getConnectedImagesForTargetNode(
-      state.nodes,
-      state.edges,
-      textNodeId,
+    const textNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "text" }> =>
+        node.id === textNodeId && node.type === "text",
     );
+
+    return [
+      ...(textNode ? getInlineReferenceImagesForTextNode(textNode) : []),
+      ...getConnectedImagesForTargetNode(
+        state.nodes,
+        state.edges,
+        textNodeId,
+      ),
+    ];
   },
 
   getConnectedVideosForTextNode: (textNodeId) => {
     const state = get();
-    return getConnectedVideosForTargetNode(
-      state.nodes,
-      state.edges,
-      textNodeId,
+    const textNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "text" }> =>
+        node.id === textNodeId && node.type === "text",
     );
+
+    return [
+      ...(textNode ? getInlineReferenceVideosForTextNode(textNode) : []),
+      ...getConnectedVideosForTargetNode(
+        state.nodes,
+        state.edges,
+        textNodeId,
+      ),
+    ];
   },
 
   getConnectedImagesForStoryboardNode: (storyboardNodeId) => {
@@ -7377,6 +7541,52 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                     ...audioRefs,
                   ],
                   mode: videoRefs.length > 0 ? "all-reference" : node.data.mode,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  addReferenceMediaToTextNode: (textNodeId, media) => {
+    if (media.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const textNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "text" }> =>
+          node.id === textNodeId && node.type === "text",
+      );
+
+      if (!textNode) {
+        return state;
+      }
+
+      const imageRefs = media.filter((item) => item.mimeType?.startsWith("image/"));
+      const videoRefs = media.filter((item) => item.mimeType?.startsWith("video/"));
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: state.nodes.map((node) =>
+          node.id === textNodeId && node.type === "text"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: [
+                    ...(node.data.referenceImages ?? []),
+                    ...imageRefs,
+                  ],
+                  referenceVideos: [
+                    ...(node.data.referenceVideos ?? []),
+                    ...videoRefs,
+                  ],
                   status: node.data.status === "error" ? "idle" : node.data.status,
                   errorMessage: undefined,
                 },

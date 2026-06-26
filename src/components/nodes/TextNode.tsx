@@ -40,6 +40,9 @@ export interface TextNodeProps {
   onEndEdit?: () => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onRun?: () => void;
+  onUpload?: () => void;
+  onQuickReferenceConnect?: () => void;
+  onRemoveReference?: (referenceId: string) => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
 }
@@ -57,6 +60,9 @@ export const TextNode = memo(function TextNode({
   onEndEdit,
   onTitleChange,
   onRun,
+  onUpload,
+  onQuickReferenceConnect,
+  onRemoveReference,
   onPromptPointerDown,
   onPromptFocusWithinChange,
 }: TextNodeProps) {
@@ -375,6 +381,9 @@ export const TextNode = memo(function TextNode({
         onProviderModelChange={handleProviderModelChange}
         onModelChange={handleModelChange}
         onRun={onRun}
+        onUpload={onUpload}
+        onQuickReferenceConnect={onQuickReferenceConnect}
+        onRemoveReference={onRemoveReference}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={onPromptFocusWithinChange}
       />

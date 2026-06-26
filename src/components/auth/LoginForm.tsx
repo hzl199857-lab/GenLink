@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { FormEvent } from "react";
 import { useState } from "react";
@@ -11,10 +12,16 @@ import { getLoginErrorMessage } from "@/lib/auth-error-message";
 
 export function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const nextPath = searchParams.get("next");
+  const safeNextPath =
+    nextPath?.startsWith("/") && !nextPath.startsWith("//")
+      ? nextPath
+      : "/?app=library";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -32,7 +39,7 @@ export function LoginForm() {
         return;
       }
 
-      router.push("/?app=library");
+      router.push(safeNextPath);
       router.refresh();
     } finally {
       setSubmitting(false);

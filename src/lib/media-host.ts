@@ -10,7 +10,19 @@ const OSS_UPLOAD_URL_EXPIRES_SECONDS = 10 * 60;
 const MAX_FILE_STEM_LENGTH = 80;
 
 const ALIYUN_VIDEO_OSS_BUCKET = process.env.ALIYUN_VIDEO_OSS_BUCKET?.trim() ?? '';
-const ALIYUN_VIDEO_OSS_REGION = process.env.ALIYUN_VIDEO_OSS_REGION?.trim() ?? '';
+function normalizeAliyunOssRegion(region: string): string {
+  const trimmed = region.trim();
+
+  if (!trimmed || trimmed.startsWith('oss-') || trimmed.includes('.')) {
+    return trimmed;
+  }
+
+  return `oss-${trimmed}`;
+}
+
+const ALIYUN_VIDEO_OSS_REGION = normalizeAliyunOssRegion(
+  process.env.ALIYUN_VIDEO_OSS_REGION?.trim() ?? '',
+);
 const ALIYUN_VIDEO_OSS_ACCESS_KEY_ID =
   process.env.ALIYUN_VIDEO_OSS_ACCESS_KEY_ID?.trim() ||
   process.env.ALIYUN_OSS_ACCESS_KEY_ID?.trim() ||

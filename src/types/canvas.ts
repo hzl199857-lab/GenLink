@@ -33,6 +33,8 @@ export interface TextNodeData {
   aiPrompt?: string;
   provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";
   model?: string;
+  referenceImages?: VideoGenerationMediaReference[];
+  referenceVideos?: VideoGenerationMediaReference[];
   status?: "idle" | "generating" | "error";
   errorMessage?: string;
 }

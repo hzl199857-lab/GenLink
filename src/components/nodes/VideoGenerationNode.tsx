@@ -58,6 +58,7 @@ export interface VideoGenerationNodeProps {
   onRun?: (promptOverride?: string) => void;
   onUpload?: () => void;
   onQuickReferenceConnect?: () => void;
+  onRemoveReference?: (referenceId: string) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onToolbarAction?: (action: VideoGenerationToolbarAction) => void;
   onFrameCapture?: (
@@ -115,6 +116,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   onRun,
   onUpload,
   onQuickReferenceConnect,
+  onRemoveReference,
   onTitleChange,
   onToolbarAction,
   onFrameCapture,
@@ -330,6 +332,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
         focusRequestId={promptFocusRequestId}
         onUpload={onUpload}
         onQuickReferenceConnect={onQuickReferenceConnect}
+        onRemoveReference={onRemoveReference}
         onPromptChange={(next) => handlePatch({ prompt: next })}
         onProviderModelChange={handleProviderModelChange}
         onModeChange={handleModeChange}

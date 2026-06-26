@@ -8,7 +8,6 @@ import {
   Minimize2,
   ChevronDown,
   Check,
-  Play,
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
@@ -16,10 +15,10 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceImageHoverPreviewPortal,
   ReferenceVideoHoverPreviewPortal,
-  ReferenceVideoThumbnail,
   useReferenceImageHoverPreview,
   useReferenceVideoHoverPreview,
 } from './ReferenceImageHoverPreview';
+import { ReferenceMediaStrip } from './ReferenceMediaStrip';
 import {
   getApiProviderLabel,
   persistSelectedModel,
@@ -78,6 +77,9 @@ export interface TextNodePromptBarProps {
   onProviderModelChange?: (next: { provider: ApiProvider; model: string }) => void;
   onModelChange?: (next: string) => void;
   onRun?: () => void;
+  onUpload?: () => void;
+  onQuickReferenceConnect?: () => void;
+  onRemoveReference?: (referenceId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
 }
@@ -94,6 +96,9 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
   onProviderModelChange,
   onModelChange,
   onRun,
+  onUpload,
+  onQuickReferenceConnect,
+  onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
 }: TextNodePromptBarProps) {
@@ -214,53 +219,17 @@ export const TextNodePromptBar = memo(function TextNodePromptBar({
           <Tooltip label={expanded ? '收起' : '展开'} side="top" />
         </div>
 
-        {connectedImages.length > 0 || connectedVideos.length > 0 ? (
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 nodrag nopan">
-            {connectedImages.map((image, index) => (
-              <div
-                key={image.id}
-                className="relative h-[50px] w-[50px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                onPointerEnter={(event) =>
-                  referenceImagePreview.showPreview(image, event.currentTarget)
-                }
-                onPointerLeave={referenceImagePreview.hidePreview}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={image.previewUrl || image.imageUrl}
-                  alt={image.alt || `Connected image ${index + 1}`}
-                  className="h-full w-full object-cover"
-                  draggable={false}
-                />
-                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                  {index + 1}
-                </span>
-              </div>
-            ))}
-            {connectedVideos.map((video, index) => (
-              <div
-                key={video.id}
-                className="relative h-[50px] w-[68px] shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-black/35 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                onPointerEnter={(event) =>
-                  referenceVideoPreview.showPreview(video, event.currentTarget)
-                }
-                onPointerLeave={referenceVideoPreview.hidePreview}
-              >
-                <ReferenceVideoThumbnail
-                  videoUrl={video.videoUrl}
-                  previewUrl={video.previewUrl}
-                  alt={video.alt || `Connected video ${index + 1}`}
-                />
-                <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
-                  <Play size={14} fill="currentColor" strokeWidth={0} />
-                </span>
-                <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                  {index + 1}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <div className="pb-1">
+          <ReferenceMediaStrip
+            connectedImages={connectedImages}
+            connectedVideos={connectedVideos}
+            imagePreview={referenceImagePreview}
+            videoPreview={referenceVideoPreview}
+            onQuickReferenceConnect={onQuickReferenceConnect}
+            onAddReference={onUpload ?? onQuickReferenceConnect}
+            onRemoveReference={onRemoveReference}
+          />
+        </div>
 
         <div className="relative">
           <div

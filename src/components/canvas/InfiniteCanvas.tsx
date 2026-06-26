@@ -217,6 +217,9 @@ let notifyCanvasImageLightboxRequest:
 let notifyImageGenerationReferenceUpload:
   | ((nodeId: string) => void)
   | null = null;
+let notifyTextReferenceUpload:
+  | ((nodeId: string) => void)
+  | null = null;
 let notifyVideoGenerationReferenceUpload:
   | ((nodeId: string) => void)
   | null = null;
@@ -1499,6 +1502,17 @@ type ReadImageFileOptions = {
   folder?: 'images' | 'references';
 };
 
+type MediaUploadUrlResponse =
+  | {
+      ok: true;
+      result: {
+        uploadUrl: string;
+        mediaUrl: string;
+        headers: Record<string, string>;
+      };
+    }
+  | { ok: false; error: string };
+
 function readImageFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1869,37 +1883,51 @@ async function uploadMediaFileToOss(file: File): Promise<{
     : file.type.startsWith('audio/')
       ? 'references/audio'
       : 'references/images';
-  const response = await fetch('/api/media-hosting/upload-url', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contentType: file.type || 'application/octet-stream',
-      fileName: file.name,
-      folder,
-    }),
-  });
-  const json = (await response.json()) as
-    | {
-        ok: true;
-        result: {
-          uploadUrl: string;
-          mediaUrl: string;
-          headers: Record<string, string>;
-        };
-      }
-    | { ok: false; error: string };
+  let response: Response;
+
+  try {
+    response = await fetch('/api/media-hosting/upload-url', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contentType: file.type || 'application/octet-stream',
+        fileName: file.name,
+        folder,
+      }),
+    });
+  } catch (error) {
+    throw new Error(
+      `无法连接媒体上传服务：${error instanceof Error ? error.message : 'Failed to fetch'}`,
+    );
+  }
+
+  const json = await readMediaUploadUrlResponse(response);
 
   if (!response.ok || !json.ok) {
     throw new Error('error' in json ? json.error : 'Media upload URL creation failed');
   }
 
-  const uploadResponse = await fetch(json.result.uploadUrl, {
-    method: 'PUT',
-    headers: json.result.headers,
-    body: file,
-  });
+  let uploadResponse: Response;
+
+  try {
+    uploadResponse = await fetch(json.result.uploadUrl, {
+      method: 'PUT',
+      headers: json.result.headers,
+      body: file,
+    });
+  } catch (error) {
+    const uploadHost = getUploadUrlHost(json.result.uploadUrl);
+    const origin = typeof window !== 'undefined' ? window.location.origin : '当前站点';
+
+    throw new Error(
+      [
+        `无法直传媒体到 OSS${uploadHost ? `（${uploadHost}）` : ''}：${error instanceof Error ? error.message : 'Failed to fetch'}`,
+        `请检查 Vercel 的 ALIYUN_VIDEO_OSS_REGION 是否类似 oss-cn-hangzhou，并在 OSS CORS 中允许 ${origin} 发起 PUT 请求和 Content-Type 请求头。`,
+      ].join(' '),
+    );
+  }
 
   if (!uploadResponse.ok) {
     throw new Error(`Media upload failed (${uploadResponse.status})`);
@@ -1911,6 +1939,31 @@ async function uploadMediaFileToOss(file: File): Promise<{
     mimeType: file.type || 'application/octet-stream',
     sizeBytes: file.size,
   };
+}
+
+async function readMediaUploadUrlResponse(response: Response): Promise<MediaUploadUrlResponse> {
+  const fallback = response.ok
+    ? 'Media upload URL creation returned an invalid response'
+    : `Media upload URL creation failed (${response.status})`;
+  const text = await response.text().catch(() => '');
+
+  if (!text.trim()) {
+    return { ok: false, error: fallback };
+  }
+
+  try {
+    return JSON.parse(text) as MediaUploadUrlResponse;
+  } catch {
+    return { ok: false, error: fallback };
+  }
+}
+
+function getUploadUrlHost(uploadUrl: string): string {
+  try {
+    return new URL(uploadUrl).host;
+  } catch {
+    return '';
+  }
 }
 
 async function resolveHistoryImageUrls(item: ImageHistoryItem): Promise<{
@@ -2256,6 +2309,7 @@ function createMaterialSourceFromUploadedImageData(
 const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateText = useCanvasStore((s) => s.generateTextFromTextNode);
+  const removeReference = useCanvasStore((s) => s.removeReferenceFromNode);
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForTextNode(id));
   const connectedVideos = useCanvasStore((s) => s.getConnectedVideosForTextNode(id));
   const renderData = data as CanvasNodeRenderData;
@@ -2303,6 +2357,13 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
       }}
       onEndEdit={() => setEditing(false)}
       onRun={() => generateText(id)}
+      onUpload={() => notifyTextReferenceUpload?.(id)}
+      onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
+        targetKind: 'node',
+        targetNodeId: id,
+        targetType: 'text',
+      })}
+      onRemoveReference={(referenceId) => removeReference(id, referenceId)}
       onPromptPointerDown={() => {
         handleSelectNode();
         notifyPromptBarInteraction?.();
@@ -2505,6 +2566,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
 const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id, data, selected, dragging, xPos, yPos }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateVideo = useCanvasStore((s) => s.generateVideoFromVideoGenerationNode);
+  const removeReference = useCanvasStore((s) => s.removeReferenceFromNode);
   const createVideoUpscaleNode = useCanvasStore((s) => s.createVideoUpscaleNodeFromSource);
   const createImageNodeFromVideoFrame = useCanvasStore((s) => s.createImageNodeFromVideoFrame);
   const connectedImages = useCanvasStore((s) =>
@@ -2657,11 +2719,12 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       onTitleChange={(nextTitle) => updateNodeData<'video_generation'>(id, { title: nextTitle })}
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
-        onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
+      onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
           targetKind: 'node',
           targetNodeId: id,
           targetType: 'video_generation',
         })}
+      onRemoveReference={(referenceId) => removeReference(id, referenceId)}
       onToolbarAction={handleToolbarAction}
       onFrameCapture={(position, video) => void extractGeneratedVideoFrame(position, video)}
       onSelectNode={handleVideoCardClick}
@@ -3993,7 +4056,7 @@ type GroupConnectionPreview = {
 type QuickReferenceConnectMode = {
   targetKind: 'node';
   targetNodeId: string;
-  targetType: 'image_generation' | 'video_generation';
+  targetType: 'text' | 'image_generation' | 'video_generation';
 } | {
   targetKind: 'agent';
   onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate';
@@ -8981,6 +9044,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const addReferenceImagesToImageGenerationNode = useCanvasStore(
     (s) => s.addReferenceImagesToImageGenerationNode,
   );
+  const addReferenceMediaToTextNode = useCanvasStore(
+    (s) => s.addReferenceMediaToTextNode,
+  );
   const addReferenceMediaToVideoGenerationNode = useCanvasStore(
     (s) => s.addReferenceMediaToVideoGenerationNode,
   );
@@ -9307,6 +9373,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const referenceUploadNodeIdRef = React.useRef<string | null>(null);
+  const textReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const videoReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const copiedNodesRef = useRef<CanvasNode[]>([]);
   const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
@@ -10130,6 +10197,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   useEffect(() => {
     notifyImageGenerationReferenceUpload = (nodeId) => {
       referenceUploadNodeIdRef.current = nodeId;
+      textReferenceUploadNodeIdRef.current = null;
       videoReferenceUploadNodeIdRef.current = null;
       const input = uploadInputRef.current;
 
@@ -10147,9 +10215,28 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, []);
 
   useEffect(() => {
+    notifyTextReferenceUpload = (nodeId) => {
+      textReferenceUploadNodeIdRef.current = nodeId;
+      referenceUploadNodeIdRef.current = null;
+      videoReferenceUploadNodeIdRef.current = null;
+      const input = uploadInputRef.current;
+
+      if (!input) {
+        return;
+      }
+      openFileInput(input);
+    };
+
+    return () => {
+      notifyTextReferenceUpload = null;
+    };
+  }, []);
+
+  useEffect(() => {
     notifyVideoGenerationReferenceUpload = (nodeId) => {
       videoReferenceUploadNodeIdRef.current = nodeId;
       referenceUploadNodeIdRef.current = null;
+      textReferenceUploadNodeIdRef.current = null;
       const input = uploadInputRef.current;
 
       if (!input) {
@@ -11816,9 +11903,45 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const files = Array.from(event.target.files ?? []);
     const position = uploadPositionRef.current;
     const referenceUploadNodeId = referenceUploadNodeIdRef.current;
+    const textReferenceUploadNodeId = textReferenceUploadNodeIdRef.current;
     const videoReferenceUploadNodeId = videoReferenceUploadNodeIdRef.current;
 
-    if (files.length > 0 && videoReferenceUploadNodeId) {
+    if (files.length > 0 && textReferenceUploadNodeId) {
+      void (async () => {
+        const media = await Promise.all(
+          files
+            .filter((file) =>
+              file.type.startsWith('image/') ||
+              file.type.startsWith('video/'),
+            )
+            .map(async (file) => {
+              const videoFrame = file.type.startsWith('video/')
+                ? await captureVideoFirstFrame(file).catch(() => null)
+                : null;
+              const uploaded = await uploadMediaFileToOss(file);
+              return {
+                id: crypto.randomUUID(),
+                url: uploaded.url,
+                hostedUrl: uploaded.url,
+                previewUrl: file.type.startsWith('image/')
+                  ? URL.createObjectURL(file)
+                  : videoFrame?.previewUrl,
+                fileName: uploaded.fileName,
+                mimeType: uploaded.mimeType,
+                sizeBytes: uploaded.sizeBytes,
+                width: videoFrame?.width,
+                height: videoFrame?.height,
+                durationSeconds: videoFrame?.durationSeconds,
+              };
+            }),
+        );
+
+        addReferenceMediaToTextNode(textReferenceUploadNodeId, media);
+      })().catch((error) => {
+        setSaveMessage(error instanceof Error ? error.message : 'Upload text reference failed');
+        window.setTimeout(() => setSaveMessage(null), 2200);
+      });
+    } else if (files.length > 0 && videoReferenceUploadNodeId) {
       void (async () => {
         const media = await Promise.all(
           files
@@ -11896,8 +12019,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     event.target.value = '';
     uploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
+    textReferenceUploadNodeIdRef.current = null;
     videoReferenceUploadNodeIdRef.current = null;
-  }, [addReferenceImagesToImageGenerationNode, addReferenceMediaToVideoGenerationNode, addUploadedImages, addUploadedVideos, setSaveMessage]);
+  }, [addReferenceImagesToImageGenerationNode, addReferenceMediaToTextNode, addReferenceMediaToVideoGenerationNode, addUploadedImages, addUploadedVideos, setSaveMessage]);
 
   const handleSelectMaterial = useCallback((
     item: MaterialLibraryItem,
