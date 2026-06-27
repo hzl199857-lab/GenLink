@@ -108,8 +108,25 @@ function getVideoOssEndpoint(): string {
   return `https://${ALIYUN_VIDEO_OSS_BUCKET}.${ALIYUN_VIDEO_OSS_REGION}.aliyuncs.com`;
 }
 
+function normalizeOssEndpoint(endpoint: string): string {
+  const trimmed = endpoint.trim().replace(/\/+$/, '');
+
+  if (!trimmed) {
+    return '';
+  }
+
+  const withProtocol = trimmed.includes('://') ? trimmed : `https://${trimmed}`;
+  const url = new URL(withProtocol);
+
+  if (!url.host.startsWith(`${ALIYUN_VIDEO_OSS_BUCKET}.`)) {
+    url.host = `${ALIYUN_VIDEO_OSS_BUCKET}.${url.host}`;
+  }
+
+  return url.toString().replace(/\/+$/, '');
+}
+
 function getServerVideoOssEndpoint(): string {
-  return ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT || getVideoOssEndpoint();
+  return normalizeOssEndpoint(ALIYUN_VIDEO_OSS_INTERNAL_ENDPOINT) || getVideoOssEndpoint();
 }
 
 function getVideoOssPublicBaseUrl(): string {

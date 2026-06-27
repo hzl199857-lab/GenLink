@@ -334,8 +334,21 @@ def oss_endpoint() -> str:
     return f"https://{OSS_BUCKET}.{OSS_REGION}.aliyuncs.com"
 
 
+def normalize_oss_endpoint(endpoint: str) -> str:
+    normalized = endpoint.rstrip("/")
+    if not normalized:
+        return ""
+    if "://" not in normalized:
+        normalized = f"https://{normalized}"
+
+    protocol, rest = normalized.split("://", 1)
+    if rest.startswith(f"{OSS_BUCKET}."):
+        return normalized
+    return f"{protocol}://{OSS_BUCKET}.{rest}"
+
+
 def server_oss_endpoint() -> str:
-    return OSS_INTERNAL_ENDPOINT or oss_endpoint()
+    return normalize_oss_endpoint(OSS_INTERNAL_ENDPOINT) or oss_endpoint()
 
 
 def oss_public_base_url() -> str:
