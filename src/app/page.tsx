@@ -36,6 +36,7 @@ function HomePageContent() {
   const [entryLoader, setEntryLoader] = useState<null | 'library' | 'canvas'>(null);
   const [entryLoaderLeaving, setEntryLoaderLeaving] = useState(false);
   const [knownProjectCount, setKnownProjectCount] = useState<number | null>(null);
+  const [refreshRestoreLoading, setRefreshRestoreLoading] = useState(false);
   const [pendingRefreshRestore, setPendingRefreshRestore] =
     useState<UpdateRefreshRestoreState | null>(null);
   const entryLoaderStartedAtRef = useRef<number | null>(null);
@@ -90,12 +91,13 @@ function HomePageContent() {
 
   useEffect(() => {
     if (mode === 'hero') return;
+    if (refreshRestoreLoading) return;
 
     const id = requestAnimationFrame(() => {
       requestAnimationFrame(() => setAppVisible(true));
     });
     return () => cancelAnimationFrame(id);
-  }, [mode]);
+  }, [mode, refreshRestoreLoading]);
 
   useEffect(() => clearEntryLoaderTimer, [clearEntryLoaderTimer]);
 
@@ -130,6 +132,10 @@ function HomePageContent() {
     }
 
     const timer = window.setTimeout(() => {
+      setRefreshRestoreLoading(true);
+      setEntryLoaderLeaving(false);
+      setEntryLoader('canvas');
+
       if (restoreState.mode === 'canvas' && restoreState.projectId) {
         setPendingRefreshRestore(restoreState);
       } else {
@@ -137,7 +143,7 @@ function HomePageContent() {
         clearUpdateRefreshRestoreState();
       }
 
-      showEntryLoader('library');
+      setAppVisible(false);
       showAppMode('library');
       router.replace('/');
     }, 0);
@@ -148,7 +154,6 @@ function HomePageContent() {
     session.data?.user,
     session.isPending,
     showAppMode,
-    showEntryLoader,
   ]);
 
   useEffect(() => {
@@ -191,6 +196,11 @@ function HomePageContent() {
   ]);
 
   const showCanvasAfterProjectOpen = () => {
+    if (refreshRestoreLoading) {
+      showAppMode('canvas');
+      return;
+    }
+
     showEntryLoader('canvas');
     showAppMode('canvas');
   };
@@ -225,11 +235,15 @@ function HomePageContent() {
         <div
           className="h-full w-full will-change-[opacity,transform,filter]"
           style={{
-            opacity: appVisible ? 1 : 0,
-            transform: appVisible && (!entryLoader || entryLoaderLeaving) ? 'scale(1)' : 'scale(0.992)',
-            filter: appVisible && (!entryLoader || entryLoaderLeaving) ? 'blur(0px)' : 'blur(6px)',
+            opacity: refreshRestoreLoading ? 0 : appVisible ? 1 : 0,
+            transform: refreshRestoreLoading
+              ? 'scale(1)'
+              : appVisible && (!entryLoader || entryLoaderLeaving) ? 'scale(1)' : 'scale(0.992)',
+            filter: refreshRestoreLoading
+              ? 'blur(0px)'
+              : appVisible && (!entryLoader || entryLoaderLeaving) ? 'blur(0px)' : 'blur(6px)',
             transitionProperty: 'opacity, transform, filter',
-            transitionDuration: `${entryLoader ? ENTRY_LOADER_EXIT_MS : FADE_MS}ms`,
+            transitionDuration: `${refreshRestoreLoading ? 0 : entryLoader ? ENTRY_LOADER_EXIT_MS : FADE_MS}ms`,
             transitionTimingFunction: ENTRY_EASING,
           }}
         >
@@ -246,6 +260,10 @@ function HomePageContent() {
                 setPendingRefreshRestore(null);
               }}
               onRestoreProjectMissing={() => {
+                setRefreshRestoreLoading(false);
+                setEntryLoader(null);
+                setEntryLoaderLeaving(false);
+                setAppVisible(true);
                 setPendingRefreshRestore(null);
                 clearUpdateRefreshRestoreState();
               }}
@@ -269,6 +287,17 @@ function HomePageContent() {
                 showAppMode('library');
               }}
               onCanvasReady={() => {
+                if (refreshRestoreLoading) {
+                  setEntryLoaderLeaving(true);
+                  window.setTimeout(() => {
+                    setRefreshRestoreLoading(false);
+                    setEntryLoader(null);
+                    setEntryLoaderLeaving(false);
+                    setAppVisible(true);
+                  }, ENTRY_LOADER_EXIT_MS);
+                  return;
+                }
+
                 hideEntryLoader('canvas');
               }}
             />
@@ -276,7 +305,7 @@ function HomePageContent() {
         </div>
       )}
 
-      {entryLoader ? (
+      {entryLoader || refreshRestoreLoading ? (
         <div
           className="fixed inset-0 z-[180] flex flex-col items-center justify-center bg-[#08090b] text-white will-change-[opacity,transform,filter]"
           style={{
@@ -299,7 +328,9 @@ function HomePageContent() {
               transitionTimingFunction: ENTRY_EASING,
             }}
           >
-            {entryLoader === 'library'
+            {refreshRestoreLoading
+              ? '正在更新'
+              : entryLoader === 'library'
               ? knownProjectCount === null
                 ? '正在检查项目库'
                 : '正在加载项目库'
