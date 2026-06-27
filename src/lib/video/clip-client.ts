@@ -12,13 +12,26 @@ function wait(ms: number): Promise<void> {
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
-  const json = (await response.json()) as T;
+  const text = await response.text().catch(() => "");
+  let json: T | null = null;
+
+  if (text.trim()) {
+    try {
+      json = JSON.parse(text) as T;
+    } catch {
+      throw new Error(text.slice(0, 240) || "Video processing returned an invalid response");
+    }
+  }
 
   if (!response.ok) {
     const error = json && typeof json === "object" && "error" in json
       ? String((json as { error?: unknown }).error)
-      : "Video processing request failed";
+      : text.trim() || `Video processing request failed (${response.status})`;
     throw new Error(error);
+  }
+
+  if (!json) {
+    throw new Error("Video processing service returned an empty response");
   }
 
   return json;

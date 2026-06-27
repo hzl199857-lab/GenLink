@@ -24,16 +24,30 @@ export async function GET(
     return jsonError("Invalid job id");
   }
 
-  const response = await fetch(
-    `${WORKER_BASE_URL}/clip-jobs/${encodeURIComponent(normalizedJobId)}`,
-    {
-      headers: {
-        ...(WORKER_TOKEN ? { Authorization: `Bearer ${WORKER_TOKEN}` } : {}),
+  let response: Response;
+
+  try {
+    response = await fetch(
+      `${WORKER_BASE_URL}/clip-jobs/${encodeURIComponent(normalizedJobId)}`,
+      {
+        headers: {
+          ...(WORKER_TOKEN ? { Authorization: `Bearer ${WORKER_TOKEN}` } : {}),
+        },
+        cache: "no-store",
       },
-      cache: "no-store",
-    },
-  );
+    );
+  } catch (error) {
+    return jsonError(
+      `Media worker request failed: ${error instanceof Error ? error.message : "Failed to fetch"}`,
+      502,
+    );
+  }
+
   const text = await response.text();
+
+  if (!text.trim()) {
+    return jsonError(`Media worker returned an empty response (${response.status})`, 502);
+  }
 
   return new NextResponse(text, {
     status: response.status,

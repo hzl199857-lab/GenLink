@@ -83,16 +83,30 @@ export async function POST(request: Request) {
     return jsonError("Invalid video clip job request");
   }
 
-  const response = await fetch(`${WORKER_BASE_URL}/clip-jobs`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(WORKER_TOKEN ? { Authorization: `Bearer ${WORKER_TOKEN}` } : {}),
-    },
-    body: JSON.stringify(normalized),
-    cache: "no-store",
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${WORKER_BASE_URL}/clip-jobs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(WORKER_TOKEN ? { Authorization: `Bearer ${WORKER_TOKEN}` } : {}),
+      },
+      body: JSON.stringify(normalized),
+      cache: "no-store",
+    });
+  } catch (error) {
+    return jsonError(
+      `Media worker request failed: ${error instanceof Error ? error.message : "Failed to fetch"}`,
+      502,
+    );
+  }
+
   const text = await response.text();
+
+  if (!text.trim()) {
+    return jsonError(`Media worker returned an empty response (${response.status})`, 502);
+  }
 
   return new NextResponse(text, {
     status: response.status,

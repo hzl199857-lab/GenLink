@@ -107,6 +107,11 @@ jobs:
               pm2 start "$WORKER_VENV/bin/python" \
                 --name "$WORKER_NAME" \
                 -- -m uvicorn app.main:app --host 127.0.0.1 --port "$WORKER_PORT"
+            sleep 3
+            if ! curl -fsS "http://127.0.0.1:${WORKER_PORT}/health" >/dev/null; then
+              pm2 logs "$WORKER_NAME" --lines 80 --nostream || true
+              exit 1
+            fi
             pm2 save
           }
 
