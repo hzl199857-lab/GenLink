@@ -5912,7 +5912,7 @@ function GroupFrame({
                 onChange={onUpdateBackgroundColor}
               />
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Group}>打组</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Group}>布局</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
               <MultiNodeSelectionToolbarButton icon={Play}>运行</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
@@ -6211,7 +6211,7 @@ function MultiNodeSelectionToolbarButton({
           >
             <GroupExecuteMenuItem
               icon={Grid2x2}
-              label="Grid"
+              label="网格"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('grid');
@@ -6219,7 +6219,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={Columns3}
-              label="Horizontal"
+              label="横向"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('horizontal');
@@ -6227,7 +6227,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={Rows3}
-              label="Vertical"
+              label="纵向"
               onClick={() => {
                 setLayoutMenuOpen(false);
                 groupLayout?.('vertical');
@@ -6255,7 +6255,7 @@ function MultiNodeSelectionToolbarButton({
           >
             <GroupExecuteMenuItem
               icon={Play}
-              label="Parallel"
+              label="并行运行"
               onClick={() => {
                 setExecuteMenuOpen(false);
                 groupExecute?.('parallel');
@@ -6263,7 +6263,7 @@ function MultiNodeSelectionToolbarButton({
             />
             <GroupExecuteMenuItem
               icon={ListOrdered}
-              label="Sequential"
+              label="顺序运行"
               onClick={() => {
                 setExecuteMenuOpen(false);
                 groupExecute?.('sequence');
