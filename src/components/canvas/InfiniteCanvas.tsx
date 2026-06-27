@@ -3639,7 +3639,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       const jobId = await createVideoClipJob({
         kind: 'smart_clip',
         sourceUrl,
-        options: { mode: 'balanced', maxSegments: 20, fps: 24 },
+        options: { mode: 'sensitive', maxSegments: 20, fps: 24 },
       });
       const done = await pollVideoClipJob(jobId, (status) => {
         if (status.ok) {
