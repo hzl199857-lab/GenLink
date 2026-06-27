@@ -19,7 +19,6 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import requests
-import cv2
 import imageio_ffmpeg
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -238,80 +237,80 @@ def run_cmd(args: list[str], timeout: int) -> None:
 
 
 def probe_duration(path: Path) -> float:
-    capture = cv2.VideoCapture(str(path))
-    try:
-        if capture.isOpened():
-            fps = capture.get(cv2.CAP_PROP_FPS)
-            frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
-            if fps and fps > 0 and frame_count and frame_count > 0:
-                duration = float(frame_count / fps)
-                if math.isfinite(duration) and duration > 0:
-                    return duration
-    finally:
-        capture.release()
-
     probe = ffprobe_path()
-    if not probe:
-        raise RuntimeError("Unable to read source video duration")
+
+    if probe:
+        completed = subprocess.run(
+            [
+                probe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if completed.returncode == 0:
+            duration = float(completed.stdout.strip())
+            if math.isfinite(duration) and duration > 0:
+                return duration
 
     completed = subprocess.run(
-        [
-            probe,
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
+        [ffmpeg_path(), "-hide_banner", "-i", str(path)],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr.strip() or "ffprobe failed")
-    duration = float(completed.stdout.strip())
+    output = f"{completed.stderr}\n{completed.stdout}"
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    if not match:
+        raise RuntimeError("Unable to read source video duration")
+    hours, minutes, seconds = match.groups()
+    duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
     if not math.isfinite(duration) or duration <= 0:
         raise RuntimeError("Invalid source video duration")
     return duration
 
 
 def probe_dimensions(path: Path) -> tuple[int | None, int | None]:
-    capture = cv2.VideoCapture(str(path))
-    try:
-        if capture.isOpened():
-            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-            if width > 0 and height > 0:
-                return width, height
-    finally:
-        capture.release()
-
     probe = ffprobe_path()
-    if not probe:
-        return None, None
+
+    if probe:
+        completed = subprocess.run(
+            [
+                probe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=s=x:p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if completed.returncode == 0:
+            match = re.match(r"^(\d+)x(\d+)", completed.stdout.strip())
+            if match:
+                return int(match.group(1)), int(match.group(2))
 
     completed = subprocess.run(
-        [
-            probe,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height",
-            "-of",
-            "csv=s=x:p=0",
-            str(path),
-        ],
+        [ffmpeg_path(), "-hide_banner", "-i", str(path)],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    if completed.returncode != 0:
-        return None, None
-    match = re.match(r"^(\d+)x(\d+)", completed.stdout.strip())
+    output = f"{completed.stderr}\n{completed.stdout}"
+    match = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", output)
     if not match:
         return None, None
     return int(match.group(1)), int(match.group(2))
