@@ -155,7 +155,7 @@ function HomePageContent() {
   };
 
   const backToHero = () => {
-    handledAppEntryRef.current = true;
+    handledAppEntryRef.current = searchParams.get('app') === 'library';
     setAppVisible(false);
     clearEntryLoaderTimer();
     setEntryLoader(null);
