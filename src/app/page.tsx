@@ -30,15 +30,23 @@ function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const session = authClient.useSession();
-  const [mode, setMode] = useState<Mode>('hero');
+  const [initialRefreshRestore] = useState<UpdateRefreshRestoreState | null>(() =>
+    readUpdateRefreshRestoreState(),
+  );
+  const startsWithRefreshRestore = initialRefreshRestore !== null;
+  const [mode, setMode] = useState<Mode>(startsWithRefreshRestore ? 'library' : 'hero');
   const [heroLeaving] = useState(false);
   const [appVisible, setAppVisible] = useState(false);
-  const [entryLoader, setEntryLoader] = useState<null | 'library' | 'canvas'>(null);
+  const [entryLoader, setEntryLoader] = useState<null | 'library' | 'canvas'>(
+    startsWithRefreshRestore ? 'canvas' : null,
+  );
   const [entryLoaderLeaving, setEntryLoaderLeaving] = useState(false);
   const [knownProjectCount, setKnownProjectCount] = useState<number | null>(null);
-  const [refreshRestoreLoading, setRefreshRestoreLoading] = useState(false);
+  const [refreshRestoreLoading, setRefreshRestoreLoading] = useState(startsWithRefreshRestore);
   const [pendingRefreshRestore, setPendingRefreshRestore] =
-    useState<UpdateRefreshRestoreState | null>(null);
+    useState<UpdateRefreshRestoreState | null>(
+      initialRefreshRestore?.mode === 'canvas' ? initialRefreshRestore : null,
+    );
   const entryLoaderStartedAtRef = useRef<number | null>(null);
   const entryLoaderTimerRef = useRef<number | null>(null);
   const handledAppEntryRef = useRef(false);
@@ -119,7 +127,7 @@ function HomePageContent() {
   useEffect(() => {
     if (session.isPending || refreshRestoreStartedRef.current) return;
 
-    const restoreState = readUpdateRefreshRestoreState();
+    const restoreState = initialRefreshRestore ?? readUpdateRefreshRestoreState();
     if (!restoreState) return;
 
     refreshRestoreStartedRef.current = true;
@@ -150,6 +158,7 @@ function HomePageContent() {
 
     return () => window.clearTimeout(timer);
   }, [
+    initialRefreshRestore,
     router,
     session.data?.user,
     session.isPending,
