@@ -8,6 +8,7 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -35,6 +36,7 @@ JobStatus = Literal["queued", "running", "done", "error"]
 
 REDIS_REST_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "").rstrip("/")
 REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+STATE_DB_PATH = os.environ.get("MEDIA_WORKER_STATE_DB", "/data/jobs.sqlite3")
 WORKER_TOKEN = os.environ.get("MEDIA_WORKER_TOKEN", "")
 MAX_SOURCE_BYTES = int(os.environ.get("MAX_SOURCE_BYTES", str(1024 * 1024 * 1024)))
 JOB_TTL_SECONDS = int(os.environ.get("JOB_TTL_SECONDS", str(60 * 60 * 6)))
@@ -90,10 +92,6 @@ app = FastAPI(title="GenLink Media Worker")
 
 def require_config() -> None:
     missing = []
-    if not REDIS_REST_URL:
-        missing.append("UPSTASH_REDIS_REST_URL")
-    if not REDIS_REST_TOKEN:
-        missing.append("UPSTASH_REDIS_REST_TOKEN")
     if not OSS_BUCKET:
         missing.append("ALIYUN_VIDEO_OSS_BUCKET or ALIYUN_OSS_BUCKET")
     if not OSS_REGION:
@@ -132,19 +130,75 @@ def redis_command(*args: Any) -> Any:
     raise RuntimeError("Invalid Redis response")
 
 
+def use_redis_state() -> bool:
+    return bool(REDIS_REST_URL and REDIS_REST_TOKEN)
+
+
+def sqlite_connect() -> sqlite3.Connection:
+    db_path = Path(STATE_DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(db_path, timeout=30)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=30000")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+          job_id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+        """,
+    )
+    return connection
+
+
+def cleanup_sqlite_jobs(connection: sqlite3.Connection) -> None:
+    connection.execute("DELETE FROM jobs WHERE expires_at < ?", (int(time.time()),))
+
+
 def job_key(job_id: str) -> str:
     return f"genlink:media-job:{job_id}"
 
 
 def save_job(job: dict[str, Any]) -> None:
-    redis_command("SET", job_key(job["jobId"]), json.dumps(job), "EX", JOB_TTL_SECONDS)
+    if use_redis_state():
+        redis_command("SET", job_key(job["jobId"]), json.dumps(job), "EX", JOB_TTL_SECONDS)
+        return
+
+    now = int(time.time())
+    with sqlite_connect() as connection:
+        cleanup_sqlite_jobs(connection)
+        connection.execute(
+            """
+            INSERT INTO jobs (job_id, payload, expires_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(job_id) DO UPDATE SET
+              payload=excluded.payload,
+              expires_at=excluded.expires_at,
+              updated_at=excluded.updated_at
+            """,
+            (job["jobId"], json.dumps(job), now + JOB_TTL_SECONDS, now),
+        )
 
 
 def load_job(job_id: str) -> dict[str, Any] | None:
-    raw = redis_command("GET", job_key(job_id))
-    if not raw:
+    if use_redis_state():
+        raw = redis_command("GET", job_key(job_id))
+        if not raw:
+            return None
+        return json.loads(raw)
+
+    with sqlite_connect() as connection:
+        cleanup_sqlite_jobs(connection)
+        row = connection.execute(
+            "SELECT payload FROM jobs WHERE job_id = ? AND expires_at >= ?",
+            (job_id, int(time.time())),
+        ).fetchone()
+
+    if not row:
         return None
-    return json.loads(raw)
+    return json.loads(row[0])
 
 
 def update_job(job_id: str, **updates: Any) -> None:

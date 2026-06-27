@@ -48,12 +48,45 @@ jobs:
           SHARED="/www/GenLink_shared"
           CURRENT="/www/GenLink_current"
           KEEP_RELEASES=3
+          WORKER_NAME="genlink-media-worker"
+          WORKER_PORT="8080"
 
           restart_app() {
             cd "$CURRENT"
             pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
             pm2 start npm --name "$APP_NAME" -- start -- -H 127.0.0.1 -p 3002
             pm2 save
+          }
+
+          upsert_env_var() {
+            local key="$1"
+            local value="$2"
+            local file="$SHARED/.env.production"
+
+            if grep -q "^${key}=" "$file"; then
+              sed -i "s#^${key}=.*#${key}=\"${value}\"#" "$file"
+            else
+              printf '%s="%s"\n' "$key" "$value" >> "$file"
+            fi
+          }
+
+          restart_worker() {
+            if ! command -v podman >/dev/null 2>&1; then
+              echo "Podman is not installed. Install podman before deploying media worker."
+              exit 1
+            fi
+
+            mkdir -p "$SHARED/media-worker"
+            podman build -t genlink-media-worker:latest "$CURRENT/media-worker"
+            podman rm -f "$WORKER_NAME" >/dev/null 2>&1 || true
+            podman run -d \
+              --name "$WORKER_NAME" \
+              --restart=always \
+              --env-file "$SHARED/.env.production" \
+              -e MEDIA_WORKER_STATE_DB=/data/jobs.sqlite3 \
+              -v "$SHARED/media-worker:/data:Z" \
+              -p "127.0.0.1:${WORKER_PORT}:8080" \
+              genlink-media-worker:latest
           }
 
           latest_previous_release() {
@@ -130,6 +163,8 @@ jobs:
             cp -p "$LEGACY_APP/prisma/dev.db" "$SHARED/prisma/dev.db"
           fi
 
+          upsert_env_var "MEDIA_WORKER_BASE_URL" "http://127.0.0.1:${WORKER_PORT}"
+
           cd "$LEGACY_APP"
           if ! git diff --quiet || ! git diff --cached --quiet; then
             echo "Server source repository has changes to tracked files. Commit, stash, or clean them before deploying."
@@ -154,6 +189,7 @@ jobs:
           npm run build
 
           ln -sfn "$RELEASE_DIR" "$CURRENT"
+          restart_worker
           restart_app
           prune_old_releases
 
