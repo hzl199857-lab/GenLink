@@ -3653,8 +3653,15 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
       }
 
       const nextNodeIds: string[] = [];
+      const clipNodeGap = 32;
+      let nextClipY = yPos;
 
       for (const [index, segment] of segments.entries()) {
+        const segmentDimensions = resolveUploadedVideoCardDimensions({
+          ...videoData,
+          width: segment.width ?? videoData.width,
+          height: segment.height ?? videoData.height,
+        });
         const nextNodeId = await createProcessedVideoNode({
           sourceNodeId: id,
           title: `Clip ${index + 1}`,
@@ -3666,10 +3673,11 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
           mimeType: segment.mimeType,
           position: {
             x: xPos + cardDimensions.width + 48,
-            y: yPos + index * 40,
+            y: nextClipY,
           },
         });
         nextNodeIds.push(nextNodeId);
+        nextClipY += IMAGE_NODE_ADAPTER_TOP_PADDING + segmentDimensions.height + 36 + clipNodeGap;
       }
 
       setClipMessage('Smart clips created');
