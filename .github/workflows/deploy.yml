@@ -34,8 +34,8 @@ jobs:
 
           cd /www/GenLink_app
 
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Server working tree has uncommitted changes. Commit, stash, or clean them before deploying."
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "Server working tree has changes to tracked files. Commit, stash, or clean them before deploying."
             git status --short
             exit 1
           fi
