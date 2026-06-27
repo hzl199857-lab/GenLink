@@ -182,6 +182,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { AGENT_PANEL_FLOATING_INSET } from '@/lib/agent-panel-layout';
 import { downloadImageGenerationResult } from '@/lib/image-download';
 import { createVideoClipJob, pollVideoClipJob } from '@/lib/video/clip-client';
+import type { CreateVideoClipJobRequest } from '@/lib/video/clip-types';
 import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 import { validateCanvasAgentActions } from '@/lib/agent-actions';
@@ -3635,16 +3636,43 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     }
   };
 
+  const getSmartClipAiCredentials = (): CreateVideoClipJobRequest['aiCredentials'] => {
+    const settings = readStoredApiSettings();
+    const preferredProvider =
+      settings.textProvider === 'comfly' || settings.textProvider === 'zhenzhen'
+        ? settings.textProvider
+        : null;
+    const providers: Array<'comfly' | 'zhenzhen'> = preferredProvider
+      ? [preferredProvider, preferredProvider === 'comfly' ? 'zhenzhen' : 'comfly']
+      : ['comfly', 'zhenzhen'];
+
+    const credentials = providers
+      .map((provider) => ({
+        provider,
+        apiKey: settings.textApiKeys[provider]?.trim() ?? '',
+      }))
+      .filter((credential) => credential.apiKey.length > 0);
+
+    return credentials.length > 0 ? credentials : undefined;
+  };
+
   const runSmartClip = async () => {
     setClipBusy(true);
     setClipMessage('Preparing video...');
 
     try {
+      const aiCredentials = getSmartClipAiCredentials();
+
+      if (!aiCredentials?.length) {
+        throw new Error(`请先在 API 设置里填写支持 ${SMART_CLIP_MODEL_ID} 的 Comfly 或贞贞文本 API Key`);
+      }
+
       const sourceUrl = await ensureVideoProcessingSourceUrl(videoData);
-      setClipMessage('Analyzing video...');
+      setClipMessage(`Analyzing video with ${SMART_CLIP_MODEL_ID}...`);
       const jobId = await createVideoClipJob({
         kind: 'smart_clip',
         sourceUrl,
+        aiCredentials,
         options: { mode: 'sensitive', maxSegments: 20, fps: 24 },
       });
       const done = await pollVideoClipJob(jobId, (status) => {
@@ -4114,6 +4142,7 @@ const THREE_VIEW_FOCUS_ANIMATION_DURATION_MS = 680;
 const THREE_VIEW_FOCUS_PADDING = 0.14;
 const THREE_VIEW_FOCUS_EASE = (t: number): number =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const SMART_CLIP_MODEL_ID = 'gemini-3.5-flash';
 const VIDEO_CLIP_CONTROLS_TOP_OFFSET = 48;
 const VIDEO_CLIP_CONTROLS_FOCUS_HEIGHT = 96;
 const VIDEO_CLIP_CONTROLS_MIN_FOCUS_WIDTH = 430;

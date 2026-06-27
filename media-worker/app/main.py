@@ -62,6 +62,11 @@ OSS_INTERNAL_ENDPOINT = (
     or os.environ.get("ALIYUN_OSS_INTERNAL_ENDPOINT")
     or ""
 ).rstrip("/")
+SMART_CLIP_MODEL = "gemini-3.5-flash"
+SMART_CLIP_PROVIDER_BASE_URLS = {
+    "comfly": os.environ.get("COMFLY_TEXT_BASE_URL", "https://ai.comfly.org/v1").rstrip("/"),
+    "zhenzhen": os.environ.get("ZHENZHEN_TEXT_BASE_URL", "https://ai.t8star.cn/v1").rstrip("/"),
+}
 
 
 class SmartClipOptions(BaseModel):
@@ -70,12 +75,18 @@ class SmartClipOptions(BaseModel):
     fps: Literal[16, 24, 30] = 24
 
 
+class SmartClipAiCredential(BaseModel):
+    provider: Literal["comfly", "zhenzhen"]
+    apiKey: str
+
+
 class CreateClipJobRequest(BaseModel):
     kind: JobKind
     sourceUrl: HttpUrl
     start: float | None = None
     end: float | None = None
     fps: Literal[16, 24, 30] | None = None
+    aiCredentials: list[SmartClipAiCredential] | None = None
     options: SmartClipOptions | None = None
 
 
@@ -407,25 +418,146 @@ def cut_video(source: Path, target: Path, start: float, end: float, fps: int | N
     run_cmd(args, timeout=600)
 
 
+def extract_json_array(text: str) -> Any:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        match = re.search(r"\[[\s\S]*\]", stripped)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def normalize_ai_clip_ranges(
+    value: Any,
+    duration: float,
+    options: SmartClipOptions,
+) -> list[tuple[float, float]]:
+    if not isinstance(value, list):
+        return []
+
+    ranges: list[tuple[float, float]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+
+        start = item.get("start")
+        end = item.get("end")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            continue
+
+        start = max(0.0, float(start))
+        end = min(duration, float(end))
+        if end - start >= 0.45:
+            ranges.append((start, end))
+
+    return post_process_scene_ranges(ranges, duration, options)
+
+
+def analyze_video_with_gemini(
+    source_url: str,
+    duration: float,
+    options: SmartClipOptions,
+    credentials: list[dict[str, Any]],
+) -> list[tuple[float, float]]:
+    if not credentials:
+        raise RuntimeError(
+            f"请先在 API 设置里填写支持 {SMART_CLIP_MODEL} 的 Comfly 或贞贞文本 API Key"
+        )
+
+    prompt = (
+        "你是专业视频剪辑师。请分析这个视频，按真实镜头/叙事动作变化切成若干可用片段。"
+        f"视频总时长约 {duration:.2f} 秒。"
+        "只输出 JSON 数组，不要解释，不要 Markdown。"
+        "每个元素格式为 {\"start\": 秒数, \"end\": 秒数, \"reason\": \"简短中文原因\"}。"
+        "要求：1) 切点必须符合画面/动作/人物/场景明显变化；"
+        "2) 不要只输出整段视频；"
+        "3) 片段时长通常 0.8 到 5 秒；"
+        "4) start/end 使用数字秒，保留一位小数即可；"
+        f"5) 最多输出 {options.maxSegments} 段。"
+    )
+    last_error = ""
+
+    for credential in credentials:
+        provider = credential.get("provider")
+        api_key = str(credential.get("apiKey") or "").strip()
+        base_url = SMART_CLIP_PROVIDER_BASE_URLS.get(provider)
+
+        if not provider or not api_key or not base_url:
+            continue
+
+        try:
+            response = requests.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": SMART_CLIP_MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": source_url}},
+                            ],
+                        }
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 1200,
+                },
+                timeout=300,
+            )
+
+            if not response.ok:
+                last_error = f"{provider} returned {response.status_code}: {response.text[:300]}"
+                continue
+
+            payload = response.json()
+            content = (
+                payload.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            ranges = normalize_ai_clip_ranges(extract_json_array(str(content)), duration, options)
+            if len(ranges) >= 2:
+                return ranges
+
+            last_error = f"{provider} returned too few valid clip ranges"
+        except Exception as exc:
+            last_error = f"{provider}: {exc}"
+
+    raise RuntimeError(
+        f"没有可用渠道成功调用 {SMART_CLIP_MODEL}。请确认已填写的 Comfly/贞贞 Key 支持该模型。"
+        + (f" 最后错误：{last_error}" if last_error else "")
+    )
+
+
 def smart_clip_profile(options: SmartClipOptions) -> dict[str, float]:
     return {
         "stable": {
-            "content_threshold": 30.0,
-            "ffmpeg_scene_threshold": 0.34,
+            "content_threshold": 28.0,
+            "ffmpeg_scene_threshold": 0.32,
             "min_scene_sec": 1.2,
             "min_output_sec": 1.5,
         },
         "balanced": {
-            "content_threshold": 26.0,
-            "ffmpeg_scene_threshold": 0.28,
-            "min_scene_sec": 0.9,
-            "min_output_sec": 1.2,
+            "content_threshold": 23.0,
+            "ffmpeg_scene_threshold": 0.24,
+            "min_scene_sec": 0.6,
+            "min_output_sec": 0.9,
         },
         "sensitive": {
-            "content_threshold": 22.0,
-            "ffmpeg_scene_threshold": 0.22,
-            "min_scene_sec": 0.7,
-            "min_output_sec": 1.0,
+            "content_threshold": 18.0,
+            "ffmpeg_scene_threshold": 0.16,
+            "min_scene_sec": 0.25,
+            "min_output_sec": 0.65,
         },
     }[options.mode]
 
@@ -505,7 +637,18 @@ def ranges_from_cut_points(duration: float, cut_points: list[float]) -> list[tup
 
 
 def ffmpeg_scene_ranges(source: Path, duration: float, options: SmartClipOptions) -> list[tuple[float, float]]:
-    threshold = smart_clip_profile(options)["ffmpeg_scene_threshold"]
+    return ffmpeg_scene_ranges_for_threshold(
+        source,
+        duration,
+        smart_clip_profile(options)["ffmpeg_scene_threshold"],
+    )
+
+
+def ffmpeg_scene_ranges_for_threshold(
+    source: Path,
+    duration: float,
+    threshold: float,
+) -> list[tuple[float, float]]:
     completed = subprocess.run(
         [
             ffmpeg_path(),
@@ -536,27 +679,47 @@ def ffmpeg_scene_ranges(source: Path, duration: float, options: SmartClipOptions
 
 def detect_scene_ranges(source: Path, duration: float, options: SmartClipOptions) -> list[tuple[float, float]]:
     profile = smart_clip_profile(options)
-    ranges: list[tuple[float, float]] = []
+    content_thresholds = [
+        profile["content_threshold"],
+        profile["content_threshold"] * 0.82,
+        profile["content_threshold"] * 0.64,
+        profile["content_threshold"] * 0.48,
+    ]
+    scene_lengths = [
+        profile["min_scene_sec"],
+        max(0.2, profile["min_scene_sec"] * 0.7),
+        0.15,
+    ]
 
-    if not ContentDetector or not SceneManager or not open_video:
-        ranges = []
-    else:
-        min_scene_len = max(1, round(profile["min_scene_sec"] * options.fps))
+    if ContentDetector and SceneManager and open_video:
+        for threshold in content_thresholds:
+            for min_scene_sec in scene_lengths:
+                min_scene_len = max(1, round(min_scene_sec * options.fps))
+                video = open_video(str(source))
+                manager = SceneManager()
+                manager.add_detector(ContentDetector(threshold=threshold, min_scene_len=min_scene_len))
+                manager.detect_scenes(video=video)
+                scenes = manager.get_scene_list()
+                ranges = [(max(0.0, s.get_seconds()), min(duration, e.get_seconds())) for s, e in scenes]
+                processed = post_process_scene_ranges(ranges, duration, options)
+                if len(processed) >= 2:
+                    return processed
 
-        video = open_video(str(source))
-        manager = SceneManager()
-        manager.add_detector(ContentDetector(threshold=profile["content_threshold"], min_scene_len=min_scene_len))
-        manager.detect_scenes(video=video)
-        scenes = manager.get_scene_list()
-        ranges = [(max(0.0, s.get_seconds()), min(duration, e.get_seconds())) for s, e in scenes]
+    ffmpeg_thresholds = [
+        profile["ffmpeg_scene_threshold"],
+        profile["ffmpeg_scene_threshold"] * 0.75,
+        profile["ffmpeg_scene_threshold"] * 0.5,
+        profile["ffmpeg_scene_threshold"] * 0.35,
+    ]
 
-    processed = post_process_scene_ranges(ranges, duration, options)
-    if len(processed) >= 2:
-        return processed
-
-    processed = post_process_scene_ranges(ffmpeg_scene_ranges(source, duration, options), duration, options)
-    if len(processed) >= 2:
-        return processed
+    for threshold in ffmpeg_thresholds:
+        processed = post_process_scene_ranges(
+            ffmpeg_scene_ranges_for_threshold(source, duration, threshold),
+            duration,
+            options,
+        )
+        if len(processed) >= 2:
+            return processed
 
     return fallback_ranges(duration, options.maxSegments)
 
@@ -564,10 +727,7 @@ def detect_scene_ranges(source: Path, duration: float, options: SmartClipOptions
 def fallback_ranges(duration: float, max_segments: int) -> list[tuple[float, float]]:
     if duration <= 0.2:
         return []
-    if duration <= 30:
-        return [(0.0, duration)]
-
-    count = max(2, min(max_segments, round(duration / 10) or 2))
+    count = max(2, min(max_segments, round(duration / 3) or 2))
     step = duration / count
     return [(i * step, duration if i == count - 1 else (i + 1) * step) for i in range(count)]
 
@@ -635,7 +795,16 @@ def process_job(job_id: str) -> None:
         else:
             options = SmartClipOptions(**payload.get("options", {}))
             update_job(job_id, stage="detect", progress=0.08)
-            ranges = detect_scene_ranges(source, duration, options)
+            ai_credentials = payload.get("aiCredentials") or []
+            if ai_credentials:
+                ranges = analyze_video_with_gemini(
+                    str(payload["sourceUrl"]),
+                    duration,
+                    options,
+                    ai_credentials,
+                )
+            else:
+                ranges = detect_scene_ranges(source, duration, options)
             total = len(ranges)
             for idx, (start, end) in enumerate(ranges, start=1):
                 target = tmp_dir / f"scene-{idx:03d}.mp4"

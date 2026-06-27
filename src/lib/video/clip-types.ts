@@ -39,6 +39,10 @@ export interface CreateVideoClipJobRequest {
   start?: number;
   end?: number;
   fps?: number;
+  aiCredentials?: Array<{
+    provider: "comfly" | "zhenzhen";
+    apiKey: string;
+  }>;
   options?: {
     mode?: VideoClipMode;
     maxSegments?: number;

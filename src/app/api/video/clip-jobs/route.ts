@@ -15,6 +15,33 @@ function isAllowedFps(value: unknown): value is number {
   return value === 16 || value === 24 || value === 30;
 }
 
+function normalizeAiCredentials(value: unknown): CreateVideoClipJobRequest["aiCredentials"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const credentials: NonNullable<CreateVideoClipJobRequest["aiCredentials"]> = [];
+
+  for (const item of value) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const record = item as { provider?: unknown; apiKey?: unknown };
+      const provider =
+        record.provider === "comfly" || record.provider === "zhenzhen"
+          ? record.provider
+          : null;
+      const apiKey = typeof record.apiKey === "string" ? record.apiKey.trim() : "";
+
+      if (provider && apiKey) {
+        credentials.push({ provider, apiKey });
+      }
+  }
+
+  return credentials.length > 0 ? credentials : undefined;
+}
+
 function normalizeRequestBody(body: CreateVideoClipJobRequest): CreateVideoClipJobRequest | null {
   const kind = body.kind;
   const sourceUrl = typeof body.sourceUrl === "string" ? body.sourceUrl.trim() : "";
@@ -56,6 +83,7 @@ function normalizeRequestBody(body: CreateVideoClipJobRequest): CreateVideoClipJ
   return {
     kind,
     sourceUrl,
+    aiCredentials: normalizeAiCredentials(body.aiCredentials),
     options: {
       mode,
       maxSegments,
