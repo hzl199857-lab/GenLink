@@ -77,6 +77,18 @@ jobs:
               exit 1
             fi
 
+            if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+              if command -v apt-get >/dev/null 2>&1; then
+                apt-get update
+                DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
+              elif command -v yum >/dev/null 2>&1; then
+                yum install -y ffmpeg
+              else
+                echo "ffmpeg/ffprobe is not installed and no supported package manager was found."
+                exit 1
+              fi
+            fi
+
             mkdir -p "$SHARED/media-worker"
             if [ ! -x "$WORKER_VENV/bin/python" ]; then
               python3.11 -m venv "$WORKER_VENV"

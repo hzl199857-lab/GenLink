@@ -97,14 +97,16 @@ def ffmpeg_path() -> str:
 
 def ffprobe_path() -> str:
     configured = os.environ.get("FFPROBE_PATH", "").strip()
-    if configured:
+    if configured and Path(configured).is_file():
         return configured
     discovered = shutil.which("ffprobe")
     if discovered:
         return discovered
     exe = Path(ffmpeg_path())
     sibling = exe.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
-    return str(sibling)
+    if sibling.is_file():
+        return str(sibling)
+    raise RuntimeError("ffprobe is not installed. Install the ffmpeg system package or set FFPROBE_PATH.")
 
 
 def require_config() -> None:

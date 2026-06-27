@@ -3895,7 +3895,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                   className="flex h-6 items-center justify-center gap-1 rounded-full border border-white/10 bg-[#24262b]/95 px-2.5 py-0 text-[9px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
                 >
                   <Box size={11} strokeWidth={1.9} className="text-white/86" />
-                  Upscale
+                  智能剪辑
                 </button>
                 <button
                   type="button"
