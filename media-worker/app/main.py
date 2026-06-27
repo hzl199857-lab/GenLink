@@ -19,6 +19,7 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import requests
+import cv2
 import imageio_ffmpeg
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -95,7 +96,7 @@ def ffmpeg_path() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def ffprobe_path() -> str:
+def ffprobe_path() -> str | None:
     configured = os.environ.get("FFPROBE_PATH", "").strip()
     if configured and Path(configured).is_file():
         return configured
@@ -106,7 +107,7 @@ def ffprobe_path() -> str:
     sibling = exe.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
     if sibling.is_file():
         return str(sibling)
-    raise RuntimeError("ffprobe is not installed. Install the ffmpeg system package or set FFPROBE_PATH.")
+    return None
 
 
 def require_config() -> None:
@@ -237,9 +238,25 @@ def run_cmd(args: list[str], timeout: int) -> None:
 
 
 def probe_duration(path: Path) -> float:
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if capture.isOpened():
+            fps = capture.get(cv2.CAP_PROP_FPS)
+            frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+            if fps and fps > 0 and frame_count and frame_count > 0:
+                duration = float(frame_count / fps)
+                if math.isfinite(duration) and duration > 0:
+                    return duration
+    finally:
+        capture.release()
+
+    probe = ffprobe_path()
+    if not probe:
+        raise RuntimeError("Unable to read source video duration")
+
     completed = subprocess.run(
         [
-            ffprobe_path(),
+            probe,
             "-v",
             "error",
             "-show_entries",
@@ -261,9 +278,23 @@ def probe_duration(path: Path) -> float:
 
 
 def probe_dimensions(path: Path) -> tuple[int | None, int | None]:
+    capture = cv2.VideoCapture(str(path))
+    try:
+        if capture.isOpened():
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+            if width > 0 and height > 0:
+                return width, height
+    finally:
+        capture.release()
+
+    probe = ffprobe_path()
+    if not probe:
+        return None, None
+
     completed = subprocess.run(
         [
-            ffprobe_path(),
+            probe,
             "-v",
             "error",
             "-select_streams",
