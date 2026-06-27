@@ -1513,6 +1513,15 @@ type MediaUploadUrlResponse =
     }
   | { ok: false; error: string };
 
+type MediaUploadResponse =
+  | {
+      ok: true;
+      result: {
+        mediaUrl: string;
+      };
+    }
+  | { ok: false; error: string };
+
 function readImageFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1937,6 +1946,7 @@ async function uploadMediaFileToOss(file: File): Promise<{
     throw new Error('error' in json ? json.error : 'Media upload URL creation failed');
   }
 
+  let uploadedMediaUrl = json.result.mediaUrl;
   let uploadResponse: Response;
 
   try {
@@ -1949,24 +1959,46 @@ async function uploadMediaFileToOss(file: File): Promise<{
     const uploadHost = getUploadUrlHost(json.result.uploadUrl);
     const origin = typeof window !== 'undefined' ? window.location.origin : '当前站点';
 
-    throw new Error(
+    console.warn(
       [
-        `无法直传媒体到 OSS${uploadHost ? `（${uploadHost}）` : ''}：${error instanceof Error ? error.message : 'Failed to fetch'}`,
-        `请检查 Vercel 的 ALIYUN_VIDEO_OSS_REGION 是否类似 oss-cn-hangzhou，并在 OSS CORS 中允许 ${origin} 发起 PUT 请求和 Content-Type 请求头。`,
+        `Direct media upload to OSS failed${uploadHost ? ` (${uploadHost})` : ''}: ${error instanceof Error ? error.message : 'Failed to fetch'}.`,
+        `Falling back to server upload. Check OSS CORS if this keeps happening for ${origin}.`,
       ].join(' '),
     );
+
+    uploadedMediaUrl = await uploadMediaFileViaServer(file, folder);
+    uploadResponse = new Response(null, { status: 200 });
   }
 
   if (!uploadResponse.ok) {
-    throw new Error(`Media upload failed (${uploadResponse.status})`);
+    uploadedMediaUrl = await uploadMediaFileViaServer(file, folder);
   }
 
   return {
-    url: json.result.mediaUrl,
+    url: uploadedMediaUrl,
     fileName: file.name,
     mimeType: file.type || 'application/octet-stream',
     sizeBytes: file.size,
   };
+}
+
+async function uploadMediaFileViaServer(file: File, folder: string): Promise<string> {
+  const formData = new FormData();
+  formData.set('file', file);
+  formData.set('fileName', file.name);
+  formData.set('folder', folder);
+
+  const response = await fetch('/api/media-hosting/upload', {
+    method: 'POST',
+    body: formData,
+  });
+  const json = await readMediaUploadResponse(response);
+
+  if (!response.ok || !json.ok) {
+    throw new Error('error' in json ? json.error : `Media server upload failed (${response.status})`);
+  }
+
+  return json.result.mediaUrl;
 }
 
 async function readMediaUploadUrlResponse(response: Response): Promise<MediaUploadUrlResponse> {
@@ -1981,6 +2013,23 @@ async function readMediaUploadUrlResponse(response: Response): Promise<MediaUplo
 
   try {
     return JSON.parse(text) as MediaUploadUrlResponse;
+  } catch {
+    return { ok: false, error: fallback };
+  }
+}
+
+async function readMediaUploadResponse(response: Response): Promise<MediaUploadResponse> {
+  const fallback = response.ok
+    ? 'Media upload returned an invalid response'
+    : `Media upload failed (${response.status})`;
+  const text = await response.text().catch(() => '');
+
+  if (!text.trim()) {
+    return { ok: false, error: fallback };
+  }
+
+  try {
+    return JSON.parse(text) as MediaUploadResponse;
   } catch {
     return { ok: false, error: fallback };
   }

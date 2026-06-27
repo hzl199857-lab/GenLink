@@ -186,3 +186,38 @@ export function createAliyunMediaUploadTarget(params: {
     objectKey,
   };
 }
+
+export async function uploadAliyunMediaObject(params: {
+  file: Blob;
+  contentType: string;
+  fileName?: string;
+  folder?: string;
+}): Promise<{
+  mediaUrl: string;
+  objectKey: string;
+}> {
+  const target = createAliyunMediaUploadTarget({
+    contentType: params.contentType,
+    fileName: params.fileName,
+    folder: params.folder,
+    useInternalEndpoint: true,
+  });
+  const response = await fetch(target.uploadUrl, {
+    method: 'PUT',
+    headers: target.headers,
+    body: params.file,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new VibeApiError(
+      502,
+      `Aliyun video OSS upload failed (${response.status})${detail ? `: ${detail.slice(0, 240)}` : ''}`,
+    );
+  }
+
+  return {
+    mediaUrl: target.mediaUrl,
+    objectKey: target.objectKey,
+  };
+}
