@@ -50,6 +50,7 @@ jobs:
           KEEP_RELEASES=3
           WORKER_NAME="genlink-media-worker"
           WORKER_PORT="8080"
+          WORKER_VENV="/www/GenLink_worker_venv"
 
           restart_app() {
             cd "$CURRENT"
@@ -71,22 +72,29 @@ jobs:
           }
 
           restart_worker() {
-            if ! command -v podman >/dev/null 2>&1; then
-              echo "Podman is not installed. Install podman before deploying media worker."
+            if ! command -v python3.11 >/dev/null 2>&1; then
+              echo "python3.11 is not installed. Install python3.11 and python3.11-pip before deploying media worker."
               exit 1
             fi
 
             mkdir -p "$SHARED/media-worker"
-            podman build -t genlink-media-worker:latest "$CURRENT/media-worker"
-            podman rm -f "$WORKER_NAME" >/dev/null 2>&1 || true
-            podman run -d \
-              --name "$WORKER_NAME" \
-              --restart=always \
-              --env-file "$SHARED/.env.production" \
-              -e MEDIA_WORKER_STATE_DB=/data/jobs.sqlite3 \
-              -v "$SHARED/media-worker:/data:Z" \
-              -p "127.0.0.1:${WORKER_PORT}:8080" \
-              genlink-media-worker:latest
+            if [ ! -x "$WORKER_VENV/bin/python" ]; then
+              python3.11 -m venv "$WORKER_VENV"
+            fi
+
+            "$WORKER_VENV/bin/python" -m pip install --upgrade pip
+            "$WORKER_VENV/bin/python" -m pip install -r "$CURRENT/media-worker/requirements.txt"
+
+            pm2 delete "$WORKER_NAME" >/dev/null 2>&1 || true
+            cd "$CURRENT/media-worker"
+            set -a
+            . "$SHARED/.env.production"
+            set +a
+            MEDIA_WORKER_STATE_DB="$SHARED/media-worker/jobs.sqlite3" \
+              pm2 start "$WORKER_VENV/bin/python" \
+                --name "$WORKER_NAME" \
+                -- -m uvicorn app.main:app --host 127.0.0.1 --port "$WORKER_PORT"
+            pm2 save
           }
 
           latest_previous_release() {

@@ -19,6 +19,7 @@ from typing import Any, Literal
 from urllib.parse import quote
 
 import requests
+import imageio_ffmpeg
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, HttpUrl
@@ -88,6 +89,22 @@ class Segment:
 
 
 app = FastAPI(title="GenLink Media Worker")
+
+
+def ffmpeg_path() -> str:
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def ffprobe_path() -> str:
+    configured = os.environ.get("FFPROBE_PATH", "").strip()
+    if configured:
+        return configured
+    discovered = shutil.which("ffprobe")
+    if discovered:
+        return discovered
+    exe = Path(ffmpeg_path())
+    sibling = exe.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    return str(sibling)
 
 
 def require_config() -> None:
@@ -220,7 +237,7 @@ def run_cmd(args: list[str], timeout: int) -> None:
 def probe_duration(path: Path) -> float:
     completed = subprocess.run(
         [
-            "ffprobe",
+            ffprobe_path(),
             "-v",
             "error",
             "-show_entries",
@@ -244,7 +261,7 @@ def probe_duration(path: Path) -> float:
 def probe_dimensions(path: Path) -> tuple[int | None, int | None]:
     completed = subprocess.run(
         [
-            "ffprobe",
+            ffprobe_path(),
             "-v",
             "error",
             "-select_streams",
@@ -324,7 +341,7 @@ def cut_video(source: Path, target: Path, start: float, end: float, fps: int | N
     if end <= start:
         raise RuntimeError("Invalid cut range")
     args = [
-        "ffmpeg",
+        ffmpeg_path(),
         "-y",
         "-i",
         str(source),
