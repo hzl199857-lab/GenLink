@@ -2,6 +2,11 @@
 
 import { RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT,
+  readUpdateRefreshAppMode,
+  writeUpdateRefreshRestoreState,
+} from "@/lib/update-refresh-restore";
 import { useCanvasStore } from "@/store/canvas-store";
 
 const VERSION_ENDPOINT = "/api/app-version";
@@ -101,6 +106,16 @@ export function UpdateAvailableToast() {
     try {
       if (state.currentProject) {
         await state.saveProject();
+      }
+
+      const mode = readUpdateRefreshAppMode();
+      if (mode === "library" || mode === "canvas") {
+        writeUpdateRefreshRestoreState({
+          mode,
+          projectId: state.currentProject?.id,
+        });
+
+        window.dispatchEvent(new Event(UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT));
       }
 
       window.location.reload();

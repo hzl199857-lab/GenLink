@@ -88,6 +88,12 @@ import {
   pickProjectParentDirectory,
 } from '@/lib/project-storage';
 import {
+  UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT,
+  clearUpdateRefreshRestoreState,
+  mergeUpdateRefreshRestoreViewport,
+  readUpdateRefreshRestoreState,
+} from '@/lib/update-refresh-restore';
+import {
   createHostedCanvasImageData,
   createPendingCanvasImageData,
   type CanvasImageAssetUploadKind,
@@ -9532,6 +9538,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
   const { fitView, getViewport, project, setViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+  const refreshRestoreViewportAppliedRef = useRef<string | null>(null);
 
   const refreshNodeInternalsAfterRender = useCallback((nodeIds: string[]) => {
     const uniqueNodeIds = Array.from(new Set(nodeIds.filter(Boolean)));
@@ -9556,6 +9563,60 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       setSaveMessage(null);
     }, 2200);
   }, [setSaveMessage]);
+
+  useEffect(() => {
+    const handleViewportRequest = () => {
+      if (!currentProject?.id) {
+        return;
+      }
+
+      mergeUpdateRefreshRestoreViewport(currentProject.id, getViewport());
+    };
+
+    window.addEventListener(UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT, handleViewportRequest);
+    return () => {
+      window.removeEventListener(UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT, handleViewportRequest);
+    };
+  }, [currentProject?.id, getViewport]);
+
+  useEffect(() => {
+    if (loading || !currentProject?.id) {
+      return;
+    }
+
+    if (refreshRestoreViewportAppliedRef.current === currentProject.id) {
+      return;
+    }
+
+    const restoreState = readUpdateRefreshRestoreState();
+    if (
+      restoreState?.mode !== 'canvas' ||
+      restoreState.projectId !== currentProject.id
+    ) {
+      return;
+    }
+
+    if (!restoreState.viewport) {
+      clearUpdateRefreshRestoreState();
+      return;
+    }
+
+    refreshRestoreViewportAppliedRef.current = currentProject.id;
+    let secondFrame: number | null = null;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        void setViewport(restoreState.viewport!, { duration: 0 });
+        clearUpdateRefreshRestoreState();
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) {
+        window.cancelAnimationFrame(secondFrame);
+      }
+    };
+  }, [currentProject?.id, loading, setViewport]);
 
   const openImageAnnotationMode = useCallback((data: ImageAnnotationOverlayData) => {
     cropPrevViewportRef.current = getViewport();

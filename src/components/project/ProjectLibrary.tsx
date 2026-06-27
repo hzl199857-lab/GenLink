@@ -39,6 +39,9 @@ interface ProjectLibraryProps {
   onOpenProject: () => void;
   onBackToHero?: () => void;
   onProjectsReady?: (projectCount: number) => void;
+  restoreProjectId?: string;
+  onRestoreProjectOpened?: () => void;
+  onRestoreProjectMissing?: () => void;
 }
 
 function formatDate(value: string): string {
@@ -366,7 +369,14 @@ function CreateProjectDialog({
   );
 }
 
-export function ProjectLibrary({ onOpenProject, onBackToHero, onProjectsReady }: ProjectLibraryProps) {
+export function ProjectLibrary({
+  onOpenProject,
+  onBackToHero,
+  onProjectsReady,
+  restoreProjectId,
+  onRestoreProjectOpened,
+  onRestoreProjectMissing,
+}: ProjectLibraryProps) {
   const router = useRouter();
   const attachProject = useCanvasStore((state) => state.attachProject);
   const listProjects = useCanvasStore((state) => state.listProjects);
@@ -376,7 +386,7 @@ export function ProjectLibrary({ onOpenProject, onBackToHero, onProjectsReady }:
   const duplicateProject = useCanvasStore((state) => state.duplicateProject);
 
   const [projects, setProjects] = useState<ProjectHandleRecord[]>([]);
-  const [, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menuProjectId, setMenuProjectId] = useState<string | null>(null);
@@ -388,6 +398,7 @@ export function ProjectLibrary({ onOpenProject, onBackToHero, onProjectsReady }:
     parentHandle: null,
     parentDirectoryLabel: '',
   });
+  const restoreProjectAttemptRef = useRef<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeMenuTimeoutRef = useRef<number | null>(null);
   const thumbnailUrlsRef = useRef<string[]>([]);
@@ -620,6 +631,49 @@ export function ProjectLibrary({ onOpenProject, onBackToHero, onProjectsReady }:
       setMenuProjectId(null);
     }
   };
+
+  useEffect(() => {
+    if (!restoreProjectId || loading || busy) {
+      return;
+    }
+
+    if (restoreProjectAttemptRef.current === restoreProjectId) {
+      return;
+    }
+
+    const project = projects.find((candidate) => candidate.id === restoreProjectId);
+    if (!project) {
+      restoreProjectAttemptRef.current = restoreProjectId;
+      onRestoreProjectMissing?.();
+      return;
+    }
+
+    restoreProjectAttemptRef.current = restoreProjectId;
+    void (async () => {
+      setBusy(true);
+      setError(null);
+
+      try {
+        await loadProject(project);
+        onRestoreProjectOpened?.();
+        onOpenProject();
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : '打开项目失败');
+        onRestoreProjectMissing?.();
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [
+    busy,
+    loadProject,
+    loading,
+    onOpenProject,
+    onRestoreProjectMissing,
+    onRestoreProjectOpened,
+    projects,
+    restoreProjectId,
+  ]);
 
   const handleSignOut = async () => {
     await authClient.signOut();
