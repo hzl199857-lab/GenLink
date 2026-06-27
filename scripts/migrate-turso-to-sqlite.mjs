@@ -18,7 +18,7 @@ const target = createClient({
   url: `file:${targetPath}`,
 });
 
-const tables = [
+const defaultTables = [
   "Project",
   "CanvasNode",
   "CanvasEdge",
@@ -29,6 +29,9 @@ const tables = [
   "Account",
   "Verification",
 ];
+const tables = process.env.MIGRATION_TABLES
+  ? process.env.MIGRATION_TABLES.split(",").map((table) => table.trim()).filter(Boolean)
+  : defaultTables;
 
 function quoteIdent(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
@@ -66,7 +69,9 @@ async function clearTargetTables() {
       await target.execute(`DELETE FROM ${quoteIdent(table)}`);
     }
   }
-  await target.execute("DELETE FROM sqlite_sequence WHERE name IN (" + tables.map(() => "?").join(",") + ")", tables).catch(() => {});
+  if (tables.length > 0) {
+    await target.execute("DELETE FROM sqlite_sequence WHERE name IN (" + tables.map(() => "?").join(",") + ")", tables).catch(() => {});
+  }
   await target.execute("PRAGMA foreign_keys = ON");
 }
 
