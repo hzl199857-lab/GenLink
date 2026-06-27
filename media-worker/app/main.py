@@ -407,33 +407,167 @@ def cut_video(source: Path, target: Path, start: float, end: float, fps: int | N
     run_cmd(args, timeout=600)
 
 
+def smart_clip_profile(options: SmartClipOptions) -> dict[str, float]:
+    return {
+        "stable": {
+            "content_threshold": 30.0,
+            "ffmpeg_scene_threshold": 0.34,
+            "min_scene_sec": 1.2,
+            "min_output_sec": 1.5,
+        },
+        "balanced": {
+            "content_threshold": 26.0,
+            "ffmpeg_scene_threshold": 0.28,
+            "min_scene_sec": 0.9,
+            "min_output_sec": 1.2,
+        },
+        "sensitive": {
+            "content_threshold": 22.0,
+            "ffmpeg_scene_threshold": 0.22,
+            "min_scene_sec": 0.7,
+            "min_output_sec": 1.0,
+        },
+    }[options.mode]
+
+
+def normalize_ranges(ranges: list[tuple[float, float]], duration: float) -> list[tuple[float, float]]:
+    normalized = sorted(
+        (max(0.0, start), min(duration, end))
+        for start, end in ranges
+        if math.isfinite(start) and math.isfinite(end)
+    )
+    normalized = [(start, end) for start, end in normalized if end - start >= 0.2]
+
+    merged: list[tuple[float, float]] = []
+    for start, end in normalized:
+        if not merged or start > merged[-1][1] + 0.08:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def merge_short_ranges(ranges: list[tuple[float, float]], min_duration: float) -> list[tuple[float, float]]:
+    merged = list(ranges)
+
+    while len(merged) > 1:
+        short_indexes = [
+            index
+            for index, (start, end) in enumerate(merged)
+            if end - start < min_duration
+        ]
+        if not short_indexes:
+            break
+
+        index = min(short_indexes, key=lambda item: merged[item][1] - merged[item][0])
+        if index == 0:
+            merged[1] = (merged[0][0], merged[1][1])
+            merged.pop(0)
+        elif index == len(merged) - 1:
+            merged[index - 1] = (merged[index - 1][0], merged[index][1])
+            merged.pop(index)
+        else:
+            previous_duration = merged[index - 1][1] - merged[index - 1][0]
+            next_duration = merged[index + 1][1] - merged[index + 1][0]
+            if previous_duration <= next_duration:
+                merged[index - 1] = (merged[index - 1][0], merged[index][1])
+                merged.pop(index)
+            else:
+                merged[index + 1] = (merged[index][0], merged[index + 1][1])
+                merged.pop(index)
+
+    return merged
+
+
+def post_process_scene_ranges(
+    ranges: list[tuple[float, float]],
+    duration: float,
+    options: SmartClipOptions,
+) -> list[tuple[float, float]]:
+    profile = smart_clip_profile(options)
+    processed = normalize_ranges(ranges, duration)
+    processed = merge_short_ranges(processed, profile["min_output_sec"])
+
+    if len(processed) > options.maxSegments:
+        processed = merge_to_limit(processed, options.maxSegments)
+        processed = merge_short_ranges(processed, profile["min_output_sec"])
+
+    return processed
+
+
+def ranges_from_cut_points(duration: float, cut_points: list[float]) -> list[tuple[float, float]]:
+    points = [0.0]
+    for point in sorted(set(round(value, 3) for value in cut_points)):
+        if 0.3 <= point <= duration - 0.3 and point - points[-1] >= 0.3:
+            points.append(point)
+    points.append(duration)
+    return [(points[index], points[index + 1]) for index in range(len(points) - 1)]
+
+
+def ffmpeg_scene_ranges(source: Path, duration: float, options: SmartClipOptions) -> list[tuple[float, float]]:
+    threshold = smart_clip_profile(options)["ffmpeg_scene_threshold"]
+    completed = subprocess.run(
+        [
+            ffmpeg_path(),
+            "-hide_banner",
+            "-i",
+            str(source),
+            "-vf",
+            f"select='gt(scene,{threshold})',showinfo",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if completed.returncode != 0:
+        return []
+
+    output = f"{completed.stderr}\n{completed.stdout}"
+    cut_points = [
+        float(match.group(1))
+        for match in re.finditer(r"pts_time:([0-9]+(?:\.[0-9]+)?)", output)
+    ]
+    return ranges_from_cut_points(duration, cut_points)
+
+
 def detect_scene_ranges(source: Path, duration: float, options: SmartClipOptions) -> list[tuple[float, float]]:
+    profile = smart_clip_profile(options)
+    ranges: list[tuple[float, float]] = []
+
     if not ContentDetector or not SceneManager or not open_video:
-        return fallback_ranges(duration, options.maxSegments)
+        ranges = []
+    else:
+        min_scene_len = max(1, round(profile["min_scene_sec"] * options.fps))
 
-    profiles = {
-        "stable": {"threshold": 27.0, "min_scene_sec": 1.0},
-        "balanced": {"threshold": 23.0, "min_scene_sec": 0.6},
-        "sensitive": {"threshold": 18.0, "min_scene_sec": 0.25},
-    }
-    profile = profiles[options.mode]
-    min_scene_len = max(1, round(profile["min_scene_sec"] * options.fps))
+        video = open_video(str(source))
+        manager = SceneManager()
+        manager.add_detector(ContentDetector(threshold=profile["content_threshold"], min_scene_len=min_scene_len))
+        manager.detect_scenes(video=video)
+        scenes = manager.get_scene_list()
+        ranges = [(max(0.0, s.get_seconds()), min(duration, e.get_seconds())) for s, e in scenes]
 
-    video = open_video(str(source))
-    manager = SceneManager()
-    manager.add_detector(ContentDetector(threshold=profile["threshold"], min_scene_len=min_scene_len))
-    manager.detect_scenes(video=video)
-    scenes = manager.get_scene_list()
-    ranges = [(max(0.0, s.get_seconds()), min(duration, e.get_seconds())) for s, e in scenes]
-    ranges = [(s, e) for s, e in ranges if e - s >= 0.2]
+    processed = post_process_scene_ranges(ranges, duration, options)
+    if len(processed) >= 2:
+        return processed
 
-    if len(ranges) < 2:
-        return fallback_ranges(duration, options.maxSegments)
-    return merge_to_limit(ranges, options.maxSegments)
+    processed = post_process_scene_ranges(ffmpeg_scene_ranges(source, duration, options), duration, options)
+    if len(processed) >= 2:
+        return processed
+
+    return fallback_ranges(duration, options.maxSegments)
 
 
 def fallback_ranges(duration: float, max_segments: int) -> list[tuple[float, float]]:
-    count = max(2, min(max_segments, round(duration / 3) or 2))
+    if duration <= 0.2:
+        return []
+    if duration <= 30:
+        return [(0.0, duration)]
+
+    count = max(2, min(max_segments, round(duration / 10) or 2))
     step = duration / count
     return [(i * step, duration if i == count - 1 else (i + 1) * step) for i in range(count)]
 
