@@ -85,12 +85,12 @@ export function TextNodeFloatingToolbar({
           <button
             type="button"
             onClick={() => onSetHeading?.(0)}
-            aria-label="Body"
+            aria-label="正文"
             className="flex h-9 w-9 items-center justify-center rounded-gl-sm text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
           >
             <Pilcrow size={15} />
           </button>
-          <Tooltip label="Body" side="top" />
+          <Tooltip label="正文" side="top" />
         </div>
 
         <div className="mx-1 h-5 w-px bg-gl-stroke-soft" />
@@ -99,7 +99,7 @@ export function TextNodeFloatingToolbar({
           <button
             type="button"
             onClick={onCopyContent}
-            aria-label="Copy content"
+            aria-label="复制内容"
             className="flex h-9 w-9 items-center justify-center rounded-gl-sm text-gl-text-secondary transition-colors hover:bg-gl-panel-hover hover:text-gl-text-primary"
           >
             <Copy size={15} />
@@ -126,7 +126,7 @@ function TextBackgroundColorButton({
     <div className="group/tooltip relative">
       <button
         type="button"
-        aria-label="Background color"
+        aria-label="背景色"
         aria-expanded={open}
         className="flex h-9 w-9 items-center justify-center rounded-gl-pill transition-colors hover:bg-gl-panel-hover"
         onPointerDown={(event) => {
@@ -144,12 +144,12 @@ function TextBackgroundColorButton({
           style={{ backgroundColor: swatchColor }}
         />
       </button>
-      <Tooltip label="Background color" side="top" />
+      <Tooltip label="背景色" side="top" />
 
       {open ? (
         <div
           role="menu"
-          aria-label="Text background color"
+          aria-label="文字背景色"
           className="absolute bottom-[calc(100%+8px)] left-1/2 z-30 grid -translate-x-1/2 place-items-center gap-3 rounded-[18px] border border-white/10 bg-gl-panel/95 px-3 py-3 shadow-gl-toolbar backdrop-blur-md"
           style={{
             width: 156,
@@ -162,7 +162,7 @@ function TextBackgroundColorButton({
           onClick={(event) => event.stopPropagation()}
         >
           <TextBackgroundColorMenuItem
-            label="Default"
+            label="默认"
             color="#ffffff"
             selected={!activeColor}
             onClick={() => {

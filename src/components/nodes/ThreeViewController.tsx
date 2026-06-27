@@ -209,7 +209,7 @@ export function ThreeViewController({
         <button
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/8"
-          aria-label="Close"
+          aria-label="关闭"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={onClose}
         >
@@ -268,7 +268,7 @@ export function ThreeViewController({
                 <button
                   type="button"
                   className="absolute bottom-6 right-6 flex h-5 w-5 items-center justify-center rounded-full bg-white text-black shadow-sm transition-colors hover:bg-gray-200"
-                  aria-label="Generate"
+                  aria-label="生成"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={onGenerate}
                 >

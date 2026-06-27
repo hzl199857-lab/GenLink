@@ -472,13 +472,13 @@ function renderAgentTrace(trace?: CanvasAgentTraceItem[]) {
 
   return (
     <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
-      <div className="mb-2 text-xs font-semibold text-white/78">Agent trace</div>
+      <div className="mb-2 text-xs font-semibold text-white/78">Agent 过程</div>
       <div className="space-y-2">
         {trace.map((item) => {
           if (item.type === 'thinking') {
             return (
               <div key={item.id} className="grid grid-cols-[72px_1fr] gap-2 text-[11px] leading-5">
-                <div className="text-[#19d3ff]">thinking</div>
+                <div className="text-[#19d3ff]">思考</div>
                 <div className="text-white/56">{item.content}</div>
               </div>
             );
@@ -487,7 +487,7 @@ function renderAgentTrace(trace?: CanvasAgentTraceItem[]) {
           if (item.type === 'tool_call') {
             return (
               <div key={item.id} className="grid grid-cols-[72px_1fr] gap-2 text-[11px] leading-5">
-                <div className="text-[#c9ff1a]">tool call</div>
+                <div className="text-[#c9ff1a]">调用工具</div>
                 <div className="min-w-0 text-white/56">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-white/72">{getTraceToolLabel(item.call.name)}</span>
@@ -510,7 +510,7 @@ function renderAgentTrace(trace?: CanvasAgentTraceItem[]) {
 
             return (
               <div key={item.id} className="grid grid-cols-[72px_1fr] gap-2 text-[11px] leading-5">
-                <div className={item.result.ok ? 'text-[#7dffb2]' : 'text-[#ffb4a8]'}>result</div>
+                <div className={item.result.ok ? 'text-[#7dffb2]' : 'text-[#ffb4a8]'}>结果</div>
                 <div className="min-w-0 text-white/56">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-white/72">{getTraceToolLabel(item.result.toolName)}</span>
@@ -529,7 +529,7 @@ function renderAgentTrace(trace?: CanvasAgentTraceItem[]) {
 
           return (
             <div key={item.id} className="grid grid-cols-[72px_1fr] gap-2 text-[11px] leading-5">
-              <div className="text-white/38">final</div>
+              <div className="text-white/38">最终回复</div>
               <div className="text-white/56">{item.content}</div>
             </div>
           );
@@ -1097,12 +1097,12 @@ async function requestAgentEcomPlannerPromptMarkdown(params: {
         apiKey: textRunConfig.apiKey,
       }),
     },
-    '套图企划生图 Prompt 生成失败',
+    '套图企划生图提示词生成失败',
   );
 
   if (response.headers.get('content-type')?.includes('application/x-ndjson')) {
     if (!response.ok || !response.body) {
-      throw new Error('套图企划生图 Prompt 生成失败');
+      throw new Error('套图企划生图提示词生成失败');
     }
 
     const reader = response.body.getReader();
@@ -1146,7 +1146,7 @@ async function requestAgentEcomPlannerPromptMarkdown(params: {
     handleStreamLine(buffer);
 
     if (!donePrompt) {
-      throw new Error('套图企划生图 Prompt 流式生成未返回最终结果');
+      throw new Error('套图企划生图提示词生成未返回最终结果');
     }
 
     return donePrompt;
@@ -1154,11 +1154,11 @@ async function requestAgentEcomPlannerPromptMarkdown(params: {
 
   const json = await readJsonResponse<AgentEcomPlannerPromptMarkdownApiResponse>(
     response,
-    '套图企划生图 Prompt 生成失败',
+    '套图企划生图提示词生成失败',
   );
 
   if (!response.ok || !json.ok) {
-    throw new Error(json.ok ? '套图企划生图 Prompt 生成失败' : json.error);
+    throw new Error(json.ok ? '套图企划生图提示词生成失败' : json.error);
   }
 
   return json.prompt;
@@ -2371,7 +2371,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
             return {
               ...message,
-              summary: `已生成 ${nextOptions.length}/3 套方案。${nextOptions.length < 3 ? '正在继续生成下一套。' : '请选择一套继续生成生图 Prompt。'}`,
+              summary: `已生成 ${nextOptions.length}/3 套方案。${nextOptions.length < 3 ? '正在继续生成下一套。' : '请选择一套继续生成生图提示词。'}`,
               productName: planner.productName || message.productName,
               platform: planner.platform || message.platform,
               taskType: planner.taskType || message.taskType,
@@ -2413,7 +2413,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         return {
           ...message,
           summary: hasOptions
-            ? `已生成 ${message.options.length}/3 套方案。${optionErrors.length ? '部分方案失败，可先选择已生成方案继续。' : '请选择一套继续生成生图 Prompt。'}`
+            ? `已生成 ${message.options.length}/3 套方案。${optionErrors.length ? '部分方案失败，可先选择已生成方案继续。' : '请选择一套继续生成生图提示词。'}`
             : '套图企划生成失败，请稍后重试。',
           status: hasOptions ? 'waiting' as const : 'error' as const,
           errorMessage: optionErrors.length ? optionErrors.join('\n') : undefined,
@@ -2931,7 +2931,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             ...message,
             status: 'submitted' as const,
             selectedOptionId: optionId,
-            summary: `已选择方案 ${optionId}，正在按 skill 第 5 步分段生成生图 Prompt。`,
+            summary: `已选择方案 ${optionId}，正在按规则第 5 步分段生成生图提示词。`,
             promptCurrentStatus: '准备读取规则并解析图位。',
             promptProgressCurrent: 0,
             promptProgressTotal: undefined,
@@ -2946,7 +2946,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           ? {
               ...message,
               status: 'error' as const,
-              errorMessage: `方案 ${optionId} 缺少完整 JSON，无法按 skill 第 5 步生成 Markdown prompt，请重新生成方案。`,
+              errorMessage: `方案 ${optionId} 缺少完整 JSON，无法按规则第 5 步生成 Markdown 提示词，请重新生成方案。`,
             }
           : message
       )));
@@ -2987,8 +2987,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               ? {
                   ...message,
                   status: 'completed' as const,
-                  summary: `已选择方案 ${optionId}，已按 skill 第 5 步生成 ${promptResult.promptBlockCount} 个图位 prompt。`,
-                  promptCurrentStatus: `全部完成，已生成 ${promptResult.promptBlockCount} 个图位 prompt。`,
+                  summary: `已选择方案 ${optionId}，已按规则第 5 步生成 ${promptResult.promptBlockCount} 个图位提示词。`,
+                  promptCurrentStatus: `全部完成，已生成 ${promptResult.promptBlockCount} 个图位提示词。`,
                   promptProgressCurrent: promptResult.promptBlockCount,
                   promptProgressTotal: promptResult.promptBlockCount,
                 }
@@ -3018,8 +3018,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             ? {
                 ...message,
                 status: 'error' as const,
-                promptCurrentStatus: error instanceof Error ? error.message : '套图企划生图 Prompt 生成失败',
-                errorMessage: error instanceof Error ? error.message : '套图企划生图 Prompt 生成失败',
+                promptCurrentStatus: error instanceof Error ? error.message : '套图企划生图提示词生成失败',
+                errorMessage: error instanceof Error ? error.message : '套图企划生图提示词生成失败',
               }
             : message
         )));
@@ -3096,7 +3096,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
             return {
               ...message,
-              summary: `已重新生成 ${nextOptions.length}/3 套方案。${nextOptions.length < 3 ? '正在继续生成下一套。' : '请选择一套继续生成生图 Prompt。'}`,
+              summary: `已重新生成 ${nextOptions.length}/3 套方案。${nextOptions.length < 3 ? '正在继续生成下一套。' : '请选择一套继续生成生图提示词。'}`,
               productName: planner.productName || message.productName,
               platform: planner.platform || message.platform,
               taskType: planner.taskType || message.taskType,
@@ -3136,7 +3136,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         return {
           ...message,
           summary: hasOptions
-            ? `已重新生成 ${message.options.length}/3 套方案。${optionErrors.length ? '部分方案失败，可先选择已生成方案继续。' : '请选择一套继续生成生图 Prompt。'}`
+            ? `已重新生成 ${message.options.length}/3 套方案。${optionErrors.length ? '部分方案失败，可先选择已生成方案继续。' : '请选择一套继续生成生图提示词。'}`
             : '套图企划生成失败，请稍后重试。',
           status: hasOptions ? 'waiting' as const : 'error' as const,
           errorMessage: optionErrors.length ? optionErrors.join('\n') : undefined,
@@ -4297,7 +4297,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                                   className="h-8 rounded-lg bg-[#19d3ff] px-3 text-xs font-semibold text-[#061019] transition hover:bg-[#6ee7ff] disabled:cursor-not-allowed disabled:opacity-45"
                                   onClick={() => handleSelectEcomPlannerOption(message.id, option.id)}
                                 >
-                                  选这套生成生图 Prompt
+                                  选这套生成生图提示词
                                 </button>
                               </div>
                             </div>
@@ -4367,7 +4367,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 text-[13px] font-semibold text-white/62">
                             <Sparkles size={15} />
-                            套图企划 · 生图 Prompt
+                            套图企划 · 生图提示词
                           </div>
                           <div className="mt-3 text-[16px] font-semibold leading-6 text-white">
                             方案 {message.optionId} · {message.productName} 图位编排
@@ -4401,12 +4401,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                             </div>
                             <div className="overflow-hidden rounded-xl bg-[#ebebec] text-[#16181d]">
                               <div className="flex h-8 items-center justify-between border-b border-black/[0.06] px-3 text-[11px] text-black/48">
-                                <span>text</span>
+                                <span>文本</span>
                                 <button
                                   type="button"
                                   className="inline-flex h-6 w-6 items-center justify-center rounded-md text-black/42 transition hover:bg-black/[0.06] hover:text-black/72"
-                                  title="复制 prompt"
-                                  aria-label={`复制 ${block.heading} prompt`}
+                                  title="复制提示词"
+                                  aria-label={`复制 ${block.heading} 提示词`}
                                   onClick={() => {
                                     void navigator.clipboard?.writeText(block.prompt);
                                   }}
@@ -4424,7 +4424,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
                       {message.errorMessage ? (
                         <div className="mt-3 text-xs leading-5 text-[#ffb4a8]">
-                          {formatAgentChatErrorText(message.errorMessage, '套图企划生图 Prompt 生成失败，请稍后重试。')}
+                          {formatAgentChatErrorText(message.errorMessage, '套图企划生图提示词生成失败，请稍后重试。')}
                         </div>
                       ) : null}
 
@@ -4770,7 +4770,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm font-semibold text-[#19d3ff]">
                   <span className="agent-busy-shimmer">
-                    {activeEcomPlannerPromptStatus ? '正在生成生图 Prompt' : busyMode === 'mcp' ? '正在准备画布节点' : '正在思考中...'}
+                    {activeEcomPlannerPromptStatus ? '正在生成生图提示词' : busyMode === 'mcp' ? '正在准备画布节点' : '正在思考中...'}
                   </span>
                   <span className="text-[11px] font-normal text-white/38">请稍等</span>
                 </div>
@@ -5022,8 +5022,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
           {showAgentSuggestions && !planfPresetOpen ? (
             <div className="mb-4">
-              <div className="mb-2 text-xl font-semibold">HI，我是你的 Agent 助手</div>
-              <div className="text-sm text-white/55">告诉 Agent 你希望它在画布上完成什么。</div>
+              <div className="mb-2 text-xl font-semibold">你好，我是你的 Agent 助手</div>
+              <div className="text-sm text-white/55">告诉我你希望在画布上完成什么。</div>
               <div className="mt-4 grid gap-2">
                 {['创建一张可爱小狗的图片', '分析画面风格', '基于上传图片生成变体'].map((label) => (
                   <button
@@ -5161,7 +5161,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             <PromptMentionInput
               value={draft}
               connectedImages={mentionImages}
-              placeholder="描述你希望 Agent 在画布上完成什么，可以用 @ 引用上传图片。"
+              placeholder="描述你希望在画布上完成什么，可以用 @ 引用上传图片。"
               className="prompt-mention-input agent-mention-input scrollbar-hide min-h-[64px] max-h-32 flex-1 overflow-y-auto px-1 py-1 text-sm leading-6 text-white outline-none"
               mentionMenuVariant="agent"
               onChange={setDraft}

@@ -138,7 +138,7 @@ function ProjectCard({
 
   return (
     <article
-      className={`relative ${projectLibraryCardClassName}`}
+      className={`relative ${menuOpen ? 'z-40' : 'z-0'} ${projectLibraryCardClassName}`}
       style={{
         ...projectLibraryCardStyle,
         ...projectLibraryCardSurfaceStyle,
@@ -317,7 +317,7 @@ function CreateProjectDialog({
               }
             }}
             className="h-10 w-full rounded-sm border border-[#333333] bg-[#050505] px-3.5 text-[13px] text-white outline-none transition-colors placeholder:text-[#555555] focus:border-[#ccff00]"
-            placeholder="my-project"
+            placeholder="我的项目"
           />
         </div>
 

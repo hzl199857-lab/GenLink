@@ -697,7 +697,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                     {onRemoveReference ? (
                       <button
                         type="button"
-                        aria-label="Remove reference image"
+                        aria-label="移除参考图"
                         className="absolute right-0 top-0 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/35 bg-[#1b1d21] text-white opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.35)] transition hover:bg-white hover:text-[#1b1d21] focus-visible:opacity-100 group-hover/reference-thumb:opacity-100"
                         onPointerEnter={referenceImagePreview.hidePreview}
                         onPointerDown={(event) => {

@@ -670,7 +670,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center px-8 text-center text-[13px] leading-5 text-gl-error">
-                        {result.errorMessage || 'Image generation failed'}
+                        {result.errorMessage || '图片生成失败'}
                       </div>
                     )}
                   </button>

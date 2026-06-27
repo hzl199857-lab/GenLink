@@ -3006,7 +3006,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
           })
           .catch((error) => {
             console.error('create panorama 360 node failed', error);
-            const message = error instanceof Error ? error.message : '360 panorama generation failed';
+            const message = error instanceof Error ? error.message : '360 全景生成失败';
             useCanvasStore.getState().setSaveMessage(message);
             window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
           });
@@ -3867,7 +3867,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
             <div className="flex w-full items-center justify-center gap-1">
               <button
                 type="button"
-                aria-label="Cancel clip"
+                aria-label="取消裁剪"
                 disabled={clipBusy}
                 onClick={() => setClipOpen(false)}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#1b1d21]/95 text-gl-text-secondary shadow-[0_10px_24px_rgba(0,0,0,0.34)] transition hover:text-white disabled:opacity-50"
@@ -3917,7 +3917,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
 
               <button
                 type="button"
-                aria-label="Confirm clip"
+                aria-label="确认裁剪"
                 disabled={clipBusy || !(clipEnd > clipStart)}
                 onClick={() => void runCut()}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-[0_10px_24px_rgba(255,255,255,0.2)] transition hover:bg-white/90 disabled:opacity-50"
@@ -3941,7 +3941,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
                 </button>
                 <button
                   type="button"
-                  aria-label="Extract frame"
+                  aria-label="提取帧"
                   disabled={clipBusy}
                   onClick={() => void extractFrame()}
                   className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-[#24262b]/95 p-0 text-white shadow-[0_4px_10px_rgba(0,0,0,.28)] transition hover:bg-white/10 disabled:opacity-50"
@@ -5912,13 +5912,13 @@ function GroupFrame({
                 onChange={onUpdateBackgroundColor}
               />
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Group}>Group</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Group}>打组</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Play}>Run</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Play}>运行</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>Ungroup</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Ungroup} onClick={onDelete}>取消组</MultiNodeSelectionToolbarButton>
               <div className="mx-1 h-5 w-px bg-white/10" />
-              <MultiNodeSelectionToolbarButton icon={Download} onClick={onDownload}>Download</MultiNodeSelectionToolbarButton>
+              <MultiNodeSelectionToolbarButton icon={Download} onClick={onDownload}>下载</MultiNodeSelectionToolbarButton>
             </div>
           </GroupExecutionMenuContext.Provider>
         </GroupLayoutMenuContext.Provider>
@@ -6049,7 +6049,7 @@ function GroupBackgroundColorButton({
     <div className="relative mr-1">
       <button
         type="button"
-        aria-label="Select group background"
+        aria-label="选择组背景色"
         aria-expanded={open}
         className="nodrag nopan flex h-10 w-10 items-center justify-center rounded-gl-pill transition-colors hover:bg-gl-panel-hover"
         onPointerDown={(event) => {
@@ -6071,7 +6071,7 @@ function GroupBackgroundColorButton({
       {open ? (
         <div
           role="menu"
-          aria-label="Group background"
+          aria-label="组背景色"
           className="absolute bottom-[calc(100%+8px)] left-1/2 z-30 grid -translate-x-1/2 place-items-center gap-3 rounded-[18px] border border-white/10 bg-gl-panel/95 px-3 py-3 shadow-gl-toolbar backdrop-blur-md"
           style={{
             width: 156,
@@ -6084,7 +6084,7 @@ function GroupBackgroundColorButton({
           onClick={(event) => event.stopPropagation()}
         >
           <GroupBackgroundColorMenuItem
-            label="Default"
+            label="默认"
             color="#ffffff"
             selected={!activeColor}
             onClick={() => {
@@ -6437,11 +6437,11 @@ function MultiNodeSelectionOverlay({
         <MultiNodeSelectionToolbarButton icon={Group} compact />
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={FolderPlus}>
-          Add to group
+          加入组
         </MultiNodeSelectionToolbarButton>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Copy}>
-          Duplicate
+          复制
         </MultiNodeSelectionToolbarButton>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <MultiNodeSelectionToolbarButton icon={Plus} compact />
@@ -6450,7 +6450,7 @@ function MultiNodeSelectionOverlay({
           icon={Group}
           onClick={() => onGroup(selectedNodes.map((n) => n.id))}
         >
-          Group
+          打组
         </MultiNodeSelectionToolbarButton>
         <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
       </div>
@@ -6682,7 +6682,7 @@ function CanvasViewportControls({
               void zoomTo(Number(event.target.value), { duration: 120 });
             }}
             className="canvas-zoom-slider"
-            aria-label="Empty canvas"
+            aria-label="空画布"
           />
         </div>
 
@@ -7561,7 +7561,7 @@ function CropOverlay({
           <button
             type="button"
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 backdrop-blur-md transition-colors hover:bg-white/16 hover:text-white"
-            aria-label="Close crop"
+            aria-label="关闭裁剪"
             onClick={onClose}
           >
             <X size={18} strokeWidth={2.2} />
@@ -7583,7 +7583,7 @@ function CropOverlay({
               }}
             >
               <CropIcon size={14} strokeWidth={2} />
-              <span>Aspect</span>
+              <span>比例</span>
             </button>
             {aspectMenuOpen ? (
               <div className="absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 z-10 w-[148px] rounded-[14px] border border-white/10 bg-[#17181B]/95 p-1.5 shadow-[0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur-xl">
@@ -7610,14 +7610,14 @@ function CropOverlay({
                     ].join(' ')}
                     onClick={() => { setCustomMode(true); setAspectRatio(null); }}
                   >
-                    Custom
+                    自定义
                   </button>
                 ) : (
                   <div className="flex items-center gap-1.5 px-2 py-2">
                     <input
                       type="number"
                       min="1"
-                      placeholder="Width"
+                      placeholder="宽"
                       value={customW}
                       className="w-0 flex-1 rounded-[8px] bg-white/10 px-2 py-1.5 text-center text-[13px] text-white outline-none placeholder:text-white/30 focus:bg-white/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       onChange={(e) => {
@@ -7637,7 +7637,7 @@ function CropOverlay({
                     <input
                       type="number"
                       min="1"
-                      placeholder="Height"
+                      placeholder="高"
                       value={customH}
                       className="w-0 flex-1 rounded-[8px] bg-white/10 px-2 py-1.5 text-center text-[13px] text-white outline-none placeholder:text-white/30 focus:bg-white/15 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       onChange={(e) => {
@@ -7665,7 +7665,7 @@ function CropOverlay({
             onClick={() => onConfirm(data.nodeId, cropRect)}
           >
             <Check size={14} strokeWidth={2.5} />
-            <span>Apply</span>
+            <span>应用</span>
           </button>
         </div>
       </div>
@@ -8904,14 +8904,14 @@ function ImageLightbox({
       className="fixed inset-0 z-[90] flex items-center justify-center bg-black/82 p-8 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
-      aria-label="Image preview"
+      aria-label="图片预览"
       onMouseDown={onClose}
     >
       <div className="group/tooltip absolute right-5 top-5">
         <button
           type="button"
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/16 hover:text-white"
-          aria-label="Close crop"
+          aria-label="关闭裁剪"
           onMouseDown={(event) => event.stopPropagation()}
           onClick={onClose}
         >
@@ -9141,7 +9141,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
       {!open ? (
         <button
           type="button"
-          aria-label="Close crop"
+          aria-label="关闭裁剪"
           className="nodrag nopan fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center text-[#d8dadd] transition hover:scale-105 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
           onPointerDown={(event) => {
             event.stopPropagation();
@@ -10127,7 +10127,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             setEdgeDeleteButtonPosition(null);
           })
           .catch((error) => {
-            setSaveMessage(error instanceof Error ? error.message : '360 panorama generation failed');
+            setSaveMessage(error instanceof Error ? error.message : '360 全景生成失败');
             window.setTimeout(() => setSaveMessage(null), 2200);
           });
         return;
@@ -10137,14 +10137,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         void downloadImageGenerationResult(data)
           .then((status) => {
             if (status === 'saved') {
-              setSaveMessage('Image downloaded');
+              setSaveMessage('图片已下载');
               window.setTimeout(() => {
                 setSaveMessage(null);
               }, 2200);
             }
           })
           .catch((error) => {
-            setSaveMessage(error instanceof Error ? error.message : 'Download failed');
+            setSaveMessage(error instanceof Error ? error.message : '下载失败');
             window.setTimeout(() => {
               setSaveMessage(null);
             }, 2200);
@@ -10283,7 +10283,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             setEdgeDeleteButtonPosition(null);
           })
           .catch((error) => {
-            setSaveMessage(error instanceof Error ? error.message : '360 panorama generation failed');
+            setSaveMessage(error instanceof Error ? error.message : '360 全景生成失败');
             window.setTimeout(() => setSaveMessage(null), 2200);
           });
         return;
@@ -10698,7 +10698,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
 
     if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
-      showProjectMessage('This node cannot be used as a reference');
+      showProjectMessage('这个节点不能作为参考');
       return;
     }
 
@@ -10706,12 +10706,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const attachment = createAgentAttachmentFromCanvasImageNode(sourceNode);
 
       if (!attachment) {
-        showProjectMessage('This node cannot be used as a reference');
+        showProjectMessage('这个节点不能作为参考');
         return;
       }
 
       const result = quickReferenceConnect.onSelect(attachment);
-      showProjectMessage(result === 'duplicate' ? 'Reference image already added' : 'Added as Agent reference image');
+      showProjectMessage(result === 'duplicate' ? '参考图已添加' : '已添加为 Agent 参考图');
       setQuickReferenceConnect(null);
       clearEdgeSelection();
       setSelectedGroupId(null);
@@ -10725,14 +10725,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
 
     if (alreadyConnected) {
-      showProjectMessage('Already connected');
+      showProjectMessage('已经连接为参考');
     } else {
       addEdgeStore({
         id: crypto.randomUUID(),
         source: sourceNode.id,
         target: quickReferenceConnect.targetNodeId,
       });
-      showProjectMessage('Connected as reference');
+      showProjectMessage('已连接为参考');
     }
 
     setQuickReferenceConnect(null);
@@ -10773,7 +10773,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const sourceNode = storeNodes.find((candidate) => candidate.id === nodeId);
 
     if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
-      showProjectMessage('This node cannot be used as a reference');
+      showProjectMessage('这个节点不能作为参考');
       return;
     }
 
@@ -10782,14 +10782,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
 
     if (alreadyConnected) {
-      showProjectMessage('Already connected');
+      showProjectMessage('已经连接为参考');
     } else {
       addEdgeStore({
         id: crypto.randomUUID(),
         source: sourceNode.id,
         target: quickReferenceConnect.targetNodeId,
       });
-      showProjectMessage('Connected as reference');
+      showProjectMessage('已连接为参考');
     }
 
     setQuickReferenceConnect(null);
@@ -10823,7 +10823,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const sourceNode = storeNodes.find((candidate) => candidate.id === node.id);
 
       if (!sourceNode || !canNodeProvideQuickReference(sourceNode, quickReferenceConnect)) {
-        showProjectMessage('This node cannot be used as a reference');
+        showProjectMessage('这个节点不能作为参考');
         return;
       }
 
@@ -10832,14 +10832,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       );
 
       if (alreadyConnected) {
-        showProjectMessage('Already connected');
+        showProjectMessage('已经连接为参考');
       } else {
         addEdgeStore({
           id: crypto.randomUUID(),
           source: sourceNode.id,
           target: quickReferenceConnect.targetNodeId,
         });
-        showProjectMessage('Connected as reference');
+        showProjectMessage('已连接为参考');
       }
 
       setQuickReferenceConnect(null);
@@ -12776,7 +12776,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x);
 
     if (runnableNodes.length === 0) {
-      showProjectMessage('No runnable nodes in group');
+      showProjectMessage('组内没有可运行的节点');
       return;
     }
 
@@ -12794,7 +12794,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const failedCount = results.filter((result) => result.status === 'rejected').length;
 
         if (failedCount > 0) {
-          showProjectMessage(`${failedCount} nodes failed to run`);
+          showProjectMessage(`${failedCount} 个节点运行失败`);
         }
         return;
       }
@@ -12810,7 +12810,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       }
 
       if (failedCount > 0) {
-        showProjectMessage(`${failedCount} nodes failed to run`);
+        showProjectMessage(`${failedCount} 个节点运行失败`);
       }
     })();
   }, [
@@ -12830,20 +12830,20 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const zipItems = getGroupZipItems(group, state.nodes);
 
     if (zipItems.length === 0) {
-      showProjectMessage('No images to download');
+      showProjectMessage('没有可下载的图片');
       return;
     }
 
     const zipFileName = group.name?.trim() || `group-${group.id.slice(0, 8)}`;
-    showProjectMessage('Downloading group images...');
+    showProjectMessage('正在下载组内图片...');
 
     void import('@/lib/image-zip-download')
       .then(({ downloadImagesAsZip }) => downloadImagesAsZip(zipItems, zipFileName))
       .then((count) => {
-        showProjectMessage(`Downloaded ${count} images`);
+        showProjectMessage(`已下载 ${count} 张图片`);
       })
       .catch((error) => {
-        showProjectMessage(error instanceof Error ? error.message : 'Download failed');
+        showProjectMessage(error instanceof Error ? error.message : '下载失败');
       });
   }, [showProjectMessage]);
 
@@ -13526,7 +13526,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       {activeSelectedEdgeId && edgeDeleteButtonPosition ? (
         <button
           type="button"
-          aria-label="Delete selected connection"
+          aria-label="删除选中的连线"
           className="edge-delete-button fixed z-20 flex h-5 w-5 items-center justify-center rounded-full border border-white/35 bg-white text-[#1b1f27] shadow-[0_8px_18px_rgba(255,255,255,0.22)] transition hover:scale-110 hover:bg-white/90"
           style={{
             left: edgeDeleteButtonPosition.x,
