@@ -171,6 +171,7 @@ import {
 } from '../nodes/ImageGenerationNodeToolbar';
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
+import { CanvasContextMenu, type CanvasContextMenuPlatform } from './CanvasContextMenu';
 import { CanvasHeader } from './CanvasHeader';
 import { CanvasAgentPanel } from './CanvasAgentPanel';
 import UniqueLoading from '../ui/grid-loading';
@@ -9206,6 +9207,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const setSaveMessage = useCanvasStore((s) => s.setSaveMessage);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
+  const undoStackLength = useCanvasStore((s) => s.undoStack.length);
+  const redoStackLength = useCanvasStore((s) => s.redoStack.length);
   const attachProject = useCanvasStore((s) => s.attachProject);
   const renameProject = useCanvasStore((s) => s.renameProject);
   const deleteProject = useCanvasStore((s) => s.deleteProject);
@@ -9273,6 +9276,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     y: number;
   } | null>(null);
   const [addMenu, setAddMenu] = useState<{
+    screen: { x: number; y: number };
+    canvas: { x: number; y: number };
+  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
     screen: { x: number; y: number };
     canvas: { x: number; y: number };
   } | null>(null);
@@ -9561,6 +9568,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [apiSettings, setApiSettings] = useState<StoredApiSettings>(() => readStoredApiSettings());
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
+  const contextMenuUploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const referenceUploadNodeIdRef = React.useRef<string | null>(null);
   const textReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const storyboardReferenceUploadNodeIdRef = React.useRef<string | null>(null);
@@ -9568,6 +9576,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const copiedNodesRef = useRef<CanvasNode[]>([]);
   const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
   const pasteCountRef = useRef(0);
+  const [hasCopiedNodes, setHasCopiedNodes] = useState(false);
   const promptBarInteractionRef = useRef(false);
   const pendingConnectionRef = useRef<OnConnectStartParams | null>(null);
   const suppressNextPaneClearRef = useRef(false);
@@ -9591,6 +9600,16 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const { fitView, getViewport, project, setViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const refreshRestoreViewportAppliedRef = useRef<string | null>(null);
+  const contextMenuPlatform = useMemo<CanvasContextMenuPlatform>(() => {
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator.platform.toLowerCase().includes('mac')
+    ) {
+      return 'mac';
+    }
+
+    return 'windows';
+  }, []);
 
   const refreshNodeInternalsAfterRender = useCallback((nodeIds: string[]) => {
     const uniqueNodeIds = Array.from(new Set(nodeIds.filter(Boolean)));
@@ -9615,6 +9634,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       setSaveMessage(null);
     }, 2200);
   }, [setSaveMessage]);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
 
   useEffect(() => {
     const handleViewportRequest = () => {
@@ -11214,6 +11237,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, []);
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
+    if (event.button === 0) {
+      setContextMenu(null);
+    }
+
     if (quickReferenceConnect) {
       if (event.button === 2) {
         event.preventDefault();
@@ -11358,6 +11385,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       selectedNodeIds,
     );
     pasteCountRef.current = 0;
+    setHasCopiedNodes(true);
     return true;
   }, [selectedNodeIds, storeEdges, storeNodes]);
 
@@ -11376,6 +11404,41 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
     setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
+    setHasCopiedNodes(copiedNodesRef.current.length > 0);
+    return true;
+  }, [addNodes, clearEdgeSelection]);
+
+  const handlePasteNodesAtPosition = useCallback((targetPosition: { x: number; y: number }) => {
+    if (copiedNodesRef.current.length === 0) {
+      setHasCopiedNodes(false);
+      return false;
+    }
+
+    pasteCountRef.current += 1;
+
+    const minX = Math.min(...copiedNodesRef.current.map((node) => node.position.x));
+    const minY = Math.min(...copiedNodesRef.current.map((node) => node.position.y));
+    const offset = {
+      x: targetPosition.x - minX,
+      y: targetPosition.y - minY,
+    };
+    const pastedNodes = copiedNodesRef.current.map((node) => {
+      const pastedNode = cloneCanvasNode(node, pasteCountRef.current);
+
+      return {
+        ...pastedNode,
+        position: {
+          x: node.position.x + offset.x,
+          y: node.position.y + offset.y,
+        },
+      };
+    });
+
+    addNodes(pastedNodes);
+    setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
+    setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
+    clearEdgeSelection();
+    setHasCopiedNodes(true);
     return true;
   }, [addNodes, clearEdgeSelection]);
 
@@ -11410,6 +11473,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
     setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
+    setHasCopiedNodes(copiedNodesRef.current.length > 0);
     return true;
   }, [addEdgeStore, addNodes, clearEdgeSelection, storeNodes]);
 
@@ -11697,6 +11761,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     addUploadedImages,
     clearConnectionMenu,
     clearEdgeSelection,
+    closeContextMenu,
     handleCopySelectedNodes,
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
@@ -11717,6 +11782,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       addUploadedImages,
       clearConnectionMenu,
       clearEdgeSelection,
+      closeContextMenu,
       handleCopySelectedNodes,
       handleDeleteSelectedEdge,
       handleDeleteSelectedNodes,
@@ -11735,6 +11801,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     addUploadedImages,
     clearConnectionMenu,
     clearEdgeSelection,
+    closeContextMenu,
     handleCopySelectedNodes,
     handleDeleteSelectedEdge,
     handleDeleteSelectedNodes,
@@ -11753,6 +11820,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const shortcuts = clipboardShortcutRef.current;
+
+      if (event.key === 'Escape') {
+        shortcuts.closeContextMenu();
+      }
 
       if (event.key === 'Escape' && shortcuts.quickReferenceConnect) {
         event.preventDefault();
@@ -12053,6 +12124,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     clientX?: number;
     clientY?: number;
   }) => {
+    setContextMenu(null);
+
     if (quickReferenceConnect) {
       return;
     }
@@ -12101,11 +12174,31 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return;
     }
 
+    setContextMenu(null);
     setAddMenu(null);
     clearConnectionMenu();
     setImageInfoPopover(null);
     setImageLightbox(null);
   }, [clearConnectionMenu, isInteractiveCanvasTarget]);
+
+  const handlePaneContextMenu = useCallback((event: React.MouseEvent) => {
+    if (isNodeInternalTarget(event.target) || isInteractiveCanvasTarget(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const screen = { x: event.clientX, y: event.clientY };
+
+    setContextMenu({
+      screen,
+      canvas: project(screen),
+    });
+    setAddMenu(null);
+    clearConnectionMenu();
+    setImageInfoPopover(null);
+  }, [clearConnectionMenu, isInteractiveCanvasTarget, isNodeInternalTarget, project]);
 
   const onConnect = useCallback((connection: Connection) => {
     clearConnectionMenu();
@@ -12183,6 +12276,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [addEdgeStore, clearEdgeSelection, project]);
 
   const openUploadPicker = useCallback((position?: { x: number; y: number }) => {
+    contextMenuUploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
     textReferenceUploadNodeIdRef.current = null;
     storyboardReferenceUploadNodeIdRef.current = null;
@@ -12201,7 +12295,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
   const handleUploadInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
-    const position = uploadPositionRef.current;
+    const position = contextMenuUploadPositionRef.current ?? uploadPositionRef.current;
     const referenceUploadNodeId = referenceUploadNodeIdRef.current;
     const textReferenceUploadNodeId = textReferenceUploadNodeIdRef.current;
     const storyboardReferenceUploadNodeId = storyboardReferenceUploadNodeIdRef.current;
@@ -12398,6 +12492,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
 
     event.target.value = '';
+    contextMenuUploadPositionRef.current = null;
     uploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
     textReferenceUploadNodeIdRef.current = null;
@@ -12510,8 +12605,69 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         y: screen.y,
       }),
     });
+    closeContextMenu();
     clearConnectionMenu();
-  }, [clearConnectionMenu, project]);
+  }, [clearConnectionMenu, closeContextMenu, project]);
+
+  const handleContextMenuUpload = useCallback(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    contextMenuUploadPositionRef.current = contextMenu.canvas;
+    uploadPositionRef.current = null;
+    referenceUploadNodeIdRef.current = null;
+    textReferenceUploadNodeIdRef.current = null;
+    storyboardReferenceUploadNodeIdRef.current = null;
+    videoReferenceUploadNodeIdRef.current = null;
+    closeContextMenu();
+
+    const input = uploadInputRef.current;
+
+    if (input) {
+      openFileInput(input);
+    }
+  }, [closeContextMenu, contextMenu]);
+
+  const handleContextMenuAddNode = useCallback(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    setAddMenu({
+      screen: contextMenu.screen,
+      canvas: contextMenu.canvas,
+    });
+    closeContextMenu();
+  }, [closeContextMenu, contextMenu]);
+
+  const handleContextMenuUndo = useCallback(() => {
+    if (undoStackLength <= 0) {
+      return;
+    }
+
+    closeContextMenu();
+    undo();
+  }, [closeContextMenu, undo, undoStackLength]);
+
+  const handleContextMenuRedo = useCallback(() => {
+    if (redoStackLength <= 0) {
+      return;
+    }
+
+    closeContextMenu();
+    redo();
+  }, [closeContextMenu, redo, redoStackLength]);
+
+  const handleContextMenuPaste = useCallback(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    if (handlePasteNodesAtPosition(contextMenu.canvas)) {
+      closeContextMenu();
+    }
+  }, [closeContextMenu, contextMenu, handlePasteNodesAtPosition]);
 
   const keepAddMenuOpen = useCallback(() => {
     if (closeAddMenuTimeoutRef.current) {
@@ -13518,6 +13674,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
         onPaneClick={handlePaneClick}
+        onPaneContextMenu={handlePaneContextMenu}
         onPaneScroll={handleViewportMove}
         onMoveStart={handleViewportMove}
         onPaneMouseMove={handlePaneMouseMove}
@@ -13649,6 +13806,22 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           x={connectionMenu.screen.x}
           y={connectionMenu.screen.y}
           onSelect={handleConnectionMenuSelect}
+        />
+      ) : null}
+
+      {contextMenu ? (
+        <CanvasContextMenu
+          x={contextMenu.screen.x}
+          y={contextMenu.screen.y}
+          canUndo={undoStackLength > 0}
+          canRedo={redoStackLength > 0}
+          canPaste={hasCopiedNodes}
+          platform={contextMenuPlatform}
+          onUpload={handleContextMenuUpload}
+          onAddNode={handleContextMenuAddNode}
+          onUndo={handleContextMenuUndo}
+          onRedo={handleContextMenuRedo}
+          onPaste={handleContextMenuPaste}
         />
       ) : null}
 
