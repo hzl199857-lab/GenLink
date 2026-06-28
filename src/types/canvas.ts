@@ -29,6 +29,8 @@ export interface BaseCanvasNode<
 export interface TextNodeData {
   text: string;
   title?: string;
+  cardWidth?: number;
+  cardHeight?: number;
   backgroundColor?: string;
   aiPrompt?: string;
   provider?: "vibe" | "fucheers" | "comfly" | "zhenzhen" | "runninghub" | "grsai";

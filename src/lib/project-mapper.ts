@@ -25,11 +25,12 @@ import {
   STORYBOARD_NODE_DEFAULT_CARD_HEIGHT,
   STORYBOARD_NODE_DEFAULT_CARD_WIDTH,
   normalizeStoryboardCardSize,
-} from "@/lib/storyboard/layout";
+} from "./storyboard/layout";
+import { normalizeTextNodeCardSize } from "./text-node/layout";
 import {
   isStoryboardRecord,
   normalizeStoryboardRow,
-} from "@/lib/storyboard/normalize";
+} from "./storyboard/normalize";
 
 interface DbProjectRecord {
   id: string;
@@ -268,14 +269,22 @@ function parseNodeJson(value: string): unknown {
 function normalizeTextNodeData(value: unknown): TextNodeData {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
+    const cardSize = normalizeTextNodeCardSize(record.cardWidth, record.cardHeight);
 
     return {
       text: typeof record.text === "string" ? record.text : "",
       title: typeof record.title === "string" ? record.title : undefined,
+      cardWidth: cardSize.width,
+      cardHeight: cardSize.height,
     };
   }
 
-  return { text: "" };
+  const cardSize = normalizeTextNodeCardSize(undefined, undefined);
+  return {
+    text: "",
+    cardWidth: cardSize.width,
+    cardHeight: cardSize.height,
+  };
 }
 
 function normalizeStoryboardReferenceImages(value: unknown): StoryboardReferenceImage[] {

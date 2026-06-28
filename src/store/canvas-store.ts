@@ -59,6 +59,10 @@ import {
   STORYBOARD_NODE_DEFAULT_CARD_WIDTH,
 } from "@/lib/storyboard/layout";
 import {
+  TEXT_NODE_DEFAULT_CARD_HEIGHT,
+  TEXT_NODE_DEFAULT_CARD_WIDTH,
+} from "@/lib/text-node/layout";
+import {
   isStoryboardRecord,
   normalizeStoryboardRow,
 } from "@/lib/storyboard/normalize";
@@ -930,6 +934,8 @@ function createTextNodeData(): TextNodeData {
   return {
     title: "Text",
     text: "",
+    cardWidth: TEXT_NODE_DEFAULT_CARD_WIDTH,
+    cardHeight: TEXT_NODE_DEFAULT_CARD_HEIGHT,
     provider,
     model: readStoredSelectedModel("text", "gpt-5.4"),
     status: "idle",

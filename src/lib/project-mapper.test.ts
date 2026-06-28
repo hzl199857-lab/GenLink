@@ -22,6 +22,77 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const { dbToSnapshot } = require("./project-mapper.ts") as typeof import("./project-mapper");
 
+test("normalizes text node card dimensions from persisted data", () => {
+  const snapshot = dbToSnapshot(
+    {
+      id: "project-1",
+      name: "Project",
+      createdAt: new Date("2026-06-13T08:00:00.000Z"),
+      updatedAt: new Date("2026-06-13T09:00:00.000Z"),
+    },
+    [
+      {
+        id: "text-1",
+        projectId: "project-1",
+        type: "text",
+        positionX: 10,
+        positionY: 20,
+        data: JSON.stringify({
+          text: "Prompt",
+          title: "Resizable prompt",
+          cardWidth: 760,
+          cardHeight: 480,
+        }),
+        createdAt: new Date("2026-06-13T08:30:00.000Z"),
+        updatedAt: new Date("2026-06-13T08:40:00.000Z"),
+      },
+    ],
+    [],
+  );
+
+  assert.deepEqual(snapshot.nodes[0], {
+    id: "text-1",
+    type: "text",
+    position: { x: 10, y: 20 },
+    data: {
+      text: "Prompt",
+      title: "Resizable prompt",
+      cardWidth: 760,
+      cardHeight: 480,
+    },
+  });
+});
+
+test("adds default text node card dimensions for legacy persisted data", () => {
+  const snapshot = dbToSnapshot(
+    {
+      id: "project-1",
+      name: "Project",
+      createdAt: new Date("2026-06-13T08:00:00.000Z"),
+      updatedAt: new Date("2026-06-13T09:00:00.000Z"),
+    },
+    [
+      {
+        id: "text-1",
+        projectId: "project-1",
+        type: "text",
+        positionX: 10,
+        positionY: 20,
+        data: JSON.stringify({
+          text: "Prompt",
+        }),
+        createdAt: new Date("2026-06-13T08:30:00.000Z"),
+        updatedAt: new Date("2026-06-13T08:40:00.000Z"),
+      },
+    ],
+    [],
+  );
+
+  assert.equal(snapshot.nodes[0].type, "text");
+  assert.equal(snapshot.nodes[0].data.cardWidth, 511);
+  assert.equal(snapshot.nodes[0].data.cardHeight, 289);
+});
+
 test("maps legacy uploaded_image db nodes into image nodes with hosted asset fields", () => {
   const snapshot = dbToSnapshot(
     {
