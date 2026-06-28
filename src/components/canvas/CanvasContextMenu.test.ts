@@ -92,6 +92,22 @@ test("renders unavailable edit actions as disabled", () => {
   assert.equal(opacityMatches.length, 3);
 });
 
+test("renders clamped position with fallback viewport dimensions", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CanvasContextMenu, {
+      x: 2000,
+      y: 2000,
+      canUndo: true,
+      canRedo: true,
+      canPaste: true,
+      platform: "windows",
+    }),
+  );
+
+  assert.match(html, /left:820px/);
+  assert.match(html, /top:578px/);
+});
+
 test("clamps canvas context menu position inside the viewport", () => {
   assert.deepEqual(
     getCanvasContextMenuPosition({

@@ -27,6 +27,8 @@ interface CanvasContextMenuPositionInput {
 const MENU_WIDTH = 196;
 const MENU_HEIGHT = 182;
 const VIEWPORT_MARGIN = 8;
+const FALLBACK_VIEWPORT_WIDTH = 1024;
+const FALLBACK_VIEWPORT_HEIGHT = 768;
 
 export function getCanvasContextMenuShortcuts(platform: CanvasContextMenuPlatform) {
   if (platform === "mac") {
@@ -73,11 +75,16 @@ export function CanvasContextMenu({
   onPaste,
 }: CanvasContextMenuProps) {
   const shortcuts = getCanvasContextMenuShortcuts(platform);
+  const viewportWidth =
+    typeof window === "undefined" ? FALLBACK_VIEWPORT_WIDTH : window.innerWidth;
+  const viewportHeight =
+    typeof window === "undefined" ? FALLBACK_VIEWPORT_HEIGHT : window.innerHeight;
+  const position = getCanvasContextMenuPosition({ x, y, viewportWidth, viewportHeight });
 
   return (
     <div
       className="fixed z-[70] w-[196px] rounded-[12px] border border-white/10 bg-[#191A1C]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur-xl"
-      style={{ left: x, top: y }}
+      style={{ left: position.x, top: position.y }}
       role="menu"
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
