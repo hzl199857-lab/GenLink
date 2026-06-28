@@ -6616,7 +6616,12 @@ function CanvasViewportControls({
     <>
       {isMiniMapVisible ? <CanvasMiniMap nodes={nodes} /> : null}
 
-      <Panel position="bottom-left" className="canvas-zoom-panel">
+      <Panel
+        position="bottom-left"
+        className="canvas-zoom-panel group-frame-no-drag"
+        data-canvas-menu-ignore="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="group/tooltip relative">
           <button
             type="button"
@@ -6701,7 +6706,9 @@ function CanvasViewportControls({
             onChange={(event) => {
               void zoomTo(Number(event.target.value), { duration: 120 });
             }}
-            className="canvas-zoom-slider"
+            className="canvas-zoom-slider group-frame-no-drag"
+            data-canvas-menu-ignore="true"
+            onMouseDown={(event) => event.stopPropagation()}
             aria-label="空画布"
           />
         </div>
