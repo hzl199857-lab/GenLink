@@ -171,7 +171,7 @@ import {
 } from '../nodes/ImageGenerationNodeToolbar';
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
-import { CanvasContextMenu, type CanvasContextMenuPlatform } from './CanvasContextMenu';
+import { CanvasContextMenu, getCanvasContextMenuPosition, type CanvasContextMenuPlatform } from './CanvasContextMenu';
 import { CanvasHeader } from './CanvasHeader';
 import { CanvasAgentPanel } from './CanvasAgentPanel';
 import UniqueLoading from '../ui/grid-loading';
@@ -12635,7 +12635,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
 
     setAddMenu({
-      screen: contextMenu.screen,
+      screen: getCanvasContextMenuPosition({
+        x: contextMenu.screen.x,
+        y: contextMenu.screen.y,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }),
       canvas: contextMenu.canvas,
     });
     closeContextMenu();
