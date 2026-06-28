@@ -751,9 +751,6 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
           <div className="flex items-center gap-2">
             <Clapperboard size={15} className="text-gl-text-tertiary" />
             <span className="text-[13px] font-semibold text-gl-text-secondary">分镜脚本</span>
-            <span className="rounded-[5px] border border-red-400/30 bg-red-400/10 px-1.5 py-0.5 text-[9px] font-bold text-red-300">
-              BETA
-            </span>
             {isGenerating ? (
               <span className="ml-2 text-[11px] text-gl-text-muted">生成中...</span>
             ) : null}
