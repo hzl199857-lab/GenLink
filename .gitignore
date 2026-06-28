@@ -71,6 +71,7 @@ graphify-out/
 
 # local scaffold residue
 genlink-scaffold/
+.worktrees/
 
 # clone reference project
 clone/
