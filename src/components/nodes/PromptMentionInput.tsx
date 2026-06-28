@@ -10,6 +10,7 @@ import React, {
   useState,
 } from 'react';
 import NextImage from 'next/image';
+import { createPortal } from 'react-dom';
 import { Play } from 'lucide-react';
 import {
   createReferenceMentionToken,
@@ -50,7 +51,13 @@ type MentionTrigger = {
   query: string;
   left: number;
   top: number;
+  viewportLeft: number;
+  viewportTop: number;
 };
+
+const DEFAULT_MENTION_MENU_WIDTH = 260;
+const DEFAULT_MENTION_MENU_MAX_HEIGHT = 260;
+const DEFAULT_MENTION_MENU_MARGIN = 8;
 
 export interface PromptMentionInputProps {
   value: string;
@@ -197,12 +204,25 @@ function getCurrentTrigger(editor: HTMLDivElement): MentionTrigger | null {
   const startOffset = range.startOffset - query.length - 1;
   const rect = range.getBoundingClientRect();
   const editorRect = editor.getBoundingClientRect();
-  const left = rect.left
-    ? rect.left - editorRect.left
-    : 0;
-  const top = rect.bottom
-    ? rect.bottom - editorRect.top + 6
-    : 28;
+  const caretLeft = rect.left || editorRect.left;
+  const caretTop = rect.top || editorRect.top;
+  const caretBottom = rect.bottom || editorRect.top + 28;
+  const left = caretLeft - editorRect.left;
+  const top = caretBottom - editorRect.top + 6;
+  const maxViewportLeft = Math.max(
+    DEFAULT_MENTION_MENU_MARGIN,
+    window.innerWidth - DEFAULT_MENTION_MENU_WIDTH - DEFAULT_MENTION_MENU_MARGIN,
+  );
+  const belowTop = caretBottom + 6;
+  const maxBelowTop = window.innerHeight -
+    DEFAULT_MENTION_MENU_MAX_HEIGHT -
+    DEFAULT_MENTION_MENU_MARGIN;
+  const shouldFlipAbove =
+    belowTop > maxBelowTop &&
+    caretTop > DEFAULT_MENTION_MENU_MAX_HEIGHT + DEFAULT_MENTION_MENU_MARGIN;
+  const viewportTop = shouldFlipAbove
+    ? caretTop - DEFAULT_MENTION_MENU_MAX_HEIGHT - 6
+    : belowTop;
 
   return {
     textNode,
@@ -211,6 +231,11 @@ function getCurrentTrigger(editor: HTMLDivElement): MentionTrigger | null {
     query,
     left: Math.max(0, left),
     top: Math.max(28, top),
+    viewportLeft: Math.min(
+      maxViewportLeft,
+      Math.max(DEFAULT_MENTION_MENU_MARGIN, caretLeft),
+    ),
+    viewportTop: Math.max(DEFAULT_MENTION_MENU_MARGIN, viewportTop),
   };
 }
 
@@ -469,6 +494,97 @@ export const PromptMentionInput = memo(function PromptMentionInput({
     refreshTrigger();
   };
 
+  const mentionMenu = trigger ? (
+    <div
+      data-ref-mention-menu="true"
+      className={[
+        'v2-mention-menu nodrag nopan',
+        agentMenu ? 'agent-mention-menu' : '',
+      ].join(' ')}
+      style={agentMenu ? undefined : {
+        left: trigger.viewportLeft,
+        top: trigger.viewportTop,
+        position: 'fixed',
+        zIndex: 1000,
+      }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      {agentMenu ? (
+        <div className="agent-mention-menu-title">可能@的内容</div>
+      ) : null}
+      {filteredOptions.length > 0 ? (
+        filteredOptions.map((option, index) => {
+          const active = index === activeIndex;
+
+          return (
+            <button
+              key={option.id}
+              type="button"
+              className={[
+                'at-mention-item',
+                active ? 'at-mention-item-active' : '',
+              ].join(' ')}
+              onPointerEnter={() => setActiveIndex(index)}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                insertMention(option);
+              }}
+            >
+              <span className="ref-thumb-wrap">
+                {option.type === 'video' ? (
+                  <>
+                    {option.previewUrl ? (
+                      <NextImage
+                        src={option.previewUrl}
+                        alt={option.alt || option.label}
+                        fill
+                        unoptimized
+                        sizes="34px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center bg-black/40 text-white/80">
+                        <Play size={14} fill="currentColor" strokeWidth={0} />
+                      </span>
+                    )}
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
+                      <Play size={12} fill="currentColor" strokeWidth={0} />
+                    </span>
+                  </>
+                ) : (
+                  <NextImage
+                    src={option.previewUrl || option.imageUrl || ''}
+                    alt={option.alt || option.label}
+                    fill
+                    unoptimized
+                    sizes="34px"
+                    className="object-cover"
+                  />
+                )}
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col text-left">
+                <span className="truncate">{option.label}</span>
+                {option.detail ? (
+                  <span className="truncate text-[11px] leading-4 text-gl-text-muted">
+                    {option.detail}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })
+      ) : (
+        <div className="px-3 py-2 text-[12px] text-gl-text-muted">
+          No references
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="relative h-full w-full">
       <div
@@ -532,7 +648,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
         onWheelCapture={(event) => event.stopPropagation()}
       />
 
-      {trigger ? (
+      {agentMenu && trigger ? (
         <div
           data-ref-mention-menu="true"
           className={[
@@ -620,6 +736,9 @@ export const PromptMentionInput = memo(function PromptMentionInput({
           )}
         </div>
       ) : null}
+      {!agentMenu && mentionMenu && typeof document !== 'undefined'
+        ? createPortal(mentionMenu, document.body)
+        : null}
     </div>
   );
 });

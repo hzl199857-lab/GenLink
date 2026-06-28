@@ -107,6 +107,8 @@ export interface StoryboardScriptNodeProps {
   onEndEdit?: () => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
   onRun?: () => void;
+  onUpload?: () => void;
+  onQuickReferenceConnect?: () => void;
   onRemoveReference?: (referenceImageId: string) => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
@@ -215,10 +217,19 @@ function ReferenceChips({
           );
         }
 
+        const referenceAspectRatio =
+          reference.width && reference.height
+            ? reference.width / reference.height
+            : 16 / 9;
+        const referenceWidth = Math.round(
+          Math.min(112, Math.max(34, 64 * referenceAspectRatio)),
+        );
+
         return (
           <span
             key={label}
-            className="group/tooltip relative inline-flex h-16 w-28 overflow-visible"
+            className="group/tooltip relative inline-flex h-16 overflow-visible"
+            style={{ width: referenceWidth }}
             title={label}
           >
             <span className="inline-flex h-full w-full overflow-hidden border border-white/12 bg-white/[0.04]">
@@ -228,6 +239,8 @@ function ReferenceChips({
                     videoUrl={reference.url}
                     previewUrl={reference.previewUrl}
                     alt={reference.alt || label}
+                    imageClassName="h-full w-full object-contain"
+                    videoClassName="h-full w-full object-contain"
                   />
                   <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
                     <Play size={14} fill="currentColor" strokeWidth={0} />
@@ -239,7 +252,7 @@ function ReferenceChips({
                   src={reference.previewUrl || reference.url}
                   alt={reference.alt || label}
                   loading="lazy"
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-contain"
                   draggable={false}
                 />
               )}
@@ -385,6 +398,8 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
   onEndEdit,
   onTitleChange,
   onRun,
+  onUpload,
+  onQuickReferenceConnect,
   onRemoveReference,
   onPromptPointerDown,
   onPromptFocusWithinChange,
@@ -963,6 +978,8 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
           })
         }
         onRun={onRun}
+        onAddReference={onUpload}
+        onQuickReferenceConnect={onQuickReferenceConnect}
         onRemoveReference={onRemoveReference}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={(focused) => {

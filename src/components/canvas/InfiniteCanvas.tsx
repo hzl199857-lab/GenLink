@@ -230,6 +230,9 @@ let notifyTextReferenceUpload:
 let notifyVideoGenerationReferenceUpload:
   | ((nodeId: string) => void)
   | null = null;
+let notifyStoryboardReferenceUpload:
+  | ((nodeId: string) => void)
+  | null = null;
 let notifyStoryboardGridCellUpload:
   | ((nodeId: string, cellIndex: number, file: File) => Promise<void>)
   | null = null;
@@ -2511,9 +2514,7 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
 const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateStoryboard = useCanvasStore((s) => s.generateStoryboardFromStoryboardNode);
-  const removeReferenceImage = useCanvasStore(
-    (s) => s.removeReferenceImageFromStoryboardNode,
-  );
+  const removeReference = useCanvasStore((s) => s.removeReferenceFromNode);
   const connectedImages = useCanvasStore((s) => s.getConnectedImagesForStoryboardNode(id));
   const connectedVideos = useCanvasStore((s) => s.getConnectedVideosForStoryboardNode(id));
   const renderData = data as CanvasNodeRenderData;
@@ -2549,7 +2550,13 @@ const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ 
       }}
       onEndEdit={() => setEditing(false)}
       onRun={() => generateStoryboard(id)}
-      onRemoveReference={(referenceImageId) => removeReferenceImage(id, referenceImageId)}
+      onUpload={() => notifyStoryboardReferenceUpload?.(id)}
+      onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
+        targetKind: 'node',
+        targetNodeId: id,
+        targetType: 'storyboard_script',
+      })}
+      onRemoveReference={(referenceId) => removeReference(id, referenceId)}
       onPromptPointerDown={() => {
         handleSelectNode();
         notifyPromptBarInteraction?.();
@@ -4222,7 +4229,7 @@ type GroupConnectionPreview = {
 type QuickReferenceConnectMode = {
   targetKind: 'node';
   targetNodeId: string;
-  targetType: 'text' | 'image_generation' | 'video_generation';
+  targetType: 'text' | 'storyboard_script' | 'image_generation' | 'video_generation';
 } | {
   targetKind: 'agent';
   onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate';
@@ -5531,7 +5538,7 @@ function GroupFrame({
   const screenH = group.height * viewport.zoom;
 
   const nodeCount = group.nodeIds.length;
-  const defaultName = 'Group - ' + nodeCount + ' nodes';
+  const defaultName = '组';
   const frameColorStyle = getGroupFrameColorStyle(group.backgroundColor, selected);
   const showResizeHandles = selected || hovered || resizing;
   const showSourceHandle = selected || hovered;
@@ -5835,14 +5842,19 @@ function GroupFrame({
         className="group-frame-no-drag nodrag nopan pointer-events-auto absolute z-[19]"
         style={{
           left: topLeft.x + 12 * viewport.zoom,
-          top: topLeft.y - 52 * viewport.zoom,
-          transform: `scale(${viewport.zoom * 1.5})`,
+          top: topLeft.y - 38 * viewport.zoom,
+          transform: `scale(${viewport.zoom})`,
           transformOrigin: 'left top',
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <GroupFrameLabel value={group.name} fallback={defaultName} onCommit={onRename} />
+        <GroupFrameLabel
+          value={group.name}
+          fallback={defaultName}
+          nodeCount={nodeCount}
+          onCommit={onRename}
+        />
       </div>
 
       {showSourceHandle ? (
@@ -5965,10 +5977,12 @@ function GroupConnectionPreviewOverlay({ preview }: { preview: GroupConnectionPr
 function GroupFrameLabel({
   value,
   fallback,
+  nodeCount,
   onCommit,
 }: {
   value?: string;
   fallback: string;
+  nodeCount: number;
   onCommit: (name: string | undefined) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -5996,7 +6010,7 @@ function GroupFrameLabel({
   if (editing) {
     return (
       <span className="flex select-none items-center gap-1.5 text-gl-text-tertiary">
-        <Group size={24} />
+        <Group size={18} />
         <input
           ref={inputRef}
           type="text"
@@ -6017,8 +6031,8 @@ function GroupFrameLabel({
   }
 
   return (
-    <span className="flex cursor-text select-none items-center gap-1.5 text-gl-text-tertiary hover:text-gl-text-secondary">
-      <Group size={24} />
+    <span className="flex cursor-text select-none items-center gap-2 text-gl-text-tertiary hover:text-gl-text-secondary">
+      <Group size={18} />
       <span
         className="text-[22px] font-medium leading-none"
         onDoubleClick={(e) => {
@@ -6030,6 +6044,11 @@ function GroupFrameLabel({
       >
         {value ?? fallback}
       </span>
+      {!value ? (
+        <span className="pt-0.5 text-[13px] font-medium leading-none text-gl-text-muted">
+          {nodeCount} 个节点
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -9213,6 +9232,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const addReferenceMediaToTextNode = useCanvasStore(
     (s) => s.addReferenceMediaToTextNode,
   );
+  const addReferenceMediaToStoryboardNode = useCanvasStore(
+    (s) => s.addReferenceMediaToStoryboardNode,
+  );
   const addReferenceMediaToVideoGenerationNode = useCanvasStore(
     (s) => s.addReferenceMediaToVideoGenerationNode,
   );
@@ -9541,6 +9563,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const referenceUploadNodeIdRef = React.useRef<string | null>(null);
   const textReferenceUploadNodeIdRef = React.useRef<string | null>(null);
+  const storyboardReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const videoReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const copiedNodesRef = useRef<CanvasNode[]>([]);
   const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
@@ -10420,6 +10443,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     notifyImageGenerationReferenceUpload = (nodeId) => {
       referenceUploadNodeIdRef.current = nodeId;
       textReferenceUploadNodeIdRef.current = null;
+      storyboardReferenceUploadNodeIdRef.current = null;
       videoReferenceUploadNodeIdRef.current = null;
       const input = uploadInputRef.current;
 
@@ -10440,6 +10464,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     notifyTextReferenceUpload = (nodeId) => {
       textReferenceUploadNodeIdRef.current = nodeId;
       referenceUploadNodeIdRef.current = null;
+      storyboardReferenceUploadNodeIdRef.current = null;
       videoReferenceUploadNodeIdRef.current = null;
       const input = uploadInputRef.current;
 
@@ -10455,10 +10480,30 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, []);
 
   useEffect(() => {
+    notifyStoryboardReferenceUpload = (nodeId) => {
+      storyboardReferenceUploadNodeIdRef.current = nodeId;
+      referenceUploadNodeIdRef.current = null;
+      textReferenceUploadNodeIdRef.current = null;
+      videoReferenceUploadNodeIdRef.current = null;
+      const input = uploadInputRef.current;
+
+      if (!input) {
+        return;
+      }
+      openFileInput(input);
+    };
+
+    return () => {
+      notifyStoryboardReferenceUpload = null;
+    };
+  }, []);
+
+  useEffect(() => {
     notifyVideoGenerationReferenceUpload = (nodeId) => {
       videoReferenceUploadNodeIdRef.current = nodeId;
       referenceUploadNodeIdRef.current = null;
       textReferenceUploadNodeIdRef.current = null;
+      storyboardReferenceUploadNodeIdRef.current = null;
       const input = uploadInputRef.current;
 
       if (!input) {
@@ -12139,6 +12184,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
   const openUploadPicker = useCallback((position?: { x: number; y: number }) => {
     referenceUploadNodeIdRef.current = null;
+    textReferenceUploadNodeIdRef.current = null;
+    storyboardReferenceUploadNodeIdRef.current = null;
+    videoReferenceUploadNodeIdRef.current = null;
     uploadPositionRef.current = position ?? project({
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
@@ -12156,6 +12204,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const position = uploadPositionRef.current;
     const referenceUploadNodeId = referenceUploadNodeIdRef.current;
     const textReferenceUploadNodeId = textReferenceUploadNodeIdRef.current;
+    const storyboardReferenceUploadNodeId = storyboardReferenceUploadNodeIdRef.current;
     const videoReferenceUploadNodeId = videoReferenceUploadNodeIdRef.current;
 
     if (files.length > 0 && textReferenceUploadNodeId) {
@@ -12196,6 +12245,46 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         });
       })().catch((error) => {
         setSaveMessage(error instanceof Error ? error.message : 'Upload text reference failed');
+        window.setTimeout(() => setSaveMessage(null), 2200);
+      });
+    } else if (files.length > 0 && storyboardReferenceUploadNodeId) {
+      void (async () => {
+        const acceptedFiles = files.filter((file) =>
+          file.type.startsWith('image/') ||
+          file.type.startsWith('video/'),
+        );
+        const pendingReferences = await Promise.all(acceptedFiles.map(createPendingMediaReference));
+
+        addReferenceMediaToStoryboardNode(
+          storyboardReferenceUploadNodeId,
+          pendingReferences.map(({ reference }) => reference),
+        );
+
+        pendingReferences.forEach(({ reference, localUrl }, index) => {
+          const file = acceptedFiles[index];
+
+          void uploadMediaFileToOss(file)
+            .then((uploaded) => {
+              updateInlineReferenceMedia(storyboardReferenceUploadNodeId, reference.id, {
+                url: uploaded.url,
+                hostedUrl: uploaded.url,
+                fileName: uploaded.fileName,
+                mimeType: uploaded.mimeType,
+                sizeBytes: uploaded.sizeBytes,
+                uploadStatus: 'uploaded',
+                uploadError: undefined,
+              });
+              URL.revokeObjectURL(localUrl);
+            })
+            .catch((error) => {
+              updateInlineReferenceMedia(storyboardReferenceUploadNodeId, reference.id, {
+                uploadStatus: 'error',
+                uploadError: error instanceof Error ? error.message : 'Upload failed',
+              });
+            });
+        });
+      })().catch((error) => {
+        setSaveMessage(error instanceof Error ? error.message : 'Upload storyboard reference failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     } else if (files.length > 0 && videoReferenceUploadNodeId) {
@@ -12312,10 +12401,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     uploadPositionRef.current = null;
     referenceUploadNodeIdRef.current = null;
     textReferenceUploadNodeIdRef.current = null;
+    storyboardReferenceUploadNodeIdRef.current = null;
     videoReferenceUploadNodeIdRef.current = null;
   }, [
     addReferenceImagesToImageGenerationNode,
     addReferenceMediaToTextNode,
+    addReferenceMediaToStoryboardNode,
     addReferenceMediaToVideoGenerationNode,
     addUploadedImages,
     addUploadedVideos,

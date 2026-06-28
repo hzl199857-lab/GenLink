@@ -1,16 +1,13 @@
 'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import NextImage from 'next/image';
 import { NodeToolbar, Position, useReactFlow } from 'reactflow';
 import {
-  Play,
   Check,
   ChevronDown,
   Maximize2,
   Minimize2,
   Sparkles,
-  X,
 } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
@@ -18,10 +15,10 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceImageHoverPreviewPortal,
   ReferenceVideoHoverPreviewPortal,
-  ReferenceVideoThumbnail,
   useReferenceImageHoverPreview,
   useReferenceVideoHoverPreview,
 } from './ReferenceImageHoverPreview';
+import { ReferenceMediaStrip } from './ReferenceMediaStrip';
 import {
   getApiProviderLabel,
   persistSelectedModel,
@@ -87,6 +84,8 @@ export interface StoryboardScriptPromptBarProps {
   onPromptChange?: (next: string) => void;
   onProviderModelChange?: (next: { provider: ApiProvider; model: string }) => void;
   onRun?: () => void;
+  onAddReference?: () => void;
+  onQuickReferenceConnect?: () => void;
   onRemoveReference?: (referenceImageId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
@@ -104,6 +103,8 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
   onPromptChange,
   onProviderModelChange,
   onRun,
+  onAddReference,
+  onQuickReferenceConnect,
   onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
@@ -253,82 +254,17 @@ export const StoryboardScriptPromptBar = memo(function StoryboardScriptPromptBar
           <Tooltip label={expanded ? '收起' : '展开'} side="top" />
         </div>
 
-        {connectedImages.length > 0 || connectedVideos.length > 0 ? (
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 nodrag nopan">
-            {connectedImages.map((image, index) => (
-              <div
-                key={`${image.id}-${image.imageUrl}-${index}`}
-                className="group/reference-thumb relative h-[50px] w-[50px] shrink-0"
-              >
-                <div
-                  className="relative h-full w-full overflow-hidden rounded-[14px] border border-white/10 bg-white/5 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                  onPointerEnter={(event) =>
-                    referenceImagePreview.showPreview(image, event.currentTarget)
-                  }
-                  onPointerLeave={referenceImagePreview.hidePreview}
-                >
-                  <NextImage
-                    src={image.previewUrl || image.imageUrl}
-                    alt={image.alt || `Connected image ${index + 1}`}
-                    fill
-                    unoptimized
-                    sizes="50px"
-                    className="object-cover"
-                  />
-                  <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                    {index + 1}
-                  </span>
-                </div>
-                {onRemoveReference ? (
-                  <button
-                    type="button"
-                    aria-label="移除参考图"
-                    className="absolute right-0 top-0 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/35 bg-[#1b1d21] text-white opacity-0 shadow-[0_6px_14px_rgba(0,0,0,0.35)] transition hover:bg-white hover:text-[#1b1d21] focus-visible:opacity-100 group-hover/reference-thumb:opacity-100"
-                    onPointerEnter={referenceImagePreview.hidePreview}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      referenceImagePreview.hidePreview();
-                      onRemoveReference(image.id);
-                    }}
-                  >
-                    <X size={11} strokeWidth={2.4} />
-                  </button>
-                ) : null}
-              </div>
-            ))}
-            {connectedVideos.map((video, index) => (
-              <div
-                key={`${video.id}-${video.videoUrl}-${index}`}
-                className="group/reference-thumb relative h-[50px] w-[68px] shrink-0"
-              >
-                <div
-                  className="relative h-full w-full overflow-hidden rounded-[14px] border border-white/10 bg-black/35 shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-                  onPointerEnter={(event) =>
-                    referenceVideoPreview.showPreview(video, event.currentTarget)
-                  }
-                  onPointerLeave={referenceVideoPreview.hidePreview}
-                >
-                  <ReferenceVideoThumbnail
-                    videoUrl={video.videoUrl}
-                    previewUrl={video.previewUrl}
-                    alt={video.alt || `Connected video ${index + 1}`}
-                  />
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
-                    <Play size={14} fill="currentColor" strokeWidth={0} />
-                  </span>
-                  <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
-                    {index + 1}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <div className="pb-1">
+          <ReferenceMediaStrip
+            connectedImages={connectedImages}
+            connectedVideos={connectedVideos}
+            imagePreview={referenceImagePreview}
+            videoPreview={referenceVideoPreview}
+            onQuickReferenceConnect={onQuickReferenceConnect}
+            onAddReference={onAddReference}
+            onRemoveReference={onRemoveReference}
+          />
+        </div>
 
         <div className="relative">
           <div

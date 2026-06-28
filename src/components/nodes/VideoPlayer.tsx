@@ -129,7 +129,7 @@ export function VideoPlayer({
   return (
     <div
       ref={frameRef}
-      className={className}
+      className={['video-player-frame', className].filter(Boolean).join(' ')}
       onPointerEnter={() => setControlsHovered(true)}
       onPointerLeave={() => setControlsHovered(false)}
     >

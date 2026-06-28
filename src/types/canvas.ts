@@ -58,23 +58,38 @@ export type StoryboardRow = {
 };
 
 export interface StoryboardReferenceImage {
+  id?: string;
   label: string;
   url: string;
-  previewUrl?: string;
-  sourceNodeId: string;
-  alt?: string;
-}
-
-export interface StoryboardReferenceVideo {
-  label: string;
-  url: string;
+  hostedUrl?: string;
   previewUrl?: string;
   sourceNodeId: string;
   alt?: string;
   fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+  uploadStatus?: "uploading" | "uploaded" | "error";
+  uploadError?: string;
+}
+
+export interface StoryboardReferenceVideo {
+  id?: string;
+  label: string;
+  url: string;
+  hostedUrl?: string;
+  previewUrl?: string;
+  sourceNodeId: string;
+  alt?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
   width?: number;
   height?: number;
   durationSeconds?: number;
+  uploadStatus?: "uploading" | "uploaded" | "error";
+  uploadError?: string;
 }
 
 export interface StoryboardScriptNodeData {

@@ -209,10 +209,14 @@ export function ReferenceVideoThumbnail({
   videoUrl,
   previewUrl,
   alt,
+  imageClassName = 'h-full w-full object-cover',
+  videoClassName = 'h-full w-full object-cover',
 }: {
   videoUrl: string;
   previewUrl?: string;
   alt: string;
+  imageClassName?: string;
+  videoClassName?: string;
 }) {
   const fallbackVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const [capturedFrame, setCapturedFrame] = React.useState<{
@@ -335,7 +339,7 @@ export function ReferenceVideoThumbnail({
         <img
           src={thumbnailUrl}
           alt={alt}
-          className="h-full w-full object-cover"
+          className={imageClassName}
           draggable={false}
         />
       </>
@@ -350,6 +354,7 @@ export function ReferenceVideoThumbnail({
       controlsVisible={false}
       preload="auto"
       className="h-full w-full"
+      videoClassName={videoClassName}
       ariaLabel={alt}
     />
   );

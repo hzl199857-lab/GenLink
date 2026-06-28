@@ -619,6 +619,39 @@ function dedupeConnectedImages(
   return deduped;
 }
 
+function getConnectedVideoDedupKeys(video: ConnectedVideoPayload): string[] {
+  const hostedVideoUrl = video.hostedVideoUrl?.trim();
+  const videoUrl = video.videoUrl.trim();
+
+  return [
+    video.id ? `node:${video.id}` : null,
+    hostedVideoUrl ? `url:${hostedVideoUrl}` : null,
+    videoUrl ? `url:${videoUrl}` : null,
+  ].filter((key): key is string => Boolean(key));
+}
+
+function dedupeConnectedVideos(
+  videos: ConnectedVideoPayload[],
+): ConnectedVideoPayload[] {
+  const seen = new Set<string>();
+  const deduped: ConnectedVideoPayload[] = [];
+
+  for (const video of videos) {
+    const keys = getConnectedVideoDedupKeys(video);
+
+    if (keys.some((key) => seen.has(key))) {
+      continue;
+    }
+
+    for (const key of keys) {
+      seen.add(key);
+    }
+    deduped.push(video);
+  }
+
+  return deduped;
+}
+
 type CanvasImageSource = {
   imageUrl: string;
   hostedImageUrl?: string;
@@ -3490,6 +3523,68 @@ function getInlineReferenceVideosForTextNode(
   );
 }
 
+function getInlineReferenceImagesForStoryboardNode(
+  node: Extract<CanvasNode, { type: "storyboard_script" }>,
+): ConnectedImagePayload[] {
+  return (node.data.referenceImages ?? []).reduce<ConnectedImagePayload[]>(
+    (acc, image, index) => {
+      const imageUrl = image.hostedUrl?.trim() || image.url.trim();
+
+      if (!imageUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: image.id || image.sourceNodeId || `${node.id}-image-reference-${index}`,
+        imageUrl,
+        previewUrl: image.previewUrl?.trim() || imageUrl,
+        originalImageUrl: image.url,
+        hostedImageUrl: image.hostedUrl?.trim() || undefined,
+        fileName: image.fileName,
+        alt: image.alt || image.fileName?.trim() || `Reference image ${index + 1}`,
+        sourceType: "inline_reference",
+        width: image.width,
+        height: image.height,
+        uploadStatus: image.uploadStatus,
+        uploadError: image.uploadError,
+      });
+      return acc;
+    },
+    [],
+  );
+}
+
+function getInlineReferenceVideosForStoryboardNode(
+  node: Extract<CanvasNode, { type: "storyboard_script" }>,
+): ConnectedVideoPayload[] {
+  return (node.data.referenceVideos ?? []).reduce<ConnectedVideoPayload[]>(
+    (acc, video, index) => {
+      const videoUrl = video.hostedUrl?.trim() || video.url.trim();
+
+      if (!videoUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id: video.id || video.sourceNodeId || `${node.id}-video-reference-${index}`,
+        videoUrl,
+        hostedVideoUrl: video.hostedUrl?.trim() || undefined,
+        previewUrl: video.previewUrl,
+        fileName: video.fileName,
+        alt: video.alt || video.fileName?.trim() || `Reference video ${index + 1}`,
+        sourceType: "inline_reference",
+        width: video.width,
+        height: video.height,
+        durationSeconds: video.durationSeconds,
+        uploadStatus: video.uploadStatus,
+        uploadError: video.uploadError,
+      });
+      return acc;
+    },
+    [],
+  );
+}
+
 function getVideoGenerationReferenceVideos(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -3918,6 +4013,10 @@ export interface CanvasState {
     textNodeId: string,
     media: VideoGenerationMediaReference[],
   ) => void;
+  addReferenceMediaToStoryboardNode: (
+    storyboardNodeId: string,
+    media: VideoGenerationMediaReference[],
+  ) => void;
   updateInlineReferenceMedia: (
     targetNodeId: string,
     referenceId: string,
@@ -4208,6 +4307,36 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           const referenceVideos = node.data.referenceVideos ?? [];
           const nextReferenceImages = referenceImages.filter((item) => item.id !== referenceId);
           const nextReferenceVideos = referenceVideos.filter((item) => item.id !== referenceId);
+          const nodeRemovedInline =
+            nextReferenceImages.length !== referenceImages.length ||
+            nextReferenceVideos.length !== referenceVideos.length;
+          removedInline = removedInline || nodeRemovedInline;
+
+          if (!nodeRemovedInline) {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              referenceImages: nextReferenceImages,
+              referenceVideos: nextReferenceVideos,
+              status: node.data.status === "error" ? "idle" : node.data.status,
+              errorMessage: undefined,
+            },
+          };
+        }
+
+        if (node.type === "storyboard_script") {
+          const referenceImages = node.data.referenceImages ?? [];
+          const referenceVideos = node.data.referenceVideos ?? [];
+          const nextReferenceImages = referenceImages.filter(
+            (item) => item.id !== referenceId && item.sourceNodeId !== referenceId,
+          );
+          const nextReferenceVideos = referenceVideos.filter(
+            (item) => item.id !== referenceId && item.sourceNodeId !== referenceId,
+          );
           const nodeRemovedInline =
             nextReferenceImages.length !== referenceImages.length ||
             nextReferenceVideos.length !== referenceVideos.length;
@@ -4923,20 +5052,36 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   getConnectedImagesForStoryboardNode: (storyboardNodeId) => {
     const state = get();
-    return getConnectedImagesForTargetNode(
-      state.nodes,
-      state.edges,
-      storyboardNodeId,
+    const storyboardNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
+        node.id === storyboardNodeId && node.type === "storyboard_script",
     );
+
+    return dedupeConnectedImages([
+      ...(storyboardNode ? getInlineReferenceImagesForStoryboardNode(storyboardNode) : []),
+      ...getConnectedImagesForTargetNode(
+        state.nodes,
+        state.edges,
+        storyboardNodeId,
+      ),
+    ]);
   },
 
   getConnectedVideosForStoryboardNode: (storyboardNodeId) => {
     const state = get();
-    return getConnectedVideosForTargetNode(
-      state.nodes,
-      state.edges,
-      storyboardNodeId,
+    const storyboardNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
+        node.id === storyboardNodeId && node.type === "storyboard_script",
     );
+
+    return dedupeConnectedVideos([
+      ...(storyboardNode ? getInlineReferenceVideosForStoryboardNode(storyboardNode) : []),
+      ...getConnectedVideosForTargetNode(
+        state.nodes,
+        state.edges,
+        storyboardNodeId,
+      ),
+    ]);
   },
 
   generateImageFromImageGenerationNode: async (imageGenerationNodeId, promptOverride, options) => {
@@ -7624,6 +7769,97 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addReferenceMediaToStoryboardNode: (storyboardNodeId, media) => {
+    if (media.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const storyboardNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
+          node.id === storyboardNodeId && node.type === "storyboard_script",
+      );
+
+      if (!storyboardNode) {
+        return state;
+      }
+
+      const existingImageIds = new Set(
+        (storyboardNode.data.referenceImages ?? []).flatMap((image) => [
+          image.id,
+          image.sourceNodeId,
+          image.url,
+          image.hostedUrl,
+        ]).filter((value): value is string => Boolean(value?.trim())),
+      );
+      const existingVideoIds = new Set(
+        (storyboardNode.data.referenceVideos ?? []).flatMap((video) => [
+          video.id,
+          video.sourceNodeId,
+          video.url,
+          video.hostedUrl,
+        ]).filter((value): value is string => Boolean(value?.trim())),
+      );
+      const imageRefs = media.filter(
+        (item) =>
+          item.mimeType?.startsWith("image/") &&
+          ![item.id, item.url, item.hostedUrl].some((value) =>
+            Boolean(value?.trim() && existingImageIds.has(value.trim())),
+          ),
+      );
+      const videoRefs = media.filter(
+        (item) =>
+          item.mimeType?.startsWith("video/") &&
+          ![item.id, item.url, item.hostedUrl].some((value) =>
+            Boolean(value?.trim() && existingVideoIds.has(value.trim())),
+          ),
+      );
+
+      if (imageRefs.length === 0 && videoRefs.length === 0) {
+        return state;
+      }
+
+      const imageOffset = storyboardNode.data.referenceImages?.length ?? 0;
+      const videoOffset = storyboardNode.data.referenceVideos?.length ?? 0;
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: state.nodes.map((node) =>
+          node.id === storyboardNodeId && node.type === "storyboard_script"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: [
+                    ...(node.data.referenceImages ?? []),
+                    ...imageRefs.map((reference, index) => ({
+                      ...reference,
+                      label: `@图片${imageOffset + index + 1}`,
+                      sourceNodeId: reference.id,
+                      alt: reference.fileName,
+                    })),
+                  ],
+                  referenceVideos: [
+                    ...(node.data.referenceVideos ?? []),
+                    ...videoRefs.map((reference, index) => ({
+                      ...reference,
+                      label: `@视频${videoOffset + index + 1}`,
+                      sourceNodeId: reference.id,
+                      alt: reference.fileName,
+                    })),
+                  ],
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   updateInlineReferenceMedia: (targetNodeId, referenceId, updates) => {
     set((state) => {
       let didUpdate = false;
@@ -7681,6 +7917,48 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             return {
               ...reference,
               ...updates,
+            };
+          };
+          const nextReferenceImages = (node.data.referenceImages ?? []).map(updateReference);
+          const nextReferenceVideos = (node.data.referenceVideos ?? []).map(updateReference);
+
+          return nodeDidUpdate
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceImages: nextReferenceImages,
+                  referenceVideos: nextReferenceVideos,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node;
+        }
+
+        if (node.type === "storyboard_script") {
+          let nodeDidUpdate = false;
+          const updateReference = <
+            T extends StoryboardReferenceImage | StoryboardReferenceVideo,
+          >(reference: T): T => {
+            if (reference.id !== referenceId && reference.sourceNodeId !== referenceId) {
+              return reference;
+            }
+
+            didUpdate = true;
+            nodeDidUpdate = true;
+            return {
+              ...reference,
+              url: updates.hostedUrl ?? updates.url ?? reference.url,
+              hostedUrl: updates.hostedUrl ?? reference.hostedUrl,
+              previewUrl: updates.previewUrl ?? reference.previewUrl,
+              fileName: updates.fileName ?? reference.fileName,
+              mimeType: updates.mimeType ?? reference.mimeType,
+              sizeBytes: updates.sizeBytes ?? reference.sizeBytes,
+              width: updates.width ?? reference.width,
+              height: updates.height ?? reference.height,
+              uploadStatus: updates.uploadStatus ?? reference.uploadStatus,
+              uploadError: updates.uploadError,
             };
           };
           const nextReferenceImages = (node.data.referenceImages ?? []).map(updateReference);
