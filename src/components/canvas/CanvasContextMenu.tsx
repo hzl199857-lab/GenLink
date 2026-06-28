@@ -25,7 +25,7 @@ interface CanvasContextMenuPositionInput {
 }
 
 const MENU_WIDTH = 196;
-const MENU_HEIGHT = 182;
+const MENU_HEIGHT = 196;
 const VIEWPORT_MARGIN = 8;
 const FALLBACK_VIEWPORT_WIDTH = 1024;
 const FALLBACK_VIEWPORT_HEIGHT = 768;
@@ -85,7 +85,6 @@ export function CanvasContextMenu({
     <div
       className="fixed z-[70] w-[196px] rounded-[12px] border border-white/10 bg-[#191A1C]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur-xl"
       style={{ left: position.x, top: position.y }}
-      role="menu"
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
@@ -131,7 +130,6 @@ function MenuButton({ icon, label, shortcut, disabled = false, onClick }: MenuBu
   return (
     <button
       type="button"
-      role="menuitem"
       className={[
         "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-white transition-colors",
         disabled ? "cursor-default opacity-40" : "hover:bg-white/10",

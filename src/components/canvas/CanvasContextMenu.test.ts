@@ -92,6 +92,22 @@ test("renders unavailable edit actions as disabled", () => {
   assert.equal(opacityMatches.length, 3);
 });
 
+test("renders ordinary buttons without ARIA menu semantics", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(CanvasContextMenu, {
+      x: 24,
+      y: 36,
+      canUndo: true,
+      canRedo: true,
+      canPaste: true,
+      platform: "windows",
+    }),
+  );
+
+  assert.doesNotMatch(html, /role="menu"/);
+  assert.doesNotMatch(html, /role="menuitem"/);
+});
+
 test("renders clamped position with fallback viewport dimensions", () => {
   const html = renderToStaticMarkup(
     React.createElement(CanvasContextMenu, {
@@ -105,7 +121,7 @@ test("renders clamped position with fallback viewport dimensions", () => {
   );
 
   assert.match(html, /left:820px/);
-  assert.match(html, /top:578px/);
+  assert.match(html, /top:564px/);
 });
 
 test("clamps canvas context menu position inside the viewport", () => {
@@ -116,6 +132,6 @@ test("clamps canvas context menu position inside the viewport", () => {
       viewportWidth: 500,
       viewportHeight: 400,
     }),
-    { x: 296, y: 210 },
+    { x: 296, y: 196 },
   );
 });
