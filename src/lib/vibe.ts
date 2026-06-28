@@ -17,6 +17,31 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
 
+function getFetchFailureMessage(params: {
+  providerLabel: string;
+  baseUrl: string;
+  path: string;
+  error: unknown;
+}): string {
+  const error = params.error;
+  const cause = error instanceof Error && "cause" in error
+    ? (error as Error & { cause?: unknown }).cause
+    : undefined;
+  const causeMessage = cause instanceof Error
+    ? cause.message
+    : typeof cause === "object" && cause !== null && "message" in cause
+      ? String((cause as { message?: unknown }).message)
+      : "";
+  const causeCode = typeof cause === "object" && cause !== null && "code" in cause
+    ? String((cause as { code?: unknown }).code)
+    : "";
+  const message = error instanceof Error ? error.message : `${params.providerLabel} request failed`;
+  const detail = [causeCode, causeMessage].filter(Boolean).join(": ");
+  const target = `${params.baseUrl}${params.path}`;
+
+  return `${params.providerLabel} request failed (${target}): ${message}${detail ? `; cause=${detail}` : ""}`;
+}
+
 function resolveApiProvider(value?: string): ImageApiProvider {
   switch (value?.trim().toLowerCase()) {
     case "comfly":
@@ -1325,7 +1350,7 @@ async function requestJsonWithBaseUrl<T>(
 
     throw new VibeApiError(
       502,
-      error instanceof Error ? error.message : `${providerLabel} request failed`,
+      getFetchFailureMessage({ providerLabel, baseUrl, path, error }),
     );
   } finally {
     clearTimeout(timeout);
@@ -1393,7 +1418,7 @@ async function requestStreamWithBaseUrl(
 
     throw new VibeApiError(
       502,
-      error instanceof Error ? error.message : `${providerLabel} request failed`,
+      getFetchFailureMessage({ providerLabel, baseUrl, path, error }),
     );
   } finally {
     clearTimeout(timeout);
@@ -2232,6 +2257,24 @@ function createSseChunk(chunk: TextStreamChunk): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`);
 }
 
+function createTextResultStream(result: GenerateTextResult): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (result.content) {
+        controller.enqueue(createSseChunk({ type: "delta", delta: result.content }));
+      }
+
+      controller.enqueue(
+        createSseChunk({
+          type: "done",
+          result,
+        }),
+      );
+      controller.close();
+    },
+  });
+}
+
 function normalizeOpenAiDeltaContent(
   content:
     | string
@@ -2331,15 +2374,32 @@ export async function generateTextStream(
         stream: true,
       };
 
-  const upstreamResponse = await requestStreamWithBaseUrl(
-    baseUrl,
-    path,
-    body,
-    params.apiKey,
-    isClaude ? createAnthropicHeaders : createHeaders,
-    params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    providerLabel,
-  );
+  let upstreamResponse: Response;
+
+  try {
+    upstreamResponse = await requestStreamWithBaseUrl(
+      baseUrl,
+      path,
+      body,
+      params.apiKey,
+      isClaude ? createAnthropicHeaders : createHeaders,
+      params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      providerLabel,
+    );
+  } catch (error) {
+    if (error instanceof VibeApiError && error.status === 502) {
+      const fallback = await generateText({
+        ...params,
+        provider: textProvider,
+        model: requestedModel,
+      });
+
+      return createTextResultStream(fallback);
+    }
+
+    throw error;
+  }
+
   const reader = upstreamResponse.body!.getReader();
   const decoder = new TextDecoder();
 
