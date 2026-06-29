@@ -29,6 +29,15 @@ type PlaybackState = {
 
 const waveformCache = new Map<string, Promise<WaveformCacheEntry>>();
 
+function buildLoadingPeaks(count: number): number[] {
+  return Array.from({ length: count }, (_, index) => {
+    const wave = Math.sin(index * 0.37) * 0.18;
+    const swell = Math.sin(index * 0.11) * 0.22;
+
+    return Math.max(0.2, Math.min(0.78, 0.48 + wave + swell));
+  });
+}
+
 function formatAudioTime(value?: number): string {
   if (!Number.isFinite(value) || !value || value < 0) {
     return '0:00';
@@ -128,9 +137,12 @@ export function AudioWaveformPlayer({
   });
   const peaks = waveformState.key === waveformKey ? waveformState.peaks : [];
   const waveformFailed = waveformState.key === waveformKey ? waveformState.failed : false;
+  const waveformLoading = !waveformFailed && peaks.length === 0;
+  const loadingPeaks = useMemo(() => buildLoadingPeaks(bars), [bars]);
   const currentTime = playbackState.src === src ? playbackState.currentTime : 0;
   const duration = playbackState.src === src ? playbackState.duration : durationSeconds ?? 0;
   const playing = playbackState.src === src ? playbackState.playing : false;
+  const canInteract = duration > 0;
 
   const getKnownDuration = useCallback((audio: HTMLAudioElement, fallback = durationSeconds ?? 0): number => {
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -223,6 +235,23 @@ export function AudioWaveformPlayer({
         onLoadedMetadata?.(nextDuration);
       }
     };
+    const handleCanPlay = () => {
+      const nextDuration = getKnownDuration(audio, durationSeconds ?? 0);
+
+      if (!Number.isFinite(nextDuration) || nextDuration <= 0) {
+        return;
+      }
+
+      setPlaybackState((current) => ({
+        src,
+        currentTime: current.src === src ? current.currentTime : audio.currentTime || 0,
+        duration: current.src === src
+          ? Math.max(current.duration, nextDuration)
+          : nextDuration,
+        playing: current.src === src ? current.playing : !audio.paused,
+      }));
+      onLoadedMetadata?.(nextDuration);
+    };
     const handleEnded = () => {
       setPlaybackState((current) => ({
         src,
@@ -244,13 +273,16 @@ export function AudioWaveformPlayer({
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('durationchange', handleLoadedMetadata);
+    audio.addEventListener('canplay', handleCanPlay);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
+    audio.load();
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('durationchange', handleLoadedMetadata);
+      audio.removeEventListener('canplay', handleCanPlay);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
     };
@@ -268,7 +300,7 @@ export function AudioWaveformPlayer({
     const audio = audioRef.current;
     const rect = waveformRef.current?.getBoundingClientRect();
 
-    if (!audio || !rect || !duration) {
+    if (!audio || !rect || !duration || waveformLoading) {
       return;
     }
 
@@ -308,7 +340,7 @@ export function AudioWaveformPlayer({
   const togglePlayback = () => {
     const audio = audioRef.current;
 
-    if (!audio) {
+    if (!audio || !canInteract) {
       return;
     }
 
@@ -346,43 +378,58 @@ export function AudioWaveformPlayer({
       <audio ref={audioRef} src={src} preload="metadata" />
       <div
         ref={waveformRef}
-        className="nodrag nopan relative z-20 grid h-16 cursor-pointer items-center gap-[3px] overflow-hidden rounded-[10px] px-1"
-        style={peaks.length > 0 ? { gridTemplateColumns: `repeat(${peaks.length}, minmax(0, 1fr))` } : undefined}
+        className={[
+          'nodrag nopan relative z-20 grid h-16 items-center gap-[3px] overflow-hidden rounded-[10px] px-1',
+          waveformLoading ? 'cursor-wait' : 'cursor-pointer',
+        ].join(' ')}
+        style={{ gridTemplateColumns: `repeat(${(waveformLoading ? loadingPeaks : peaks).length || 1}, minmax(0, 1fr))` }}
         onPointerDownCapture={handleWaveformPointerDown}
         onPointerMove={handleWaveformPointerMove}
         onPointerUp={handleWaveformPointerEnd}
         onPointerCancel={handleWaveformPointerEnd}
         aria-label={title || 'Audio waveform'}
       >
-        {peaks.length > 0 ? (
-          peaks.map((peak, index) => (
+        {peaks.length > 0 || waveformLoading ? (
+          (waveformLoading ? loadingPeaks : peaks).map((peak, index) => (
             <span
               key={`${index}-${peak}`}
-              className="w-full bg-white"
+              className={[
+                'w-full rounded-full',
+                waveformLoading ? 'animate-pulse bg-white/20' : 'bg-white',
+              ].join(' ')}
               style={{
                 height: `${Math.max(7, peak * 54)}px`,
-                borderRadius: '999px',
               }}
             />
           ))
         ) : (
           <span className="col-span-full h-px w-full border-t border-dashed border-white/22" />
         )}
-        <span
-          className="nodrag nopan absolute top-1/2 z-10 h-[76px] w-5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize"
-          style={{ left: `${progress * 100}%` }}
-          aria-hidden="true"
-        >
-          <span className="absolute left-1/2 top-1/2 h-full w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#39bdf8] shadow-[0_0_14px_rgba(57,189,248,0.7)]" />
-        </span>
+        {!waveformLoading ? (
+          <span
+            className="nodrag nopan absolute top-1/2 z-10 h-[76px] w-5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize"
+            style={{ left: `${progress * 100}%` }}
+            aria-hidden="true"
+          >
+            <span className="absolute left-1/2 top-1/2 h-full w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#39bdf8] shadow-[0_0_14px_rgba(57,189,248,0.7)]" />
+          </span>
+        ) : null}
       </div>
       <div className="nodrag nopan flex items-center justify-center gap-4 text-[12px] font-medium text-white/70">
-        <span className="w-11 text-right">{formatAudioTime(currentTime)}</span>
+        {canInteract ? (
+          <span className="w-11 text-right">{formatAudioTime(currentTime)}</span>
+        ) : (
+          <span className="h-3 w-11 rounded-full bg-white/14" aria-hidden="true" />
+        )}
         <button
           type="button"
           aria-label={playing ? 'Pause audio' : 'Play audio'}
           onClick={togglePlayback}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#17191d] shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition hover:scale-105"
+          disabled={!canInteract}
+          className={[
+            'flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#17191d] shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition',
+            canInteract ? 'hover:scale-105' : 'cursor-wait opacity-55',
+          ].join(' ')}
         >
           {playing ? (
             <Pause size={15} fill="currentColor" />
@@ -390,7 +437,11 @@ export function AudioWaveformPlayer({
             <Play size={15} fill="currentColor" className="ml-0.5" />
           )}
         </button>
-        <span className="w-11">{formatAudioTime(duration)}</span>
+        {canInteract ? (
+          <span className="w-11">{formatAudioTime(duration)}</span>
+        ) : (
+          <span className="h-3 w-11 rounded-full bg-white/14" aria-hidden="true" />
+        )}
       </div>
       {waveformFailed ? (
         <div className="text-center text-[11px] font-medium text-white/38">
