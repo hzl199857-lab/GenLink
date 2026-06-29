@@ -54,6 +54,15 @@ export interface VideoGenerationNodeProps {
     height?: number;
     durationSeconds?: number;
   }>;
+  connectedAudio?: Array<{
+    id: string;
+    audioUrl: string;
+    alt: string;
+    fileName?: string;
+    durationSeconds?: number;
+    uploadStatus?: 'uploading' | 'uploaded' | 'error';
+    uploadError?: string;
+  }>;
   onChange?: (next: VideoGenerationNodeData) => void;
   onRun?: (promptOverride?: string) => void;
   onUpload?: () => void;
@@ -112,6 +121,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   dragging = false,
   connectedImages = [],
   connectedVideos = [],
+  connectedAudio = [],
   onChange,
   onRun,
   onUpload,
@@ -329,6 +339,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
         generating={isGenerating}
         connectedImages={connectedImages}
         connectedVideos={connectedVideos}
+        connectedAudio={connectedAudio}
         focusRequestId={promptFocusRequestId}
         onUpload={onUpload}
         onQuickReferenceConnect={onQuickReferenceConnect}

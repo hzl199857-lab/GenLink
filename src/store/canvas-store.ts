@@ -30,6 +30,8 @@ import {
 } from "@/lib/project-storage";
 import type {
   AITextResultNodeData,
+  AudioGenerationNodeData,
+  AudioNodeData,
   CanvasEdge,
   CanvasNode,
   ImageGenerationResultItem,
@@ -656,6 +658,78 @@ function dedupeConnectedVideos(
   return deduped;
 }
 
+function createAudioReferenceFromNode(node: CanvasNode): VideoGenerationMediaReference | null {
+  if (node.type === "audio") {
+    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl.trim();
+
+    if (!audioUrl) {
+      return null;
+    }
+
+    return {
+      id: node.id,
+      url: audioUrl,
+      hostedUrl: node.data.hostedAudioUrl?.trim() || undefined,
+      previewUrl: node.data.previewUrl,
+      fileName: node.data.fileName,
+      mimeType: node.data.mimeType || "audio/*",
+      sizeBytes: node.data.sizeBytes,
+      durationSeconds: node.data.durationSeconds,
+      uploadStatus: node.data.status === "error" ? "error" : "uploaded",
+      uploadError: node.data.errorMessage,
+    };
+  }
+
+  if (node.type === "audio_generation") {
+    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl?.trim();
+
+    if (!audioUrl) {
+      return null;
+    }
+
+    return {
+      id: node.id,
+      url: audioUrl,
+      hostedUrl: node.data.hostedAudioUrl?.trim() || undefined,
+      fileName: node.data.generatedOutputFileName,
+      mimeType: node.data.mimeType || "audio/*",
+      sizeBytes: node.data.sizeBytes,
+      durationSeconds: node.data.durationSeconds,
+      uploadStatus: node.data.status === "error" ? "error" : "uploaded",
+      uploadError: node.data.errorMessage,
+    };
+  }
+
+  return null;
+}
+
+function appendDedupeReferences(
+  current: VideoGenerationMediaReference[] | undefined,
+  refs: VideoGenerationMediaReference[],
+): VideoGenerationMediaReference[] {
+  const existing = current ?? [];
+  const seen = new Set(
+    existing.flatMap((reference) => [
+      reference.id,
+      reference.url,
+      reference.hostedUrl,
+    ]).filter((value): value is string => Boolean(value?.trim())),
+  );
+  const nextRefs = refs.filter((reference) => {
+    const keys = [reference.id, reference.url, reference.hostedUrl]
+      .filter((value): value is string => Boolean(value?.trim()));
+
+    if (keys.some((key) => seen.has(key))) {
+      return false;
+    }
+
+    keys.forEach((key) => seen.add(key));
+    return true;
+  });
+
+  return [...existing, ...nextRefs];
+}
+
 type CanvasImageSource = {
   imageUrl: string;
   hostedImageUrl?: string;
@@ -1110,6 +1184,95 @@ function createVideoGenerationNodeData(): VideoGenerationNodeData {
     returnLastFrame: false,
     generateAudio: false,
     status: "idle",
+  };
+}
+
+function createAudioGenerationNodeData(): AudioGenerationNodeData {
+  return {
+    title: "Audio",
+    prompt: "",
+    provider: "runninghub",
+    runningHubWorkflowId: "",
+    taskType: "general",
+    duration: 10,
+    style: "",
+    voice: "",
+    referenceAudio: [],
+    status: "idle",
+  };
+}
+
+function createAudioNodeData(): AudioNodeData {
+  return {
+    title: "Audio",
+    audioUrl: "",
+    status: "idle",
+  };
+}
+
+function normalizeAudioNodeData(data: unknown): AudioNodeData {
+  const defaults = createAudioNodeData();
+  const record = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+
+  return {
+    ...defaults,
+    ...record,
+    title: typeof record.title === "string" ? record.title : defaults.title,
+    audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : "",
+    hostedAudioUrl: typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
+    previewUrl: typeof record.previewUrl === "string" ? record.previewUrl : undefined,
+    fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+    outputFileName: typeof record.outputFileName === "string" ? record.outputFileName : undefined,
+    mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+    durationSeconds: typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+    status: record.status === "generating" || record.status === "error" ? record.status : "idle",
+    statusMessage: typeof record.statusMessage === "string" ? record.statusMessage : undefined,
+    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+  };
+}
+
+function normalizeAudioGenerationNodeData(data: unknown): AudioGenerationNodeData {
+  const defaults = createAudioGenerationNodeData();
+  const record = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const taskType = record.taskType === "voiceover" ||
+    record.taskType === "music" ||
+    record.taskType === "sound-effect"
+      ? record.taskType
+      : "general";
+
+  return {
+    ...defaults,
+    ...record,
+    title: typeof record.title === "string" ? record.title : defaults.title,
+    prompt: typeof record.prompt === "string" ? record.prompt : "",
+    provider: "runninghub",
+    runningHubWorkflowId: typeof record.runningHubWorkflowId === "string"
+      ? record.runningHubWorkflowId
+      : "",
+    taskType,
+    duration: typeof record.duration === "number" ? record.duration : defaults.duration,
+    style: typeof record.style === "string" ? record.style : "",
+    voice: typeof record.voice === "string" ? record.voice : "",
+    referenceAudio: Array.isArray(record.referenceAudio)
+      ? record.referenceAudio as VideoGenerationMediaReference[]
+      : [],
+    audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : undefined,
+    hostedAudioUrl: typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
+    generatedOutputFileName: typeof record.generatedOutputFileName === "string"
+      ? record.generatedOutputFileName
+      : undefined,
+    generatedModel: typeof record.generatedModel === "string" ? record.generatedModel : undefined,
+    generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : undefined,
+    durationSeconds: typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+    mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+    status: record.status === "generating" || record.status === "error" ? record.status : "idle",
+    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
   };
 }
 
@@ -1943,6 +2106,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         position,
         data: createVideoGenerationNodeData(),
       };
+    case "audio_generation":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createAudioGenerationNodeData(),
+      };
     case "video_upscale":
       return {
         id: crypto.randomUUID(),
@@ -1956,6 +2126,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createVideoNodeData(),
+      };
+    case "audio":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createAudioNodeData(),
       };
     case "image":
       return {
@@ -2350,6 +2527,20 @@ function normalizeLoadedCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
       };
     }
 
+    if (node.type === "audio") {
+      return {
+        ...node,
+        data: normalizeAudioNodeData(node.data),
+      };
+    }
+
+    if (node.type === "audio_generation") {
+      return {
+        ...node,
+        data: normalizeAudioGenerationNodeData(node.data),
+      };
+    }
+
     return node;
   });
 }
@@ -2411,6 +2602,17 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
             ...node.data,
             videoUrl: `output:${node.data.outputFileName}`,
             hostedVideoUrl: undefined,
+          },
+        };
+      }
+
+      if (node.type === "audio" && node.data.outputFileName?.trim()) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            audioUrl: `output:${node.data.outputFileName}`,
+            hostedAudioUrl: undefined,
           },
         };
       }
@@ -2481,6 +2683,32 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
 
         if (isObjectUrl(node.data.videoUrl)) {
           urls.add(node.data.videoUrl);
+        }
+      }
+
+      if (node.type === "audio") {
+        if (isObjectUrl(node.data.hostedAudioUrl)) {
+          urls.add(node.data.hostedAudioUrl as string);
+        }
+
+        if (isObjectUrl(node.data.previewUrl)) {
+          urls.add(node.data.previewUrl as string);
+        }
+
+        if (isObjectUrl(node.data.audioUrl)) {
+          urls.add(node.data.audioUrl);
+        }
+      }
+
+      if (node.type === "audio_generation") {
+        const audioUrl = node.data.audioUrl;
+
+        if (isObjectUrl(node.data.hostedAudioUrl)) {
+          urls.add(node.data.hostedAudioUrl as string);
+        }
+
+        if (typeof audioUrl === "string" && isObjectUrl(audioUrl)) {
+          urls.add(audioUrl);
         }
       }
 
@@ -4015,6 +4243,10 @@ export interface CanvasState {
     videoGenerationNodeId: string,
     media: VideoGenerationMediaReference[],
   ) => void;
+  addReferenceMediaToAudioGenerationNode: (
+    audioGenerationNodeId: string,
+    media: VideoGenerationMediaReference[],
+  ) => void;
   addReferenceMediaToTextNode: (
     textNodeId: string,
     media: VideoGenerationMediaReference[],
@@ -4254,6 +4486,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   addEdge: (edge) => {
     set((state) => {
       const sourceNode = state.nodes.find((node) => node.id === edge.source);
+      const audioReference = sourceNode ? createAudioReferenceFromNode(sourceNode) : null;
       const connectsVideoReference =
         (sourceNode?.type === "video_generation" || sourceNode?.type === "video") &&
         Boolean(
@@ -4281,7 +4514,41 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   }
                 : node,
             )
-          : state.nodes,
+          : audioReference
+            ? state.nodes.map((node) => {
+                if (node.id === edge.target && node.type === "video_generation") {
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      referenceAudio: appendDedupeReferences(
+                        node.data.referenceAudio,
+                        [audioReference],
+                      ),
+                      status: node.data.status === "error" ? "idle" : node.data.status,
+                      errorMessage: undefined,
+                    },
+                  };
+                }
+
+                if (node.id === edge.target && node.type === "audio_generation") {
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      referenceAudio: appendDedupeReferences(
+                        node.data.referenceAudio,
+                        [audioReference],
+                      ),
+                      status: node.data.status === "error" ? "idle" : node.data.status,
+                      errorMessage: undefined,
+                    },
+                  };
+                }
+
+                return node;
+              })
+            : state.nodes,
         dirty: true,
         error: null,
       };
@@ -4387,6 +4654,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               ...node.data,
               referenceImages: nextReferenceImages,
               referenceVideos: nextReferenceVideos,
+              referenceAudio: nextReferenceAudio,
+              status: node.data.status === "error" ? "idle" : node.data.status,
+              errorMessage: undefined,
+            },
+          };
+        }
+
+        if (node.type === "audio_generation") {
+          const referenceAudio = node.data.referenceAudio ?? [];
+          const nextReferenceAudio = referenceAudio.filter((item) => item.id !== referenceId);
+          const nodeRemovedInline = nextReferenceAudio.length !== referenceAudio.length;
+          removedInline = removedInline || nodeRemovedInline;
+
+          if (!nodeRemovedInline) {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
               referenceAudio: nextReferenceAudio,
               status: node.data.status === "error" ? "idle" : node.data.status,
               errorMessage: undefined,
@@ -7729,6 +8017,51 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addReferenceMediaToAudioGenerationNode: (audioGenerationNodeId, media) => {
+    if (media.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const audioGenerationNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation",
+      );
+
+      if (!audioGenerationNode) {
+        return state;
+      }
+
+      const audioRefs = media.filter((item) => item.mimeType?.startsWith("audio/"));
+
+      if (audioRefs.length === 0) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: state.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceAudio: appendDedupeReferences(
+                    node.data.referenceAudio,
+                    audioRefs,
+                  ),
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   addReferenceMediaToTextNode: (textNodeId, media) => {
     if (media.length === 0) {
       return;
@@ -8011,6 +8344,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   referenceVideos: nextReferenceVideos,
                   referenceAudio: nextReferenceAudio,
                   mode: nextReferenceVideos.length > 0 ? "all-reference" : node.data.mode,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node;
+        }
+
+        if (node.type === "audio_generation") {
+          let nodeDidUpdate = false;
+          const nextReferenceAudio = (node.data.referenceAudio ?? []).map((reference) => {
+            if (reference.id !== referenceId) {
+              return reference;
+            }
+
+            didUpdate = true;
+            nodeDidUpdate = true;
+            return {
+              ...reference,
+              ...updates,
+            };
+          });
+
+          return nodeDidUpdate
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceAudio: nextReferenceAudio,
                   status: node.data.status === "error" ? "idle" : node.data.status,
                   errorMessage: undefined,
                 },

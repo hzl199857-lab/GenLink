@@ -6,8 +6,10 @@ export type NodeType =
   | "storyboard_grid"
   | "image_generation"
   | "video_generation"
+  | "audio_generation"
   | "video_upscale"
   | "video"
+  | "audio"
   | "ai_text_result"
   | "image"
   | "uploaded_image"
@@ -290,6 +292,34 @@ export interface VideoGenerationNodeData {
   errorMessage?: string;
 }
 
+export type AudioGenerationTaskType =
+  | "general"
+  | "voiceover"
+  | "music"
+  | "sound-effect";
+
+export interface AudioGenerationNodeData {
+  title?: string;
+  prompt?: string;
+  provider?: "runninghub";
+  runningHubWorkflowId?: string;
+  taskType?: AudioGenerationTaskType;
+  duration?: number;
+  style?: string;
+  voice?: string;
+  referenceAudio?: VideoGenerationMediaReference[];
+  audioUrl?: string;
+  hostedAudioUrl?: string;
+  generatedOutputFileName?: string;
+  generatedModel?: string;
+  generatedAt?: string;
+  durationSeconds?: number;
+  mimeType?: string;
+  sizeBytes?: number;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
+}
+
 export interface VideoUpscaleNodeData {
   title?: string;
   targetResolution?: "720p" | "1080p" | "4k";
@@ -381,6 +411,21 @@ export interface VideoNodeData {
   errorMessage?: string;
 }
 
+export interface AudioNodeData {
+  title?: string;
+  audioUrl: string;
+  hostedAudioUrl?: string;
+  previewUrl?: string;
+  fileName?: string;
+  outputFileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  durationSeconds?: number;
+  status?: "idle" | "generating" | "error";
+  statusMessage?: string;
+  errorMessage?: string;
+}
+
 export interface Panorama360ViewState {
   yaw: number;
   pitch: number;
@@ -425,8 +470,10 @@ export type CanvasNodeData =
   | { type: "storyboard_grid"; data: StoryboardGridNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "video_generation"; data: VideoGenerationNodeData }
+  | { type: "audio_generation"; data: AudioGenerationNodeData }
   | { type: "video_upscale"; data: VideoUpscaleNodeData }
   | { type: "video"; data: VideoNodeData }
+  | { type: "audio"; data: AudioNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData }
@@ -438,8 +485,10 @@ export type CanvasNode =
   | BaseCanvasNode<"storyboard_grid", StoryboardGridNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
+  | BaseCanvasNode<"audio_generation", AudioGenerationNodeData>
   | BaseCanvasNode<"video_upscale", VideoUpscaleNodeData>
   | BaseCanvasNode<"video", VideoNodeData>
+  | BaseCanvasNode<"audio", AudioNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>

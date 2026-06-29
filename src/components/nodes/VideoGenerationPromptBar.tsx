@@ -68,6 +68,15 @@ export interface VideoGenerationPromptBarProps {
     height?: number;
     durationSeconds?: number;
   }>;
+  connectedAudio?: Array<{
+    id: string;
+    audioUrl: string;
+    alt: string;
+    fileName?: string;
+    durationSeconds?: number;
+    uploadStatus?: 'uploading' | 'uploaded' | 'error';
+    uploadError?: string;
+  }>;
   onPromptChange?: (next: string) => void;
   onProviderModelChange?: (next: { provider: 'comfly'; model: string }) => void;
   onModeChange?: (next: VideoGenerationMode) => void;
@@ -178,6 +187,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   generating = false,
   connectedImages = [],
   connectedVideos = [],
+  connectedAudio = [],
   onPromptChange,
   onProviderModelChange,
   onModeChange,
@@ -298,6 +308,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
               <ReferenceMediaStrip
                 connectedImages={connectedImages}
                 connectedVideos={connectedVideos}
+                connectedAudio={connectedAudio}
                 imagePreview={referenceImagePreview}
                 videoPreview={referenceVideoPreview}
                 onQuickReferenceConnect={onQuickReferenceConnect}
