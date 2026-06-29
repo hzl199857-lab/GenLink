@@ -242,13 +242,14 @@ export async function submitComflyVideoTask(
 ): Promise<VideoTaskSubmission> {
   const provider = normalizeVideoProvider(params.provider);
   const model = params.model || DEFAULT_SEEDANCE_MODEL;
+  const apiKey = assertConfigured(params.apiKey ?? '');
   const request = buildVideoCreateRequest({ ...params, model });
   const response = await requestJson<SeedanceCreateResponse>(
     provider,
     request.path,
     {
       method: 'POST',
-      apiKey: params.apiKey,
+      apiKey,
       body: request.body,
     },
   );
@@ -305,12 +306,13 @@ export async function getComflyVideoTaskResult(params: {
 
 export async function generateVideo(params: GenerateVideoParams): Promise<VideoGenerationResult> {
   const submission = await submitComflyVideoTask(params);
+  const apiKey = assertConfigured(params.apiKey ?? '');
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < DEFAULT_POLL_TIMEOUT_MS) {
     const task = await getComflyVideoTaskResult({
       provider: params.provider,
-      apiKey: params.apiKey,
+      apiKey,
       taskId: submission.taskId,
       model: submission.model,
       officialFormat: submission.officialFormat,

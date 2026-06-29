@@ -1,5 +1,11 @@
 import type {
   AITextResultNodeData,
+  AudioGenerationNodeData,
+  AudioGenerationMode,
+  AudioGenerationModel,
+  AudioGenerationProvider,
+  AudioGenerationVocalGender,
+  AudioNodeData,
   CanvasEdge,
   CanvasNode,
   ImageGenerationResultItem,
@@ -88,8 +94,10 @@ function isNodeType(value: string): value is NodeType {
     value === "storyboard_grid" ||
     value === "image_generation" ||
     value === "video_generation" ||
+    value === "audio_generation" ||
     value === "video_upscale" ||
     value === "video" ||
+    value === "audio" ||
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image" ||
@@ -147,6 +155,91 @@ function normalizeVideoUpscaleNodeData(value: unknown): VideoUpscaleNodeData {
     targetFps: "30",
     instanceType: "default",
     status: "idle",
+  };
+}
+
+function normalizeAudioGenerationProvider(value: unknown): AudioGenerationProvider {
+  return value === "zhenzhen" ? "zhenzhen" : "comfly";
+}
+
+function normalizeAudioGenerationModel(value: unknown): AudioGenerationModel {
+  switch (value) {
+    case "suno-v5":
+    case "suno-v4.5-plus":
+      return value;
+    default:
+      return "suno-v5.5";
+  }
+}
+
+function normalizeAudioGenerationMode(value: unknown): AudioGenerationMode {
+  return value === "custom" ? "custom" : "inspiration";
+}
+
+function normalizeAudioGenerationVocalGender(value: unknown): AudioGenerationVocalGender {
+  return value === "f" || value === "m" ? value : "auto";
+}
+
+function normalizeAudioGenerationNodeData(value: unknown): AudioGenerationNodeData {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const songTitleEdited = record.songTitleEdited === true;
+  const legacySongTitle = typeof record.songTitle === "string" ? record.songTitle : "";
+
+  return {
+    title: typeof record.title === "string" ? record.title : "Audio",
+    songTitle: songTitleEdited ? legacySongTitle : "",
+    songTitleEdited,
+    generatedAudioTitle:
+      typeof record.generatedAudioTitle === "string"
+        ? record.generatedAudioTitle
+        : songTitleEdited
+          ? ""
+          : legacySongTitle,
+    prompt: typeof record.prompt === "string" ? record.prompt : "",
+    provider: normalizeAudioGenerationProvider(record.provider),
+    model: normalizeAudioGenerationModel(record.model),
+    mode: normalizeAudioGenerationMode(record.mode),
+    runningHubWorkflowId:
+      typeof record.runningHubWorkflowId === "string"
+        ? record.runningHubWorkflowId
+        : "",
+    taskType:
+      record.taskType === "voiceover" ||
+      record.taskType === "music" ||
+      record.taskType === "sound-effect"
+        ? record.taskType
+        : "music",
+    duration: typeof record.duration === "number" ? record.duration : 10,
+    style: typeof record.style === "string" ? record.style : "",
+    voice: typeof record.voice === "string" ? record.voice : "",
+    instrumental: record.instrumental === true,
+    negativeTags: typeof record.negativeTags === "string" ? record.negativeTags : "",
+    vocalGender: normalizeAudioGenerationVocalGender(record.vocalGender),
+    referenceAudio: normalizeMediaReferences(record.referenceAudio),
+    taskId: typeof record.taskId === "string" ? record.taskId : undefined,
+    progress: typeof record.progress === "string" ? record.progress : undefined,
+    audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : undefined,
+    hostedAudioUrl:
+      typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
+    generatedOutputFileName:
+      typeof record.generatedOutputFileName === "string"
+        ? record.generatedOutputFileName
+        : undefined,
+    generatedModel:
+      typeof record.generatedModel === "string" ? record.generatedModel : undefined,
+    generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : undefined,
+    durationSeconds:
+      typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+    mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+    status:
+      record.status === "generating" || record.status === "error"
+        ? record.status
+        : "idle",
+    errorMessage:
+      typeof record.errorMessage === "string" ? record.errorMessage : undefined,
   };
 }
 
@@ -760,6 +853,41 @@ function normalizeVideoNodeData(value: unknown): VideoNodeData {
   };
 }
 
+function normalizeAudioNodeData(value: unknown): AudioNodeData {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    return {
+      title: typeof record.title === "string" ? record.title : undefined,
+      audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : "",
+      hostedAudioUrl:
+        typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
+      previewUrl: typeof record.previewUrl === "string" ? record.previewUrl : undefined,
+      fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+      outputFileName:
+        typeof record.outputFileName === "string" ? record.outputFileName : undefined,
+      mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+      sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+      durationSeconds:
+        typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+      status:
+        record.status === "generating" || record.status === "error"
+          ? record.status
+          : "idle",
+      statusMessage:
+        typeof record.statusMessage === "string" ? record.statusMessage : undefined,
+      errorMessage:
+        typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+    };
+  }
+
+  return {
+    title: "audio",
+    audioUrl: "",
+    status: "idle",
+  };
+}
+
 function normalizeUploadedImageNodeDataAsImage(value: unknown): ImageNodeData {
   const uploaded = normalizeUploadedImageNodeData(value);
 
@@ -982,6 +1110,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         position: { x: record.positionX, y: record.positionY },
         data: normalizeVideoGenerationNodeData(parsed),
       };
+    case "audio_generation":
+      return {
+        id: record.id,
+        type: "audio_generation",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeAudioGenerationNodeData(parsed),
+      };
     case "video_upscale":
       return {
         id: record.id,
@@ -995,6 +1130,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "video",
         position: { x: record.positionX, y: record.positionY },
         data: normalizeVideoNodeData(parsed),
+      };
+    case "audio":
+      return {
+        id: record.id,
+        type: "audio",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeAudioNodeData(parsed),
       };
     case "ai_text_result":
       return {
