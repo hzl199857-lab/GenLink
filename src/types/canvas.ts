@@ -246,7 +246,7 @@ export type VideoGenerationMode =
   | "all-reference"
   | "first-last-frame";
 
-export type VideoGenerationProvider = "comfly";
+export type VideoGenerationProvider = "comfly" | "zhenzhen";
 
 export interface VideoGenerationMediaReference {
   id: string;
@@ -298,16 +298,31 @@ export type AudioGenerationTaskType =
   | "music"
   | "sound-effect";
 
+export type AudioGenerationProvider = "comfly" | "zhenzhen";
+export type AudioGenerationModel = "suno-v5.5" | "suno-v5" | "suno-v4.5-plus";
+export type AudioGenerationMode = "inspiration" | "custom";
+export type AudioGenerationVocalGender = "auto" | "f" | "m";
+
 export interface AudioGenerationNodeData {
   title?: string;
+  songTitle?: string;
+  songTitleEdited?: boolean;
+  generatedAudioTitle?: string;
   prompt?: string;
-  provider?: "runninghub";
+  provider?: AudioGenerationProvider;
+  model?: AudioGenerationModel;
+  mode?: AudioGenerationMode;
   runningHubWorkflowId?: string;
   taskType?: AudioGenerationTaskType;
   duration?: number;
   style?: string;
   voice?: string;
+  instrumental?: boolean;
+  negativeTags?: string;
+  vocalGender?: AudioGenerationVocalGender;
   referenceAudio?: VideoGenerationMediaReference[];
+  taskId?: string;
+  progress?: string;
   audioUrl?: string;
   hostedAudioUrl?: string;
   generatedOutputFileName?: string;

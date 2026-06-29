@@ -2,12 +2,11 @@
 
 import React from 'react';
 import { Position } from 'reactflow';
-import { Copy, Download, Upload, Volume2 } from 'lucide-react';
+import { Upload, Volume2 } from 'lucide-react';
 import type { AudioNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 import { AudioWaveformPlayer } from './AudioWaveformPlayer';
-import { Tooltip } from '@/components/ui/Tooltip';
 
 export interface UploadedAudioNodeProps {
   data: AudioNodeData;
@@ -22,34 +21,10 @@ export interface UploadedAudioNodeProps {
 }
 
 export const UPLOADED_AUDIO_CARD_WIDTH = 420;
-export const UPLOADED_AUDIO_CARD_HEIGHT = 172;
+export const UPLOADED_AUDIO_CARD_HEIGHT = 236.25;
 
 function getNodeDisplayTitle(data: AudioNodeData): string | undefined {
   return data.title || data.fileName;
-}
-
-function AudioIconButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="group/tooltip relative">
-      <button
-        type="button"
-        aria-label={label}
-        onClick={onClick}
-        className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-black/65 text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition hover:bg-white hover:text-[#17191d]"
-      >
-        {children}
-      </button>
-      <Tooltip label={label} side="top" />
-    </div>
-  );
 }
 
 export function UploadedAudioNode({
@@ -60,8 +35,6 @@ export function UploadedAudioNode({
   onTitleChange,
   onSelectNode,
   onLoadedMetadata,
-  onDownload,
-  onCopyLink,
 }: UploadedAudioNodeProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const displayTitle = getNodeDisplayTitle(data);
@@ -121,47 +94,28 @@ export function UploadedAudioNode({
           </div>
         )}
 
-        <div
+        <button
+          type="button"
+          aria-label="替换音频"
           className={[
-            'nodrag nopan absolute right-3 top-3 z-10 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100',
+            'nodrag nopan absolute right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-[10px] bg-black/65 px-3 py-2 text-[14px] font-semibold text-white opacity-0 shadow-[0_8px_18px_rgba(0,0,0,0.28)] transition-opacity group-hover:opacity-100',
             showAccessories ? '' : 'pointer-events-none group-hover:opacity-0',
           ].join(' ')}
+          onClick={(event) => {
+            event.stopPropagation();
+            inputRef.current?.click();
+          }}
         >
-          <AudioIconButton
-            label="Replace audio"
-            onClick={(event) => {
-              event.stopPropagation();
-              inputRef.current?.click();
-            }}
-          >
-            <Upload size={15} />
-          </AudioIconButton>
-          <AudioIconButton
-            label="Download audio"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDownload?.();
-            }}
-          >
-            <Download size={15} />
-          </AudioIconButton>
-          <AudioIconButton
-            label="Copy audio link"
-            onClick={(event) => {
-              event.stopPropagation();
-              onCopyLink?.();
-            }}
-          >
-            <Copy size={15} />
-          </AudioIconButton>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="audio/*"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-        </div>
+          <Upload size={16} />
+          <span>替换</span>
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="audio/*"
+          className="hidden"
+          onChange={handleFileChange}
+        />
 
         {isUploading ? (
           <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-black/70 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">

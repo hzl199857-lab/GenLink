@@ -170,6 +170,40 @@ type VideoUpscaleResponse =
       };
     };
 
+type AudioGenerationResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      status: "submitted";
+        task: {
+          taskId: string;
+        model: string;
+      };
+    }
+  | {
+      ok: true;
+      status: "pending";
+      progress?: string;
+    }
+  | {
+      ok: true;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: true;
+      status: "completed";
+      result: {
+        taskId: string;
+        model: string;
+        audioUrl: string;
+        title?: string;
+        durationSeconds?: number;
+        mimeType?: string;
+        sizeBytes?: number;
+      };
+    };
+
 type StoryboardGenerationResponse =
   | ApiErrorResponse
   | {
@@ -220,6 +254,7 @@ type SplitGridDimension = 2 | 3 | 5;
 const inFlightImageGenerationNodeIds = new Set<string>();
 const inFlightVideoGenerationNodeIds = new Set<string>();
 const inFlightVideoUpscaleNodeIds = new Set<string>();
+const inFlightAudioGenerationNodeIds = new Set<string>();
 const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
 const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
@@ -232,6 +267,8 @@ const STORYBOARD_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_OSS_UPLOAD_CACHE_LIMIT = 80;
 const VIDEO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const VIDEO_JOB_POLL_INTERVAL_MS = 2_000;
+const AUDIO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
+const AUDIO_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase();
 const SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES =
@@ -297,11 +334,12 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   comfly: "Comfly",
   runninghub: "RunningHub",
   grsai: "Grsai",
-  zhenzhen: "贞贞 AI 工坊",
+  zhenzhen: "贞贞AI工坊",
 };
 
 export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
 export const CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY = "genlink.imageApiProvider";
+export const CANVAS_VIDEO_API_PROVIDER_STORAGE_KEY = "genlink.videoApiProvider";
 export const CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
 export const CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersTextApiKey";
 export const CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyTextApiKey";
@@ -362,7 +400,7 @@ function getApiProviderStorageKey(kind: ApiModelKind): string {
   }
 
   return kind === "video"
-    ? CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY
+    ? CANVAS_VIDEO_API_PROVIDER_STORAGE_KEY
     : CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY;
 }
 
@@ -378,7 +416,12 @@ function getModelStorageKey(kind: ApiModelKind): string {
 
 function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string {
   if (kind === "video") {
-    return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+    switch (provider) {
+      case "zhenzhen":
+        return CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY;
+      default:
+        return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+    }
   }
 
   if (kind === "text") {
@@ -446,9 +489,6 @@ export function persistSelectedModel(params: {
   }
 
   window.localStorage.setItem(getApiProviderStorageKey(params.kind), params.provider);
-  if (params.kind === "video") {
-    window.localStorage.setItem(getApiProviderStorageKey(params.kind), "comfly");
-  }
   window.localStorage.setItem(getModelStorageKey(params.kind), params.model);
 
   if (params.kind === "image" && params.provider === "runninghub") {
@@ -463,10 +503,6 @@ export function readStoredApiKey(
   kind: ApiModelKind,
   provider: ApiProvider,
 ): string {
-  if (kind === "video" && provider === "comfly") {
-    return readStoredValue(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY);
-  }
-
   return readStoredValue(getApiKeyStorageKey(kind, provider));
 }
 
@@ -1190,13 +1226,21 @@ function createVideoGenerationNodeData(): VideoGenerationNodeData {
 function createAudioGenerationNodeData(): AudioGenerationNodeData {
   return {
     title: "Audio",
+    songTitle: "",
+    songTitleEdited: false,
+    generatedAudioTitle: "",
     prompt: "",
-    provider: "runninghub",
+    provider: "comfly",
+    model: "suno-v5.5",
+    mode: "inspiration",
     runningHubWorkflowId: "",
-    taskType: "general",
+    taskType: "music",
     duration: 10,
     style: "",
     voice: "",
+    instrumental: false,
+    negativeTags: "",
+    vocalGender: "auto",
     referenceAudio: [],
     status: "idle",
   };
@@ -1244,13 +1288,35 @@ function normalizeAudioGenerationNodeData(data: unknown): AudioGenerationNodeDat
     record.taskType === "sound-effect"
       ? record.taskType
       : "general";
+  const provider = record.provider === "zhenzhen" ? "zhenzhen" : "comfly";
+  const model =
+    record.model === "suno-v5" ||
+    record.model === "suno-v4.5-plus"
+      ? record.model
+      : "suno-v5.5";
+  const mode = record.mode === "custom" ? "custom" : "inspiration";
+  const vocalGender =
+    record.vocalGender === "f" || record.vocalGender === "m"
+      ? record.vocalGender
+      : "auto";
+  const songTitleEdited = record.songTitleEdited === true;
+  const legacySongTitle = typeof record.songTitle === "string" ? record.songTitle : "";
 
   return {
     ...defaults,
     ...record,
     title: typeof record.title === "string" ? record.title : defaults.title,
+    songTitle: songTitleEdited ? legacySongTitle : "",
+    songTitleEdited,
+    generatedAudioTitle: typeof record.generatedAudioTitle === "string"
+      ? record.generatedAudioTitle
+      : songTitleEdited
+        ? ""
+        : legacySongTitle,
     prompt: typeof record.prompt === "string" ? record.prompt : "",
-    provider: "runninghub",
+    provider,
+    model,
+    mode,
     runningHubWorkflowId: typeof record.runningHubWorkflowId === "string"
       ? record.runningHubWorkflowId
       : "",
@@ -1258,9 +1324,14 @@ function normalizeAudioGenerationNodeData(data: unknown): AudioGenerationNodeDat
     duration: typeof record.duration === "number" ? record.duration : defaults.duration,
     style: typeof record.style === "string" ? record.style : "",
     voice: typeof record.voice === "string" ? record.voice : "",
+    instrumental: record.instrumental === true,
+    negativeTags: typeof record.negativeTags === "string" ? record.negativeTags : "",
+    vocalGender,
     referenceAudio: Array.isArray(record.referenceAudio)
       ? record.referenceAudio as VideoGenerationMediaReference[]
       : [],
+    taskId: typeof record.taskId === "string" ? record.taskId : undefined,
+    progress: typeof record.progress === "string" ? record.progress : undefined,
     audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : undefined,
     hostedAudioUrl: typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
     generatedOutputFileName: typeof record.generatedOutputFileName === "string"
@@ -2261,6 +2332,7 @@ async function readJsonResponse<T>(
 }
 
 async function requestVideoTaskStatus(params: {
+  provider: "comfly" | "zhenzhen";
   apiKey: string;
   taskId: string;
   model: string;
@@ -2271,6 +2343,7 @@ async function requestVideoTaskStatus(params: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action: "status",
+      provider: params.provider,
       apiKey: params.apiKey,
       taskId: params.taskId,
       model: params.model,
@@ -2290,6 +2363,7 @@ async function requestVideoTaskStatus(params: {
 }
 
 async function waitForVideoTaskResult(params: {
+  provider: "comfly" | "zhenzhen";
   apiKey: string;
   taskId: string;
   model: string;
@@ -2317,6 +2391,65 @@ async function waitForVideoTaskResult(params: {
   }
 
   throw new Error("Video generation timed out");
+}
+
+async function requestAudioTaskStatus(params: {
+  provider: "comfly" | "zhenzhen";
+  apiKey: string;
+  taskId: string;
+  model: string;
+}): Promise<AudioGenerationResponse> {
+  const response = await fetch("/api/ai/audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "status",
+      provider: params.provider,
+      apiKey: params.apiKey,
+      taskId: params.taskId,
+      model: params.model,
+    }),
+  });
+  const json = await readJsonResponse<AudioGenerationResponse>(
+    response,
+    "Audio generation status request failed",
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? "Audio generation status request failed" : json.error);
+  }
+
+  return json;
+}
+
+async function waitForAudioTaskResult(params: {
+  provider: "comfly" | "zhenzhen";
+  apiKey: string;
+  taskId: string;
+  model: string;
+  onProgress?: (progress?: string) => void;
+}): Promise<Extract<AudioGenerationResponse, { status: "completed" }>["result"]> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < AUDIO_JOB_POLL_TIMEOUT_MS) {
+    const json = await requestAudioTaskStatus(params);
+
+    if (json.ok && json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.ok && json.status === "error") {
+      throw new Error(json.error || "Audio generation failed");
+    }
+
+    if (json.ok && json.status === "pending") {
+      params.onProgress?.(json.progress);
+    }
+
+    await sleep(AUDIO_JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Audio generation timed out");
 }
 
 async function requestVideoUpscaleTaskStatus(params: {
@@ -4151,6 +4284,10 @@ export interface CanvasState {
   ) => Promise<void>;
   generateVideoFromVideoGenerationNode: (
     videoGenerationNodeId: string,
+    promptOverride?: string,
+  ) => Promise<void>;
+  generateAudioFromAudioGenerationNode: (
+    audioGenerationNodeId: string,
     promptOverride?: string,
   ) => Promise<void>;
   createVideoUpscaleNodeFromSource: (sourceNodeId: string) => string;
@@ -6005,13 +6142,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const apiKey = assertStoredApiKey("video", "comfly");
+      const provider = latestVideoGenerationNode.data.provider ?? "comfly";
+      const apiKey = assertStoredApiKey("video", provider);
       const response = await fetch("/api/ai/video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey,
-          provider: "comfly",
+          provider,
           model: latestVideoGenerationNode.data.model,
           mode,
           prompt,
@@ -6062,6 +6200,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
 
       const result = await waitForVideoTaskResult({
+        provider,
         apiKey,
         taskId: json.task.taskId,
         model: json.task.model,
@@ -6158,6 +6297,210 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
     } finally {
       inFlightVideoGenerationNodeIds.delete(videoGenerationNodeId);
+    }
+  },
+
+  generateAudioFromAudioGenerationNode: async (audioGenerationNodeId, promptOverride) => {
+    const state = get();
+    const audioGenerationNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
+        node.id === audioGenerationNodeId && node.type === "audio_generation",
+    );
+
+    if (!audioGenerationNode) {
+      throw new Error("Audio generation node not found");
+    }
+
+    if (audioGenerationNode.data.status === "generating") {
+      return;
+    }
+
+    if (inFlightAudioGenerationNodeIds.has(audioGenerationNodeId)) {
+      return;
+    }
+
+    inFlightAudioGenerationNodeIds.add(audioGenerationNodeId);
+
+    try {
+      const latestState = get();
+      const latestAudioGenerationNode = latestState.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation",
+      );
+
+      if (!latestAudioGenerationNode) {
+        throw new Error("Audio generation node not found");
+      }
+
+      const rawPrompt =
+        promptOverride?.trim() ||
+        latestAudioGenerationNode.data.prompt?.trim() ||
+        "";
+      const stylePrompt = latestAudioGenerationNode.data.style?.trim() || "";
+      const mode = latestAudioGenerationNode.data.mode ?? "inspiration";
+      const instrumental = latestAudioGenerationNode.data.instrumental === true;
+      const prompt = rawPrompt || (mode === "custom" && instrumental ? stylePrompt : "");
+
+      if (!prompt) {
+        throw new Error("请输入音乐描述或风格标签");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: undefined,
+                  progress: undefined,
+                  audioUrl: undefined,
+                  hostedAudioUrl: undefined,
+                  generatedAudioTitle: undefined,
+                  generatedOutputFileName: undefined,
+                  generatedModel: undefined,
+                  generatedAt: undefined,
+                  durationSeconds: undefined,
+                  mimeType: undefined,
+                  sizeBytes: undefined,
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const provider = latestAudioGenerationNode.data.provider ?? "comfly";
+      const apiKey = assertStoredApiKey("video", provider);
+      const response = await fetch("/api/ai/audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey,
+          provider,
+          model: latestAudioGenerationNode.data.model,
+          mode,
+          prompt,
+          title: latestAudioGenerationNode.data.songTitleEdited
+            ? latestAudioGenerationNode.data.songTitle
+            : "",
+          style: latestAudioGenerationNode.data.style,
+          instrumental,
+          negativeTags: latestAudioGenerationNode.data.negativeTags,
+          vocalGender: latestAudioGenerationNode.data.vocalGender,
+        }),
+      });
+      const json = await readJsonResponse<AudioGenerationResponse>(
+        response,
+        "Audio generation request failed",
+      );
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.ok ? "Audio generation failed" : json.error);
+      }
+
+      if (json.status !== "submitted") {
+        throw new Error("Audio generation request did not return a task id");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: json.task.taskId,
+                  generatedModel: json.task.model,
+                  progress: "0%",
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const result = await waitForAudioTaskResult({
+        provider,
+        apiKey,
+        taskId: json.task.taskId,
+        model: json.task.model,
+        onProgress: (progress) => {
+          if (!progress) {
+            return;
+          }
+
+          set((currentState) => ({
+            dirty: true,
+            nodes: currentState.nodes.map((node) =>
+              node.id === audioGenerationNodeId && node.type === "audio_generation"
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      progress,
+                    },
+                  }
+                : node,
+            ),
+          }));
+        },
+      });
+      const generatedAt = nowIso();
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  generatedAudioTitle: result.title,
+                  taskId: result.taskId,
+                  progress: "100%",
+                  audioUrl: result.audioUrl,
+                  hostedAudioUrl: result.audioUrl,
+                  generatedModel: result.model,
+                  generatedAt,
+                  durationSeconds: result.durationSeconds,
+                  mimeType: result.mimeType,
+                  sizeBytes: result.sizeBytes,
+                  status: "idle",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        error: message,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "error",
+                  errorMessage: message,
+                },
+              }
+            : node,
+        ),
+      }));
+    } finally {
+      inFlightAudioGenerationNodeIds.delete(audioGenerationNodeId);
     }
   },
 

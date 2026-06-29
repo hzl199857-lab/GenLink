@@ -427,10 +427,8 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     width: data.generatedImageWidth,
     height: data.generatedImageHeight,
   });
-  const cardStageHeight = MAX_CARD_EDGE + CARD_ACCESSORY_TOP_SPACE + CARD_ACCESSORY_GAP;
-  const cardTopOffset = cardStageHeight - cardDimensions.height;
-  const cardLeftOffset = Math.round((MAX_CARD_EDGE - cardDimensions.width) / 2);
-  const toolbarTop = cardTopOffset - CARD_ACCESSORY_TOP_SPACE - CARD_TOOLBAR_LIFT;
+  const titleTop = -(CARD_ACCESSORY_GAP + 26);
+  const toolbarTop = -(CARD_ACCESSORY_TOP_SPACE + CARD_TOOLBAR_LIFT);
   const previewImageUrl =
     data.generatedHostedImageUrl ||
     data.generatedImageUrl;
@@ -452,8 +450,6 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   }, [
     cardDimensions.height,
     cardDimensions.width,
-    cardLeftOffset,
-    cardTopOffset,
     id,
     updateNodeInternals,
   ]);
@@ -477,32 +473,28 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   return (
     <div
       className="relative group node-connectable-root"
-      style={{ width: `${MAX_CARD_EDGE}px` }}
+      style={{
+        width: `${cardDimensions.width}px`,
+        height: `${cardDimensions.height}px`,
+      }}
       onPointerDownCapture={() => {
         if (!selected) {
           setSuppressTransientUi(true);
         }
       }}
     >
-      <div
-        className="relative mx-auto"
-        style={{
-          width: `${MAX_CARD_EDGE}px`,
-          height: `${cardStageHeight}px`,
-        }}
-      >
         <div
-          className="node-visible-title absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
+          className="node-visible-title pointer-events-none absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
           style={{
-            left: `${cardLeftOffset}px`,
-            top: `${Math.max(0, cardTopOffset - CARD_ACCESSORY_GAP - 26)}px`,
+            left: 0,
+            top: `${titleTop}px`,
           }}
         >
-          <ImageIcon size={24} />
+          <ImageIcon size={24} className="pointer-events-auto" />
           <EditableNodeTitle
             value={data.title}
             fallbackValue="Image"
-            className="text-[22px] font-medium leading-none"
+            className="pointer-events-auto text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}
           />
@@ -519,16 +511,15 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         />
 
         <div
-          className="absolute left-1/2 bottom-0 transition-[width,height,transform] duration-300 ease-out"
+          className="absolute inset-0 transition-[width,height] duration-300 ease-out"
           style={{
             width: `${cardDimensions.width}px`,
             height: `${cardDimensions.height}px`,
-            transform: 'translateX(-50%)',
           }}
         >
           <div
             className={[
-              'node-connectable-card image-generation-node-drag-handle relative h-full w-full rounded-gl-lg border bg-gl-panel shadow-gl-card',
+              'node-connectable-card image-generation-node-drag-handle pointer-events-auto relative h-full w-full rounded-gl-lg border bg-gl-panel shadow-gl-card',
               'flex items-center justify-center overflow-hidden transition-[border-color,box-shadow] duration-300 ease-out',
               'cursor-grab',
               isGenerating
@@ -703,8 +694,6 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
           position={Position.Left}
           visible={showAccessories}
           disabled={galleryOpen}
-          cardTopOffset={cardTopOffset}
-          cardLeftOffset={cardLeftOffset}
           cardWidth={cardDimensions.width}
         />
         <CardSideHandle
@@ -712,11 +701,8 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
           position={Position.Right}
           visible={showAccessories}
           disabled={galleryOpen}
-          cardTopOffset={cardTopOffset}
-          cardLeftOffset={cardLeftOffset}
           cardWidth={cardDimensions.width}
         />
-      </div>
 
       <ImageGenerationPromptBar
         key={promptBarVisible ? 'visible' : 'hidden'}

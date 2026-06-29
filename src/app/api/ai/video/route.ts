@@ -7,6 +7,7 @@ import {
 } from "@/lib/video";
 import { VibeApiError } from "@/lib/vibe";
 import type { VideoGenerationMode } from "@/types/canvas";
+import { getVideoProviderConfig, normalizeVideoProvider } from "@/lib/video-provider";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -14,6 +15,7 @@ export const maxDuration = 60;
 interface VideoRequestBody {
   action?: unknown;
   apiKey?: unknown;
+  provider?: unknown;
   taskId?: unknown;
   officialFormat?: unknown;
   model?: unknown;
@@ -106,6 +108,8 @@ function parseDuration(value: unknown): number | undefined {
 }
 
 function toParams(body: VideoRequestBody): GenerateVideoParams {
+  const provider = normalizeVideoProvider(body.provider);
+  const providerLabel = getVideoProviderConfig(provider).label;
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
   const mode = parseMode(body.mode);
@@ -118,7 +122,7 @@ function toParams(body: VideoRequestBody): GenerateVideoParams {
   }
 
   if (!apiKey) {
-    throw new VibeApiError(401, "Comfly API key is required");
+    throw new VibeApiError(401, `${providerLabel} API key is required`);
   }
 
   if (mode === "image-to-video" && !images?.length) {
@@ -134,6 +138,7 @@ function toParams(body: VideoRequestBody): GenerateVideoParams {
     : images;
 
   return {
+    provider,
     apiKey,
     mode,
     prompt,
@@ -160,6 +165,8 @@ export async function POST(request: Request) {
     const action = parseAction(body.action);
 
     if (action === "status") {
+      const provider = normalizeVideoProvider(body.provider);
+      const providerLabel = getVideoProviderConfig(provider).label;
       const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
       const taskId = typeof body.taskId === "string" ? body.taskId.trim() : "";
       const model = typeof body.model === "string" && body.model.trim()
@@ -167,7 +174,7 @@ export async function POST(request: Request) {
         : undefined;
 
       if (!apiKey) {
-        throw new VibeApiError(401, "Comfly API key is required");
+        throw new VibeApiError(401, `${providerLabel} API key is required`);
       }
 
       if (!taskId) {
@@ -175,6 +182,7 @@ export async function POST(request: Request) {
       }
 
       const result = await getComflyVideoTaskResult({
+        provider,
         apiKey,
         taskId,
         model: model || "doubao-seedance-2-0-260128",

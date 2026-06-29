@@ -15,6 +15,7 @@ import {
   MousePointer2,
   Plus,
   Video,
+  Volume2,
   Type,
   Rows3,
   X,
@@ -1094,11 +1095,10 @@ function resolveMiniMapVisibleNodeRect(
       ? useCanvasStore.getState().getConnectedImagesForImageGenerationNode(node.id)
       : undefined;
     const dimensions = resolveImageGenerationCardDimensions(data, referenceImages);
-    const stageHeight = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
 
     return {
-      x: node.position.x + Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - dimensions.width) / 2),
-      y: node.position.y + stageHeight - dimensions.height,
+      x: node.position.x,
+      y: node.position.y,
       width: dimensions.width,
       height: dimensions.height,
       radius: 18,
@@ -1106,11 +1106,14 @@ function resolveMiniMapVisibleNodeRect(
   }
 
   if (node.type === 'video_generation') {
+    const data = node.data as VideoGenerationNodeData;
+    const dimensions = resolveAspectDrivenCardDimensions(data.ratio);
+
     return {
       x: node.position.x,
-      y: node.position.y + 76,
-      width: 540,
-      height: 304,
+      y: node.position.y,
+      width: dimensions.width,
+      height: dimensions.height,
       radius: 18,
     };
   }
@@ -1257,16 +1260,12 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
       ? useCanvasStore.getState().getConnectedImagesForImageGenerationNode(node.id)
       : undefined;
     const dimensions = resolveImageGenerationCardDimensions(data, referenceImages);
-    const stageHeight =
-      IMAGE_GENERATION_MAX_CARD_EDGE +
-      IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
-      IMAGE_GENERATION_CARD_ACCESSORY_GAP;
 
     return {
       x: node.position.x,
       y: node.position.y,
-      width: Math.max(IMAGE_GENERATION_MAX_CARD_EDGE, dimensions.width),
-      height: stageHeight,
+      width: dimensions.width,
+      height: dimensions.height,
     };
   }
 
@@ -1305,8 +1304,8 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     return {
       x: node.position.x,
       y: node.position.y,
-      width: 540,
-      height: UPLOADED_AUDIO_CARD_HEIGHT + 76,
+      width: UPLOADED_AUDIO_CARD_WIDTH,
+      height: UPLOADED_AUDIO_CARD_HEIGHT,
     };
   }
 
@@ -1319,7 +1318,7 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     return {
       x: node.position.x,
       y: node.position.y - 8,
-      width: Math.max(VIDEO_UPSCALE_NODE_WIDTH, VIDEO_UPSCALE_PANEL_WIDTH, dimensions.width),
+      width: Math.max(VIDEO_UPSCALE_PANEL_WIDTH, dimensions.width),
       height:
         VIDEO_UPSCALE_TITLE_HEIGHT +
         dimensions.height +
@@ -2681,12 +2680,9 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
   const imageData = data as ImageGenerationNodeData;
   const cameraAngle = imageData.cameraAngle ?? THREE_VIEW_DEFAULT_ANGLE;
   const threeViewOpen = threeViewControllerNodeId === id;
-  const controllerLeft = IMAGE_GENERATION_MAX_CARD_EDGE / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
-  const controllerTop =
-    IMAGE_GENERATION_MAX_CARD_EDGE +
-    IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
-    IMAGE_GENERATION_CARD_ACCESSORY_GAP +
-    THREE_VIEW_CONTROLLER_GAP;
+  const cardDimensions = resolveImageGenerationCardDimensions(imageData, connectedImages);
+  const controllerLeft = cardDimensions.width / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
+  const controllerTop = cardDimensions.height + THREE_VIEW_CONTROLLER_GAP;
 
   useEffect(() => {
     const handleClearNodeUi = () => setPromptFocused(false);
@@ -2971,9 +2967,11 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
 
 const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateAudio = useCanvasStore((s) => s.generateAudioFromAudioGenerationNode);
   const removeReference = useCanvasStore((s) => s.removeReferenceFromNode);
   const renderData = data as CanvasNodeRenderData;
-  const isActive = !!selected && !!renderData.canvasNodeActive && !dragging;
+  const [promptFocused, setPromptFocused] = useState(false);
+  const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const audioData = data as AudioGenerationNodeData;
   const referenceAudio = (audioData.referenceAudio ?? []).map((reference, index) => ({
     id: reference.id,
@@ -2984,6 +2982,14 @@ const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id
     uploadStatus: reference.uploadStatus,
     uploadError: reference.uploadError,
   }));
+  const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+
+  useEffect(() => {
+    const handleClearNodeUi = () => setPromptFocused(false);
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
 
   return (
     <AudioGenerationNode
@@ -2993,6 +2999,7 @@ const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id
       dragging={!!dragging}
       referenceAudio={referenceAudio}
       onChange={(next) => updateNodeData<'audio_generation'>(id, next)}
+      onRun={() => generateAudio(id)}
       onTitleChange={(nextTitle) => updateNodeData<'audio_generation'>(id, { title: nextTitle })}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
       onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
@@ -3001,15 +3008,16 @@ const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id
         targetType: 'audio_generation',
       })}
       onRemoveReference={(referenceId) => removeReference(id, referenceId)}
-      onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+      onSelectNode={handleSelectNode}
       onPromptPointerDown={() => {
-        notifyCanvasNodeSelect?.(id);
+        handleSelectNode();
         notifyPromptBarInteraction?.();
       }}
       onPromptFocusWithinChange={(focused) => {
         if (focused) {
-          notifyCanvasNodeSelect?.(id);
+          handleSelectNode();
         }
+        setPromptFocused(focused);
       }}
     />
   );
@@ -4365,7 +4373,6 @@ const GROUP_SOURCE_HANDLE_ZONE_BASE =
   'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
 const GROUP_LAYOUT_GAP_X = 48;
 const GROUP_LAYOUT_GAP_Y = 48;
-const VIDEO_UPSCALE_NODE_WIDTH = 540;
 const VIDEO_UPSCALE_PANEL_WIDTH = 448;
 const VIDEO_UPSCALE_PANEL_TOP_GAP = 24;
 const VIDEO_UPSCALE_PANEL_HEIGHT = 144;
@@ -4966,7 +4973,7 @@ type CanvasNodeRenderData = CanvasNode['data'] & {
   canvasFocusRequestId?: number;
 };
 
-type EmptyCanvasWelcomeAction = 'text' | 'image_generation' | 'video_generation';
+type EmptyCanvasWelcomeAction = 'text' | 'image_generation' | 'video_generation' | 'audio_generation';
 
 function getImageImportPosition(
   basePosition: { x: number; y: number },
@@ -9250,6 +9257,16 @@ function EmptyCanvasWelcome({
           <Video size={15} strokeWidth={2} />
           视频节点
         </button>
+        <button
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={() => onCreateNode('audio_generation')}
+          className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
+        >
+          <Volume2 size={15} strokeWidth={2} />
+          音频节点
+        </button>
       </div>
     </div>
   );
@@ -9580,37 +9597,41 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [edgeStyle]);
 
   const derivedRfNodes = useMemo<ReactFlowNode[]>(() => {
-    const nodes: ReactFlowNode[] = storeNodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      position: n.position,
-      className: quickReferenceConnect
-        ? [
-            'gl-quick-reference-node',
-            quickReferenceConnect.targetKind === 'node' && n.id === quickReferenceConnect.targetNodeId
-              ? 'gl-quick-reference-target'
-              : canNodeProvideQuickReference(n, quickReferenceConnect)
-                ? 'gl-quick-reference-connectable'
-                : 'gl-quick-reference-muted',
-          ].join(' ')
-        : undefined,
-      data: {
-        ...n.data,
-        canvasNodeActive: activeNodeId === n.id,
-        canvasFocusRequestId: nodeFocusRequest?.nodeId === n.id
-          ? nodeFocusRequest.requestId
-          : undefined,
-      },
-      selected: selectedNodeIds.has(n.id),
-      dragHandle:
-        n.type === 'text'
-          ? '.text-node-drag-handle'
-          : n.type === 'storyboard_script'
-            ? '.storyboard-script-node-drag-handle'
-          : n.type === 'image_generation' || n.type === 'video_generation' || n.type === 'video_upscale'
-            ? '.image-generation-node-drag-handle'
-          : undefined,
-    }));
+    const nodes: ReactFlowNode[] = storeNodes.map((n) => {
+      const classNames = [
+        quickReferenceConnect ? 'gl-quick-reference-node' : '',
+        quickReferenceConnect
+          ? quickReferenceConnect.targetKind === 'node' && n.id === quickReferenceConnect.targetNodeId
+            ? 'gl-quick-reference-target'
+            : canNodeProvideQuickReference(n, quickReferenceConnect)
+              ? 'gl-quick-reference-connectable'
+              : 'gl-quick-reference-muted'
+          : '',
+      ].filter(Boolean);
+
+      return {
+        id: n.id,
+        type: n.type,
+        position: n.position,
+        className: classNames.length ? classNames.join(' ') : undefined,
+        data: {
+          ...n.data,
+          canvasNodeActive: activeNodeId === n.id,
+          canvasFocusRequestId: nodeFocusRequest?.nodeId === n.id
+            ? nodeFocusRequest.requestId
+            : undefined,
+        },
+        selected: selectedNodeIds.has(n.id),
+        dragHandle:
+          n.type === 'text'
+            ? '.text-node-drag-handle'
+            : n.type === 'storyboard_script'
+              ? '.storyboard-script-node-drag-handle'
+            : n.type === 'image_generation' || n.type === 'video_generation' || n.type === 'video_upscale'
+              ? '.image-generation-node-drag-handle'
+            : undefined,
+      };
+    });
 
     if (connectionMenu) {
       nodes.push({
@@ -10325,9 +10346,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           cardH = IMAGE_GENERATION_MAX_CARD_EDGE;
           cardW = Math.max(IMAGE_GENERATION_MIN_CARD_EDGE, Math.round(cardH * resolvedAspect));
         }
-        const cardStageH = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
-        const cardTopOffset = cardStageH - cardH;
-        const cardLeftOffset = Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - cardW) / 2);
+        const cardTopOffset = 0;
+        const cardLeftOffset = 0;
 
         if (action === 'annotate') {
           openImageAnnotationMode({

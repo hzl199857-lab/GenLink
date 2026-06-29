@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pause, Play } from 'lucide-react';
 
 declare global {
@@ -11,6 +11,7 @@ declare global {
 
 type WaveformCacheEntry = {
   peaks: number[];
+  duration: number;
 };
 
 type WaveformState = {
@@ -73,6 +74,7 @@ async function decodeWaveform(src: string, bars: number): Promise<WaveformCacheE
 
     return {
       peaks: peaks.map((peak) => Math.max(0.08, peak / maxPeak)),
+      duration: audioBuffer.duration,
     };
   } finally {
     void audioContext.close();
@@ -130,6 +132,22 @@ export function AudioWaveformPlayer({
   const duration = playbackState.src === src ? playbackState.duration : durationSeconds ?? 0;
   const playing = playbackState.src === src ? playbackState.playing : false;
 
+  const getKnownDuration = useCallback((audio: HTMLAudioElement, fallback = durationSeconds ?? 0): number => {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      return audio.duration;
+    }
+
+    if (audio.seekable.length > 0) {
+      const seekableEnd = audio.seekable.end(audio.seekable.length - 1);
+
+      if (Number.isFinite(seekableEnd) && seekableEnd > 0) {
+        return seekableEnd;
+      }
+    }
+
+    return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+  }, [durationSeconds]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -141,6 +159,17 @@ export function AudioWaveformPlayer({
             peaks: entry.peaks,
             failed: false,
           });
+          if (Number.isFinite(entry.duration) && entry.duration > 0) {
+            setPlaybackState((current) => ({
+              src,
+              currentTime: current.src === src ? current.currentTime : 0,
+              duration: current.src === src
+                ? Math.max(current.duration, entry.duration)
+                : entry.duration,
+              playing: current.src === src ? current.playing : false,
+            }));
+            onLoadedMetadata?.(entry.duration);
+          }
         }
       })
       .catch(() => {
@@ -156,7 +185,7 @@ export function AudioWaveformPlayer({
     return () => {
       cancelled = true;
     };
-  }, [bars, src, waveformKey]);
+  }, [bars, onLoadedMetadata, src, waveformKey]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -166,15 +195,23 @@ export function AudioWaveformPlayer({
     }
 
     const handleTimeUpdate = () => {
+      const audioCurrentTime = audio.currentTime || 0;
+      const knownDuration = Math.max(
+        getKnownDuration(audio, durationSeconds ?? 0),
+        audioCurrentTime,
+      );
+
       setPlaybackState((current) => ({
         src,
-        currentTime: audio.currentTime || 0,
-        duration: current.src === src ? current.duration : durationSeconds ?? 0,
+        currentTime: audioCurrentTime,
+        duration: current.src === src
+          ? Math.max(current.duration, knownDuration)
+          : knownDuration,
         playing: current.src === src ? current.playing : !audio.paused,
       }));
     };
     const handleLoadedMetadata = () => {
-      const nextDuration = audio.duration;
+      const nextDuration = getKnownDuration(audio, durationSeconds ?? 0);
 
       if (Number.isFinite(nextDuration) && nextDuration > 0) {
         setPlaybackState((current) => ({
@@ -206,16 +243,18 @@ export function AudioWaveformPlayer({
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('durationchange', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('durationchange', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
     };
-  }, [durationSeconds, onError, onLoadedMetadata, src]);
+  }, [durationSeconds, getKnownDuration, onError, onLoadedMetadata, src]);
 
   const progress = useMemo(() => {
     if (!duration || duration <= 0) {
@@ -241,6 +280,29 @@ export function AudioWaveformPlayer({
       duration: current.src === src ? current.duration : duration,
       playing: current.src === src ? current.playing : !audio.paused,
     }));
+  };
+
+  const handleWaveformPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    seekFromPointer(event);
+  };
+
+  const handleWaveformPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+
+    if (event.buttons === 1) {
+      seekFromPointer(event);
+    }
+  };
+
+  const handleWaveformPointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const togglePlayback = () => {
@@ -280,21 +342,16 @@ export function AudioWaveformPlayer({
   };
 
   return (
-    <div className="nodrag nopan flex h-full w-full flex-col px-5 pb-4 pt-9 text-white">
+    <div className="flex h-full w-full flex-col justify-between px-5 pb-7 pt-10 text-white">
       <audio ref={audioRef} src={src} preload="metadata" />
       <div
         ref={waveformRef}
-        className="relative grid h-14 cursor-pointer items-center gap-[3px] overflow-hidden rounded-[10px] px-1"
+        className="nodrag nopan relative z-20 grid h-16 cursor-pointer items-center gap-[3px] overflow-hidden rounded-[10px] px-1"
         style={peaks.length > 0 ? { gridTemplateColumns: `repeat(${peaks.length}, minmax(0, 1fr))` } : undefined}
-        onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId);
-          seekFromPointer(event);
-        }}
-        onPointerMove={(event) => {
-          if (event.buttons === 1) {
-            seekFromPointer(event);
-          }
-        }}
+        onPointerDownCapture={handleWaveformPointerDown}
+        onPointerMove={handleWaveformPointerMove}
+        onPointerUp={handleWaveformPointerEnd}
+        onPointerCancel={handleWaveformPointerEnd}
         aria-label={title || 'Audio waveform'}
       >
         {peaks.length > 0 ? (
@@ -303,7 +360,7 @@ export function AudioWaveformPlayer({
               key={`${index}-${peak}`}
               className="w-full bg-white"
               style={{
-                height: `${Math.max(7, peak * 48)}px`,
+                height: `${Math.max(7, peak * 54)}px`,
                 borderRadius: '999px',
               }}
             />
@@ -312,14 +369,14 @@ export function AudioWaveformPlayer({
           <span className="col-span-full h-px w-full border-t border-dashed border-white/22" />
         )}
         <span
-          className="absolute top-1/2 z-10 h-[70px] w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize"
+          className="nodrag nopan absolute top-1/2 z-10 h-[76px] w-5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize"
           style={{ left: `${progress * 100}%` }}
           aria-hidden="true"
         >
           <span className="absolute left-1/2 top-1/2 h-full w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#39bdf8] shadow-[0_0_14px_rgba(57,189,248,0.7)]" />
         </span>
       </div>
-      <div className="mt-5 flex items-center justify-center gap-4 text-[12px] font-medium text-white/70">
+      <div className="nodrag nopan flex items-center justify-center gap-4 text-[12px] font-medium text-white/70">
         <span className="w-11 text-right">{formatAudioTime(currentTime)}</span>
         <button
           type="button"

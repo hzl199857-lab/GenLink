@@ -1,40 +1,24 @@
 import 'server-only';
 
 import { VibeApiError } from '@/lib/vibe';
-import type { VideoGenerationMode } from '@/types/canvas';
+import {
+  getVideoProviderConfig,
+  normalizeVideoProvider,
+  type VideoGenerationProvider,
+} from './video-provider';
+import {
+  buildVideoCreateRequest,
+  buildVideoTaskResultRequestPath,
+  type GenerateVideoParams,
+  type VideoReferenceInput,
+} from './video-request';
 
-const COMFLY_VIDEO_BASE_URL = normalizeBaseUrl(
-  process.env.COMFLY_VIDEO_BASE_URL ??
-    process.env.COMFLY_BASE_URL?.replace(/\/v1\/?$/, '') ??
-    'https://ai.comfly.org',
-);
 const DEFAULT_SEEDANCE_MODEL = 'doubao-seedance-2-0-260128';
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_POLL_TIMEOUT_MS = 45 * 60_000;
 
-export interface VideoReferenceInput {
-  url: string;
-  fileName?: string;
-}
-
-export interface GenerateVideoParams {
-  apiKey: string;
-  model?: string;
-  mode: VideoGenerationMode;
-  prompt: string;
-  ratio?: string;
-  resolution?: string;
-  duration?: number;
-  seed?: number;
-  camerafixed?: boolean;
-  watermark?: boolean;
-  returnLastFrame?: boolean;
-  generateAudio?: boolean;
-  images?: VideoReferenceInput[];
-  videos?: VideoReferenceInput[];
-  audio?: VideoReferenceInput[];
-}
+export type { GenerateVideoParams, VideoReferenceInput };
 
 export interface VideoGenerationResult {
   taskId: string;
@@ -105,6 +89,20 @@ function assertConfigured(value: string): string {
   return trimmed;
 }
 
+function getConfiguredVideoBaseUrl(provider?: VideoGenerationProvider): string {
+  const normalizedProvider = normalizeVideoProvider(provider);
+
+  if (normalizedProvider === 'zhenzhen') {
+    return normalizeBaseUrl(process.env.ZHENZHEN_VIDEO_BASE_URL ?? getVideoProviderConfig('zhenzhen').baseUrl);
+  }
+
+  return normalizeBaseUrl(
+    process.env.COMFLY_VIDEO_BASE_URL ??
+      process.env.COMFLY_BASE_URL?.replace(/\/v1\/?$/, '') ??
+      getVideoProviderConfig('comfly').baseUrl,
+  );
+}
+
 function createHeaders(apiKey: string): HeadersInit {
   return {
     Authorization: `Bearer ${assertConfigured(apiKey)}`,
@@ -114,6 +112,7 @@ function createHeaders(apiKey: string): HeadersInit {
 }
 
 async function requestJson<T>(
+  provider: VideoGenerationProvider,
   path: string,
   init: {
     method: 'GET' | 'POST';
@@ -129,9 +128,10 @@ async function requestJson<T>(
   );
   let responseStatus: number | undefined;
   let responseText = '';
+  const providerConfig = getVideoProviderConfig(provider);
 
   try {
-    const response = await fetch(`${COMFLY_VIDEO_BASE_URL}${path}`, {
+    const response = await fetch(`${getConfiguredVideoBaseUrl(provider)}${path}`, {
       method: init.method,
       headers: createHeaders(init.apiKey),
       body: init.body ? JSON.stringify(init.body) : undefined,
@@ -146,7 +146,7 @@ async function requestJson<T>(
       const message =
         (json as { error?: { message?: string }; message?: string }).error?.message ??
         (json as { message?: string }).message ??
-        `Comfly video request failed with status ${response.status}`;
+        `${providerConfig.label} video request failed with status ${response.status}`;
 
       throw new VibeApiError(response.status, message, json);
     }
@@ -160,123 +160,22 @@ async function requestJson<T>(
     if (error instanceof SyntaxError) {
       throw new VibeApiError(
         502,
-        `Comfly video returned invalid JSON (status=${responseStatus ?? '?'})`,
+        `${providerConfig.label} video returned invalid JSON (status=${responseStatus ?? '?'})`,
         { status: responseStatus, bodyPreview: responseText.slice(0, 500) },
       );
     }
 
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new VibeApiError(504, 'Comfly video request timed out');
+      throw new VibeApiError(504, `${providerConfig.label} video request timed out`);
     }
 
     throw new VibeApiError(
       502,
-      error instanceof Error ? error.message : 'Comfly video request failed',
+      error instanceof Error ? error.message : `${providerConfig.label} video request failed`,
     );
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function cleanReferences(references?: VideoReferenceInput[]): VideoReferenceInput[] {
-  return (references ?? []).filter((reference) => reference.url.trim());
-}
-
-function buildOfficialContent(params: GenerateVideoParams): Array<Record<string, unknown>> {
-  const content: Array<Record<string, unknown>> = [
-    {
-      type: 'text',
-      text: buildOfficialPrompt(params),
-    },
-  ];
-
-  for (const image of cleanReferences(params.images)) {
-    content.push({
-      type: 'image_url',
-      role: 'reference_image',
-      image_url: { url: image.url },
-    });
-  }
-
-  for (const video of cleanReferences(params.videos)) {
-    content.push({
-      type: 'video_url',
-      role: 'reference_video',
-      video_url: { url: video.url },
-    });
-  }
-
-  for (const audio of cleanReferences(params.audio)) {
-    content.push({
-      type: 'audio_url',
-      role: 'reference_audio',
-      audio_url: { url: audio.url },
-    });
-  }
-
-  return content;
-}
-
-function buildOfficialPrompt(params: GenerateVideoParams): string {
-  return params.prompt.trim();
-}
-
-function appendOptionalSeed(
-  body: Record<string, unknown>,
-  seed?: number,
-): Record<string, unknown> {
-  if (typeof seed === 'number' && Number.isFinite(seed)) {
-    body.seed = seed;
-  }
-
-  return body;
-}
-
-function buildOfficialBody(params: GenerateVideoParams): Record<string, unknown> {
-  return appendOptionalSeed(
-    {
-      model: params.model || DEFAULT_SEEDANCE_MODEL,
-      content: buildOfficialContent(params),
-      duration: params.duration ?? 5,
-      ratio: params.ratio ?? '16:9',
-      resolution: params.resolution ?? '720p',
-      watermark: params.watermark ?? false,
-      camerafixed: params.camerafixed ?? false,
-      return_last_frame: params.returnLastFrame ?? false,
-      generate_audio: params.generateAudio ?? false,
-    },
-    params.seed,
-  );
-}
-
-function buildUnifiedBody(params: GenerateVideoParams): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    model: params.model || DEFAULT_SEEDANCE_MODEL,
-    prompt: params.prompt.trim(),
-    duration: params.duration ?? 5,
-    resolution: params.resolution ?? '720p',
-    ratio: params.ratio ?? '16:9',
-    watermark: params.watermark ?? false,
-    camerafixed: params.camerafixed ?? false,
-    return_last_frame: params.returnLastFrame ?? false,
-    generate_audio: params.generateAudio ?? false,
-  };
-  const images = cleanReferences(params.images).map((image) => image.url);
-
-  if (images.length) {
-    body.images = images;
-  }
-
-  return appendOptionalSeed(body, params.seed);
-}
-
-function shouldUseOfficialFormat(params: GenerateVideoParams): boolean {
-  return (
-    params.mode === 'text-to-video' ||
-    params.mode === 'all-reference' ||
-    cleanReferences(params.videos).length > 0 ||
-    cleanReferences(params.audio).length > 0
-  );
 }
 
 function extractTaskId(response: SeedanceCreateResponse): string {
@@ -341,30 +240,28 @@ function toVideoResult(
 export async function submitComflyVideoTask(
   params: GenerateVideoParams,
 ): Promise<VideoTaskSubmission> {
+  const provider = normalizeVideoProvider(params.provider);
   const model = params.model || DEFAULT_SEEDANCE_MODEL;
-  const officialFormat = shouldUseOfficialFormat(params);
-  const body = officialFormat
-    ? buildOfficialBody({ ...params, model })
-    : buildUnifiedBody({ ...params, model });
+  const request = buildVideoCreateRequest({ ...params, model });
   const response = await requestJson<SeedanceCreateResponse>(
-    officialFormat
-      ? '/seedance/v3/contents/generations/tasks'
-      : '/v2/videos/generations',
+    provider,
+    request.path,
     {
       method: 'POST',
       apiKey: params.apiKey,
-      body,
+      body: request.body,
     },
   );
 
   return {
     taskId: extractTaskId(response),
     model,
-    officialFormat,
+    officialFormat: request.officialFormat,
   };
 }
 
 export async function getComflyVideoTaskResult(params: {
+  provider?: VideoGenerationProvider;
   apiKey: string;
   taskId: string;
   model: string;
@@ -374,10 +271,10 @@ export async function getComflyVideoTaskResult(params: {
   | { status: 'completed'; result: VideoGenerationResult }
   | { status: 'error'; error: string }
 > {
+  const provider = normalizeVideoProvider(params.provider);
   const task = await requestJson<SeedanceTaskResponse>(
-    params.officialFormat
-      ? `/seedance/v3/contents/generations/tasks/${encodeURIComponent(params.taskId)}`
-      : `/v2/videos/generations/${encodeURIComponent(params.taskId)}`,
+    provider,
+    buildVideoTaskResultRequestPath(params),
     {
       method: 'GET',
       apiKey: params.apiKey,
@@ -412,6 +309,7 @@ export async function generateVideo(params: GenerateVideoParams): Promise<VideoG
 
   while (Date.now() - startedAt < DEFAULT_POLL_TIMEOUT_MS) {
     const task = await getComflyVideoTaskResult({
+      provider: params.provider,
       apiKey: params.apiKey,
       taskId: submission.taskId,
       model: submission.model,
