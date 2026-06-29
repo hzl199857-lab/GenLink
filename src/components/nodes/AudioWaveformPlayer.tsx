@@ -280,11 +280,12 @@ export function AudioWaveformPlayer({
   };
 
   return (
-    <div className="nodrag nopan flex h-full w-full flex-col justify-center gap-3 px-5 py-4 text-white">
+    <div className="nodrag nopan flex h-full w-full flex-col px-5 pb-4 pt-9 text-white">
       <audio ref={audioRef} src={src} preload="metadata" />
       <div
         ref={waveformRef}
-        className="relative flex h-14 cursor-pointer items-center gap-[3px] overflow-hidden rounded-[10px] px-1"
+        className="relative grid h-14 cursor-pointer items-center gap-[3px] overflow-hidden rounded-[10px] px-1"
+        style={peaks.length > 0 ? { gridTemplateColumns: `repeat(${peaks.length}, minmax(0, 1fr))` } : undefined}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
           seekFromPointer(event);
@@ -297,30 +298,28 @@ export function AudioWaveformPlayer({
         aria-label={title || 'Audio waveform'}
       >
         {peaks.length > 0 ? (
-          peaks.map((peak, index) => {
-            const active = index / peaks.length <= progress;
-
-            return (
-              <span
-                key={`${index}-${peak}`}
-                className={active ? 'bg-white' : 'bg-white/18'}
-                style={{
-                  width: `${100 / peaks.length}%`,
-                  height: `${Math.max(7, peak * 48)}px`,
-                  borderRadius: '999px',
-                }}
-              />
-            );
-          })
+          peaks.map((peak, index) => (
+            <span
+              key={`${index}-${peak}`}
+              className="w-full bg-white"
+              style={{
+                height: `${Math.max(7, peak * 48)}px`,
+                borderRadius: '999px',
+              }}
+            />
+          ))
         ) : (
-          <span className="h-px w-full border-t border-dashed border-white/22" />
+          <span className="col-span-full h-px w-full border-t border-dashed border-white/22" />
         )}
         <span
-          className="pointer-events-none absolute top-1/2 h-[64px] w-[2px] -translate-y-1/2 rounded-full bg-[#39bdf8] shadow-[0_0_14px_rgba(57,189,248,0.7)]"
+          className="absolute top-1/2 z-10 h-[70px] w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize"
           style={{ left: `${progress * 100}%` }}
-        />
+          aria-hidden="true"
+        >
+          <span className="absolute left-1/2 top-1/2 h-full w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#39bdf8] shadow-[0_0_14px_rgba(57,189,248,0.7)]" />
+        </span>
       </div>
-      <div className="flex items-center justify-center gap-4 text-[12px] font-medium text-white/70">
+      <div className="mt-5 flex items-center justify-center gap-4 text-[12px] font-medium text-white/70">
         <span className="w-11 text-right">{formatAudioTime(currentTime)}</span>
         <button
           type="button"
