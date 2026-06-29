@@ -7,7 +7,11 @@ import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 import { VideoGenerationPromptBar } from './VideoGenerationPromptBar';
 import { useCanvasStore } from '@/store/canvas-store';
-import type { VideoGenerationMode, VideoGenerationNodeData } from '@/types/canvas';
+import type {
+  VideoGenerationMode,
+  VideoGenerationNodeData,
+  VideoGenerationProvider,
+} from '@/types/canvas';
 import { VideoPlayer } from './VideoPlayer';
 import {
   ImageGenerationNodeToolbar,
@@ -53,6 +57,15 @@ export interface VideoGenerationNodeProps {
     width?: number;
     height?: number;
     durationSeconds?: number;
+  }>;
+  connectedAudio?: Array<{
+    id: string;
+    audioUrl: string;
+    alt: string;
+    fileName?: string;
+    durationSeconds?: number;
+    uploadStatus?: 'uploading' | 'uploaded' | 'error';
+    uploadError?: string;
   }>;
   onChange?: (next: VideoGenerationNodeData) => void;
   onRun?: (promptOverride?: string) => void;
@@ -112,6 +125,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   dragging = false,
   connectedImages = [],
   connectedVideos = [],
+  connectedAudio = [],
   onChange,
   onRun,
   onUpload,
@@ -134,10 +148,8 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   const videoUrl = data.hostedVideoUrl?.trim() || data.videoUrl?.trim() || '';
   const hasVideo = Boolean(videoUrl);
   const resolvedCardDimensions = cardDimensions ?? { width: MAX_CARD_EDGE, height: MIN_CARD_EDGE };
-  const cardStageHeight = MAX_CARD_EDGE + CARD_ACCESSORY_TOP_SPACE + CARD_ACCESSORY_GAP;
-  const cardTopOffset = cardStageHeight - resolvedCardDimensions.height;
-  const cardLeftOffset = Math.round((MAX_CARD_EDGE - resolvedCardDimensions.width) / 2);
-  const toolbarTop = cardTopOffset - CARD_ACCESSORY_TOP_SPACE - CARD_TOOLBAR_LIFT;
+  const titleTop = -(CARD_ACCESSORY_GAP + 26);
+  const toolbarTop = -(CARD_ACCESSORY_TOP_SPACE + CARD_TOOLBAR_LIFT);
 
   useEffect(() => {
     if (!id) {
@@ -150,9 +162,6 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
 
     return () => window.cancelAnimationFrame(frameId);
   }, [
-    cardLeftOffset,
-    cardStageHeight,
-    cardTopOffset,
     id,
     resolvedCardDimensions.height,
     resolvedCardDimensions.width,
@@ -168,7 +177,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
     });
   };
 
-  const handleProviderModelChange = (next: { provider: 'comfly'; model: string }) => {
+  const handleProviderModelChange = (next: { provider: VideoGenerationProvider; model: string }) => {
     handlePatch({
       provider: next.provider,
       model: next.model,
@@ -220,26 +229,25 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   };
 
   return (
-    <div className="relative group node-connectable-root" style={{ width: `${MAX_CARD_EDGE}px` }}>
-      <div
-        className="relative mx-auto"
-        style={{
-          width: `${MAX_CARD_EDGE}px`,
-          height: `${cardStageHeight}px`,
-        }}
-      >
+    <div
+      className="relative group node-connectable-root"
+      style={{
+        width: `${resolvedCardDimensions.width}px`,
+        height: `${resolvedCardDimensions.height}px`,
+      }}
+    >
         <div
-          className="node-visible-title absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
+          className="node-visible-title pointer-events-none absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
           style={{
-            left: `${cardLeftOffset}px`,
-            top: `${Math.max(0, cardTopOffset - CARD_ACCESSORY_GAP - 26)}px`,
+            left: 0,
+            top: `${titleTop}px`,
           }}
         >
-          <Video size={22} />
+          <Video size={22} className="pointer-events-auto" />
           <EditableNodeTitle
             value={data.title}
             fallbackValue="Video"
-            className="text-[22px] font-medium leading-none"
+            className="pointer-events-auto text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}
           />
@@ -257,16 +265,15 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
         />
 
         <div
-          className="absolute left-1/2 bottom-0 transition-[width,height,transform] duration-300 ease-out"
+          className="absolute inset-0 transition-[width,height] duration-300 ease-out"
           style={{
             width: `${resolvedCardDimensions.width}px`,
             height: `${resolvedCardDimensions.height}px`,
-            transform: 'translateX(-50%)',
           }}
         >
           <div
             className={[
-              'node-connectable-card image-generation-node-drag-handle relative h-full w-full rounded-gl-lg border bg-gl-panel shadow-gl-card',
+              'node-connectable-card image-generation-node-drag-handle pointer-events-auto relative h-full w-full rounded-gl-lg border bg-gl-panel shadow-gl-card',
               'flex items-center justify-center overflow-hidden transition-[border-color,box-shadow] duration-300 ease-out',
               'cursor-grab',
               isGenerating
@@ -302,19 +309,14 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
           position={Position.Left}
           visible={toolbarVisible}
           disabled={data.mode === 'text-to-video'}
-          cardTopOffset={cardTopOffset}
-          cardLeftOffset={cardLeftOffset}
           cardWidth={resolvedCardDimensions.width}
         />
         <CardSideHandle
           type="source"
           position={Position.Right}
           visible={toolbarVisible}
-          cardTopOffset={cardTopOffset}
-          cardLeftOffset={cardLeftOffset}
           cardWidth={resolvedCardDimensions.width}
         />
-      </div>
 
       <VideoGenerationPromptBar
         visible={toolbarVisible}
@@ -329,6 +331,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
         generating={isGenerating}
         connectedImages={connectedImages}
         connectedVideos={connectedVideos}
+        connectedAudio={connectedAudio}
         focusRequestId={promptFocusRequestId}
         onUpload={onUpload}
         onQuickReferenceConnect={onQuickReferenceConnect}

@@ -6,8 +6,10 @@ export type NodeType =
   | "storyboard_grid"
   | "image_generation"
   | "video_generation"
+  | "audio_generation"
   | "video_upscale"
   | "video"
+  | "audio"
   | "ai_text_result"
   | "image"
   | "uploaded_image"
@@ -244,7 +246,7 @@ export type VideoGenerationMode =
   | "all-reference"
   | "first-last-frame";
 
-export type VideoGenerationProvider = "comfly";
+export type VideoGenerationProvider = "comfly" | "zhenzhen";
 
 export interface VideoGenerationMediaReference {
   id: string;
@@ -286,6 +288,49 @@ export interface VideoGenerationNodeData {
   lastFrameUrl?: string;
   generatedModel?: string;
   generatedAt?: string;
+  status?: "idle" | "generating" | "error";
+  errorMessage?: string;
+}
+
+export type AudioGenerationTaskType =
+  | "general"
+  | "voiceover"
+  | "music"
+  | "sound-effect";
+
+export type AudioGenerationProvider = "comfly" | "zhenzhen";
+export type AudioGenerationModel = "suno-v5.5" | "suno-v5" | "suno-v4.5-plus";
+export type AudioGenerationMode = "inspiration" | "custom";
+export type AudioGenerationVocalGender = "auto" | "f" | "m";
+
+export interface AudioGenerationNodeData {
+  title?: string;
+  songTitle?: string;
+  songTitleEdited?: boolean;
+  generatedAudioTitle?: string;
+  prompt?: string;
+  provider?: AudioGenerationProvider;
+  model?: AudioGenerationModel;
+  mode?: AudioGenerationMode;
+  runningHubWorkflowId?: string;
+  taskType?: AudioGenerationTaskType;
+  duration?: number;
+  style?: string;
+  voice?: string;
+  instrumental?: boolean;
+  negativeTags?: string;
+  vocalGender?: AudioGenerationVocalGender;
+  referenceAudio?: VideoGenerationMediaReference[];
+  taskId?: string;
+  progress?: string;
+  audioUrl?: string;
+  hostedAudioUrl?: string;
+  generatedOutputFileName?: string;
+  generatedModel?: string;
+  generatedAt?: string;
+  durationSeconds?: number;
+  mimeType?: string;
+  sizeBytes?: number;
   status?: "idle" | "generating" | "error";
   errorMessage?: string;
 }
@@ -381,6 +426,21 @@ export interface VideoNodeData {
   errorMessage?: string;
 }
 
+export interface AudioNodeData {
+  title?: string;
+  audioUrl: string;
+  hostedAudioUrl?: string;
+  previewUrl?: string;
+  fileName?: string;
+  outputFileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  durationSeconds?: number;
+  status?: "idle" | "generating" | "error";
+  statusMessage?: string;
+  errorMessage?: string;
+}
+
 export interface Panorama360ViewState {
   yaw: number;
   pitch: number;
@@ -425,8 +485,10 @@ export type CanvasNodeData =
   | { type: "storyboard_grid"; data: StoryboardGridNodeData }
   | { type: "image_generation"; data: ImageGenerationNodeData }
   | { type: "video_generation"; data: VideoGenerationNodeData }
+  | { type: "audio_generation"; data: AudioGenerationNodeData }
   | { type: "video_upscale"; data: VideoUpscaleNodeData }
   | { type: "video"; data: VideoNodeData }
+  | { type: "audio"; data: AudioNodeData }
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData }
@@ -438,8 +500,10 @@ export type CanvasNode =
   | BaseCanvasNode<"storyboard_grid", StoryboardGridNodeData>
   | BaseCanvasNode<"image_generation", ImageGenerationNodeData>
   | BaseCanvasNode<"video_generation", VideoGenerationNodeData>
+  | BaseCanvasNode<"audio_generation", AudioGenerationNodeData>
   | BaseCanvasNode<"video_upscale", VideoUpscaleNodeData>
   | BaseCanvasNode<"video", VideoNodeData>
+  | BaseCanvasNode<"audio", AudioNodeData>
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>

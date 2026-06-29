@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Play, X } from 'lucide-react';
+import { Music2, Play, X } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceVideoThumbnail,
@@ -28,6 +28,16 @@ export type ReferenceMediaStripVideo = {
   fileName?: string;
   width?: number;
   height?: number;
+  durationSeconds?: number;
+  uploadStatus?: 'uploading' | 'uploaded' | 'error';
+  uploadError?: string;
+};
+
+export type ReferenceMediaStripAudio = {
+  id: string;
+  audioUrl: string;
+  alt?: string;
+  fileName?: string;
   durationSeconds?: number;
   uploadStatus?: 'uploading' | 'uploaded' | 'error';
   uploadError?: string;
@@ -95,6 +105,7 @@ export function ReferenceMediaSquareButton({
 export function ReferenceMediaStrip({
   connectedImages,
   connectedVideos,
+  connectedAudio = [],
   imagePreview,
   videoPreview,
   quickConnectTitle = '快捷连接参考素材',
@@ -105,6 +116,7 @@ export function ReferenceMediaStrip({
 }: {
   connectedImages: ReferenceMediaStripImage[];
   connectedVideos: ReferenceMediaStripVideo[];
+  connectedAudio?: ReferenceMediaStripAudio[];
   imagePreview: ReturnType<typeof useReferenceImageHoverPreview>;
   videoPreview: ReturnType<typeof useReferenceVideoHoverPreview>;
   quickConnectTitle?: string;
@@ -116,6 +128,7 @@ export function ReferenceMediaStrip({
   const referenceMedia = [
     ...connectedImages.map((image) => ({ type: 'image' as const, item: image })),
     ...connectedVideos.map((video) => ({ type: 'video' as const, item: video })),
+    ...connectedAudio.map((audio) => ({ type: 'audio' as const, item: audio })),
   ];
 
   return (
@@ -150,7 +163,9 @@ export function ReferenceMediaStrip({
                     videoPreview.showPreview(reference.item, event.currentTarget);
                     return;
                   }
-                  imagePreview.showPreview(reference.item, event.currentTarget);
+                  if (reference.type === 'image') {
+                    imagePreview.showPreview(reference.item, event.currentTarget);
+                  }
                 }}
                 onPointerLeave={() => {
                   videoPreview.hidePreview();
@@ -167,7 +182,7 @@ export function ReferenceMediaStrip({
                       draggable={false}
                     />
                   </>
-                ) : (
+                ) : reference.type === 'video' ? (
                   <>
                     <ReferenceVideoThumbnail
                       videoUrl={reference.item.videoUrl}
@@ -178,6 +193,10 @@ export function ReferenceMediaStrip({
                       <Play size={15} fill="currentColor" strokeWidth={0} />
                     </span>
                   </>
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center bg-[#202328] text-gl-text-secondary">
+                    <Music2 size={18} />
+                  </span>
                 )}
                 <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[12px] font-semibold leading-none text-white shadow-[0_4px_10px_rgba(0,0,0,0.28)]">
                   {index + 1}

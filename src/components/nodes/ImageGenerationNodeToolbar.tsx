@@ -209,7 +209,7 @@ export function ImageGenerationNodeToolbar({
   return (
     <div
       data-canvas-menu-ignore="true"
-      className="absolute left-1/2 z-20 transition-[top,transform] duration-300 ease-out"
+      className="pointer-events-none absolute left-1/2 z-20 transition-[top,transform] duration-300 ease-out"
       style={{
         top: `${top}px`,
         transform: `translateX(-50%) scale(${1 / Math.max(zoom, 0.0001)})`,
@@ -218,7 +218,7 @@ export function ImageGenerationNodeToolbar({
     >
       {hasGeneratedImage ? (
         <div
-          className="flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+          className="pointer-events-auto flex items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
           onPointerDown={(e) => e.stopPropagation()}
         >
           <ToolbarIconButton title={cropButtonTitle} icon={CropButtonIcon} onClick={placeholderOnly ? undefined : () => onAction?.('crop')} />
@@ -383,7 +383,7 @@ export function ImageGenerationNodeToolbar({
           ))}
         </div>
       ) : (
-        <div className="group/tooltip relative">
+        <div className="group/tooltip pointer-events-auto relative">
           <button
             type="button"
             onPointerDown={(e) => e.stopPropagation()}
@@ -398,7 +398,7 @@ export function ImageGenerationNodeToolbar({
         </div>
       )}
       {belowContent ? (
-        <div className="mt-2 flex justify-center" onPointerDown={(e) => e.stopPropagation()}>
+        <div className="pointer-events-auto mt-2 flex justify-center" onPointerDown={(e) => e.stopPropagation()}>
           {belowContent}
         </div>
       ) : null}

@@ -15,6 +15,7 @@ import {
   MousePointer2,
   Plus,
   Video,
+  Volume2,
   Type,
   Rows3,
   X,
@@ -104,6 +105,8 @@ import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
   CanvasEdge,
   CanvasNode,
+  AudioGenerationNodeData,
+  AudioNodeData,
   ImageHistoryItem,
   MaterialLibraryItem,
   NodeGroup,
@@ -150,6 +153,7 @@ import {
   VideoGenerationNode,
   type VideoGenerationToolbarAction,
 } from '../nodes/VideoGenerationNode';
+import { AudioGenerationNode } from '../nodes/AudioGenerationNode';
 import { VideoUpscaleNode } from '../nodes/VideoUpscaleNode';
 import { getVideoModelLabel } from '../nodes/VideoGenerationPromptBar';
 import { AITextResultNode } from '../nodes/AITextResultNode';
@@ -159,6 +163,11 @@ import {
   UploadedVideoNode,
   resolveUploadedVideoCardDimensions,
 } from '../nodes/UploadedVideoNode';
+import {
+  UploadedAudioNode,
+  UPLOADED_AUDIO_CARD_HEIGHT,
+  UPLOADED_AUDIO_CARD_WIDTH,
+} from '../nodes/UploadedAudioNode';
 import { CardSideHandle } from '../nodes/CardSideHandle';
 import {
   ImageGenerationInfoPopover,
@@ -1086,11 +1095,10 @@ function resolveMiniMapVisibleNodeRect(
       ? useCanvasStore.getState().getConnectedImagesForImageGenerationNode(node.id)
       : undefined;
     const dimensions = resolveImageGenerationCardDimensions(data, referenceImages);
-    const stageHeight = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
 
     return {
-      x: node.position.x + Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - dimensions.width) / 2),
-      y: node.position.y + stageHeight - dimensions.height,
+      x: node.position.x,
+      y: node.position.y,
       width: dimensions.width,
       height: dimensions.height,
       radius: 18,
@@ -1098,11 +1106,14 @@ function resolveMiniMapVisibleNodeRect(
   }
 
   if (node.type === 'video_generation') {
+    const data = node.data as VideoGenerationNodeData;
+    const dimensions = resolveAspectDrivenCardDimensions(data.ratio);
+
     return {
       x: node.position.x,
-      y: node.position.y + 76,
-      width: 540,
-      height: 304,
+      y: node.position.y,
+      width: dimensions.width,
+      height: dimensions.height,
       radius: 18,
     };
   }
@@ -1249,16 +1260,12 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
       ? useCanvasStore.getState().getConnectedImagesForImageGenerationNode(node.id)
       : undefined;
     const dimensions = resolveImageGenerationCardDimensions(data, referenceImages);
-    const stageHeight =
-      IMAGE_GENERATION_MAX_CARD_EDGE +
-      IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
-      IMAGE_GENERATION_CARD_ACCESSORY_GAP;
 
     return {
       x: node.position.x,
       y: node.position.y,
-      width: Math.max(IMAGE_GENERATION_MAX_CARD_EDGE, dimensions.width),
-      height: stageHeight,
+      width: dimensions.width,
+      height: dimensions.height,
     };
   }
 
@@ -1284,6 +1291,24 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     };
   }
 
+  if (node.type === 'audio') {
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: UPLOADED_AUDIO_CARD_WIDTH,
+      height: UPLOADED_AUDIO_CARD_HEIGHT + 36,
+    };
+  }
+
+  if (node.type === 'audio_generation') {
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: UPLOADED_AUDIO_CARD_WIDTH,
+      height: UPLOADED_AUDIO_CARD_HEIGHT,
+    };
+  }
+
   if (node.type === 'video_upscale') {
     const sourceVideo = useCanvasStore
       .getState()
@@ -1293,7 +1318,7 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     return {
       x: node.position.x,
       y: node.position.y - 8,
-      width: Math.max(VIDEO_UPSCALE_NODE_WIDTH, VIDEO_UPSCALE_PANEL_WIDTH, dimensions.width),
+      width: Math.max(VIDEO_UPSCALE_PANEL_WIDTH, dimensions.width),
       height:
         VIDEO_UPSCALE_TITLE_HEIGHT +
         dimensions.height +
@@ -1508,6 +1533,8 @@ type ImportedImageData = ImageNodeData & {
 };
 
 type ImportedVideoData = VideoNodeData;
+
+type ImportedAudioData = AudioNodeData;
 
 type ReadImageFileOptions = {
   folder?: 'images' | 'references';
@@ -1842,6 +1869,20 @@ async function readVideoFile(file: File): Promise<ImportedVideoData> {
   };
 }
 
+async function readAudioFile(file: File): Promise<ImportedAudioData> {
+  const uploaded = await uploadMediaFileToOss(file);
+
+  return {
+    title: file.name,
+    audioUrl: uploaded.url,
+    hostedAudioUrl: uploaded.url,
+    fileName: uploaded.fileName,
+    mimeType: uploaded.mimeType,
+    sizeBytes: uploaded.sizeBytes,
+    status: 'idle',
+  };
+}
+
 async function createPendingVideoImportNode(
   file: File,
   position: { x: number; y: number },
@@ -2144,6 +2185,30 @@ async function resolveHistoryImageUrls(item: ImageHistoryItem): Promise<{
   };
 }
 
+function createPendingAudioImportNode(
+  file: File,
+  position: { x: number; y: number },
+): { node: CanvasNode; localAudioUrl: string } {
+  const localAudioUrl = URL.createObjectURL(file);
+
+  return {
+    node: createImportedAudioNode(
+      {
+        title: file.name,
+        audioUrl: localAudioUrl,
+        previewUrl: localAudioUrl,
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+        status: 'generating',
+        statusMessage: 'Uploading...',
+      },
+      position,
+    ),
+    localAudioUrl,
+  };
+}
+
 function createImportedImageNode(
   data: ImageNodeData,
   position: { x: number; y: number },
@@ -2163,6 +2228,18 @@ function createImportedVideoNode(
   return {
     id: crypto.randomUUID(),
     type: 'video',
+    position,
+    data,
+  };
+}
+
+function createImportedAudioNode(
+  data: AudioNodeData,
+  position: { x: number; y: number },
+): CanvasNode {
+  return {
+    id: crypto.randomUUID(),
+    type: 'audio',
     position,
     data,
   };
@@ -2603,12 +2680,9 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
   const imageData = data as ImageGenerationNodeData;
   const cameraAngle = imageData.cameraAngle ?? THREE_VIEW_DEFAULT_ANGLE;
   const threeViewOpen = threeViewControllerNodeId === id;
-  const controllerLeft = IMAGE_GENERATION_MAX_CARD_EDGE / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
-  const controllerTop =
-    IMAGE_GENERATION_MAX_CARD_EDGE +
-    IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE +
-    IMAGE_GENERATION_CARD_ACCESSORY_GAP +
-    THREE_VIEW_CONTROLLER_GAP;
+  const cardDimensions = resolveImageGenerationCardDimensions(imageData, connectedImages);
+  const controllerLeft = cardDimensions.width / 2 - THREE_VIEW_CONTROLLER_WIDTH / 2;
+  const controllerTop = cardDimensions.height + THREE_VIEW_CONTROLLER_GAP;
 
   useEffect(() => {
     const handleClearNodeUi = () => setPromptFocused(false);
@@ -2718,6 +2792,15 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
   const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
   const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
   const videoData = data as VideoGenerationNodeData;
+  const connectedAudio = (videoData.referenceAudio ?? []).map((reference, index) => ({
+    id: reference.id,
+    audioUrl: reference.hostedUrl?.trim() || reference.url,
+    alt: reference.fileName || `Audio ${index + 1}`,
+    fileName: reference.fileName,
+    durationSeconds: reference.durationSeconds,
+    uploadStatus: reference.uploadStatus,
+    uploadError: reference.uploadError,
+  }));
   const handleVideoCardClick = () => {
     if (videoData.hostedVideoUrl?.trim() || videoData.videoUrl?.trim()) {
       notifyCanvasImageInfoRequest?.(id);
@@ -2853,6 +2936,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       dragging={!!dragging}
       connectedImages={connectedImages}
       connectedVideos={connectedVideos}
+      connectedAudio={connectedAudio}
       onChange={(next) => updateNodeData<'video_generation'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'video_generation'>(id, { title: nextTitle })}
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
@@ -2877,6 +2961,64 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
         setPromptFocused(focused);
       }}
       promptFocusRequestId={renderData.canvasFocusRequestId}
+    />
+  );
+});
+
+const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const generateAudio = useCanvasStore((s) => s.generateAudioFromAudioGenerationNode);
+  const removeReference = useCanvasStore((s) => s.removeReferenceFromNode);
+  const renderData = data as CanvasNodeRenderData;
+  const [promptFocused, setPromptFocused] = useState(false);
+  const isActive = ((selected && renderData.canvasNodeActive) || promptFocused) && !dragging;
+  const audioData = data as AudioGenerationNodeData;
+  const referenceAudio = (audioData.referenceAudio ?? []).map((reference, index) => ({
+    id: reference.id,
+    audioUrl: reference.hostedUrl?.trim() || reference.url,
+    alt: reference.fileName || `Audio ${index + 1}`,
+    fileName: reference.fileName,
+    durationSeconds: reference.durationSeconds,
+    uploadStatus: reference.uploadStatus,
+    uploadError: reference.uploadError,
+  }));
+  const handleSelectNode = () => notifyCanvasNodeSelect?.(id);
+
+  useEffect(() => {
+    const handleClearNodeUi = () => setPromptFocused(false);
+
+    window.addEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+    return () => window.removeEventListener(CANVAS_NODE_UI_CLEAR_EVENT, handleClearNodeUi);
+  }, []);
+
+  return (
+    <AudioGenerationNode
+      id={id}
+      data={audioData}
+      selected={isActive}
+      dragging={!!dragging}
+      referenceAudio={referenceAudio}
+      onChange={(next) => updateNodeData<'audio_generation'>(id, next)}
+      onRun={() => generateAudio(id)}
+      onTitleChange={(nextTitle) => updateNodeData<'audio_generation'>(id, { title: nextTitle })}
+      onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
+      onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
+        targetKind: 'node',
+        targetNodeId: id,
+        targetType: 'audio_generation',
+      })}
+      onRemoveReference={(referenceId) => removeReference(id, referenceId)}
+      onSelectNode={handleSelectNode}
+      onPromptPointerDown={() => {
+        handleSelectNode();
+        notifyPromptBarInteraction?.();
+      }}
+      onPromptFocusWithinChange={(focused) => {
+        if (focused) {
+          handleSelectNode();
+        }
+        setPromptFocused(focused);
+      }}
     />
   );
 });
@@ -3235,6 +3377,64 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
         </div>
       ) : null}
     </div>
+  );
+});
+
+const UploadedAudioNodeAdapter = memo(function UploadedAudioNodeAdapter({ id, data, selected }: NodeProps) {
+  const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
+  const audioData = data as AudioNodeData;
+  const audioUrl = audioData.hostedAudioUrl?.trim() || audioData.audioUrl?.trim() || '';
+
+  const handleReplace = async (file: File) => {
+    const pending = createPendingAudioImportNode(file, { x: 0, y: 0 });
+    updateNodeData<'audio'>(id, {
+      ...(pending.node.data as AudioNodeData),
+    });
+
+    try {
+      const next = await readAudioFile(file);
+      updateNodeData<'audio'>(id, next);
+    } catch (error) {
+      updateNodeData<'audio'>(id, {
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Upload failed',
+      });
+    } finally {
+      URL.revokeObjectURL(pending.localAudioUrl);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!audioUrl) {
+      return;
+    }
+
+    const a = document.createElement('a');
+    a.href = audioUrl;
+    a.download = audioData.fileName || audioData.title || 'audio';
+    a.click();
+  };
+
+  const handleCopyLink = () => {
+    if (audioUrl) {
+      void navigator.clipboard?.writeText(audioUrl);
+    }
+  };
+
+  return (
+    <UploadedAudioNode
+      data={audioData}
+      selected={selected}
+      accessoriesVisible={isActive}
+      onReplace={handleReplace}
+      onTitleChange={(nextTitle) => updateNodeData<'audio'>(id, { title: nextTitle })}
+      onSelectNode={() => notifyCanvasNodeSelect?.(id)}
+      onLoadedMetadata={(durationSeconds) => updateNodeData<'audio'>(id, { durationSeconds })}
+      onDownload={handleDownload}
+      onCopyLink={handleCopyLink}
+    />
   );
 });
 
@@ -4106,8 +4306,10 @@ const nodeTypes = {
   storyboard_grid: StoryboardGridNodeAdapter,
   image_generation: ImageGenerationNodeAdapter,
   video_generation: VideoGenerationNodeAdapter,
+  audio_generation: AudioGenerationNodeAdapter,
   video_upscale: VideoUpscaleNodeAdapter,
   video: VideoNodeAdapter,
+  audio: UploadedAudioNodeAdapter,
   ai_text_result: AITextResultNodeAdapter,
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
@@ -4171,7 +4373,6 @@ const GROUP_SOURCE_HANDLE_ZONE_BASE =
   'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
 const GROUP_LAYOUT_GAP_X = 48;
 const GROUP_LAYOUT_GAP_Y = 48;
-const VIDEO_UPSCALE_NODE_WIDTH = 540;
 const VIDEO_UPSCALE_PANEL_WIDTH = 448;
 const VIDEO_UPSCALE_PANEL_TOP_GAP = 24;
 const VIDEO_UPSCALE_PANEL_HEIGHT = 144;
@@ -4230,7 +4431,7 @@ type GroupConnectionPreview = {
 type QuickReferenceConnectMode = {
   targetKind: 'node';
   targetNodeId: string;
-  targetType: 'text' | 'storyboard_script' | 'image_generation' | 'video_generation';
+  targetType: 'text' | 'storyboard_script' | 'image_generation' | 'video_generation' | 'audio_generation';
 } | {
   targetKind: 'agent';
   onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate';
@@ -4278,6 +4479,24 @@ function canNodeProvideVideoReference(node: CanvasNode): boolean {
   return false;
 }
 
+function canNodeProvideAudioReference(node: CanvasNode): boolean {
+  if (node.type === 'audio') {
+    return Boolean(
+      node.data.hostedAudioUrl?.trim() ||
+      node.data.audioUrl.trim(),
+    );
+  }
+
+  if (node.type === 'audio_generation') {
+    return Boolean(
+      node.data.hostedAudioUrl?.trim() ||
+      node.data.audioUrl?.trim(),
+    );
+  }
+
+  return false;
+}
+
 function canNodeProvideQuickReference(
   node: CanvasNode,
   mode: QuickReferenceConnectMode,
@@ -4292,6 +4511,18 @@ function canNodeProvideQuickReference(
 
   if (mode.targetType === 'image_generation') {
     return canNodeProvideImageReference(node);
+  }
+
+  if (mode.targetType === 'audio_generation') {
+    return canNodeProvideAudioReference(node);
+  }
+
+  if (mode.targetType === 'video_generation') {
+    return (
+      canNodeProvideImageReference(node) ||
+      canNodeProvideVideoReference(node) ||
+      canNodeProvideAudioReference(node)
+    );
   }
 
   return canNodeProvideImageReference(node) || canNodeProvideVideoReference(node);
@@ -4742,7 +4973,7 @@ type CanvasNodeRenderData = CanvasNode['data'] & {
   canvasFocusRequestId?: number;
 };
 
-type EmptyCanvasWelcomeAction = 'text' | 'image_generation' | 'video_generation';
+type EmptyCanvasWelcomeAction = 'text' | 'image_generation' | 'video_generation' | 'audio_generation';
 
 function getImageImportPosition(
   basePosition: { x: number; y: number },
@@ -9026,6 +9257,16 @@ function EmptyCanvasWelcome({
           <Video size={15} strokeWidth={2} />
           视频节点
         </button>
+        <button
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onClick={() => onCreateNode('audio_generation')}
+          className="inline-flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#191A1C]/90 px-4 text-[13px] font-medium text-gl-text-secondary shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-xl transition-colors hover:border-white/16 hover:bg-white/[0.08] hover:text-gl-text-primary"
+        >
+          <Volume2 size={15} strokeWidth={2} />
+          音频节点
+        </button>
       </div>
     </div>
   );
@@ -9248,6 +9489,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const addReferenceMediaToVideoGenerationNode = useCanvasStore(
     (s) => s.addReferenceMediaToVideoGenerationNode,
   );
+  const addReferenceMediaToAudioGenerationNode = useCanvasStore(
+    (s) => s.addReferenceMediaToAudioGenerationNode,
+  );
   const updateInlineReferenceMedia = useCanvasStore((s) => s.updateInlineReferenceMedia);
   const materials = useCanvasStore((s) => s.materials);
   const addMaterial = useCanvasStore((s) => s.addMaterial);
@@ -9353,37 +9597,41 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [edgeStyle]);
 
   const derivedRfNodes = useMemo<ReactFlowNode[]>(() => {
-    const nodes: ReactFlowNode[] = storeNodes.map((n) => ({
-      id: n.id,
-      type: n.type,
-      position: n.position,
-      className: quickReferenceConnect
-        ? [
-            'gl-quick-reference-node',
-            quickReferenceConnect.targetKind === 'node' && n.id === quickReferenceConnect.targetNodeId
-              ? 'gl-quick-reference-target'
-              : canNodeProvideQuickReference(n, quickReferenceConnect)
-                ? 'gl-quick-reference-connectable'
-                : 'gl-quick-reference-muted',
-          ].join(' ')
-        : undefined,
-      data: {
-        ...n.data,
-        canvasNodeActive: activeNodeId === n.id,
-        canvasFocusRequestId: nodeFocusRequest?.nodeId === n.id
-          ? nodeFocusRequest.requestId
-          : undefined,
-      },
-      selected: selectedNodeIds.has(n.id),
-      dragHandle:
-        n.type === 'text'
-          ? '.text-node-drag-handle'
-          : n.type === 'storyboard_script'
-            ? '.storyboard-script-node-drag-handle'
-          : n.type === 'image_generation' || n.type === 'video_generation' || n.type === 'video_upscale'
-            ? '.image-generation-node-drag-handle'
-          : undefined,
-    }));
+    const nodes: ReactFlowNode[] = storeNodes.map((n) => {
+      const classNames = [
+        quickReferenceConnect ? 'gl-quick-reference-node' : '',
+        quickReferenceConnect
+          ? quickReferenceConnect.targetKind === 'node' && n.id === quickReferenceConnect.targetNodeId
+            ? 'gl-quick-reference-target'
+            : canNodeProvideQuickReference(n, quickReferenceConnect)
+              ? 'gl-quick-reference-connectable'
+              : 'gl-quick-reference-muted'
+          : '',
+      ].filter(Boolean);
+
+      return {
+        id: n.id,
+        type: n.type,
+        position: n.position,
+        className: classNames.length ? classNames.join(' ') : undefined,
+        data: {
+          ...n.data,
+          canvasNodeActive: activeNodeId === n.id,
+          canvasFocusRequestId: nodeFocusRequest?.nodeId === n.id
+            ? nodeFocusRequest.requestId
+            : undefined,
+        },
+        selected: selectedNodeIds.has(n.id),
+        dragHandle:
+          n.type === 'text'
+            ? '.text-node-drag-handle'
+            : n.type === 'storyboard_script'
+              ? '.storyboard-script-node-drag-handle'
+            : n.type === 'image_generation' || n.type === 'video_generation' || n.type === 'video_upscale'
+              ? '.image-generation-node-drag-handle'
+            : undefined,
+      };
+    });
 
     if (connectionMenu) {
       nodes.push({
@@ -10098,9 +10346,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           cardH = IMAGE_GENERATION_MAX_CARD_EDGE;
           cardW = Math.max(IMAGE_GENERATION_MIN_CARD_EDGE, Math.round(cardH * resolvedAspect));
         }
-        const cardStageH = IMAGE_GENERATION_MAX_CARD_EDGE + IMAGE_GENERATION_CARD_ACCESSORY_TOP_SPACE + IMAGE_GENERATION_CARD_ACCESSORY_GAP;
-        const cardTopOffset = cardStageH - cardH;
-        const cardLeftOffset = Math.round((IMAGE_GENERATION_MAX_CARD_EDGE - cardW) / 2);
+        const cardTopOffset = 0;
+        const cardLeftOffset = 0;
 
         if (action === 'annotate') {
           openImageAnnotationMode({
@@ -11600,6 +11847,61 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     });
   }, [addNodes, clearEdgeSelection, updateNodeData]);
 
+  const addUploadedAudios = useCallback(async (
+    files: File[],
+    basePosition: { x: number; y: number },
+    options?: { select?: boolean },
+  ) => {
+    const audioFiles = files.filter((file) => file.type.startsWith('audio/'));
+
+    if (audioFiles.length === 0) {
+      return;
+    }
+
+    const pendingImports = audioFiles.map((file, index) =>
+      createPendingAudioImportNode(file, getImageImportPosition(basePosition, index)),
+    );
+    const nextNodes = pendingImports.map((pending) => pending.node);
+    const nextNodeIds = new Set(nextNodes.map((node) => node.id));
+
+    addNodes(nextNodes);
+
+    if (options?.select !== false) {
+      setSelectedNodeIds(nextNodeIds);
+      setActiveNodeId(nextNodes.length === 1 ? nextNodes[0].id : null);
+      clearEdgeSelection();
+    }
+
+    pendingImports.forEach(({ node, localAudioUrl }, index) => {
+      const file = audioFiles[index];
+
+      void readAudioFile(file)
+        .then((next) => {
+          updateNodeData<'audio'>(node.id, {
+            title: next.title,
+            audioUrl: next.audioUrl,
+            hostedAudioUrl: next.hostedAudioUrl,
+            previewUrl: next.previewUrl,
+            fileName: next.fileName,
+            mimeType: next.mimeType,
+            sizeBytes: next.sizeBytes,
+            status: 'idle',
+            statusMessage: undefined,
+            errorMessage: undefined,
+          });
+          URL.revokeObjectURL(localAudioUrl);
+        })
+        .catch((error) => {
+          updateNodeData<'audio'>(node.id, {
+            status: 'error',
+            statusMessage: undefined,
+            errorMessage: error instanceof Error ? error.message : 'Audio upload failed',
+          });
+          URL.revokeObjectURL(localAudioUrl);
+        });
+    });
+  }, [addNodes, clearEdgeSelection, updateNodeData]);
+
   const updateStoryboardGridCell = useCallback((
     nodeId: string,
     cellIndex: number,
@@ -12390,17 +12692,28 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       });
     } else if (files.length > 0 && videoReferenceUploadNodeId) {
       void (async () => {
+        const targetNode = useCanvasStore.getState().nodes.find((node) => node.id === videoReferenceUploadNodeId);
+        const acceptsAudioOnly = targetNode?.type === 'audio_generation';
         const acceptedFiles = files.filter((file) =>
-          file.type.startsWith('image/') ||
-          file.type.startsWith('video/') ||
-          file.type.startsWith('audio/'),
+          acceptsAudioOnly
+            ? file.type.startsWith('audio/')
+            : file.type.startsWith('image/') ||
+              file.type.startsWith('video/') ||
+              file.type.startsWith('audio/'),
         );
         const pendingReferences = await Promise.all(acceptedFiles.map(createPendingMediaReference));
 
-        addReferenceMediaToVideoGenerationNode(
-          videoReferenceUploadNodeId,
-          pendingReferences.map(({ reference }) => reference),
-        );
+        if (acceptsAudioOnly) {
+          addReferenceMediaToAudioGenerationNode(
+            videoReferenceUploadNodeId,
+            pendingReferences.map(({ reference }) => reference),
+          );
+        } else {
+          addReferenceMediaToVideoGenerationNode(
+            videoReferenceUploadNodeId,
+            pendingReferences.map(({ reference }) => reference),
+          );
+        }
 
         pendingReferences.forEach(({ reference, localUrl }, index) => {
           const file = acceptedFiles[index];
@@ -12475,14 +12788,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     } else if (files.length > 0 && position) {
       const imageFiles = files.filter((file) => file.type.startsWith('image/'));
       const videoFiles = files.filter((file) => file.type.startsWith('video/'));
+      const audioFiles = files.filter((file) => file.type.startsWith('audio/'));
 
       void (async () => {
         if (imageFiles.length > 0) {
-          await addUploadedImages(imageFiles, position, { select: videoFiles.length === 0 });
-        }
-
-        if (videoFiles.length === 0) {
-          return;
+          await addUploadedImages(imageFiles, position, {
+            select: videoFiles.length === 0 && audioFiles.length === 0,
+          });
         }
 
         const videoPosition = imageFiles.length > 0
@@ -12491,7 +12803,21 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
               y: position.y + Math.ceil(imageFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y),
             }
           : position;
-        await addUploadedVideos(videoFiles, videoPosition);
+        if (videoFiles.length > 0) {
+          await addUploadedVideos(videoFiles, videoPosition, { select: audioFiles.length === 0 });
+        }
+
+        if (audioFiles.length > 0) {
+          const audioPosition = imageFiles.length > 0 || videoFiles.length > 0
+            ? {
+                x: position.x,
+                y: position.y +
+                  Math.ceil(imageFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y) +
+                  Math.ceil(videoFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y),
+              }
+            : position;
+          await addUploadedAudios(audioFiles, audioPosition);
+        }
       })().catch((error) => {
         setSaveMessage(error instanceof Error ? error.message : 'Import failed');
         window.setTimeout(() => setSaveMessage(null), 2200);
@@ -12507,9 +12833,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     videoReferenceUploadNodeIdRef.current = null;
   }, [
     addReferenceImagesToImageGenerationNode,
+    addReferenceMediaToAudioGenerationNode,
     addReferenceMediaToTextNode,
     addReferenceMediaToStoryboardNode,
     addReferenceMediaToVideoGenerationNode,
+    addUploadedAudios,
     addUploadedImages,
     addUploadedVideos,
     setSaveMessage,
@@ -12567,8 +12895,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const files = Array.from(event.dataTransfer.files);
     const imageFiles = files.filter((item) => item.type.startsWith('image/'));
     const videoFiles = files.filter((item) => item.type.startsWith('video/'));
+    const audioFiles = files.filter((item) => item.type.startsWith('audio/'));
 
-    if (imageFiles.length === 0 && videoFiles.length === 0) {
+    if (imageFiles.length === 0 && videoFiles.length === 0 && audioFiles.length === 0) {
       return;
     }
 
@@ -12579,11 +12908,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     void (async () => {
       if (imageFiles.length > 0) {
-        await addUploadedImages(imageFiles, position, { select: videoFiles.length === 0 });
-      }
-
-      if (videoFiles.length === 0) {
-        return;
+        await addUploadedImages(imageFiles, position, {
+          select: videoFiles.length === 0 && audioFiles.length === 0,
+        });
       }
 
       const videoPosition = imageFiles.length > 0
@@ -12592,12 +12919,26 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             y: position.y + Math.ceil(imageFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y),
           }
         : position;
-      await addUploadedVideos(videoFiles, videoPosition);
+      if (videoFiles.length > 0) {
+        await addUploadedVideos(videoFiles, videoPosition, { select: audioFiles.length === 0 });
+      }
+
+      if (audioFiles.length > 0) {
+        const audioPosition = imageFiles.length > 0 || videoFiles.length > 0
+          ? {
+              x: position.x,
+              y: position.y +
+                Math.ceil(imageFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y) +
+                Math.ceil(videoFiles.length / IMAGE_IMPORT_COLUMNS) * (UPLOADED_IMAGE_MAX_CARD_HEIGHT + IMAGE_IMPORT_SPACING_Y),
+            }
+          : position;
+        await addUploadedAudios(audioFiles, audioPosition);
+      }
     })().catch((error) => {
       setSaveMessage(error instanceof Error ? error.message : 'Import failed');
       window.setTimeout(() => setSaveMessage(null), 2200);
     });
-  }, [addUploadedImages, addUploadedVideos, handleSelectMaterial, materials, project, setSaveMessage]);
+  }, [addUploadedAudios, addUploadedImages, addUploadedVideos, handleSelectMaterial, materials, project, setSaveMessage]);
 
   const openAddMenuAtScreen = useCallback((screen: { x: number; y: number }) => {
     if (closeAddMenuTimeoutRef.current) {
@@ -12955,6 +13296,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     if (action === 'video_generation' && addMenu) {
       const node = addNodeAtCenter('video_generation', addMenu.canvas);
+      focusCreatedNode(node.id);
+    }
+
+    if (action === 'audio' && addMenu) {
+      const node = addNodeAtCenter('audio_generation', addMenu.canvas);
       focusCreatedNode(node.id);
     }
 
@@ -13359,7 +13705,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return;
     }
 
-    if (action !== 'text' && action !== 'storyboard_script' && action !== 'image_generation' && action !== 'video_generation' && action !== 'panorama-360' && action !== 'video') {
+    if (action !== 'text' && action !== 'storyboard_script' && action !== 'image_generation' && action !== 'video_generation' && action !== 'audio' && action !== 'panorama-360' && action !== 'video') {
       clearConnectionMenu();
       return;
     }
@@ -13376,6 +13722,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           ? 'storyboard_script'
         : action === 'video_generation'
           ? 'video_generation'
+        : action === 'audio'
+          ? 'audio_generation'
         : action === 'panorama-360'
           ? 'panorama-360'
           : 'image_generation';

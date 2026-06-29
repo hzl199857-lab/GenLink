@@ -102,6 +102,7 @@ export const VideoUpscaleNode = memo(function VideoUpscaleNode({
   const instanceType = data.instanceType || 'default';
   const canRun = sourceVideoAvailable && !isGenerating;
   const displayTitle = normalizeVideoUpscaleTitle(data.title);
+  const nodeWidth = resolvedCardDimensions.width;
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedRef = useRef<HTMLDivElement | null>(null);
 
@@ -132,7 +133,12 @@ export const VideoUpscaleNode = memo(function VideoUpscaleNode({
   };
 
   return (
-    <div className="relative group node-connectable-root" style={{ width: CARD_WIDTH }}>
+    <div
+      className="relative group node-connectable-root"
+      style={{
+        width: nodeWidth,
+      }}
+    >
       <div className="node-visible-title mb-2 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
         <Sparkles size={21} />
         <EditableNodeTitle
@@ -188,14 +194,12 @@ export const VideoUpscaleNode = memo(function VideoUpscaleNode({
           position={Position.Left}
           visible={selected && !dragging}
           cardWidth={resolvedCardDimensions.width}
-          cardLeftOffset={(CARD_WIDTH - resolvedCardDimensions.width) / 2}
         />
         <CardSideHandle
           type="source"
           position={Position.Right}
           visible={selected && !dragging}
           cardWidth={resolvedCardDimensions.width}
-          cardLeftOffset={(CARD_WIDTH - resolvedCardDimensions.width) / 2}
         />
       </div>
 

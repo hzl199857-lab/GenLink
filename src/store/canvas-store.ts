@@ -30,6 +30,8 @@ import {
 } from "@/lib/project-storage";
 import type {
   AITextResultNodeData,
+  AudioGenerationNodeData,
+  AudioNodeData,
   CanvasEdge,
   CanvasNode,
   ImageGenerationResultItem,
@@ -168,6 +170,40 @@ type VideoUpscaleResponse =
       };
     };
 
+type AudioGenerationResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      status: "submitted";
+        task: {
+          taskId: string;
+        model: string;
+      };
+    }
+  | {
+      ok: true;
+      status: "pending";
+      progress?: string;
+    }
+  | {
+      ok: true;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: true;
+      status: "completed";
+      result: {
+        taskId: string;
+        model: string;
+        audioUrl: string;
+        title?: string;
+        durationSeconds?: number;
+        mimeType?: string;
+        sizeBytes?: number;
+      };
+    };
+
 type StoryboardGenerationResponse =
   | ApiErrorResponse
   | {
@@ -218,6 +254,7 @@ type SplitGridDimension = 2 | 3 | 5;
 const inFlightImageGenerationNodeIds = new Set<string>();
 const inFlightVideoGenerationNodeIds = new Set<string>();
 const inFlightVideoUpscaleNodeIds = new Set<string>();
+const inFlightAudioGenerationNodeIds = new Set<string>();
 const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
 const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
@@ -230,6 +267,8 @@ const STORYBOARD_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_OSS_UPLOAD_CACHE_LIMIT = 80;
 const VIDEO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
 const VIDEO_JOB_POLL_INTERVAL_MS = 2_000;
+const AUDIO_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
+const AUDIO_JOB_POLL_INTERVAL_MS = 2_000;
 const REFERENCE_IMAGE_UPLOAD_MODE =
   process.env.NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE?.trim().toLowerCase();
 const SHOULD_PREFER_OSS_FOR_REFERENCE_IMAGES =
@@ -295,11 +334,12 @@ const API_PROVIDER_LABELS: Record<ApiProvider, string> = {
   comfly: "Comfly",
   runninghub: "RunningHub",
   grsai: "Grsai",
-  zhenzhen: "贞贞 AI 工坊",
+  zhenzhen: "贞贞AI工坊",
 };
 
 export const CANVAS_TEXT_API_PROVIDER_STORAGE_KEY = "genlink.textApiProvider";
 export const CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY = "genlink.imageApiProvider";
+export const CANVAS_VIDEO_API_PROVIDER_STORAGE_KEY = "genlink.videoApiProvider";
 export const CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY = "genlink.vibeTextApiKey";
 export const CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY = "genlink.fucheersTextApiKey";
 export const CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY = "genlink.comflyTextApiKey";
@@ -360,7 +400,7 @@ function getApiProviderStorageKey(kind: ApiModelKind): string {
   }
 
   return kind === "video"
-    ? CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY
+    ? CANVAS_VIDEO_API_PROVIDER_STORAGE_KEY
     : CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY;
 }
 
@@ -376,7 +416,12 @@ function getModelStorageKey(kind: ApiModelKind): string {
 
 function getApiKeyStorageKey(kind: ApiModelKind, provider: ApiProvider): string {
   if (kind === "video") {
-    return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+    switch (provider) {
+      case "zhenzhen":
+        return CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY;
+      default:
+        return CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY;
+    }
   }
 
   if (kind === "text") {
@@ -444,9 +489,6 @@ export function persistSelectedModel(params: {
   }
 
   window.localStorage.setItem(getApiProviderStorageKey(params.kind), params.provider);
-  if (params.kind === "video") {
-    window.localStorage.setItem(getApiProviderStorageKey(params.kind), "comfly");
-  }
   window.localStorage.setItem(getModelStorageKey(params.kind), params.model);
 
   if (params.kind === "image" && params.provider === "runninghub") {
@@ -461,10 +503,6 @@ export function readStoredApiKey(
   kind: ApiModelKind,
   provider: ApiProvider,
 ): string {
-  if (kind === "video" && provider === "comfly") {
-    return readStoredValue(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY);
-  }
-
   return readStoredValue(getApiKeyStorageKey(kind, provider));
 }
 
@@ -654,6 +692,78 @@ function dedupeConnectedVideos(
   }
 
   return deduped;
+}
+
+function createAudioReferenceFromNode(node: CanvasNode): VideoGenerationMediaReference | null {
+  if (node.type === "audio") {
+    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl.trim();
+
+    if (!audioUrl) {
+      return null;
+    }
+
+    return {
+      id: node.id,
+      url: audioUrl,
+      hostedUrl: node.data.hostedAudioUrl?.trim() || undefined,
+      previewUrl: node.data.previewUrl,
+      fileName: node.data.fileName,
+      mimeType: node.data.mimeType || "audio/*",
+      sizeBytes: node.data.sizeBytes,
+      durationSeconds: node.data.durationSeconds,
+      uploadStatus: node.data.status === "error" ? "error" : "uploaded",
+      uploadError: node.data.errorMessage,
+    };
+  }
+
+  if (node.type === "audio_generation") {
+    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl?.trim();
+
+    if (!audioUrl) {
+      return null;
+    }
+
+    return {
+      id: node.id,
+      url: audioUrl,
+      hostedUrl: node.data.hostedAudioUrl?.trim() || undefined,
+      fileName: node.data.generatedOutputFileName,
+      mimeType: node.data.mimeType || "audio/*",
+      sizeBytes: node.data.sizeBytes,
+      durationSeconds: node.data.durationSeconds,
+      uploadStatus: node.data.status === "error" ? "error" : "uploaded",
+      uploadError: node.data.errorMessage,
+    };
+  }
+
+  return null;
+}
+
+function appendDedupeReferences(
+  current: VideoGenerationMediaReference[] | undefined,
+  refs: VideoGenerationMediaReference[],
+): VideoGenerationMediaReference[] {
+  const existing = current ?? [];
+  const seen = new Set(
+    existing.flatMap((reference) => [
+      reference.id,
+      reference.url,
+      reference.hostedUrl,
+    ]).filter((value): value is string => Boolean(value?.trim())),
+  );
+  const nextRefs = refs.filter((reference) => {
+    const keys = [reference.id, reference.url, reference.hostedUrl]
+      .filter((value): value is string => Boolean(value?.trim()));
+
+    if (keys.some((key) => seen.has(key))) {
+      return false;
+    }
+
+    keys.forEach((key) => seen.add(key));
+    return true;
+  });
+
+  return [...existing, ...nextRefs];
 }
 
 type CanvasImageSource = {
@@ -1110,6 +1220,130 @@ function createVideoGenerationNodeData(): VideoGenerationNodeData {
     returnLastFrame: false,
     generateAudio: false,
     status: "idle",
+  };
+}
+
+function createAudioGenerationNodeData(): AudioGenerationNodeData {
+  return {
+    title: "Audio",
+    songTitle: "",
+    songTitleEdited: false,
+    generatedAudioTitle: "",
+    prompt: "",
+    provider: "comfly",
+    model: "suno-v5.5",
+    mode: "inspiration",
+    runningHubWorkflowId: "",
+    taskType: "music",
+    duration: 10,
+    style: "",
+    voice: "",
+    instrumental: false,
+    negativeTags: "",
+    vocalGender: "auto",
+    referenceAudio: [],
+    status: "idle",
+  };
+}
+
+function createAudioNodeData(): AudioNodeData {
+  return {
+    title: "Audio",
+    audioUrl: "",
+    status: "idle",
+  };
+}
+
+function normalizeAudioNodeData(data: unknown): AudioNodeData {
+  const defaults = createAudioNodeData();
+  const record = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+
+  return {
+    ...defaults,
+    ...record,
+    title: typeof record.title === "string" ? record.title : defaults.title,
+    audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : "",
+    hostedAudioUrl: typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
+    previewUrl: typeof record.previewUrl === "string" ? record.previewUrl : undefined,
+    fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+    outputFileName: typeof record.outputFileName === "string" ? record.outputFileName : undefined,
+    mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+    durationSeconds: typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+    status: record.status === "generating" || record.status === "error" ? record.status : "idle",
+    statusMessage: typeof record.statusMessage === "string" ? record.statusMessage : undefined,
+    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
+  };
+}
+
+function normalizeAudioGenerationNodeData(data: unknown): AudioGenerationNodeData {
+  const defaults = createAudioGenerationNodeData();
+  const record = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const taskType = record.taskType === "voiceover" ||
+    record.taskType === "music" ||
+    record.taskType === "sound-effect"
+      ? record.taskType
+      : "general";
+  const provider = record.provider === "zhenzhen" ? "zhenzhen" : "comfly";
+  const model =
+    record.model === "suno-v5" ||
+    record.model === "suno-v4.5-plus"
+      ? record.model
+      : "suno-v5.5";
+  const mode = record.mode === "custom" ? "custom" : "inspiration";
+  const vocalGender =
+    record.vocalGender === "f" || record.vocalGender === "m"
+      ? record.vocalGender
+      : "auto";
+  const songTitleEdited = record.songTitleEdited === true;
+  const legacySongTitle = typeof record.songTitle === "string" ? record.songTitle : "";
+
+  return {
+    ...defaults,
+    ...record,
+    title: typeof record.title === "string" ? record.title : defaults.title,
+    songTitle: songTitleEdited ? legacySongTitle : "",
+    songTitleEdited,
+    generatedAudioTitle: typeof record.generatedAudioTitle === "string"
+      ? record.generatedAudioTitle
+      : songTitleEdited
+        ? ""
+        : legacySongTitle,
+    prompt: typeof record.prompt === "string" ? record.prompt : "",
+    provider,
+    model,
+    mode,
+    runningHubWorkflowId: typeof record.runningHubWorkflowId === "string"
+      ? record.runningHubWorkflowId
+      : "",
+    taskType,
+    duration: typeof record.duration === "number" ? record.duration : defaults.duration,
+    style: typeof record.style === "string" ? record.style : "",
+    voice: typeof record.voice === "string" ? record.voice : "",
+    instrumental: record.instrumental === true,
+    negativeTags: typeof record.negativeTags === "string" ? record.negativeTags : "",
+    vocalGender,
+    referenceAudio: Array.isArray(record.referenceAudio)
+      ? record.referenceAudio as VideoGenerationMediaReference[]
+      : [],
+    taskId: typeof record.taskId === "string" ? record.taskId : undefined,
+    progress: typeof record.progress === "string" ? record.progress : undefined,
+    audioUrl: typeof record.audioUrl === "string" ? record.audioUrl : undefined,
+    hostedAudioUrl: typeof record.hostedAudioUrl === "string" ? record.hostedAudioUrl : undefined,
+    generatedOutputFileName: typeof record.generatedOutputFileName === "string"
+      ? record.generatedOutputFileName
+      : undefined,
+    generatedModel: typeof record.generatedModel === "string" ? record.generatedModel : undefined,
+    generatedAt: typeof record.generatedAt === "string" ? record.generatedAt : undefined,
+    durationSeconds: typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+    mimeType: typeof record.mimeType === "string" ? record.mimeType : undefined,
+    sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+    status: record.status === "generating" || record.status === "error" ? record.status : "idle",
+    errorMessage: typeof record.errorMessage === "string" ? record.errorMessage : undefined,
   };
 }
 
@@ -1943,6 +2177,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         position,
         data: createVideoGenerationNodeData(),
       };
+    case "audio_generation":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createAudioGenerationNodeData(),
+      };
     case "video_upscale":
       return {
         id: crypto.randomUUID(),
@@ -1956,6 +2197,13 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
         type,
         position,
         data: createVideoNodeData(),
+      };
+    case "audio":
+      return {
+        id: crypto.randomUUID(),
+        type,
+        position,
+        data: createAudioNodeData(),
       };
     case "image":
       return {
@@ -2084,6 +2332,7 @@ async function readJsonResponse<T>(
 }
 
 async function requestVideoTaskStatus(params: {
+  provider: "comfly" | "zhenzhen";
   apiKey: string;
   taskId: string;
   model: string;
@@ -2094,6 +2343,7 @@ async function requestVideoTaskStatus(params: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action: "status",
+      provider: params.provider,
       apiKey: params.apiKey,
       taskId: params.taskId,
       model: params.model,
@@ -2113,6 +2363,7 @@ async function requestVideoTaskStatus(params: {
 }
 
 async function waitForVideoTaskResult(params: {
+  provider: "comfly" | "zhenzhen";
   apiKey: string;
   taskId: string;
   model: string;
@@ -2140,6 +2391,65 @@ async function waitForVideoTaskResult(params: {
   }
 
   throw new Error("Video generation timed out");
+}
+
+async function requestAudioTaskStatus(params: {
+  provider: "comfly" | "zhenzhen";
+  apiKey: string;
+  taskId: string;
+  model: string;
+}): Promise<AudioGenerationResponse> {
+  const response = await fetch("/api/ai/audio", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "status",
+      provider: params.provider,
+      apiKey: params.apiKey,
+      taskId: params.taskId,
+      model: params.model,
+    }),
+  });
+  const json = await readJsonResponse<AudioGenerationResponse>(
+    response,
+    "Audio generation status request failed",
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? "Audio generation status request failed" : json.error);
+  }
+
+  return json;
+}
+
+async function waitForAudioTaskResult(params: {
+  provider: "comfly" | "zhenzhen";
+  apiKey: string;
+  taskId: string;
+  model: string;
+  onProgress?: (progress?: string) => void;
+}): Promise<Extract<AudioGenerationResponse, { status: "completed" }>["result"]> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < AUDIO_JOB_POLL_TIMEOUT_MS) {
+    const json = await requestAudioTaskStatus(params);
+
+    if (json.ok && json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.ok && json.status === "error") {
+      throw new Error(json.error || "Audio generation failed");
+    }
+
+    if (json.ok && json.status === "pending") {
+      params.onProgress?.(json.progress);
+    }
+
+    await sleep(AUDIO_JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Audio generation timed out");
 }
 
 async function requestVideoUpscaleTaskStatus(params: {
@@ -2350,6 +2660,20 @@ function normalizeLoadedCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
       };
     }
 
+    if (node.type === "audio") {
+      return {
+        ...node,
+        data: normalizeAudioNodeData(node.data),
+      };
+    }
+
+    if (node.type === "audio_generation") {
+      return {
+        ...node,
+        data: normalizeAudioGenerationNodeData(node.data),
+      };
+    }
+
     return node;
   });
 }
@@ -2411,6 +2735,17 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
             ...node.data,
             videoUrl: `output:${node.data.outputFileName}`,
             hostedVideoUrl: undefined,
+          },
+        };
+      }
+
+      if (node.type === "audio" && node.data.outputFileName?.trim()) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            audioUrl: `output:${node.data.outputFileName}`,
+            hostedAudioUrl: undefined,
           },
         };
       }
@@ -2481,6 +2816,32 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
 
         if (isObjectUrl(node.data.videoUrl)) {
           urls.add(node.data.videoUrl);
+        }
+      }
+
+      if (node.type === "audio") {
+        if (isObjectUrl(node.data.hostedAudioUrl)) {
+          urls.add(node.data.hostedAudioUrl as string);
+        }
+
+        if (isObjectUrl(node.data.previewUrl)) {
+          urls.add(node.data.previewUrl as string);
+        }
+
+        if (isObjectUrl(node.data.audioUrl)) {
+          urls.add(node.data.audioUrl);
+        }
+      }
+
+      if (node.type === "audio_generation") {
+        const audioUrl = node.data.audioUrl;
+
+        if (isObjectUrl(node.data.hostedAudioUrl)) {
+          urls.add(node.data.hostedAudioUrl as string);
+        }
+
+        if (typeof audioUrl === "string" && isObjectUrl(audioUrl)) {
+          urls.add(audioUrl);
         }
       }
 
@@ -3925,6 +4286,10 @@ export interface CanvasState {
     videoGenerationNodeId: string,
     promptOverride?: string,
   ) => Promise<void>;
+  generateAudioFromAudioGenerationNode: (
+    audioGenerationNodeId: string,
+    promptOverride?: string,
+  ) => Promise<void>;
   createVideoUpscaleNodeFromSource: (sourceNodeId: string) => string;
   runVideoUpscaleFromNode: (videoUpscaleNodeId: string) => Promise<void>;
   getConnectedVideoForVideoUpscaleNode: (videoUpscaleNodeId: string) => ConnectedVideoPayload | null;
@@ -4013,6 +4378,10 @@ export interface CanvasState {
   ) => void;
   addReferenceMediaToVideoGenerationNode: (
     videoGenerationNodeId: string,
+    media: VideoGenerationMediaReference[],
+  ) => void;
+  addReferenceMediaToAudioGenerationNode: (
+    audioGenerationNodeId: string,
     media: VideoGenerationMediaReference[],
   ) => void;
   addReferenceMediaToTextNode: (
@@ -4254,6 +4623,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   addEdge: (edge) => {
     set((state) => {
       const sourceNode = state.nodes.find((node) => node.id === edge.source);
+      const audioReference = sourceNode ? createAudioReferenceFromNode(sourceNode) : null;
       const connectsVideoReference =
         (sourceNode?.type === "video_generation" || sourceNode?.type === "video") &&
         Boolean(
@@ -4281,7 +4651,41 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   }
                 : node,
             )
-          : state.nodes,
+          : audioReference
+            ? state.nodes.map((node) => {
+                if (node.id === edge.target && node.type === "video_generation") {
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      referenceAudio: appendDedupeReferences(
+                        node.data.referenceAudio,
+                        [audioReference],
+                      ),
+                      status: node.data.status === "error" ? "idle" : node.data.status,
+                      errorMessage: undefined,
+                    },
+                  };
+                }
+
+                if (node.id === edge.target && node.type === "audio_generation") {
+                  return {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      referenceAudio: appendDedupeReferences(
+                        node.data.referenceAudio,
+                        [audioReference],
+                      ),
+                      status: node.data.status === "error" ? "idle" : node.data.status,
+                      errorMessage: undefined,
+                    },
+                  };
+                }
+
+                return node;
+              })
+            : state.nodes,
         dirty: true,
         error: null,
       };
@@ -4387,6 +4791,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               ...node.data,
               referenceImages: nextReferenceImages,
               referenceVideos: nextReferenceVideos,
+              referenceAudio: nextReferenceAudio,
+              status: node.data.status === "error" ? "idle" : node.data.status,
+              errorMessage: undefined,
+            },
+          };
+        }
+
+        if (node.type === "audio_generation") {
+          const referenceAudio = node.data.referenceAudio ?? [];
+          const nextReferenceAudio = referenceAudio.filter((item) => item.id !== referenceId);
+          const nodeRemovedInline = nextReferenceAudio.length !== referenceAudio.length;
+          removedInline = removedInline || nodeRemovedInline;
+
+          if (!nodeRemovedInline) {
+            return node;
+          }
+
+          return {
+            ...node,
+            data: {
+              ...node.data,
               referenceAudio: nextReferenceAudio,
               status: node.data.status === "error" ? "idle" : node.data.status,
               errorMessage: undefined,
@@ -5717,13 +6142,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const apiKey = assertStoredApiKey("video", "comfly");
+      const provider = latestVideoGenerationNode.data.provider ?? "comfly";
+      const apiKey = assertStoredApiKey("video", provider);
       const response = await fetch("/api/ai/video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey,
-          provider: "comfly",
+          provider,
           model: latestVideoGenerationNode.data.model,
           mode,
           prompt,
@@ -5774,6 +6200,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
 
       const result = await waitForVideoTaskResult({
+        provider,
         apiKey,
         taskId: json.task.taskId,
         model: json.task.model,
@@ -5870,6 +6297,210 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
     } finally {
       inFlightVideoGenerationNodeIds.delete(videoGenerationNodeId);
+    }
+  },
+
+  generateAudioFromAudioGenerationNode: async (audioGenerationNodeId, promptOverride) => {
+    const state = get();
+    const audioGenerationNode = state.nodes.find(
+      (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
+        node.id === audioGenerationNodeId && node.type === "audio_generation",
+    );
+
+    if (!audioGenerationNode) {
+      throw new Error("Audio generation node not found");
+    }
+
+    if (audioGenerationNode.data.status === "generating") {
+      return;
+    }
+
+    if (inFlightAudioGenerationNodeIds.has(audioGenerationNodeId)) {
+      return;
+    }
+
+    inFlightAudioGenerationNodeIds.add(audioGenerationNodeId);
+
+    try {
+      const latestState = get();
+      const latestAudioGenerationNode = latestState.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation",
+      );
+
+      if (!latestAudioGenerationNode) {
+        throw new Error("Audio generation node not found");
+      }
+
+      const rawPrompt =
+        promptOverride?.trim() ||
+        latestAudioGenerationNode.data.prompt?.trim() ||
+        "";
+      const stylePrompt = latestAudioGenerationNode.data.style?.trim() || "";
+      const mode = latestAudioGenerationNode.data.mode ?? "inspiration";
+      const instrumental = latestAudioGenerationNode.data.instrumental === true;
+      const prompt = rawPrompt || (mode === "custom" && instrumental ? stylePrompt : "");
+
+      if (!prompt) {
+        throw new Error("请输入音乐描述或风格标签");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: undefined,
+                  progress: undefined,
+                  audioUrl: undefined,
+                  hostedAudioUrl: undefined,
+                  generatedAudioTitle: undefined,
+                  generatedOutputFileName: undefined,
+                  generatedModel: undefined,
+                  generatedAt: undefined,
+                  durationSeconds: undefined,
+                  mimeType: undefined,
+                  sizeBytes: undefined,
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const provider = latestAudioGenerationNode.data.provider ?? "comfly";
+      const apiKey = assertStoredApiKey("video", provider);
+      const response = await fetch("/api/ai/audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey,
+          provider,
+          model: latestAudioGenerationNode.data.model,
+          mode,
+          prompt,
+          title: latestAudioGenerationNode.data.songTitleEdited
+            ? latestAudioGenerationNode.data.songTitle
+            : "",
+          style: latestAudioGenerationNode.data.style,
+          instrumental,
+          negativeTags: latestAudioGenerationNode.data.negativeTags,
+          vocalGender: latestAudioGenerationNode.data.vocalGender,
+        }),
+      });
+      const json = await readJsonResponse<AudioGenerationResponse>(
+        response,
+        "Audio generation request failed",
+      );
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.ok ? "Audio generation failed" : json.error);
+      }
+
+      if (json.status !== "submitted") {
+        throw new Error("Audio generation request did not return a task id");
+      }
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  taskId: json.task.taskId,
+                  generatedModel: json.task.model,
+                  progress: "0%",
+                  status: "generating",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+
+      const result = await waitForAudioTaskResult({
+        provider,
+        apiKey,
+        taskId: json.task.taskId,
+        model: json.task.model,
+        onProgress: (progress) => {
+          if (!progress) {
+            return;
+          }
+
+          set((currentState) => ({
+            dirty: true,
+            nodes: currentState.nodes.map((node) =>
+              node.id === audioGenerationNodeId && node.type === "audio_generation"
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      progress,
+                    },
+                  }
+                : node,
+            ),
+          }));
+        },
+      });
+      const generatedAt = nowIso();
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  generatedAudioTitle: result.title,
+                  taskId: result.taskId,
+                  progress: "100%",
+                  audioUrl: result.audioUrl,
+                  hostedAudioUrl: result.audioUrl,
+                  generatedModel: result.model,
+                  generatedAt,
+                  durationSeconds: result.durationSeconds,
+                  mimeType: result.mimeType,
+                  sizeBytes: result.sizeBytes,
+                  status: "idle",
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+      }));
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        error: message,
+        dirty: true,
+        nodes: currentState.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "error",
+                  errorMessage: message,
+                },
+              }
+            : node,
+        ),
+      }));
+    } finally {
+      inFlightAudioGenerationNodeIds.delete(audioGenerationNodeId);
     }
   },
 
@@ -7729,6 +8360,51 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addReferenceMediaToAudioGenerationNode: (audioGenerationNodeId, media) => {
+    if (media.length === 0) {
+      return;
+    }
+
+    set((state) => {
+      const audioGenerationNode = state.nodes.find(
+        (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation",
+      );
+
+      if (!audioGenerationNode) {
+        return state;
+      }
+
+      const audioRefs = media.filter((item) => item.mimeType?.startsWith("audio/"));
+
+      if (audioRefs.length === 0) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        nodes: state.nodes.map((node) =>
+          node.id === audioGenerationNodeId && node.type === "audio_generation"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceAudio: appendDedupeReferences(
+                    node.data.referenceAudio,
+                    audioRefs,
+                  ),
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   addReferenceMediaToTextNode: (textNodeId, media) => {
     if (media.length === 0) {
       return;
@@ -8011,6 +8687,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   referenceVideos: nextReferenceVideos,
                   referenceAudio: nextReferenceAudio,
                   mode: nextReferenceVideos.length > 0 ? "all-reference" : node.data.mode,
+                  status: node.data.status === "error" ? "idle" : node.data.status,
+                  errorMessage: undefined,
+                },
+              }
+            : node;
+        }
+
+        if (node.type === "audio_generation") {
+          let nodeDidUpdate = false;
+          const nextReferenceAudio = (node.data.referenceAudio ?? []).map((reference) => {
+            if (reference.id !== referenceId) {
+              return reference;
+            }
+
+            didUpdate = true;
+            nodeDidUpdate = true;
+            return {
+              ...reference,
+              ...updates,
+            };
+          });
+
+          return nodeDidUpdate
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  referenceAudio: nextReferenceAudio,
                   status: node.data.status === "error" ? "idle" : node.data.status,
                   errorMessage: undefined,
                 },

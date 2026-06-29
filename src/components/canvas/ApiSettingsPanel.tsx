@@ -59,9 +59,9 @@ const PROVIDERS: Array<{
   },
   {
     key: 'zhenzhen',
-    label: '真真 AI 工坊',
-    url: 'https://ai.t8star.cn',
-    apiKeyLabel: '真真 AI 工坊 API Key',
+    label: '贞贞AI工坊',
+    url: 'https://ai.t8star.org',
+    apiKeyLabel: '贞贞AI工坊 API Key',
   },
 ];
 

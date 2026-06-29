@@ -17,15 +17,14 @@ import {
   getApiProviderLabel,
   persistSelectedModel,
   readStoredApiKey,
-  type ApiProvider,
 } from '@/store/canvas-store';
-import type { VideoGenerationMode } from '@/types/canvas';
+import type { VideoGenerationMode, VideoGenerationProvider } from '@/types/canvas';
 
 const VIDEO_MODEL_OPTIONS = [
   { id: 'doubao-seedance-2-0-260128', label: 'seedance 2.0' },
   { id: 'doubao-seedance-2-0-fast-260128', label: 'seedance 2.0 fast' },
 ] as const;
-const API_PROVIDERS: ApiProvider[] = ['comfly'];
+const API_PROVIDERS: VideoGenerationProvider[] = ['comfly', 'zhenzhen'];
 const VIDEO_RATIO_OPTIONS = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9'] as const;
 const VIDEO_KEEP_RATIO_VALUE = 'keep_ratio';
 const VIDEO_RESOLUTION_OPTIONS = ['480p', '720p', '1080p'] as const;
@@ -42,7 +41,7 @@ const VIDEO_MODE_OPTIONS: Array<{ id: VideoGenerationMode; label: string }> = [
 export interface VideoGenerationPromptBarProps {
   visible: boolean;
   prompt: string;
-  provider?: 'comfly';
+  provider?: VideoGenerationProvider;
   model?: string;
   mode?: VideoGenerationMode;
   ratio?: string;
@@ -68,8 +67,17 @@ export interface VideoGenerationPromptBarProps {
     height?: number;
     durationSeconds?: number;
   }>;
+  connectedAudio?: Array<{
+    id: string;
+    audioUrl: string;
+    alt: string;
+    fileName?: string;
+    durationSeconds?: number;
+    uploadStatus?: 'uploading' | 'uploaded' | 'error';
+    uploadError?: string;
+  }>;
   onPromptChange?: (next: string) => void;
-  onProviderModelChange?: (next: { provider: 'comfly'; model: string }) => void;
+  onProviderModelChange?: (next: { provider: VideoGenerationProvider; model: string }) => void;
   onModeChange?: (next: VideoGenerationMode) => void;
   onRatioChange?: (next: string) => void;
   onResolutionChange?: (next: '480p' | '720p' | '1080p') => void;
@@ -178,6 +186,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   generating = false,
   connectedImages = [],
   connectedVideos = [],
+  connectedAudio = [],
   onPromptChange,
   onProviderModelChange,
   onModeChange,
@@ -227,8 +236,14 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
   }, [modelMenuOpen, modeRatioMenuOpen, outputMenuOpen]);
 
   const handleModelSelect = (nextModel: string) => {
-    persistSelectedModel({ kind: 'video', provider: 'comfly', model: nextModel });
-    onProviderModelChange?.({ provider: 'comfly', model: nextModel });
+    persistSelectedModel({ kind: 'video', provider, model: nextModel });
+    onProviderModelChange?.({ provider, model: nextModel });
+    setModelMenuOpen(false);
+  };
+
+  const handleProviderSelect = (nextProvider: VideoGenerationProvider) => {
+    persistSelectedModel({ kind: 'video', provider: nextProvider, model });
+    onProviderModelChange?.({ provider: nextProvider, model });
     setModelMenuOpen(false);
   };
 
@@ -298,6 +313,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
               <ReferenceMediaStrip
                 connectedImages={connectedImages}
                 connectedVideos={connectedVideos}
+                connectedAudio={connectedAudio}
                 imagePreview={referenceImagePreview}
                 videoPreview={referenceVideoPreview}
                 onQuickReferenceConnect={onQuickReferenceConnect}
@@ -359,6 +375,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                             key={option}
                             type="button"
                             translate="no"
+                            onClick={() => handleProviderSelect(option)}
                             className={[
                               'flex h-11 w-full items-center justify-between rounded-[12px] px-3 text-left text-[14px] transition-colors duration-150',
                               provider === option
@@ -378,7 +395,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                       </div>
                       <div className="flex flex-col gap-0.5">
                         {VIDEO_MODEL_OPTIONS.map((option) => {
-                          const selected = provider === 'comfly' && model === option.id;
+                          const selected = model === option.id;
 
                           return (
                             <button
@@ -399,9 +416,9 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
                           );
                         })}
                       </div>
-                      {!readStoredApiKey('video', 'comfly') ? (
+                      {!readStoredApiKey('video', provider) ? (
                         <div className="mt-1.5 rounded-[10px] border border-gl-error/30 bg-gl-error/10 px-3 py-2 text-[12px] leading-5 text-gl-error">
-                          请先在 API 设置里配置 Comfly Key
+                          请先在 API 设置里配置 {getApiProviderLabel(provider)} Key
                         </div>
                       ) : null}
                     </div>
