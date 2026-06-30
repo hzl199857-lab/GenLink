@@ -34,6 +34,8 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   buildSunoMusicSubmitRequest,
+  buildRunningHubVoiceCloneSubmitBody,
+  parseRunningHubVoiceCloneResult,
   parseSunoFetchResult,
   parseSunoSubmitTask,
   normalizeAudioGenerationModel,
@@ -221,5 +223,57 @@ describe("Suno audio generation request mapping", () => {
       }),
       "a1a3807b-0481-414a-8e6a-b9b54c39dd68",
     );
+  });
+});
+
+describe("RunningHub voice clone request mapping", () => {
+  it("maps the uploaded audio file to the voice clone AI App node", () => {
+    const body = buildRunningHubVoiceCloneSubmitBody({
+      audioFileName: "openapi/source.mp3",
+      instanceType: "plus",
+    });
+
+    assert.deepEqual(body, {
+      nodeInfoList: [
+        {
+          nodeId: "317",
+          fieldName: "audio",
+          fieldValue: "openapi/source.mp3",
+          description: "添加音频",
+        },
+      ],
+      instanceType: "plus",
+      usePersonalQueue: "false",
+    });
+  });
+
+  it("defaults RunningHub voice clone to the default instance", () => {
+    const body = buildRunningHubVoiceCloneSubmitBody({
+      audioFileName: "openapi/source.wav",
+    });
+
+    assert.equal(body.instanceType, "default");
+  });
+
+  it("parses successful RunningHub voice clone query responses", () => {
+    const result = parseRunningHubVoiceCloneResult("rh-task-1", {
+      taskId: "rh-task-1",
+      status: "SUCCESS",
+      results: [
+        {
+          url: "https://example.com/output.txt",
+          outputType: "txt",
+        },
+        {
+          url: "https://example.com/cloned.wav",
+          outputType: "wav",
+        },
+      ],
+    });
+
+    assert.equal(result.taskId, "rh-task-1");
+    assert.equal(result.audioUrl, "https://example.com/cloned.wav");
+    assert.equal(result.model, "runninghub-voice-clone");
+    assert.equal(result.mimeType, "audio/wav");
   });
 });

@@ -298,10 +298,15 @@ export type AudioGenerationTaskType =
   | "music"
   | "sound-effect";
 
-export type AudioGenerationProvider = "comfly" | "zhenzhen";
-export type AudioGenerationModel = "suno-v5.5" | "suno-v5" | "suno-v4.5-plus";
+export type AudioGenerationProvider = "comfly" | "zhenzhen" | "runninghub";
+export type AudioGenerationModel =
+  | "suno-v5.5"
+  | "suno-v5"
+  | "suno-v4.5-plus"
+  | "runninghub-voice-clone";
 export type AudioGenerationMode = "inspiration" | "custom";
 export type AudioGenerationVocalGender = "auto" | "f" | "m";
+export type AudioGenerationInstanceType = "default" | "plus";
 
 export interface AudioGenerationNodeData {
   title?: string;
@@ -313,6 +318,7 @@ export interface AudioGenerationNodeData {
   model?: AudioGenerationModel;
   mode?: AudioGenerationMode;
   runningHubWorkflowId?: string;
+  instanceType?: AudioGenerationInstanceType;
   taskType?: AudioGenerationTaskType;
   duration?: number;
   style?: string;

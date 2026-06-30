@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 
 import {
   AudioApiError,
+  getRunningHubVoiceCloneTaskResult,
   getSunoMusicTaskResult,
+  submitRunningHubVoiceCloneTask,
   submitSunoMusicTask,
 } from "@/lib/audio";
 import type {
+  AudioGenerationInstanceType,
   AudioGenerationMode,
   AudioGenerationProvider,
   AudioGenerationVocalGender,
@@ -27,9 +30,16 @@ interface AudioRequestBody {
   instrumental?: unknown;
   negativeTags?: unknown;
   vocalGender?: unknown;
+  sourceAudioUrl?: unknown;
+  sourceAudioFileName?: unknown;
+  instanceType?: unknown;
 }
 
 function parseProvider(value: unknown): AudioGenerationProvider {
+  if (value === "runninghub") {
+    return "runninghub";
+  }
+
   return value === "zhenzhen" ? "zhenzhen" : "comfly";
 }
 
@@ -39,6 +49,10 @@ function parseMode(value: unknown): AudioGenerationMode {
 
 function parseVocalGender(value: unknown): AudioGenerationVocalGender {
   return value === "f" || value === "m" ? value : "auto";
+}
+
+function parseInstanceType(value: unknown): AudioGenerationInstanceType {
+  return value === "plus" ? "plus" : "default";
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -63,6 +77,18 @@ export async function POST(request: Request) {
         throw new AudioApiError(400, "Task id is required");
       }
 
+      if (provider === "runninghub") {
+        const result = await getRunningHubVoiceCloneTaskResult({
+          apiKey,
+          taskId,
+        });
+
+        return NextResponse.json({
+          ok: true,
+          ...result,
+        });
+      }
+
       const result = await getSunoMusicTaskResult({
         provider,
         apiKey,
@@ -77,6 +103,27 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         ...result,
+      });
+    }
+
+    if (provider === "runninghub") {
+      const sourceAudioUrl = stringValue(body.sourceAudioUrl);
+
+      if (!sourceAudioUrl) {
+        throw new AudioApiError(400, "Source audio URL is required");
+      }
+
+      const task = await submitRunningHubVoiceCloneTask({
+        apiKey,
+        audioUrl: sourceAudioUrl,
+        fileName: stringValue(body.sourceAudioFileName),
+        instanceType: parseInstanceType(body.instanceType),
+      });
+
+      return NextResponse.json({
+        ok: true,
+        status: "submitted",
+        task,
       });
     }
 

@@ -171,6 +171,7 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
         title={data.songTitleEdited ? data.songTitle || '' : ''}
         style={data.style || ''}
         instrumental={data.instrumental === true}
+        instanceType={data.instanceType || 'default'}
         generating={isGenerating}
         referenceAudio={referenceAudio}
         onUpload={onUpload}
@@ -184,6 +185,7 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
         onTitleChange={(next) => handlePatch({ songTitle: next, songTitleEdited: true })}
         onStyleChange={(next) => handlePatch({ style: next })}
         onInstrumentalChange={(next) => handlePatch({ instrumental: next })}
+        onInstanceTypeChange={(next) => handlePatch({ instanceType: next })}
         onRun={onRun}
         onPointerDownWithin={onPromptPointerDown}
         onFocusWithinChange={onPromptFocusWithinChange}

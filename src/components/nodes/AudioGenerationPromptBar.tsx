@@ -4,6 +4,7 @@ import React, { memo, useEffect, useRef, useState } from 'react';
 import { NodeToolbar, Position } from 'reactflow';
 import { Check, ChevronDown, Music2, Settings2, SlidersHorizontal } from 'lucide-react';
 import type {
+  AudioGenerationInstanceType,
   AudioGenerationMode,
   AudioGenerationModel,
   AudioGenerationProvider,
@@ -20,6 +21,7 @@ import {
 
 const AUDIO_PROVIDER_OPTIONS: Array<{ id: AudioGenerationProvider; label: string }> = [
   { id: 'comfly', label: 'Comfly' },
+  { id: 'runninghub', label: 'RunningHub' },
   { id: 'zhenzhen', label: '贞贞AI工坊' },
 ];
 
@@ -27,6 +29,10 @@ const AUDIO_MODEL_OPTIONS: Array<{ id: AudioGenerationModel; label: string }> = 
   { id: 'suno-v5.5', label: 'Suno v5.5' },
   { id: 'suno-v5', label: 'Suno v5' },
   { id: 'suno-v4.5-plus', label: 'Suno v4.5+' },
+];
+
+const RUNNINGHUB_AUDIO_MODEL_OPTIONS: Array<{ id: AudioGenerationModel; label: string }> = [
+  { id: 'runninghub-voice-clone', label: '语音克隆' },
 ];
 
 const AUDIO_MODE_OPTIONS: Array<{ id: AudioGenerationMode; label: string }> = [
@@ -43,6 +49,7 @@ export interface AudioGenerationPromptBarProps {
   title?: string;
   style?: string;
   instrumental?: boolean;
+  instanceType?: AudioGenerationInstanceType;
   generating?: boolean;
   referenceAudio?: ReferenceMediaStripAudio[];
   onPromptChange?: (next: string) => void;
@@ -56,6 +63,7 @@ export interface AudioGenerationPromptBarProps {
   onTitleChange?: (next: string) => void;
   onStyleChange?: (next: string) => void;
   onInstrumentalChange?: (next: boolean) => void;
+  onInstanceTypeChange?: (next: AudioGenerationInstanceType) => void;
   onRun?: () => void;
   onUpload?: () => void;
   onQuickReferenceConnect?: () => void;
@@ -65,11 +73,18 @@ export interface AudioGenerationPromptBarProps {
 }
 
 function getAudioModelLabel(model: AudioGenerationModel): string {
-  return AUDIO_MODEL_OPTIONS.find((option) => option.id === model)?.label ?? 'Suno v5.5';
+  return (
+    [...AUDIO_MODEL_OPTIONS, ...RUNNINGHUB_AUDIO_MODEL_OPTIONS].find((option) => option.id === model)?.label ??
+    'Suno v5.5'
+  );
 }
 
 function getAudioModeLabel(mode: AudioGenerationMode): string {
   return AUDIO_MODE_OPTIONS.find((option) => option.id === mode)?.label ?? '灵感模式';
+}
+
+function getModelOptionsForProvider(provider: AudioGenerationProvider) {
+  return provider === 'runninghub' ? RUNNINGHUB_AUDIO_MODEL_OPTIONS : AUDIO_MODEL_OPTIONS;
 }
 
 function getPromptPlaceholder(mode: AudioGenerationMode, instrumental: boolean): string {
@@ -196,6 +211,7 @@ function ProviderModelMenuButton({
   const [open, setOpen] = useState(false);
   const [activeProvider, setActiveProvider] = useState<AudioGenerationProvider>(provider);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const activeModelOptions = getModelOptionsForProvider(activeProvider);
 
   useEffect(() => {
     if (!open) {
@@ -281,7 +297,7 @@ function ProviderModelMenuButton({
               Model
             </div>
             <div className="flex flex-col gap-0.5">
-              {AUDIO_MODEL_OPTIONS.map((option) => {
+              {activeModelOptions.map((option) => {
                 const selected = activeProvider === provider && option.id === model;
 
                 return (
@@ -322,21 +338,27 @@ function ProviderModelMenuButton({
 }
 
 function AudioParametersMenuButton({
+  model,
   mode,
   title,
   style,
   instrumental,
+  instanceType,
   onTitleChange,
   onStyleChange,
   onInstrumentalChange,
+  onInstanceTypeChange,
 }: {
+  model: AudioGenerationModel;
   mode: AudioGenerationMode;
   title: string;
   style: string;
   instrumental: boolean;
+  instanceType: AudioGenerationInstanceType;
   onTitleChange?: (next: string) => void;
   onStyleChange?: (next: string) => void;
   onInstrumentalChange?: (next: boolean) => void;
+  onInstanceTypeChange?: (next: AudioGenerationInstanceType) => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -401,6 +423,35 @@ function AudioParametersMenuButton({
           translate="no"
           onKeyDownCapture={(event) => event.stopPropagation()}
         >
+          {model === 'runninghub-voice-clone' ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-[13px] font-medium text-gl-text-secondary">实例类型</span>
+              <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-white/[0.06] p-1">
+                {[
+                  { label: 'default', value: 'default' as const },
+                  { label: 'plus', value: 'plus' as const },
+                ].map((option) => {
+                  const selected = instanceType === option.value;
+
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => onInstanceTypeChange?.(option.value)}
+                      className={[
+                        'h-9 rounded-[10px] text-[14px] font-semibold transition-colors',
+                        selected
+                          ? 'bg-white/[0.13] text-gl-text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
+                          : 'text-gl-text-muted hover:bg-white/[0.06] hover:text-gl-text-secondary',
+                      ].join(' ')}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <span className="text-[13px] font-medium text-gl-text-secondary">演唱模式</span>
@@ -496,6 +547,7 @@ function AudioParametersMenuButton({
               />
             </label>
           </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -511,6 +563,7 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
   title = '',
   style = '',
   instrumental = false,
+  instanceType = 'default',
   generating = false,
   referenceAudio = [],
   onPromptChange,
@@ -521,6 +574,7 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
   onTitleChange,
   onStyleChange,
   onInstrumentalChange,
+  onInstanceTypeChange,
   onRun,
   onUpload,
   onQuickReferenceConnect,
@@ -538,6 +592,8 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
     setDraftPrompt(prompt);
     setLastSyncedPrompt(prompt);
   }
+
+  const isRunningHubVoiceClone = provider === 'runninghub' || model === 'runninghub-voice-clone';
 
   return (
     <NodeToolbar
@@ -588,7 +644,7 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
           <div className="relative h-[54px] overflow-visible">
             {!draftPrompt.trim() ? (
               <div className="pointer-events-none absolute left-0 top-0 z-0 pr-10 text-[14px] leading-7 text-gl-text-muted">
-                {getPromptPlaceholder(mode, instrumental)}
+                {isRunningHubVoiceClone ? '请添加一段参考音频' : getPromptPlaceholder(mode, instrumental)}
               </div>
             ) : null}
             <textarea
@@ -619,26 +675,31 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
             <div className="notranslate flex flex-wrap items-center gap-1" translate="no">
               <ProviderModelMenuButton
                 provider={provider}
-                model={model}
+                model={isRunningHubVoiceClone ? 'runninghub-voice-clone' : model}
                 onProviderModelChange={onProviderModelChange}
                 onProviderChange={onProviderChange}
                 onModelChange={onModelChange}
               />
-              <SelectMenuButton
-                icon={<SlidersHorizontal size={14} />}
-                label={getAudioModeLabel(mode)}
-                options={AUDIO_MODE_OPTIONS}
-                value={mode}
-                onChange={onModeChange}
-              />
+              {!isRunningHubVoiceClone ? (
+                <SelectMenuButton
+                  icon={<SlidersHorizontal size={14} />}
+                  label={getAudioModeLabel(mode)}
+                  options={AUDIO_MODE_OPTIONS}
+                  value={mode}
+                  onChange={onModeChange}
+                />
+              ) : null}
               <AudioParametersMenuButton
+                model={model}
                 mode={mode}
                 title={title}
                 style={style}
                 instrumental={instrumental}
+                instanceType={instanceType}
                 onTitleChange={onTitleChange}
                 onStyleChange={onStyleChange}
                 onInstrumentalChange={onInstrumentalChange}
+                onInstanceTypeChange={onInstanceTypeChange}
               />
             </div>
 

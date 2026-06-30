@@ -1234,6 +1234,7 @@ function createAudioGenerationNodeData(): AudioGenerationNodeData {
     model: "suno-v5.5",
     mode: "inspiration",
     runningHubWorkflowId: "",
+    instanceType: "default",
     taskType: "music",
     duration: 10,
     style: "",
@@ -1288,8 +1289,13 @@ function normalizeAudioGenerationNodeData(data: unknown): AudioGenerationNodeDat
     record.taskType === "sound-effect"
       ? record.taskType
       : "general";
-  const provider = record.provider === "zhenzhen" ? "zhenzhen" : "comfly";
+  const provider = record.provider === "runninghub"
+    ? "runninghub"
+    : record.provider === "zhenzhen"
+      ? "zhenzhen"
+      : "comfly";
   const model =
+    record.model === "runninghub-voice-clone" ||
     record.model === "suno-v5" ||
     record.model === "suno-v4.5-plus"
       ? record.model
@@ -1320,6 +1326,7 @@ function normalizeAudioGenerationNodeData(data: unknown): AudioGenerationNodeDat
     runningHubWorkflowId: typeof record.runningHubWorkflowId === "string"
       ? record.runningHubWorkflowId
       : "",
+    instanceType: record.instanceType === "plus" ? "plus" : "default",
     taskType,
     duration: typeof record.duration === "number" ? record.duration : defaults.duration,
     style: typeof record.style === "string" ? record.style : "",
@@ -2394,7 +2401,7 @@ async function waitForVideoTaskResult(params: {
 }
 
 async function requestAudioTaskStatus(params: {
-  provider: "comfly" | "zhenzhen";
+  provider: "comfly" | "zhenzhen" | "runninghub";
   apiKey: string;
   taskId: string;
   model: string;
@@ -2423,7 +2430,7 @@ async function requestAudioTaskStatus(params: {
 }
 
 async function waitForAudioTaskResult(params: {
-  provider: "comfly" | "zhenzhen";
+  provider: "comfly" | "zhenzhen" | "runninghub";
   apiKey: string;
   taskId: string;
   model: string;
@@ -6332,6 +6339,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Audio generation node not found");
       }
 
+      const provider = latestAudioGenerationNode.data.provider ?? "comfly";
+      const model = latestAudioGenerationNode.data.model ?? "suno-v5.5";
+      const isRunningHubVoiceClone =
+        provider === "runninghub" || model === "runninghub-voice-clone";
       const rawPrompt =
         promptOverride?.trim() ||
         latestAudioGenerationNode.data.prompt?.trim() ||
@@ -6340,8 +6351,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const mode = latestAudioGenerationNode.data.mode ?? "inspiration";
       const instrumental = latestAudioGenerationNode.data.instrumental === true;
       const prompt = rawPrompt || (mode === "custom" && instrumental ? stylePrompt : "");
+      const sourceAudio = latestAudioGenerationNode.data.referenceAudio?.find((reference) =>
+        Boolean(reference.hostedUrl?.trim() || reference.url?.trim()),
+      );
 
-      if (!prompt) {
+      if (isRunningHubVoiceClone && !sourceAudio) {
+        throw new Error("请先添加一段参考音频");
+      }
+
+      if (!isRunningHubVoiceClone && !prompt) {
         throw new Error("请输入音乐描述或风格标签");
       }
 
@@ -6373,25 +6391,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const provider = latestAudioGenerationNode.data.provider ?? "comfly";
-      const apiKey = assertStoredApiKey("video", provider);
+      const apiKey = isRunningHubVoiceClone
+        ? assertStoredRunningHubWorkflowApiKey()
+        : assertStoredApiKey("video", provider);
       const response = await fetch("/api/ai/audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey,
-          provider,
-          model: latestAudioGenerationNode.data.model,
-          mode,
-          prompt,
-          title: latestAudioGenerationNode.data.songTitleEdited
-            ? latestAudioGenerationNode.data.songTitle
-            : "",
-          style: latestAudioGenerationNode.data.style,
-          instrumental,
-          negativeTags: latestAudioGenerationNode.data.negativeTags,
-          vocalGender: latestAudioGenerationNode.data.vocalGender,
-        }),
+        body: JSON.stringify(
+          isRunningHubVoiceClone
+            ? {
+                apiKey,
+                provider: "runninghub",
+                model: "runninghub-voice-clone",
+                sourceAudioUrl: sourceAudio?.hostedUrl?.trim() || sourceAudio?.url?.trim(),
+                sourceAudioFileName: sourceAudio?.fileName,
+                instanceType: latestAudioGenerationNode.data.instanceType || "default",
+              }
+            : {
+                apiKey,
+                provider,
+                model,
+                mode,
+                prompt,
+                title: latestAudioGenerationNode.data.songTitleEdited
+                  ? latestAudioGenerationNode.data.songTitle
+                  : "",
+                style: latestAudioGenerationNode.data.style,
+                instrumental,
+                negativeTags: latestAudioGenerationNode.data.negativeTags,
+                vocalGender: latestAudioGenerationNode.data.vocalGender,
+              },
+        ),
       });
       const json = await readJsonResponse<AudioGenerationResponse>(
         response,

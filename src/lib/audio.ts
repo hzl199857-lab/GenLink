@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  AudioGenerationInstanceType,
   AudioGenerationMode,
   AudioGenerationModel,
   AudioGenerationProvider,
@@ -8,6 +9,9 @@ import type {
 } from "../types/canvas";
 
 const DEFAULT_SUNO_MODEL: SunoModel = "chirp-fenix";
+const RUNNINGHUB_AUDIO_MODEL = "runninghub-voice-clone";
+const RUNNINGHUB_BASE_URL = "https://www.runninghub.cn/openapi/v2";
+const RUNNINGHUB_VOICE_CLONE_APP_ID = "2071882091696058369";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export type SunoModel = "chirp-fenix" | "chirp-crow" | "chirp-bluejay";
@@ -43,12 +47,12 @@ export interface SunoMusicSubmitRequest {
 
 export interface AudioTaskSubmission {
   taskId: string;
-  model: SunoModel;
+  model: SunoModel | typeof RUNNINGHUB_AUDIO_MODEL;
 }
 
 export interface AudioGenerationResult {
   taskId: string;
-  model: SunoModel;
+  model: SunoModel | typeof RUNNINGHUB_AUDIO_MODEL;
   audioUrl: string;
   title?: string;
   durationSeconds?: number;
@@ -107,6 +111,54 @@ type SunoFetchResponse = {
   error?: { message?: string };
 };
 
+type RunningHubUploadResponse = {
+  code?: number | string;
+  message?: string;
+  msg?: string;
+  data?: {
+    fileName?: string;
+    download_url?: string;
+    size?: string | number;
+    type?: string;
+  };
+};
+
+type RunningHubTaskResponse = {
+  code?: number | string;
+  taskId?: string;
+  status?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  failedReason?: unknown;
+  promptTips?: unknown;
+  message?: string;
+  msg?: string;
+  results?: Array<{
+    url?: string;
+    nodeId?: string;
+    outputType?: string;
+    text?: string | null;
+  }> | null;
+};
+
+export interface SubmitRunningHubVoiceCloneParams {
+  apiKey: string;
+  audioUrl: string;
+  fileName?: string;
+  instanceType?: AudioGenerationInstanceType;
+}
+
+export interface RunningHubVoiceCloneSubmitBody {
+  nodeInfoList: Array<{
+    nodeId: "317";
+    fieldName: "audio";
+    fieldValue: string;
+    description: string;
+  }>;
+  instanceType: AudioGenerationInstanceType;
+  usePersonalQueue: "false";
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
 }
@@ -139,6 +191,49 @@ function createHeaders(apiKey: string): HeadersInit {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
+}
+
+function createRunningHubHeaders(apiKey: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${assertConfiguredApiKey(apiKey)}`,
+    Accept: "application/json",
+  };
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new AudioApiError(504, "Audio request timed out");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readJson<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const text = await response.text();
+
+  try {
+    return text ? (JSON.parse(text) as T) : ({} as T);
+  } catch {
+    throw new AudioApiError(response.ok ? 502 : response.status, fallbackMessage, {
+      bodyPreview: text.slice(0, 500),
+    });
+  }
 }
 
 async function requestJson<T>(
@@ -390,6 +485,76 @@ function getResponsePreview(value: unknown): string {
   }
 }
 
+function getFileNameFromUrl(url: string, fallback = "audio.mp3"): string {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split("/").filter(Boolean).pop();
+    return name || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseSizeBytes(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function getAudioMimeTypeFromOutputType(outputType?: string): string | undefined {
+  switch (outputType?.trim().toLowerCase()) {
+    case "mp3":
+    case "mpeg":
+      return "audio/mpeg";
+    case "wav":
+      return "audio/wav";
+    case "m4a":
+      return "audio/mp4";
+    case "ogg":
+      return "audio/ogg";
+    case "flac":
+      return "audio/flac";
+    default:
+      return undefined;
+  }
+}
+
+function isRunningHubAudioResult(result?: { url?: string; outputType?: string }): boolean {
+  const outputType = result?.outputType?.trim().toLowerCase();
+
+  if (outputType && ["mp3", "wav", "m4a", "ogg", "flac", "aac"].includes(outputType)) {
+    return true;
+  }
+
+  const url = result?.url?.trim().toLowerCase() ?? "";
+  return /\.(mp3|wav|m4a|ogg|flac|aac)(?:[?#].*)?$/.test(url);
+}
+
+function getRunningHubErrorMessage(response: RunningHubTaskResponse): string {
+  const parts = [
+    response.errorMessage,
+    response.message,
+    response.msg,
+    typeof response.failedReason === "string" ? response.failedReason : undefined,
+    typeof response.promptTips === "string" ? response.promptTips : undefined,
+  ]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+
+  if (response.errorCode?.trim()) {
+    parts.unshift(`错误码 ${response.errorCode.trim()}`);
+  }
+
+  return parts.length ? parts.join("；") : "RunningHub audio generation failed";
+}
+
 export function parseSunoSubmitTask(response: SunoSubmitResponse): string {
   const taskId =
     findTaskIdDeep(response, 0, false) ??
@@ -408,6 +573,30 @@ export function parseSunoSubmitTask(response: SunoSubmitResponse): string {
   }
 
   return taskId;
+}
+
+export function buildRunningHubVoiceCloneSubmitBody(params: {
+  audioFileName: string;
+  instanceType?: AudioGenerationInstanceType;
+}): RunningHubVoiceCloneSubmitBody {
+  const audioFileName = params.audioFileName.trim();
+
+  if (!audioFileName) {
+    throw new AudioApiError(400, "RunningHub audio file is required");
+  }
+
+  return {
+    nodeInfoList: [
+      {
+        nodeId: "317",
+        fieldName: "audio",
+        fieldValue: audioFileName,
+        description: "添加音频",
+      },
+    ],
+    instanceType: params.instanceType === "plus" ? "plus" : "default",
+    usePersonalQueue: "false",
+  };
 }
 
 function normalizeStatus(value?: string): string {
@@ -524,6 +713,85 @@ export function parseSunoFetchResult(
   };
 }
 
+export function parseRunningHubVoiceCloneResult(
+  taskId: string,
+  response: RunningHubTaskResponse,
+): AudioGenerationResult {
+  const result =
+    response.results?.find((item) => item.url?.trim() && isRunningHubAudioResult(item)) ??
+    response.results?.find((item) => item.url?.trim());
+  const audioUrl = result?.url?.trim();
+
+  if (!audioUrl) {
+    throw new AudioApiError(
+      502,
+      `RunningHub returned no audio URL: ${getResponsePreview(response)}`,
+      response,
+    );
+  }
+
+  return {
+    taskId,
+    model: RUNNINGHUB_AUDIO_MODEL,
+    audioUrl,
+    mimeType: getAudioMimeTypeFromOutputType(result?.outputType),
+  };
+}
+
+async function uploadAudioToRunningHub(params: {
+  apiKey: string;
+  audioUrl: string;
+  fileName?: string;
+}): Promise<{ fileName: string; sizeBytes?: number }> {
+  const sourceResponse = await fetchWithTimeout(params.audioUrl, { method: "GET" });
+
+  if (!sourceResponse.ok) {
+    throw new AudioApiError(
+      400,
+      `读取源音频失败（HTTP ${sourceResponse.status}）`,
+    );
+  }
+
+  const blob = await sourceResponse.blob();
+  const formData = new FormData();
+  formData.append(
+    "file",
+    blob,
+    params.fileName?.trim() || getFileNameFromUrl(params.audioUrl),
+  );
+
+  const uploadResponse = await fetchWithTimeout(
+    `${RUNNINGHUB_BASE_URL}/media/upload/binary`,
+    {
+      method: "POST",
+      headers: createRunningHubHeaders(params.apiKey),
+      body: formData,
+    },
+  );
+  const json = await readJson<RunningHubUploadResponse>(
+    uploadResponse,
+    "RunningHub upload returned invalid JSON",
+  );
+  const upstreamCode =
+    typeof json.code === "number" || typeof json.code === "string"
+      ? String(json.code)
+      : "";
+  const fileName = json.data?.fileName?.trim();
+
+  if (!uploadResponse.ok || (upstreamCode && upstreamCode !== "0") || !fileName) {
+    throw new AudioApiError(
+      uploadResponse.ok ? 502 : uploadResponse.status,
+      json.message || json.msg || "RunningHub audio upload failed",
+      json,
+    );
+  }
+
+  return {
+    fileName,
+    sizeBytes: parseSizeBytes(json.data?.size),
+  };
+}
+
 export async function submitSunoMusicTask(
   params: GenerateSunoMusicParams & { provider?: AudioGenerationProvider },
 ): Promise<AudioTaskSubmission> {
@@ -546,6 +814,54 @@ export async function submitSunoMusicTask(
   return {
     taskId: parseSunoSubmitTask(response),
     model,
+  };
+}
+
+export async function submitRunningHubVoiceCloneTask(
+  params: SubmitRunningHubVoiceCloneParams,
+): Promise<AudioTaskSubmission> {
+  const uploaded = await uploadAudioToRunningHub({
+    apiKey: params.apiKey,
+    audioUrl: params.audioUrl,
+    fileName: params.fileName,
+  });
+  const response = await fetchWithTimeout(
+    `${RUNNINGHUB_BASE_URL}/run/ai-app/${RUNNINGHUB_VOICE_CLONE_APP_ID}`,
+    {
+      method: "POST",
+      headers: {
+        ...createRunningHubHeaders(params.apiKey),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        buildRunningHubVoiceCloneSubmitBody({
+          audioFileName: uploaded.fileName,
+          instanceType: params.instanceType,
+        }),
+      ),
+    },
+  );
+  const json = await readJson<RunningHubTaskResponse>(
+    response,
+    "RunningHub voice clone submit returned invalid JSON",
+  );
+  const upstreamCode =
+    typeof json.code === "number" || typeof json.code === "string"
+      ? String(json.code)
+      : "";
+  const taskId = json.taskId?.trim();
+
+  if (!response.ok || (upstreamCode && upstreamCode !== "0") || !taskId) {
+    throw new AudioApiError(
+      response.ok ? 502 : response.status,
+      getRunningHubErrorMessage(json),
+      json,
+    );
+  }
+
+  return {
+    taskId,
+    model: RUNNINGHUB_AUDIO_MODEL,
   };
 }
 
@@ -587,5 +903,52 @@ export async function getSunoMusicTaskResult(params: {
   return {
     status: "pending",
     progress: response.data?.progress,
+  };
+}
+
+export async function getRunningHubVoiceCloneTaskResult(params: {
+  apiKey: string;
+  taskId: string;
+}): Promise<
+  | { status: "pending"; progress?: string }
+  | { status: "completed"; result: AudioGenerationResult }
+  | { status: "error"; error: string }
+> {
+  const response = await fetchWithTimeout(`${RUNNINGHUB_BASE_URL}/query`, {
+    method: "POST",
+    headers: {
+      ...createRunningHubHeaders(params.apiKey),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ taskId: params.taskId }),
+  });
+  const json = await readJson<RunningHubTaskResponse>(
+    response,
+    "RunningHub voice clone status returned invalid JSON",
+  );
+
+  if (!response.ok) {
+    throw new AudioApiError(response.status, getRunningHubErrorMessage(json), json);
+  }
+
+  const status = json.status?.trim().toUpperCase();
+
+  if (status === "SUCCESS") {
+    return {
+      status: "completed",
+      result: parseRunningHubVoiceCloneResult(params.taskId, json),
+    };
+  }
+
+  if (status === "FAILED") {
+    return {
+      status: "error",
+      error: getRunningHubErrorMessage(json),
+    };
+  }
+
+  return {
+    status: "pending",
+    progress: status || undefined,
   };
 }

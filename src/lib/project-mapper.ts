@@ -159,11 +159,16 @@ function normalizeVideoUpscaleNodeData(value: unknown): VideoUpscaleNodeData {
 }
 
 function normalizeAudioGenerationProvider(value: unknown): AudioGenerationProvider {
+  if (value === "runninghub") {
+    return "runninghub";
+  }
+
   return value === "zhenzhen" ? "zhenzhen" : "comfly";
 }
 
 function normalizeAudioGenerationModel(value: unknown): AudioGenerationModel {
   switch (value) {
+    case "runninghub-voice-clone":
     case "suno-v5":
     case "suno-v4.5-plus":
       return value;
@@ -205,6 +210,7 @@ function normalizeAudioGenerationNodeData(value: unknown): AudioGenerationNodeDa
       typeof record.runningHubWorkflowId === "string"
         ? record.runningHubWorkflowId
         : "",
+    instanceType: record.instanceType === "plus" ? "plus" : "default",
     taskType:
       record.taskType === "voiceover" ||
       record.taskType === "music" ||
