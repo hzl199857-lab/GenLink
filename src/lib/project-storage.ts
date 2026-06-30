@@ -1,6 +1,8 @@
 'use client';
 
 import type {
+  AudioGenerationNodeData,
+  AudioNodeData,
   CanvasNode,
   ImageGenerationNodeData,
   MaterialLibraryCategory,
@@ -35,7 +37,7 @@ type OutputHistoryManifestItem = {
   id: string;
   sourceKey?: string;
   fileName: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   createdAt: string;
   modifiedAt: string;
   mimeType?: string;
@@ -44,7 +46,7 @@ type OutputHistoryManifestItem = {
   width?: number;
   height?: number;
   format?: string;
-  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
+  nodeData?: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData | AudioGenerationNodeData | AudioNodeData;
 };
 
 function isImageHistoryManifestItem(
@@ -57,6 +59,12 @@ function isVideoHistoryManifestItem(
   item: OutputHistoryManifestItem | undefined,
 ): item is OutputHistoryManifestItem & { kind: "video"; nodeData?: VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData } {
   return item?.kind === "video";
+}
+
+function isAudioHistoryManifestItem(
+  item: OutputHistoryManifestItem | undefined,
+): item is OutputHistoryManifestItem & { kind: "audio"; nodeData?: AudioGenerationNodeData | AudioNodeData } {
+  return item?.kind === "audio";
 }
 
 type OutputHistoryManifest = {
@@ -90,10 +98,10 @@ export interface ImportProjectsResult {
 export interface PersistProjectOutputParams {
   sourceKey: string;
   imageUrl: string;
-  kind?: "image" | "video";
+  kind?: "image" | "video" | "audio";
   fileName?: string;
   generatedAt: string;
-  nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
+  nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData | AudioGenerationNodeData | AudioNodeData;
   title?: string;
   model?: string;
   width?: number;
@@ -106,6 +114,23 @@ export interface PersistProjectOutputResult {
   fileName: string;
   previewUrl: string;
   sizeBytes: number;
+}
+
+export function applyPersistedAudioPreview<T extends AudioGenerationNodeData | AudioNodeData>(
+  data: T,
+  persisted: PersistProjectOutputResult,
+  outputFileField: "outputFileName" | "generatedOutputFileName" = "outputFileName",
+): T {
+  return {
+    ...data,
+    audioUrl: persisted.previewUrl,
+    previewUrl: persisted.previewUrl,
+    hostedAudioUrl: isObjectUrl(data.hostedAudioUrl) ? undefined : data.hostedAudioUrl,
+    ...(outputFileField === "generatedOutputFileName"
+      ? { generatedOutputFileName: persisted.fileName }
+      : { outputFileName: persisted.fileName }),
+    sizeBytes: persisted.sizeBytes,
+  } as T;
 }
 
 function toProjectLibraryItem(
@@ -177,15 +202,31 @@ export function inferExtension(format?: string, mimeType?: string): string {
       return "mp4";
     case "video/webm":
       return "webm";
+    case "audio/mpeg":
+    case "audio/mp3":
+      return "mp3";
+    case "audio/wav":
+    case "audio/wave":
+    case "audio/x-wav":
+      return "wav";
+    case "audio/mp4":
+    case "audio/x-m4a":
+      return "m4a";
+    case "audio/aac":
+      return "aac";
+    case "audio/ogg":
+      return "ogg";
+    case "audio/webm":
+      return "webm";
     default:
       return "png";
   }
 }
 
-function inferOutputKind(
+export function inferOutputKind(
   fileName: string,
   mimeType?: string,
-): "image" | "video" | null {
+): "image" | "video" | "audio" | null {
   const normalizedMimeType = mimeType?.trim().toLowerCase();
 
   if (normalizedMimeType?.startsWith("image/")) {
@@ -196,6 +237,10 @@ function inferOutputKind(
     return "video";
   }
 
+  if (normalizedMimeType?.startsWith("audio/")) {
+    return "audio";
+  }
+
   const lowerFileName = fileName.toLowerCase();
 
   if (/\.(png|jpe?g|webp|gif|bmp|svg)$/.test(lowerFileName)) {
@@ -204,6 +249,10 @@ function inferOutputKind(
 
   if (/\.(mp4|webm|mov|m4v)$/.test(lowerFileName)) {
     return "video";
+  }
+
+  if (/\.(mp3|wav|m4a|aac|ogg|flac|opus)$/.test(lowerFileName)) {
+    return "audio";
   }
 
   return null;
@@ -399,7 +448,7 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
-async function readRemoteImageBlobViaProxy(imageUrl: string): Promise<Blob> {
+async function readRemoteMediaBlobViaProxy(imageUrl: string): Promise<Blob> {
   const response = await fetch("/api/image-hosting/read", {
     method: "POST",
     headers: {
@@ -409,7 +458,7 @@ async function readRemoteImageBlobViaProxy(imageUrl: string): Promise<Blob> {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to read generated image");
+    throw new Error("Failed to read generated media");
   }
 
   return response.blob();
@@ -429,18 +478,18 @@ export async function readImageOutputBlob(
     const response = await fetch(trimmedImageUrl);
 
     if (!response.ok) {
-      throw new Error("Failed to read generated image");
+      throw new Error("Failed to read generated media");
     }
 
     return await response.blob();
   } catch {
     if (trimmedImageUrl.startsWith("blob:")) {
-      throw new Error("Failed to read generated image");
+      throw new Error("Failed to read generated media");
     }
 
     if (/^https?:\/\//i.test(trimmedImageUrl)) {
       try {
-        return await readRemoteImageBlobViaProxy(trimmedImageUrl);
+        return await readRemoteMediaBlobViaProxy(trimmedImageUrl);
       } catch {
         // Fall back to hosting first for URLs that need server-side normalization.
       }
@@ -451,12 +500,12 @@ export async function readImageOutputBlob(
 
     if (!response.ok) {
       try {
-        return await readRemoteImageBlobViaProxy(hostedImageUrl);
+        return await readRemoteMediaBlobViaProxy(hostedImageUrl);
       } catch {
         // Fall through to the existing user-facing save error.
       }
 
-      throw new Error("Failed to read hosted generated image");
+      throw new Error("Failed to read hosted generated media");
     }
 
     return response.blob();
@@ -666,7 +715,7 @@ async function readOutputHistoryManifest(
           typeof item === "object" &&
           typeof item.id === "string" &&
           typeof item.fileName === "string" &&
-          (item.kind === "image" || item.kind === "video"),
+          (item.kind === "image" || item.kind === "video" || item.kind === "audio"),
       ),
     };
   } catch {
@@ -1280,7 +1329,7 @@ export async function persistGeneratedOutput(
     id: existingIndex >= 0 ? manifest.items[existingIndex].id : crypto.randomUUID(),
     sourceKey: compactOutputSourceKey(params.sourceKey, fileName),
     fileName,
-    kind: params.kind ?? (blob.type.startsWith("video/") ? "video" : "image"),
+    kind: params.kind ?? inferOutputKind(fileName, blob.type) ?? "image",
     createdAt: params.generatedAt,
     modifiedAt: new Date().toISOString(),
     mimeType: blob.type || undefined,
@@ -1382,6 +1431,32 @@ function resolveSourceKeyFromNode(node: CanvasNode): string | null {
     return `${node.id}:video:${videoUrl}`;
   }
 
+  if (node.type === "audio_generation") {
+    const generatedAt = node.data.generatedAt?.trim();
+    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl?.trim();
+
+    if (!generatedAt || !audioUrl) {
+      return null;
+    }
+
+    return `${node.id}:${generatedAt}:${audioUrl}`;
+  }
+
+  if (node.type === "audio") {
+    const outputFileName = node.data.outputFileName?.trim();
+    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl.trim();
+
+    if (outputFileName) {
+      return `${node.id}:output:${outputFileName}`;
+    }
+
+    if (!audioUrl) {
+      return null;
+    }
+
+    return `${node.id}:audio:${audioUrl}`;
+  }
+
   if (node.type !== "image_generation") {
     return null;
   }
@@ -1479,6 +1554,41 @@ function withResolvedVideoNodePreviewUrl(
   };
 }
 
+export function withResolvedAudioGenerationPreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "audio_generation" }>,
+): Extract<CanvasNode, { type: "audio_generation" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      audioUrl: previewUrl,
+      previewUrl,
+      hostedAudioUrl: isObjectUrl(node.data.hostedAudioUrl) ? undefined : node.data.hostedAudioUrl,
+      generatedOutputFileName: fileName,
+    },
+  };
+}
+
+export function withResolvedAudioNodePreviewUrl(
+  previewUrl: string,
+  fileName: string,
+  node: Extract<CanvasNode, { type: "audio" }>,
+): Extract<CanvasNode, { type: "audio" }> {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      audioUrl: previewUrl,
+      previewUrl,
+      hostedAudioUrl: isObjectUrl(node.data.hostedAudioUrl) ? undefined : node.data.hostedAudioUrl,
+      fileName: node.data.fileName ?? fileName,
+      outputFileName: fileName,
+    },
+  };
+}
+
 function withResolvedPanoramaPreviewUrl(
   previewUrl: string,
   fileName: string,
@@ -1536,6 +1646,24 @@ function resolveVideoOutputFileName(
   return fileName;
 }
 
+function resolveAudioOutputFileName(
+  node: Extract<CanvasNode, { type: "audio" }>,
+): string | null {
+  const fileName = node.data.outputFileName?.trim();
+
+  if (!fileName) {
+    return null;
+  }
+
+  const audioUrl = node.data.audioUrl.trim();
+
+  if (!audioUrl || audioUrl === `output:${fileName}`) {
+    return fileName;
+  }
+
+  return fileName;
+}
+
 function withResolvedUploadedImagePreviewUrl(
   previewUrl: string,
   fileName: string,
@@ -1578,6 +1706,7 @@ export async function hydrateProjectSnapshotPreviewUrls(
   const manifest = await readOutputHistoryManifest(project.projectHandle);
   const fileNameBySourceKey = new Map<string, string>();
   const latestVideoFileNameByNodeId = new Map<string, string>();
+  const latestAudioFileNameByNodeId = new Map<string, string>();
 
   for (const item of manifest.items) {
     if (item.sourceKey?.trim()) {
@@ -1597,6 +1726,22 @@ export async function hydrateProjectSnapshotPreviewUrls(
 
       if (nodeId && nextTime >= currentTime) {
         latestVideoFileNameByNodeId.set(nodeId, item.fileName);
+      }
+    }
+
+    if (item.kind === "audio" && item.sourceKey?.trim()) {
+      const nodeId = item.sourceKey.split(":")[0];
+      const currentFileName = latestAudioFileNameByNodeId.get(nodeId);
+      const currentItem = currentFileName
+        ? manifest.items.find((candidate) => candidate.fileName === currentFileName)
+        : undefined;
+      const currentTime = currentItem
+        ? new Date(currentItem.modifiedAt || currentItem.createdAt).getTime()
+        : -Infinity;
+      const nextTime = new Date(item.modifiedAt || item.createdAt).getTime();
+
+      if (nodeId && nextTime >= currentTime) {
+        latestAudioFileNameByNodeId.set(nodeId, item.fileName);
       }
     }
   }
@@ -1642,6 +1787,14 @@ export async function hydrateProjectSnapshotPreviewUrls(
           ? resolveVideoOutputFileName(node) ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined) ||
             latestVideoFileNameByNodeId.get(node.id)
+        : node.type === "audio_generation"
+          ? node.data.generatedOutputFileName?.trim() ||
+            (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined) ||
+            latestAudioFileNameByNodeId.get(node.id)
+        : node.type === "audio"
+          ? resolveAudioOutputFileName(node) ||
+            (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined) ||
+            latestAudioFileNameByNodeId.get(node.id)
         : node.type === "panorama-360"
           ? node.data.panorama360Node.panorama.generatedOutputFileName?.trim() ||
             (sourceKey ? fileNameBySourceKey.get(sourceKey) : undefined)
@@ -1682,6 +1835,14 @@ export async function hydrateProjectSnapshotPreviewUrls(
 
       if (node.type === "video") {
         return withResolvedVideoNodePreviewUrl(previewUrl, fileName, node);
+      }
+
+      if (node.type === "audio_generation") {
+        return withResolvedAudioGenerationPreviewUrl(previewUrl, fileName, node);
+      }
+
+      if (node.type === "audio") {
+        return withResolvedAudioNodePreviewUrl(previewUrl, fileName, node);
       }
 
       if (node.type === "image") {
@@ -1770,11 +1931,19 @@ export async function readProjectHistory(
               ? (manifestItem.nodeData as ImageGenerationNodeData | undefined)
               : undefined,
           }
-        : {
+        : kind === "video"
+          ? {
             ...baseItem,
             kind,
             nodeData: isVideoHistoryManifestItem(manifestItem)
               ? (manifestItem.nodeData as VideoGenerationNodeData | undefined)
+              : undefined,
+          }
+          : {
+            ...baseItem,
+            kind,
+            nodeData: isAudioHistoryManifestItem(manifestItem)
+              ? (manifestItem.nodeData as AudioGenerationNodeData | AudioNodeData | undefined)
               : undefined,
           },
     );

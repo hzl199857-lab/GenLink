@@ -106,6 +106,12 @@ export async function POST(request: Request) {
       });
     }
 
+    const prompt = stringValue(body.prompt);
+
+    if (!prompt) {
+      throw new AudioApiError(400, "Prompt is required");
+    }
+
     if (provider === "runninghub") {
       const sourceAudioUrl = stringValue(body.sourceAudioUrl);
 
@@ -117,7 +123,9 @@ export async function POST(request: Request) {
         apiKey,
         audioUrl: sourceAudioUrl,
         fileName: stringValue(body.sourceAudioFileName),
+        prompt,
         instanceType: parseInstanceType(body.instanceType),
+        requestUrl: request.url,
       });
 
       return NextResponse.json({
@@ -125,12 +133,6 @@ export async function POST(request: Request) {
         status: "submitted",
         task,
       });
-    }
-
-    const prompt = stringValue(body.prompt);
-
-    if (!prompt) {
-      throw new AudioApiError(400, "Prompt is required");
     }
 
     const task = await submitSunoMusicTask({

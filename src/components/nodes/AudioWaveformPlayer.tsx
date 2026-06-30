@@ -48,6 +48,19 @@ function formatAudioTime(value?: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+export function shouldNotifyAudioDuration(
+  nextDuration: number,
+  currentDuration?: number,
+): boolean {
+  if (!Number.isFinite(nextDuration) || nextDuration <= 0) {
+    return false;
+  }
+
+  return !Number.isFinite(currentDuration) ||
+    !currentDuration ||
+    Math.abs(nextDuration - currentDuration) > 0.05;
+}
+
 async function decodeWaveform(src: string, bars: number): Promise<WaveformCacheEntry> {
   const response = await fetch(src);
 
@@ -122,6 +135,10 @@ export function AudioWaveformPlayer({
 }: AudioWaveformPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
+  const durationSecondsRef = useRef<number | undefined>(durationSeconds);
+  const onLoadedMetadataRef = useRef<typeof onLoadedMetadata>(onLoadedMetadata);
+  const onErrorRef = useRef<typeof onError>(onError);
+  const notifiedDurationRef = useRef<number | undefined>(durationSeconds);
   const bars = compact ? 48 : 72;
   const waveformKey = `${src}:${bars}`;
   const [waveformState, setWaveformState] = useState<WaveformState>({
@@ -144,7 +161,32 @@ export function AudioWaveformPlayer({
   const playing = playbackState.src === src ? playbackState.playing : false;
   const canInteract = duration > 0;
 
-  const getKnownDuration = useCallback((audio: HTMLAudioElement, fallback = durationSeconds ?? 0): number => {
+  useEffect(() => {
+    durationSecondsRef.current = durationSeconds;
+  }, [durationSeconds]);
+
+  useEffect(() => {
+    notifiedDurationRef.current = durationSeconds;
+  }, [durationSeconds, src]);
+
+  useEffect(() => {
+    onLoadedMetadataRef.current = onLoadedMetadata;
+  }, [onLoadedMetadata]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  const notifyLoadedDuration = useCallback((nextDuration: number) => {
+    if (!shouldNotifyAudioDuration(nextDuration, notifiedDurationRef.current)) {
+      return;
+    }
+
+    notifiedDurationRef.current = nextDuration;
+    onLoadedMetadataRef.current?.(nextDuration);
+  }, []);
+
+  const getKnownDuration = useCallback((audio: HTMLAudioElement, fallback = durationSecondsRef.current ?? 0): number => {
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
       return audio.duration;
     }
@@ -158,7 +200,7 @@ export function AudioWaveformPlayer({
     }
 
     return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
-  }, [durationSeconds]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +222,7 @@ export function AudioWaveformPlayer({
                 : entry.duration,
               playing: current.src === src ? current.playing : false,
             }));
-            onLoadedMetadata?.(entry.duration);
+            notifyLoadedDuration(entry.duration);
           }
         }
       })
@@ -197,7 +239,7 @@ export function AudioWaveformPlayer({
     return () => {
       cancelled = true;
     };
-  }, [bars, onLoadedMetadata, src, waveformKey]);
+  }, [bars, notifyLoadedDuration, src, waveformKey]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -209,7 +251,7 @@ export function AudioWaveformPlayer({
     const handleTimeUpdate = () => {
       const audioCurrentTime = audio.currentTime || 0;
       const knownDuration = Math.max(
-        getKnownDuration(audio, durationSeconds ?? 0),
+        getKnownDuration(audio),
         audioCurrentTime,
       );
 
@@ -223,7 +265,7 @@ export function AudioWaveformPlayer({
       }));
     };
     const handleLoadedMetadata = () => {
-      const nextDuration = getKnownDuration(audio, durationSeconds ?? 0);
+      const nextDuration = getKnownDuration(audio);
 
       if (Number.isFinite(nextDuration) && nextDuration > 0) {
         setPlaybackState((current) => ({
@@ -232,11 +274,11 @@ export function AudioWaveformPlayer({
           duration: nextDuration,
           playing: current.src === src ? current.playing : false,
         }));
-        onLoadedMetadata?.(nextDuration);
+        notifyLoadedDuration(nextDuration);
       }
     };
     const handleCanPlay = () => {
-      const nextDuration = getKnownDuration(audio, durationSeconds ?? 0);
+      const nextDuration = getKnownDuration(audio);
 
       if (!Number.isFinite(nextDuration) || nextDuration <= 0) {
         return;
@@ -250,13 +292,13 @@ export function AudioWaveformPlayer({
           : nextDuration,
         playing: current.src === src ? current.playing : !audio.paused,
       }));
-      onLoadedMetadata?.(nextDuration);
+      notifyLoadedDuration(nextDuration);
     };
     const handleEnded = () => {
       setPlaybackState((current) => ({
         src,
         currentTime: current.src === src ? current.currentTime : 0,
-        duration: current.src === src ? current.duration : durationSeconds ?? 0,
+        duration: current.src === src ? current.duration : durationSecondsRef.current ?? 0,
         playing: false,
       }));
     };
@@ -264,10 +306,10 @@ export function AudioWaveformPlayer({
       setPlaybackState((current) => ({
         src,
         currentTime: current.src === src ? current.currentTime : 0,
-        duration: current.src === src ? current.duration : durationSeconds ?? 0,
+        duration: current.src === src ? current.duration : durationSecondsRef.current ?? 0,
         playing: false,
       }));
-      onError?.();
+      onErrorRef.current?.();
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -286,7 +328,7 @@ export function AudioWaveformPlayer({
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
     };
-  }, [durationSeconds, getKnownDuration, onError, onLoadedMetadata, src]);
+  }, [getKnownDuration, notifyLoadedDuration, src]);
 
   const progress = useMemo(() => {
     if (!duration || duration <= 0) {
@@ -369,7 +411,7 @@ export function AudioWaveformPlayer({
         duration: current.src === src ? current.duration : duration,
         playing: false,
       }));
-      onError?.();
+      onErrorRef.current?.();
     });
   };
 

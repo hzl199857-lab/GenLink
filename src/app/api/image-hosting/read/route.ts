@@ -4,22 +4,22 @@ import { VibeApiError } from "@/lib/vibe";
 
 export const runtime = "nodejs";
 
-const REMOTE_IMAGE_READ_TIMEOUT_MS = 5 * 60_000;
+const REMOTE_MEDIA_READ_TIMEOUT_MS = 5 * 60_000;
 
-interface ReadImageRequestBody {
+interface ReadMediaRequestBody {
   imageUrl?: unknown;
 }
 
 export async function POST(request: Request) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REMOTE_IMAGE_READ_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), REMOTE_MEDIA_READ_TIMEOUT_MS);
 
   try {
-    const body = (await request.json()) as ReadImageRequestBody;
+    const body = (await request.json()) as ReadMediaRequestBody;
 
     if (typeof body.imageUrl !== "string" || !body.imageUrl.trim()) {
       return NextResponse.json(
-        { ok: false, error: "Image URL is required" },
+        { ok: false, error: "Media URL is required" },
         { status: 400 },
       );
     }
@@ -30,26 +30,31 @@ export async function POST(request: Request) {
 
     if (!/^https?:\/\//i.test(sourceUrl)) {
       return NextResponse.json(
-        { ok: false, error: "Only HTTP image URLs can be read" },
+        { ok: false, error: "Only HTTP media URLs can be read" },
         { status: 400 },
       );
     }
 
     const response = await fetch(sourceUrl, {
       headers: {
-        Accept: "image/*",
+        Accept: "image/*,video/*,audio/*,*/*;q=0.8",
       },
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      throw new VibeApiError(response.status, `Failed to read image (${response.status})`);
+      throw new VibeApiError(response.status, `Failed to read media (${response.status})`);
     }
 
-    const contentType = response.headers.get("content-type")?.split(";")[0] || "image/png";
+    const contentType = response.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
 
-    if (!contentType.startsWith("image/")) {
-      throw new VibeApiError(400, "URL did not return an image");
+    if (
+      !contentType.startsWith("image/") &&
+      !contentType.startsWith("video/") &&
+      !contentType.startsWith("audio/") &&
+      contentType !== "application/octet-stream"
+    ) {
+      throw new VibeApiError(400, "URL did not return supported media");
     }
 
     const bytes = await response.arrayBuffer();
@@ -71,7 +76,7 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "Internal error";
 
     return NextResponse.json(
-      { ok: false, error: `Failed to fetch image: ${message}` },
+      { ok: false, error: `Failed to fetch media: ${message}` },
       { status: 502 },
     );
   } finally {

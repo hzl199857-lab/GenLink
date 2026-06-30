@@ -18,6 +18,7 @@ import {
   deleteProjectDirectory,
   duplicateProjectDirectory,
   hydrateProjectSnapshotPreviewUrls,
+  applyPersistedAudioPreview,
   listProjectLibrary,
   loadProjectSnapshot as loadProjectSnapshotFromDisk,
   persistGeneratedOutput,
@@ -204,6 +205,43 @@ type AudioGenerationResponse =
       };
     };
 
+type AudioSeparationResponse =
+  | ApiErrorResponse
+  | {
+      ok: true;
+      status: "submitted";
+      task: {
+        taskId: string;
+      };
+    }
+  | {
+      ok: true;
+      status: "pending";
+      progress?: string;
+    }
+  | {
+      ok: true;
+      status: "error";
+      error: string;
+    }
+  | {
+      ok: true;
+      status: "completed";
+      result: {
+        taskId: string;
+        vocal: {
+          audioUrl: string;
+          mimeType?: string;
+          outputType?: string;
+        };
+        accompaniment: {
+          audioUrl: string;
+          mimeType?: string;
+          outputType?: string;
+        };
+      };
+    };
+
 type StoryboardGenerationResponse =
   | ApiErrorResponse
   | {
@@ -255,6 +293,7 @@ const inFlightImageGenerationNodeIds = new Set<string>();
 const inFlightVideoGenerationNodeIds = new Set<string>();
 const inFlightVideoUpscaleNodeIds = new Set<string>();
 const inFlightAudioGenerationNodeIds = new Set<string>();
+const inFlightAudioSeparationNodeIds = new Set<string>();
 const IMAGE_GENERATION_NODE_STAGE_WIDTH = 540;
 const IMAGE_GENERATION_NODE_MIN_EDGE = 220;
 const IMAGE_JOB_POLL_TIMEOUT_MS = 45 * 60_000;
@@ -599,6 +638,104 @@ type NormalizedReferenceImage = {
 };
 
 const referenceOssUploadCache = new Map<string, Promise<NormalizedReferenceImage>>();
+const audioReferenceOssUploadCache = new Map<string, Promise<VideoGenerationMediaReference>>();
+
+function pickRemoteAudioReferenceUrl(reference: VideoGenerationMediaReference): string {
+  const hostedUrl = reference.hostedUrl?.trim();
+
+  if (hostedUrl && !isObjectUrl(hostedUrl)) {
+    return hostedUrl;
+  }
+
+  return reference.url.trim();
+}
+
+function isRemoteAudioUrl(value?: string): boolean {
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim());
+}
+
+function getAudioReferenceSourceUrl(reference: VideoGenerationMediaReference): string {
+  return (
+    reference.hostedUrl?.trim() ||
+    reference.url.trim() ||
+    reference.previewUrl?.trim() ||
+    ""
+  );
+}
+
+async function uploadAudioReferenceToOss(
+  reference: VideoGenerationMediaReference,
+): Promise<VideoGenerationMediaReference> {
+  const sourceUrl = getAudioReferenceSourceUrl(reference);
+
+  if (!sourceUrl) {
+    throw new Error("参考音频为空");
+  }
+
+  if (isRemoteAudioUrl(sourceUrl) && !isObjectUrl(sourceUrl)) {
+    return {
+      ...reference,
+      url: sourceUrl,
+      hostedUrl: sourceUrl,
+      uploadStatus: "uploaded",
+      uploadError: undefined,
+    };
+  }
+
+  if (!isObjectUrl(sourceUrl)) {
+    throw new Error("参考音频需要重新上传到 OSS");
+  }
+
+  const cached = audioReferenceOssUploadCache.get(sourceUrl);
+
+  if (cached) {
+    return cached;
+  }
+
+  const uploadPromise = (async () => {
+    const sourceResponse = await fetch(sourceUrl);
+
+    if (!sourceResponse.ok) {
+      throw new Error(`读取参考音频失败（HTTP ${sourceResponse.status}）`);
+    }
+
+    const blob = await sourceResponse.blob();
+    const contentType = blob.type || reference.mimeType || "audio/mpeg";
+    const fileName = reference.fileName?.trim() || "reference-audio.mp3";
+    const formData = new FormData();
+    formData.set("file", new File([blob], fileName, { type: contentType }));
+    formData.set("fileName", fileName);
+    formData.set("folder", "references/audio");
+
+    const uploadResponse = await fetch("/api/media-hosting/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const json = (await uploadResponse.json()) as
+      | { ok: true; result: { mediaUrl: string } }
+      | { ok: false; error: string };
+
+    if (!uploadResponse.ok || !json.ok) {
+      throw new Error("error" in json ? json.error : `参考音频上传失败（HTTP ${uploadResponse.status}）`);
+    }
+
+    return {
+      ...reference,
+      url: json.result.mediaUrl,
+      hostedUrl: json.result.mediaUrl,
+      previewUrl: sourceUrl,
+      mimeType: contentType,
+      sizeBytes: reference.sizeBytes ?? blob.size,
+      uploadStatus: "uploaded" as const,
+      uploadError: undefined,
+    };
+  })().finally(() => {
+    audioReferenceOssUploadCache.delete(sourceUrl);
+  });
+
+  audioReferenceOssUploadCache.set(sourceUrl, uploadPromise);
+  return uploadPromise;
+}
 
 type ConnectedVideoPayload = {
   id: string;
@@ -696,7 +833,10 @@ function dedupeConnectedVideos(
 
 function createAudioReferenceFromNode(node: CanvasNode): VideoGenerationMediaReference | null {
   if (node.type === "audio") {
-    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl.trim();
+    const hostedAudioUrl = node.data.hostedAudioUrl?.trim();
+    const audioUrl = hostedAudioUrl && !isObjectUrl(hostedAudioUrl)
+      ? hostedAudioUrl
+      : node.data.audioUrl.trim();
 
     if (!audioUrl) {
       return null;
@@ -705,7 +845,7 @@ function createAudioReferenceFromNode(node: CanvasNode): VideoGenerationMediaRef
     return {
       id: node.id,
       url: audioUrl,
-      hostedUrl: node.data.hostedAudioUrl?.trim() || undefined,
+      hostedUrl: hostedAudioUrl && !isObjectUrl(hostedAudioUrl) ? hostedAudioUrl : undefined,
       previewUrl: node.data.previewUrl,
       fileName: node.data.fileName,
       mimeType: node.data.mimeType || "audio/*",
@@ -717,7 +857,10 @@ function createAudioReferenceFromNode(node: CanvasNode): VideoGenerationMediaRef
   }
 
   if (node.type === "audio_generation") {
-    const audioUrl = node.data.hostedAudioUrl?.trim() || node.data.audioUrl?.trim();
+    const hostedAudioUrl = node.data.hostedAudioUrl?.trim();
+    const audioUrl = hostedAudioUrl && !isObjectUrl(hostedAudioUrl)
+      ? hostedAudioUrl
+      : node.data.audioUrl?.trim();
 
     if (!audioUrl) {
       return null;
@@ -726,7 +869,7 @@ function createAudioReferenceFromNode(node: CanvasNode): VideoGenerationMediaRef
     return {
       id: node.id,
       url: audioUrl,
-      hostedUrl: node.data.hostedAudioUrl?.trim() || undefined,
+      hostedUrl: hostedAudioUrl && !isObjectUrl(hostedAudioUrl) ? hostedAudioUrl : undefined,
       fileName: node.data.generatedOutputFileName,
       mimeType: node.data.mimeType || "audio/*",
       sizeBytes: node.data.sizeBytes,
@@ -2459,6 +2602,54 @@ async function waitForAudioTaskResult(params: {
   throw new Error("Audio generation timed out");
 }
 
+async function requestAudioSeparationTaskStatus(params: {
+  apiKey: string;
+  taskId: string;
+}): Promise<AudioSeparationResponse> {
+  const response = await fetch("/api/ai/audio-separation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "status",
+      apiKey: params.apiKey,
+      taskId: params.taskId,
+    }),
+  });
+  const json = await readJsonResponse<AudioSeparationResponse>(
+    response,
+    "Audio separation status request failed",
+  );
+
+  if (!response.ok || !json.ok) {
+    throw new Error(json.ok ? "Audio separation status request failed" : json.error);
+  }
+
+  return json;
+}
+
+async function waitForAudioSeparationResult(params: {
+  apiKey: string;
+  taskId: string;
+}): Promise<Extract<AudioSeparationResponse, { status: "completed" }>["result"]> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < AUDIO_JOB_POLL_TIMEOUT_MS) {
+    const json = await requestAudioSeparationTaskStatus(params);
+
+    if (json.ok && json.status === "completed") {
+      return json.result;
+    }
+
+    if (json.ok && json.status === "error") {
+      throw new Error(json.error || "Audio separation failed");
+    }
+
+    await sleep(AUDIO_JOB_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Audio separation timed out");
+}
+
 async function requestVideoUpscaleTaskStatus(params: {
   apiKey: string;
   taskId: string;
@@ -2752,6 +2943,17 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
           data: {
             ...node.data,
             audioUrl: `output:${node.data.outputFileName}`,
+            hostedAudioUrl: undefined,
+          },
+        };
+      }
+
+      if (node.type === "audio_generation" && node.data.generatedOutputFileName?.trim()) {
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            audioUrl: `output:${node.data.generatedOutputFileName}`,
             hostedAudioUrl: undefined,
           },
         };
@@ -4297,6 +4499,7 @@ export interface CanvasState {
     audioGenerationNodeId: string,
     promptOverride?: string,
   ) => Promise<void>;
+  separateAudioFromNode: (sourceNodeId: string) => Promise<void>;
   createVideoUpscaleNodeFromSource: (sourceNodeId: string) => string;
   runVideoUpscaleFromNode: (videoUpscaleNodeId: string) => Promise<void>;
   getConnectedVideoForVideoUpscaleNode: (videoUpscaleNodeId: string) => ConnectedVideoPayload | null;
@@ -4442,10 +4645,10 @@ export interface CanvasState {
   persistProjectOutput: (params: {
     sourceKey: string;
     imageUrl: string;
-    kind?: "image" | "video";
+    kind?: "image" | "video" | "audio";
     fileName?: string;
     generatedAt: string;
-    nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
+    nodeData: ImageGenerationNodeData | VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData | AudioGenerationNodeData | AudioNodeData;
     title?: string;
     model?: string;
     width?: number;
@@ -6352,15 +6555,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const instrumental = latestAudioGenerationNode.data.instrumental === true;
       const prompt = rawPrompt || (mode === "custom" && instrumental ? stylePrompt : "");
       const sourceAudio = latestAudioGenerationNode.data.referenceAudio?.find((reference) =>
-        Boolean(reference.hostedUrl?.trim() || reference.url?.trim()),
+        Boolean(getAudioReferenceSourceUrl(reference)),
       );
+
+      if (!prompt) {
+        throw new Error(isRunningHubVoiceClone ? "请输入要朗读的文本" : "请输入音乐描述或风格标签");
+      }
 
       if (isRunningHubVoiceClone && !sourceAudio) {
         throw new Error("请先添加一段参考音频");
       }
 
-      if (!isRunningHubVoiceClone && !prompt) {
-        throw new Error("请输入音乐描述或风格标签");
+      const readySourceAudio = isRunningHubVoiceClone && sourceAudio
+        ? await uploadAudioReferenceToOss(sourceAudio)
+        : sourceAudio;
+
+      if (isRunningHubVoiceClone && readySourceAudio && readySourceAudio !== sourceAudio) {
+        set((currentState) => ({
+          error: null,
+          dirty: true,
+          nodes: currentState.nodes.map((node) =>
+            node.id === audioGenerationNodeId && node.type === "audio_generation"
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    referenceAudio: (node.data.referenceAudio ?? []).map((reference) =>
+                      reference.id === readySourceAudio.id ? readySourceAudio : reference,
+                    ),
+                    errorMessage: undefined,
+                  },
+                }
+              : node,
+          ),
+        }));
       }
 
       set((currentState) => ({
@@ -6403,8 +6631,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 apiKey,
                 provider: "runninghub",
                 model: "runninghub-voice-clone",
-                sourceAudioUrl: sourceAudio?.hostedUrl?.trim() || sourceAudio?.url?.trim(),
-                sourceAudioFileName: sourceAudio?.fileName,
+                prompt,
+                sourceAudioUrl: readySourceAudio
+                  ? pickRemoteAudioReferenceUrl(readySourceAudio)
+                  : undefined,
+                sourceAudioFileName: readySourceAudio?.fileName,
                 instanceType: latestAudioGenerationNode.data.instanceType || "default",
               }
             : {
@@ -6510,6 +6741,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             : node,
         ),
       }));
+
+      void get().persistProjectOutput({
+        sourceKey: `${audioGenerationNodeId}:${generatedAt}:${result.audioUrl}`,
+        imageUrl: result.audioUrl,
+        kind: "audio",
+        fileName: `${latestAudioGenerationNode.data.title || result.title || "audio"}.mp3`,
+        generatedAt,
+        nodeData: {
+          ...latestAudioGenerationNode.data,
+          generatedAudioTitle: result.title,
+          taskId: result.taskId,
+          progress: "100%",
+          audioUrl: result.audioUrl,
+          hostedAudioUrl: result.audioUrl,
+          generatedModel: result.model,
+          generatedAt,
+          durationSeconds: result.durationSeconds,
+          mimeType: result.mimeType,
+          sizeBytes: result.sizeBytes,
+          status: "idle",
+          errorMessage: undefined,
+        },
+        title: latestAudioGenerationNode.data.title || result.title || "audio",
+        model: result.model,
+        format: result.mimeType ? undefined : "mp3",
+        sizeBytes: result.sizeBytes,
+      }).catch((error) => {
+        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+      });
     } catch (error) {
       const message = toErrorMessage(error);
 
@@ -6531,6 +6791,241 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
     } finally {
       inFlightAudioGenerationNodeIds.delete(audioGenerationNodeId);
+    }
+  },
+
+  separateAudioFromNode: async (sourceNodeId) => {
+    const state = get();
+    const sourceNode = state.nodes.find((node) => node.id === sourceNodeId);
+
+    if (!sourceNode || (sourceNode.type !== "audio" && sourceNode.type !== "audio_generation")) {
+      throw new Error("Audio source node not found");
+    }
+
+    const sourceAudioUrl = sourceNode.type === "audio"
+      ? sourceNode.data.hostedAudioUrl?.trim() || sourceNode.data.audioUrl.trim()
+      : sourceNode.data.hostedAudioUrl?.trim() || sourceNode.data.audioUrl?.trim() || "";
+
+    if (!sourceAudioUrl) {
+      throw new Error("当前节点没有可分离的音频");
+    }
+
+    if (inFlightAudioSeparationNodeIds.has(sourceNodeId)) {
+      return;
+    }
+
+    inFlightAudioSeparationNodeIds.add(sourceNodeId);
+
+    try {
+      const apiKey = assertStoredRunningHubWorkflowApiKey();
+      const fileName = sourceNode.type === "audio"
+        ? sourceNode.data.fileName || sourceNode.data.outputFileName
+        : sourceNode.data.generatedOutputFileName || sourceNode.data.generatedAudioTitle;
+
+      set((currentState) => ({
+        error: null,
+        dirty: true,
+        nodes: currentState.nodes.map((node): CanvasNode => {
+          if (node.id !== sourceNodeId) {
+            return node;
+          }
+
+          if (node.type === "audio") {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status: "generating",
+                statusMessage: "正在分离人声/伴奏...",
+                errorMessage: undefined,
+              },
+            };
+          }
+
+          if (node.type === "audio_generation") {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status: "generating",
+                progress: "分离中",
+                errorMessage: undefined,
+              },
+            };
+          }
+
+          return node;
+        }),
+      }));
+
+      const response = await fetch("/api/ai/audio-separation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey,
+          audioUrl: sourceAudioUrl,
+          fileName,
+          instanceType: "default",
+        }),
+      });
+      const json = await readJsonResponse<AudioSeparationResponse>(
+        response,
+        "Audio separation request failed",
+      );
+
+      if (!response.ok || !json.ok) {
+        throw new Error(json.ok ? "Audio separation failed" : json.error);
+      }
+
+      if (json.status !== "submitted") {
+        throw new Error("Audio separation request did not return a task id");
+      }
+
+      const result = await waitForAudioSeparationResult({
+        apiKey,
+        taskId: json.task.taskId,
+      });
+      const rightX = sourceNode.position.x + 420 + 80;
+      const generatedAt = nowIso();
+      const vocalNodeId = crypto.randomUUID();
+      const accompanimentNodeId = crypto.randomUUID();
+      const vocalNode: Extract<CanvasNode, { type: "audio" }> = {
+        id: vocalNodeId,
+        type: "audio",
+        position: {
+          x: rightX,
+          y: sourceNode.position.y,
+        },
+        data: {
+          title: "人声",
+          audioUrl: result.vocal.audioUrl,
+          hostedAudioUrl: result.vocal.audioUrl,
+          fileName: "vocal",
+          mimeType: result.vocal.mimeType,
+          status: "idle",
+        },
+      };
+      const accompanimentNode: Extract<CanvasNode, { type: "audio" }> = {
+        id: accompanimentNodeId,
+        type: "audio",
+        position: {
+          x: rightX + 420 + 40,
+          y: sourceNode.position.y,
+        },
+        data: {
+          title: "伴奏",
+          audioUrl: result.accompaniment.audioUrl,
+          hostedAudioUrl: result.accompaniment.audioUrl,
+          fileName: "accompaniment",
+          mimeType: result.accompaniment.mimeType,
+          status: "idle",
+        },
+      };
+      set((currentState) => ({
+        ...createUndoHistoryUpdate(currentState),
+        error: null,
+        dirty: true,
+        nodes: [
+          ...currentState.nodes.map((node): CanvasNode => {
+            if (node.id !== sourceNodeId) {
+              return node;
+            }
+
+            if (node.type === "audio") {
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "idle",
+                  statusMessage: undefined,
+                  errorMessage: undefined,
+                },
+              };
+            }
+
+            if (node.type === "audio_generation") {
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  status: "idle",
+                  progress: undefined,
+                  errorMessage: undefined,
+                },
+              };
+            }
+
+            return node;
+          }),
+          vocalNode,
+          accompanimentNode,
+        ],
+      }));
+
+      void Promise.all([
+        get().persistProjectOutput({
+          sourceKey: `${vocalNodeId}:audio:${result.vocal.audioUrl}`,
+          imageUrl: result.vocal.audioUrl,
+          kind: "audio",
+          fileName: "vocal.mp3",
+          generatedAt,
+          nodeData: vocalNode.data,
+          title: vocalNode.data.title,
+          format: result.vocal.mimeType ? undefined : "mp3",
+        }),
+        get().persistProjectOutput({
+          sourceKey: `${accompanimentNodeId}:audio:${result.accompaniment.audioUrl}`,
+          imageUrl: result.accompaniment.audioUrl,
+          kind: "audio",
+          fileName: "accompaniment.mp3",
+          generatedAt,
+          nodeData: accompanimentNode.data,
+          title: accompanimentNode.data.title,
+          format: result.accompaniment.mimeType ? undefined : "mp3",
+        }),
+      ]).catch((error) => {
+        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+      });
+    } catch (error) {
+      const message = toErrorMessage(error);
+
+      set((currentState) => ({
+        error: message,
+        dirty: true,
+        nodes: currentState.nodes.map((node): CanvasNode => {
+          if (node.id !== sourceNodeId) {
+            return node;
+          }
+
+          if (node.type === "audio") {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status: "error",
+                statusMessage: undefined,
+                errorMessage: message,
+              },
+            };
+          }
+
+          if (node.type === "audio_generation") {
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                status: "error",
+                progress: undefined,
+                errorMessage: message,
+              },
+            };
+          }
+
+          return node;
+        }),
+      }));
+    } finally {
+      inFlightAudioSeparationNodeIds.delete(sourceNodeId);
     }
   },
 
@@ -9067,6 +9562,63 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 hostedVideoUrl: persisted.previewUrl,
                 fileName: node.data.fileName ?? persisted.fileName,
                 outputFileName: persisted.fileName,
+              },
+            };
+          }
+
+          return node;
+        });
+
+        return {
+          nodes,
+          currentProjectPreviewUrls: [
+            ...currentState.currentProjectPreviewUrls,
+            persisted.previewUrl,
+          ],
+        };
+      }
+
+      if (params.kind === "audio") {
+        const nodeData = params.nodeData as AudioGenerationNodeData | AudioNodeData;
+        const nodes = currentState.nodes.map((node) => {
+          if (node.type === "audio_generation") {
+            const sourceKey = `${node.id}:${params.generatedAt}:${nodeData.audioUrl ?? ""}`;
+
+            if (sourceKey !== params.sourceKey) {
+              return node;
+            }
+
+            return {
+              ...node,
+              data: applyPersistedAudioPreview(
+                node.data,
+                {
+                  ...persisted,
+                  sizeBytes: params.sizeBytes ?? persisted.sizeBytes,
+                },
+                "generatedOutputFileName",
+              ),
+            };
+          }
+
+          if (node.type === "audio") {
+            const sourceNodeId = params.sourceKey.split(":")[0];
+
+            if (node.id !== sourceNodeId) {
+              return node;
+            }
+
+            return {
+              ...node,
+              data: {
+                ...applyPersistedAudioPreview(
+                  node.data,
+                  {
+                    ...persisted,
+                    sizeBytes: params.sizeBytes ?? persisted.sizeBytes,
+                  },
+                ),
+                fileName: node.data.fileName ?? persisted.fileName,
               },
             };
           }

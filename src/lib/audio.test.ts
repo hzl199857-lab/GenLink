@@ -35,6 +35,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 const {
   buildSunoMusicSubmitRequest,
   buildRunningHubVoiceCloneSubmitBody,
+  resolveRunningHubReferenceAudioUrl,
   parseRunningHubVoiceCloneResult,
   parseSunoFetchResult,
   parseSunoSubmitTask,
@@ -227,32 +228,51 @@ describe("Suno audio generation request mapping", () => {
 });
 
 describe("RunningHub voice clone request mapping", () => {
-  it("maps the uploaded audio file to the voice clone AI App node", () => {
+  it("accepts only HTTP reference audio URLs for server-side upload", () => {
+    assert.equal(
+      resolveRunningHubReferenceAudioUrl(" https://example.com/reference.mp3 "),
+      "https://example.com/reference.mp3",
+    );
+    assert.equal(
+      resolveRunningHubReferenceAudioUrl("/media/reference.mp3", "https://app.example.com/canvas"),
+      "https://app.example.com/media/reference.mp3",
+    );
+
+    assert.throws(
+      () => resolveRunningHubReferenceAudioUrl("blob:https://app.example.com/reference"),
+      /请先等待参考音频上传完成/,
+    );
+    assert.throws(
+      () => resolveRunningHubReferenceAudioUrl("output:reference.mp3"),
+      /请重新上传参考音频/,
+    );
+  });
+
+  it("maps reference audio and narration text to the voice clone AI App nodes", () => {
     const body = buildRunningHubVoiceCloneSubmitBody({
-      audioFileName: "openapi/source.mp3",
+      audioFileName: "openapi/reference.mp3",
+      prompt: "请用参考声音朗读这段文本",
       instanceType: "plus",
     });
 
     assert.deepEqual(body, {
       nodeInfoList: [
         {
-          nodeId: "317",
+          nodeId: "3",
           fieldName: "audio",
-          fieldValue: "openapi/source.mp3",
-          description: "添加音频",
+          fieldValue: "openapi/reference.mp3",
+          description: "克隆的音频",
+        },
+        {
+          nodeId: "6",
+          fieldName: "prompt",
+          fieldValue: "请用参考声音朗读这段文本",
+          description: "文本（支持复杂混合语言）",
         },
       ],
       instanceType: "plus",
       usePersonalQueue: "false",
     });
-  });
-
-  it("defaults RunningHub voice clone to the default instance", () => {
-    const body = buildRunningHubVoiceCloneSubmitBody({
-      audioFileName: "openapi/source.wav",
-    });
-
-    assert.equal(body.instanceType, "default");
   });
 
   it("parses successful RunningHub voice clone query responses", () => {

@@ -21,8 +21,8 @@ import {
 
 const AUDIO_PROVIDER_OPTIONS: Array<{ id: AudioGenerationProvider; label: string }> = [
   { id: 'comfly', label: 'Comfly' },
-  { id: 'runninghub', label: 'RunningHub' },
   { id: 'zhenzhen', label: '贞贞AI工坊' },
+  { id: 'runninghub', label: 'RunningHub' },
 ];
 
 const AUDIO_MODEL_OPTIONS: Array<{ id: AudioGenerationModel; label: string }> = [
@@ -87,7 +87,11 @@ function getModelOptionsForProvider(provider: AudioGenerationProvider) {
   return provider === 'runninghub' ? RUNNINGHUB_AUDIO_MODEL_OPTIONS : AUDIO_MODEL_OPTIONS;
 }
 
-function getPromptPlaceholder(mode: AudioGenerationMode, instrumental: boolean): string {
+function getPromptPlaceholder(mode: AudioGenerationMode, instrumental: boolean, voiceClone: boolean): string {
+  if (voiceClone) {
+    return '请输入要用参考声音朗读的文本';
+  }
+
   if (mode === 'inspiration' && instrumental) {
     return '请输入纯音乐描述';
   }
@@ -338,7 +342,7 @@ function ProviderModelMenuButton({
 }
 
 function AudioParametersMenuButton({
-  model,
+  voiceClone,
   mode,
   title,
   style,
@@ -349,7 +353,7 @@ function AudioParametersMenuButton({
   onInstrumentalChange,
   onInstanceTypeChange,
 }: {
-  model: AudioGenerationModel;
+  voiceClone: boolean;
   mode: AudioGenerationMode;
   title: string;
   style: string;
@@ -423,7 +427,7 @@ function AudioParametersMenuButton({
           translate="no"
           onKeyDownCapture={(event) => event.stopPropagation()}
         >
-          {model === 'runninghub-voice-clone' ? (
+          {voiceClone ? (
             <div className="flex flex-col gap-2">
               <span className="text-[13px] font-medium text-gl-text-secondary">实例类型</span>
               <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-white/[0.06] p-1">
@@ -644,7 +648,7 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
           <div className="relative h-[54px] overflow-visible">
             {!draftPrompt.trim() ? (
               <div className="pointer-events-none absolute left-0 top-0 z-0 pr-10 text-[14px] leading-7 text-gl-text-muted">
-                {isRunningHubVoiceClone ? '请添加一段参考音频' : getPromptPlaceholder(mode, instrumental)}
+                {getPromptPlaceholder(mode, instrumental, isRunningHubVoiceClone)}
               </div>
             ) : null}
             <textarea
@@ -690,7 +694,7 @@ export const AudioGenerationPromptBar = memo(function AudioGenerationPromptBar({
                 />
               ) : null}
               <AudioParametersMenuButton
-                model={model}
+                voiceClone={isRunningHubVoiceClone}
                 mode={mode}
                 title={title}
                 style={style}

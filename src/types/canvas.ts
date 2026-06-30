@@ -331,6 +331,7 @@ export interface AudioGenerationNodeData {
   progress?: string;
   audioUrl?: string;
   hostedAudioUrl?: string;
+  previewUrl?: string;
   generatedOutputFileName?: string;
   generatedModel?: string;
   generatedAt?: string;
@@ -617,5 +618,9 @@ export type ProjectOutputHistoryItem =
     })
   | (BaseProjectOutputHistoryItem & {
       kind: "video";
-      nodeData?: VideoGenerationNodeData | VideoUpscaleNodeData;
+      nodeData?: VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
+    })
+  | (BaseProjectOutputHistoryItem & {
+      kind: "audio";
+      nodeData?: AudioGenerationNodeData | AudioNodeData;
     });

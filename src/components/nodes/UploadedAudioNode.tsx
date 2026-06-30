@@ -7,6 +7,7 @@ import type { AudioNodeData } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 import { AudioWaveformPlayer } from './AudioWaveformPlayer';
+import { AudioNodeToolbar } from './AudioNodeToolbar';
 
 export interface UploadedAudioNodeProps {
   data: AudioNodeData;
@@ -18,6 +19,7 @@ export interface UploadedAudioNodeProps {
   onLoadedMetadata?: (durationSeconds: number) => void;
   onDownload?: () => void;
   onCopyLink?: () => void;
+  onSeparateAudio?: () => void;
 }
 
 export const UPLOADED_AUDIO_CARD_WIDTH = 420;
@@ -35,6 +37,7 @@ export function UploadedAudioNode({
   onTitleChange,
   onSelectNode,
   onLoadedMetadata,
+  onSeparateAudio,
 }: UploadedAudioNodeProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const displayTitle = getNodeDisplayTitle(data);
@@ -54,6 +57,14 @@ export function UploadedAudioNode({
 
   return (
     <div className="relative group node-connectable-root" style={{ width: UPLOADED_AUDIO_CARD_WIDTH }}>
+      <AudioNodeToolbar
+        visible={showAccessories}
+        top={-58}
+        disabled={!audioUrl || isUploading}
+        separating={isUploading}
+        onSeparateAudio={onSeparateAudio}
+      />
+
       <div className="node-visible-title -mt-2 mb-1.5 ml-1 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan">
         <Volume2 size={24} />
         <EditableNodeTitle

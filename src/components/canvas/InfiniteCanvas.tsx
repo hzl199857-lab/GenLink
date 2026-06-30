@@ -100,6 +100,7 @@ import {
   type CanvasImageAssetUploadKind,
   type CanvasImageDerivativeOptions,
 } from '@/lib/canvas-image-assets';
+import { uploadImageAsset } from '@/lib/browser-oss-upload';
 import { layoutAgentWorkflowNodes } from '@/lib/canvas/agent-layout';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
@@ -1645,43 +1646,14 @@ async function uploadCanvasImageAssetDataUrl(
     semantic: `${baseFolder}/semantic`,
   };
   const blob = await fetch(dataUrl).then((response) => response.blob());
-  const response = await fetch('/api/image-hosting/upload-url', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contentType: blob.type || 'image/png',
-      fileName,
-      folder: folderByKind[kind],
-    }),
-  });
-  const json = (await response.json()) as
-    | {
-        ok: true;
-        result: {
-          uploadUrl: string;
-          imageUrl: string;
-          headers: Record<string, string>;
-        };
-      }
-    | { ok: false; error: string };
-
-  if (!response.ok || !json.ok) {
-    throw new Error('error' in json ? json.error : 'Failed to create image upload URL');
-  }
-
-  const uploadResponse = await fetch(json.result.uploadUrl, {
-    method: 'PUT',
-    headers: json.result.headers,
-    body: blob,
+  const uploaded = await uploadImageAsset({
+    data: blob,
+    contentType: blob.type || 'image/png',
+    fileName,
+    folder: folderByKind[kind],
   });
 
-  if (!uploadResponse.ok) {
-    throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
-  }
-
-  return json.result.imageUrl;
+  return uploaded.hostedUrl;
 }
 
 async function uploadCanvasOriginalImageFile(
@@ -1694,43 +1666,14 @@ async function uploadCanvasOriginalImageFile(
     preview: `${baseFolder}/previews`,
     semantic: `${baseFolder}/semantic`,
   };
-  const response = await fetch('/api/image-hosting/upload-url', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contentType: file.type || 'application/octet-stream',
-      fileName: file.name,
-      folder: folderByKind[kind],
-    }),
-  });
-  const json = (await response.json()) as
-    | {
-        ok: true;
-        result: {
-          uploadUrl: string;
-          imageUrl: string;
-          headers: Record<string, string>;
-        };
-      }
-    | { ok: false; error: string };
-
-  if (!response.ok || !json.ok) {
-    throw new Error('error' in json ? json.error : 'Failed to create image upload URL');
-  }
-
-  const uploadResponse = await fetch(json.result.uploadUrl, {
-    method: 'PUT',
-    headers: json.result.headers,
-    body: file,
+  const uploaded = await uploadImageAsset({
+    data: file,
+    contentType: file.type || 'application/octet-stream',
+    fileName: file.name,
+    folder: folderByKind[kind],
   });
 
-  if (!uploadResponse.ok) {
-    throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
-  }
-
-  return json.result.imageUrl;
+  return uploaded.hostedUrl;
 }
 
 function readImageFile(
@@ -2968,6 +2911,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
 const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateAudio = useCanvasStore((s) => s.generateAudioFromAudioGenerationNode);
+  const separateAudio = useCanvasStore((s) => s.separateAudioFromNode);
   const removeReference = useCanvasStore((s) => s.removeReferenceFromNode);
   const renderData = data as CanvasNodeRenderData;
   const [promptFocused, setPromptFocused] = useState(false);
@@ -3000,6 +2944,9 @@ const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id
       referenceAudio={referenceAudio}
       onChange={(next) => updateNodeData<'audio_generation'>(id, next)}
       onRun={() => generateAudio(id)}
+      onSeparateAudio={() => {
+        void separateAudio(id);
+      }}
       onTitleChange={(nextTitle) => updateNodeData<'audio_generation'>(id, { title: nextTitle })}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
       onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
@@ -3382,6 +3329,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
 
 const UploadedAudioNodeAdapter = memo(function UploadedAudioNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const separateAudio = useCanvasStore((s) => s.separateAudioFromNode);
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const audioData = data as AudioNodeData;
@@ -3434,6 +3382,9 @@ const UploadedAudioNodeAdapter = memo(function UploadedAudioNodeAdapter({ id, da
       onLoadedMetadata={(durationSeconds) => updateNodeData<'audio'>(id, { durationSeconds })}
       onDownload={handleDownload}
       onCopyLink={handleCopyLink}
+      onSeparateAudio={() => {
+        void separateAudio(id);
+      }}
     />
   );
 });

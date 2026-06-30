@@ -15,6 +15,7 @@ import {
   UPLOADED_AUDIO_CARD_HEIGHT,
   UPLOADED_AUDIO_CARD_WIDTH,
 } from './UploadedAudioNode';
+import { AudioNodeToolbar } from './AudioNodeToolbar';
 
 const RESULT_CARD_WIDTH = UPLOADED_AUDIO_CARD_WIDTH;
 const RESULT_CARD_HEIGHT = UPLOADED_AUDIO_CARD_HEIGHT;
@@ -39,6 +40,7 @@ export interface AudioGenerationNodeProps {
   onSelectNode?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
+  onSeparateAudio?: () => void;
 }
 
 export const AudioGenerationNode = memo(function AudioGenerationNode({
@@ -56,6 +58,7 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
   onSelectNode,
   onPromptPointerDown,
   onPromptFocusWithinChange,
+  onSeparateAudio,
 }: AudioGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   const toolbarVisible = selected && !dragging;
@@ -77,9 +80,19 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
   }, [id, updateNodeInternals]);
 
   const handlePatch = (partial: Partial<AudioGenerationNodeData>) => {
+    const nextProvider = partial.provider ?? data.provider;
+    const nextModel = partial.model ?? data.model;
+    const normalizedPatch = { ...partial };
+
+    if (nextProvider === 'runninghub') {
+      normalizedPatch.model = 'runninghub-voice-clone';
+    } else if (nextModel === 'runninghub-voice-clone') {
+      normalizedPatch.model = 'suno-v5.5';
+    }
+
     onChange?.({
       ...data,
-      ...partial,
+      ...normalizedPatch,
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -93,6 +106,14 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
         height: `${RESULT_CARD_HEIGHT}px`,
       }}
     >
+        <AudioNodeToolbar
+          visible={toolbarVisible}
+          top={-58}
+          disabled={!hasAudio || isGenerating}
+          separating={isGenerating}
+          onSeparateAudio={onSeparateAudio}
+        />
+
         <div
           className="node-visible-title pointer-events-none absolute z-20 flex items-center gap-1.5 select-none text-gl-text-tertiary nodrag nopan whitespace-nowrap transition-[top,left,transform] duration-300 ease-out"
           style={{

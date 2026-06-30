@@ -11,7 +11,7 @@ import type {
 const DEFAULT_SUNO_MODEL: SunoModel = "chirp-fenix";
 const RUNNINGHUB_AUDIO_MODEL = "runninghub-voice-clone";
 const RUNNINGHUB_BASE_URL = "https://www.runninghub.cn/openapi/v2";
-const RUNNINGHUB_VOICE_CLONE_APP_ID = "2071882091696058369";
+const RUNNINGHUB_VOICE_CLONE_APP_ID = "2016458198860959745";
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export type SunoModel = "chirp-fenix" | "chirp-crow" | "chirp-bluejay";
@@ -144,17 +144,27 @@ type RunningHubTaskResponse = {
 export interface SubmitRunningHubVoiceCloneParams {
   apiKey: string;
   audioUrl: string;
+  prompt: string;
   fileName?: string;
   instanceType?: AudioGenerationInstanceType;
+  requestUrl?: string;
 }
 
 export interface RunningHubVoiceCloneSubmitBody {
-  nodeInfoList: Array<{
-    nodeId: "317";
-    fieldName: "audio";
-    fieldValue: string;
-    description: string;
-  }>;
+  nodeInfoList: Array<
+    | {
+        nodeId: "3";
+        fieldName: "audio";
+        fieldValue: string;
+        description: string;
+      }
+    | {
+        nodeId: "6";
+        fieldName: "prompt";
+        fieldValue: string;
+        description: string;
+      }
+  >;
   instanceType: AudioGenerationInstanceType;
   usePersonalQueue: "false";
 }
@@ -495,19 +505,6 @@ function getFileNameFromUrl(url: string, fallback = "audio.mp3"): string {
   }
 }
 
-function parseSizeBytes(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-  }
-
-  return undefined;
-}
-
 function getAudioMimeTypeFromOutputType(outputType?: string): string | undefined {
   switch (outputType?.trim().toLowerCase()) {
     case "mp3":
@@ -521,6 +518,8 @@ function getAudioMimeTypeFromOutputType(outputType?: string): string | undefined
       return "audio/ogg";
     case "flac":
       return "audio/flac";
+    case "aac":
+      return "audio/aac";
     default:
       return undefined;
   }
@@ -552,7 +551,7 @@ function getRunningHubErrorMessage(response: RunningHubTaskResponse): string {
     parts.unshift(`错误码 ${response.errorCode.trim()}`);
   }
 
-  return parts.length ? parts.join("；") : "RunningHub audio generation failed";
+  return parts.length ? parts.join("；") : "RunningHub voice clone failed";
 }
 
 export function parseSunoSubmitTask(response: SunoSubmitResponse): string {
@@ -577,26 +576,64 @@ export function parseSunoSubmitTask(response: SunoSubmitResponse): string {
 
 export function buildRunningHubVoiceCloneSubmitBody(params: {
   audioFileName: string;
+  prompt: string;
   instanceType?: AudioGenerationInstanceType;
 }): RunningHubVoiceCloneSubmitBody {
   const audioFileName = params.audioFileName.trim();
+  const prompt = params.prompt.trim();
 
   if (!audioFileName) {
-    throw new AudioApiError(400, "RunningHub audio file is required");
+    throw new AudioApiError(400, "RunningHub reference audio file is required");
+  }
+
+  if (!prompt) {
+    throw new AudioApiError(400, "Prompt is required");
   }
 
   return {
     nodeInfoList: [
       {
-        nodeId: "317",
+        nodeId: "3",
         fieldName: "audio",
         fieldValue: audioFileName,
-        description: "添加音频",
+        description: "克隆的音频",
+      },
+      {
+        nodeId: "6",
+        fieldName: "prompt",
+        fieldValue: prompt,
+        description: "文本（支持复杂混合语言）",
       },
     ],
     instanceType: params.instanceType === "plus" ? "plus" : "default",
     usePersonalQueue: "false",
   };
+}
+
+export function resolveRunningHubReferenceAudioUrl(audioUrl: string, requestUrl?: string): string {
+  const trimmed = audioUrl.trim();
+
+  if (!trimmed) {
+    throw new AudioApiError(400, "Source audio URL is required");
+  }
+
+  if (trimmed.startsWith("blob:")) {
+    throw new AudioApiError(400, "请先等待参考音频上传完成，再运行语音克隆");
+  }
+
+  if (trimmed.startsWith("output:")) {
+    throw new AudioApiError(400, "当前参考音频只有本地项目预览地址，请重新上传参考音频后再运行语音克隆");
+  }
+
+  const resolvedUrl = trimmed.startsWith("/") && requestUrl
+    ? new URL(trimmed, requestUrl).toString()
+    : trimmed;
+
+  if (!/^https?:\/\//i.test(resolvedUrl)) {
+    throw new AudioApiError(400, "参考音频必须是可由服务器读取的 HTTP(S) 地址");
+  }
+
+  return resolvedUrl;
 }
 
 function normalizeStatus(value?: string): string {
@@ -742,8 +779,21 @@ async function uploadAudioToRunningHub(params: {
   apiKey: string;
   audioUrl: string;
   fileName?: string;
-}): Promise<{ fileName: string; sizeBytes?: number }> {
-  const sourceResponse = await fetchWithTimeout(params.audioUrl, { method: "GET" });
+  requestUrl?: string;
+}): Promise<string> {
+  const sourceUrl = resolveRunningHubReferenceAudioUrl(params.audioUrl, params.requestUrl);
+  const sourceResponse = await fetchWithTimeout(sourceUrl, { method: "GET" }).catch(
+    (error: unknown) => {
+      if (error instanceof AudioApiError) {
+        throw error;
+      }
+
+      throw new AudioApiError(
+        400,
+        `读取参考音频失败：${error instanceof Error ? error.message : "无法访问音频地址"}`,
+      );
+    },
+  );
 
   if (!sourceResponse.ok) {
     throw new AudioApiError(
@@ -757,7 +807,7 @@ async function uploadAudioToRunningHub(params: {
   formData.append(
     "file",
     blob,
-    params.fileName?.trim() || getFileNameFromUrl(params.audioUrl),
+    params.fileName?.trim() || getFileNameFromUrl(sourceUrl),
   );
 
   const uploadResponse = await fetchWithTimeout(
@@ -786,10 +836,7 @@ async function uploadAudioToRunningHub(params: {
     );
   }
 
-  return {
-    fileName,
-    sizeBytes: parseSizeBytes(json.data?.size),
-  };
+  return fileName;
 }
 
 export async function submitSunoMusicTask(
@@ -820,10 +867,11 @@ export async function submitSunoMusicTask(
 export async function submitRunningHubVoiceCloneTask(
   params: SubmitRunningHubVoiceCloneParams,
 ): Promise<AudioTaskSubmission> {
-  const uploaded = await uploadAudioToRunningHub({
+  const uploadedFileName = await uploadAudioToRunningHub({
     apiKey: params.apiKey,
     audioUrl: params.audioUrl,
     fileName: params.fileName,
+    requestUrl: params.requestUrl,
   });
   const response = await fetchWithTimeout(
     `${RUNNINGHUB_BASE_URL}/run/ai-app/${RUNNINGHUB_VOICE_CLONE_APP_ID}`,
@@ -835,7 +883,8 @@ export async function submitRunningHubVoiceCloneTask(
       },
       body: JSON.stringify(
         buildRunningHubVoiceCloneSubmitBody({
-          audioFileName: uploaded.fileName,
+          audioFileName: uploadedFileName,
+          prompt: params.prompt,
           instanceType: params.instanceType,
         }),
       ),

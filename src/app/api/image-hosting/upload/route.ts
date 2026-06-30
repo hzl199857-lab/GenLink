@@ -15,6 +15,12 @@ interface UploadImageRequestBody {
 
 export async function POST(request: Request) {
   try {
+    const contentTypeHeader = request.headers.get("content-type") ?? "";
+
+    if (contentTypeHeader.toLowerCase().includes("multipart/form-data")) {
+      return await handleMultipartUpload(request);
+    }
+
     const body = (await request.json()) as UploadImageRequestBody;
 
     const fileName = typeof body.fileName === "string" ? body.fileName : undefined;
@@ -60,4 +66,48 @@ export async function POST(request: Request) {
       { status: 500 },
     );
   }
+}
+
+async function handleMultipartUpload(request: Request) {
+  const formData = await request.formData();
+  const file = formData.get("file");
+  const fileNameValue = formData.get("fileName");
+  const folderValue = formData.get("folder");
+  const forceOssValue = formData.get("forceOss");
+  const contentTypeValue = formData.get("contentType");
+
+  if (!(file instanceof Blob)) {
+    return NextResponse.json(
+      { ok: false, error: "Image file is required" },
+      { status: 400 },
+    );
+  }
+
+  const mimeType =
+    typeof contentTypeValue === "string" && contentTypeValue.trim()
+      ? contentTypeValue.trim()
+      : file.type || "application/octet-stream";
+
+  if (!mimeType.startsWith("image/")) {
+    return NextResponse.json(
+      { ok: false, error: "Only image uploads are allowed" },
+      { status: 400 },
+    );
+  }
+
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const dataUrl = `data:${mimeType};base64,${bytes.toString("base64")}`;
+  const imageUrl = await saveImageDataUrl(
+    dataUrl,
+    typeof fileNameValue === "string" ? fileNameValue : undefined,
+    typeof folderValue === "string" ? folderValue : undefined,
+    { forceOss: forceOssValue === "true" },
+  );
+
+  return NextResponse.json({
+    ok: true,
+    result: {
+      imageUrl,
+    },
+  });
 }
