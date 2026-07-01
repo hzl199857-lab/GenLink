@@ -25,6 +25,7 @@ require.extensions[".ts"] = transpileTypeScriptModule;
 require.extensions[".tsx"] = transpileTypeScriptModule;
 
 const {
+  getProxiedAudioPlaybackSrc,
   shouldUseAudioWaveformProxy,
   shouldNotifyAudioDuration,
 } = require("./AudioWaveformPlayer.tsx") as typeof import("./AudioWaveformPlayer");
@@ -43,4 +44,16 @@ test("uses the media proxy only for HTTP audio waveform fallbacks", () => {
   assert.equal(shouldUseAudioWaveformProxy("/api/media/audio.mp3"), false);
   assert.equal(shouldUseAudioWaveformProxy("blob:https://example.com/audio"), false);
   assert.equal(shouldUseAudioWaveformProxy("data:audio/mpeg;base64,AAAA"), false);
+});
+
+test("builds a playable proxy URL only for remote HTTP audio", () => {
+  assert.equal(
+    getProxiedAudioPlaybackSrc("https://example.com/audio track.mp3"),
+    "/api/image-hosting/read?url=https%3A%2F%2Fexample.com%2Faudio%20track.mp3",
+  );
+  assert.equal(getProxiedAudioPlaybackSrc("/api/media/audio.mp3"), "/api/media/audio.mp3");
+  assert.equal(
+    getProxiedAudioPlaybackSrc("blob:https://example.com/audio"),
+    "blob:https://example.com/audio",
+  );
 });

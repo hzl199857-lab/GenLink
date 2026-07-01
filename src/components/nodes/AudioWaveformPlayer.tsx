@@ -65,6 +65,16 @@ export function shouldUseAudioWaveformProxy(src: string): boolean {
   return /^https?:\/\//i.test(src.trim());
 }
 
+export function getProxiedAudioPlaybackSrc(src: string): string {
+  const trimmedSrc = src.trim();
+
+  if (!shouldUseAudioWaveformProxy(trimmedSrc)) {
+    return trimmedSrc;
+  }
+
+  return `/api/image-hosting/read?url=${encodeURIComponent(trimmedSrc)}`;
+}
+
 async function fetchAudioWaveformArrayBuffer(src: string): Promise<ArrayBuffer> {
   try {
     const response = await fetch(src);
@@ -168,8 +178,10 @@ export function AudioWaveformPlayer({
   const onLoadedMetadataRef = useRef<typeof onLoadedMetadata>(onLoadedMetadata);
   const onErrorRef = useRef<typeof onError>(onError);
   const notifiedDurationRef = useRef<number | undefined>(durationSeconds);
+  const proxiedPlaybackSrc = useMemo(() => getProxiedAudioPlaybackSrc(src), [src]);
   const bars = compact ? 48 : 72;
   const waveformKey = `${src}:${bars}`;
+  const [playbackSrc, setPlaybackSrc] = useState(proxiedPlaybackSrc);
   const [waveformState, setWaveformState] = useState<WaveformState>({
     key: waveformKey,
     peaks: [],
@@ -189,6 +201,10 @@ export function AudioWaveformPlayer({
   const duration = playbackState.src === src ? playbackState.duration : durationSeconds ?? 0;
   const playing = playbackState.src === src ? playbackState.playing : false;
   const canInteract = duration > 0;
+
+  useEffect(() => {
+    setPlaybackSrc(proxiedPlaybackSrc);
+  }, [proxiedPlaybackSrc]);
 
   useEffect(() => {
     durationSecondsRef.current = durationSeconds;
@@ -357,7 +373,7 @@ export function AudioWaveformPlayer({
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
     };
-  }, [getKnownDuration, notifyLoadedDuration, src]);
+  }, [getKnownDuration, notifyLoadedDuration, playbackSrc, src]);
 
   const progress = useMemo(() => {
     if (!duration || duration <= 0) {
@@ -426,6 +442,16 @@ export function AudioWaveformPlayer({
       return;
     }
 
+    const setPlaybackFailed = () => {
+      setPlaybackState((current) => ({
+        src,
+        currentTime: current.src === src ? current.currentTime : audio.currentTime || 0,
+        duration: current.src === src ? current.duration : duration,
+        playing: false,
+      }));
+      onErrorRef.current?.();
+    };
+
     void audio.play().then(() => {
       setPlaybackState((current) => ({
         src,
@@ -434,19 +460,41 @@ export function AudioWaveformPlayer({
         playing: true,
       }));
     }).catch(() => {
-      setPlaybackState((current) => ({
-        src,
-        currentTime: current.src === src ? current.currentTime : audio.currentTime || 0,
-        duration: current.src === src ? current.duration : duration,
-        playing: false,
-      }));
-      onErrorRef.current?.();
+      if (playbackSrc !== proxiedPlaybackSrc) {
+        setPlaybackSrc(proxiedPlaybackSrc);
+        setPlaybackState((current) => ({
+          src,
+          currentTime: current.src === src ? current.currentTime : 0,
+          duration: current.src === src ? current.duration : duration,
+          playing: true,
+        }));
+        return;
+      }
+
+      setPlaybackFailed();
     });
   };
 
   return (
     <div className="flex h-full w-full flex-col justify-between px-5 pb-7 pt-10 text-white">
-      <audio ref={audioRef} src={src} preload="metadata" />
+      <audio
+        ref={audioRef}
+        src={playbackSrc}
+        preload="metadata"
+        onCanPlay={() => {
+          if (playing) {
+            void audioRef.current?.play().catch(() => {
+              setPlaybackState((current) => ({
+                src,
+                currentTime: current.src === src ? current.currentTime : 0,
+                duration: current.src === src ? current.duration : duration,
+                playing: false,
+              }));
+              onErrorRef.current?.();
+            });
+          }
+        }}
+      />
       <div
         ref={waveformRef}
         className={[
