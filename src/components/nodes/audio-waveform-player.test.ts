@@ -25,6 +25,7 @@ require.extensions[".ts"] = transpileTypeScriptModule;
 require.extensions[".tsx"] = transpileTypeScriptModule;
 
 const {
+  shouldUseAudioWaveformProxy,
   shouldNotifyAudioDuration,
 } = require("./AudioWaveformPlayer.tsx") as typeof import("./AudioWaveformPlayer");
 
@@ -35,4 +36,11 @@ test("does not notify parent when decoded duration already matches known duratio
 test("notifies parent when decoded duration differs from known duration", () => {
   assert.equal(shouldNotifyAudioDuration(18, undefined), true);
   assert.equal(shouldNotifyAudioDuration(18, 17.5), true);
+});
+
+test("uses the media proxy only for HTTP audio waveform fallbacks", () => {
+  assert.equal(shouldUseAudioWaveformProxy("https://example.com/audio.mp3"), true);
+  assert.equal(shouldUseAudioWaveformProxy("/api/media/audio.mp3"), false);
+  assert.equal(shouldUseAudioWaveformProxy("blob:https://example.com/audio"), false);
+  assert.equal(shouldUseAudioWaveformProxy("data:audio/mpeg;base64,AAAA"), false);
 });

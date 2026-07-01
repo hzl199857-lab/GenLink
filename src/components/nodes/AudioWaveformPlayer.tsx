@@ -61,12 +61,42 @@ export function shouldNotifyAudioDuration(
     Math.abs(nextDuration - currentDuration) > 0.05;
 }
 
-async function decodeWaveform(src: string, bars: number): Promise<WaveformCacheEntry> {
-  const response = await fetch(src);
+export function shouldUseAudioWaveformProxy(src: string): boolean {
+  return /^https?:\/\//i.test(src.trim());
+}
 
-  if (!response.ok) {
+async function fetchAudioWaveformArrayBuffer(src: string): Promise<ArrayBuffer> {
+  try {
+    const response = await fetch(src);
+
+    if (response.ok) {
+      return await response.arrayBuffer();
+    }
+  } catch {
+    // Remote media often blocks browser-side waveform decoding through CORS.
+  }
+
+  if (!shouldUseAudioWaveformProxy(src)) {
     throw new Error('Audio waveform request failed');
   }
+
+  const proxyResponse = await fetch('/api/image-hosting/read', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ imageUrl: src }),
+  });
+
+  if (!proxyResponse.ok) {
+    throw new Error('Audio waveform request failed');
+  }
+
+  return proxyResponse.arrayBuffer();
+}
+
+async function decodeWaveform(src: string, bars: number): Promise<WaveformCacheEntry> {
+  const arrayBuffer = await fetchAudioWaveformArrayBuffer(src);
 
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
 
@@ -74,7 +104,6 @@ async function decodeWaveform(src: string, bars: number): Promise<WaveformCacheE
     throw new Error('Web Audio API unavailable');
   }
 
-  const arrayBuffer = await response.arrayBuffer();
   const audioContext = new AudioContextCtor();
 
   try {
