@@ -216,7 +216,23 @@ jobs:
           rm -f "$RELEASE_DIR/prisma/dev.db"
           ln -sfn "$SHARED/prisma/dev.db" "$RELEASE_DIR/prisma/dev.db"
 
-          npm ci --no-audit --no-fund
+          NPM_CACHE="$SHARED/npm-cache"
+          mkdir -p "$NPM_CACHE"
+          node --version
+          npm --version
+          npm_ci() {
+            npm ci \
+              --no-audit \
+              --no-fund \
+              --no-progress \
+              --prefer-offline \
+              --cache "$NPM_CACHE"
+          }
+          if ! npm_ci; then
+            echo "npm ci failed. Cleaning npm cache and retrying once."
+            npm --cache "$NPM_CACHE" cache clean --force || true
+            npm_ci
+          fi
           npm run build
 
           ln -sfn "$RELEASE_DIR" "$CURRENT"
