@@ -216,7 +216,7 @@ jobs:
           rm -f "$RELEASE_DIR/prisma/dev.db"
           ln -sfn "$SHARED/prisma/dev.db" "$RELEASE_DIR/prisma/dev.db"
 
-          npm ci
+          npm ci --no-audit --no-fund
           npm run build
 
           ln -sfn "$RELEASE_DIR" "$CURRENT"
