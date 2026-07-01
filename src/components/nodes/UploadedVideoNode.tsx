@@ -14,6 +14,7 @@ export interface UploadedVideoNodeProps {
   accessoriesVisible?: boolean;
   onReplace?: (file: File) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
+  titleEditRequestId?: number;
   onSelectNode?: () => void;
   videoRef?: React.RefObject<HTMLVideoElement | null>;
   controlsVisible?: boolean;
@@ -59,6 +60,7 @@ export function UploadedVideoNode({
   accessoriesVisible = selected,
   onReplace,
   onTitleChange,
+  titleEditRequestId,
   onSelectNode,
   videoRef,
   controlsVisible = true,
@@ -98,6 +100,7 @@ export function UploadedVideoNode({
         <EditableNodeTitle
           value={displayTitle}
           fallbackValue="video"
+          editRequestId={titleEditRequestId}
           className="text-[22px] font-medium leading-none"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
           onCommit={onTitleChange}

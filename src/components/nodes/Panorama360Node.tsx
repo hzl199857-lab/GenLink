@@ -80,6 +80,7 @@ export interface Panorama360NodeProps {
   sourceImage?: Panorama360SourceImage | null;
   accessoriesVisible?: boolean;
   onTitleChange?: (nextTitle: string | undefined) => void;
+  titleEditRequestId?: number;
   onViewChange?: (view: Panorama360ViewState) => void;
   onNavigationActiveChange?: (active: boolean) => void;
   onSelectNode?: () => void;
@@ -176,6 +177,7 @@ export function Panorama360Node({
   sourceImage,
   accessoriesVisible = selected,
   onTitleChange,
+  titleEditRequestId,
   onViewChange,
   onNavigationActiveChange,
   onSelectNode,
@@ -972,6 +974,7 @@ export function Panorama360Node({
           <EditableNodeTitle
             value={data.title}
             fallbackValue="360全景图"
+            editRequestId={titleEditRequestId}
             className="text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}

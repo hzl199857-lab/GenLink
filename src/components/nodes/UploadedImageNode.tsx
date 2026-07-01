@@ -21,6 +21,7 @@ export interface UploadedImageNodeProps {
   accessoriesVisible?: boolean;
   onReplace?: (file: File) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
+  titleEditRequestId?: number;
   onSelectNode?: () => void;
   onShowInfo?: () => void;
   onCardLayout?: (layout: UploadedImageCardLayout) => void;
@@ -44,6 +45,7 @@ export function UploadedImageNode({
   accessoriesVisible = selected,
   onReplace,
   onTitleChange,
+  titleEditRequestId,
   onSelectNode,
   onShowInfo,
   onCardLayout,
@@ -122,6 +124,7 @@ export function UploadedImageNode({
         <EditableNodeTitle
           value={displayTitle}
           fallbackValue="image"
+          editRequestId={titleEditRequestId}
           className="text-[22px] font-medium leading-none"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
           onCommit={onTitleChange}

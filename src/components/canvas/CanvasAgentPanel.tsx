@@ -348,6 +348,8 @@ type CanvasAgentPanelProps = {
   onClose: () => void;
   onLayoutChange?: (layout: { open: boolean; width: number }) => void;
   onCreateSourceNodes?: (attachments: AgentTaskAttachment[]) => Record<string, string>;
+  pendingReferenceAttachment?: AgentTaskAttachment | null;
+  onPendingReferenceAttachmentConsumed?: (result: 'added' | 'duplicate') => void;
   onQuickReferenceSelect?: (
     onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
   ) => void;
@@ -1862,6 +1864,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   onClose,
   onLayoutChange,
   onCreateSourceNodes,
+  pendingReferenceAttachment,
+  onPendingReferenceAttachmentConsumed,
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
@@ -2267,6 +2271,30 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       return result;
     });
   }, [onQuickReferenceSelect]);
+
+  useEffect(() => {
+    if (!pendingReferenceAttachment) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const duplicate = attachmentsRef.current.some((item) => (
+        (pendingReferenceAttachment.sourceNodeId && item.sourceNodeId === pendingReferenceAttachment.sourceNodeId) ||
+        item.imageUrl === pendingReferenceAttachment.imageUrl ||
+        item.previewUrl === pendingReferenceAttachment.previewUrl
+      ));
+      const result: 'added' | 'duplicate' = duplicate ? 'duplicate' : 'added';
+
+      if (result === 'added') {
+        setAttachments((current) => [...current, pendingReferenceAttachment]);
+        setReferenceUploadNudgeRequested(false);
+      }
+
+      onPendingReferenceAttachmentConsumed?.(result);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [onPendingReferenceAttachmentConsumed, pendingReferenceAttachment]);
 
   const runAgent = useCallback(async (params: {
     prompt: string;

@@ -182,6 +182,7 @@ import {
 import { ApiSettingsPanel } from './ApiSettingsPanel';
 import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasContextMenu, getCanvasContextMenuPosition, type CanvasContextMenuPlatform } from './CanvasContextMenu';
+import { NodeContextMenu } from './NodeContextMenu';
 import { CanvasHeader } from './CanvasHeader';
 import { CanvasAgentPanel } from './CanvasAgentPanel';
 import UniqueLoading from '../ui/grid-loading';
@@ -197,6 +198,13 @@ import type { CreateVideoClipJobRequest } from '@/lib/video/clip-types';
 import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
 import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 import { validateCanvasAgentActions } from '@/lib/agent-actions';
+import {
+  createAgentAttachmentFromNode,
+  getNodeClipboardText,
+  getNodeExport,
+  isNodeRenameable,
+  type NodeExport,
+} from '@/lib/canvas/node-context-actions';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
   CreateProjectDialog,
@@ -2505,6 +2513,7 @@ const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, drag
       connectedVideos={connectedVideos}
       onChange={(next) => updateNodeData<'text'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'text'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onStartEdit={() => {
         handleSelectNode();
         setEditing(true);
@@ -2565,6 +2574,7 @@ const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ 
       connectedVideos={connectedVideos}
       onChange={(next) => updateNodeData<'storyboard_script'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'storyboard_script'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onStartEdit={() => {
         handleSelectNode();
         setEditing(true);
@@ -2644,6 +2654,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         connectedImages={connectedImages}
         onChange={(next) => updateNodeData<'image_generation'>(id, next)}
         onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
+        titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
         onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
         onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
         onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
@@ -2882,6 +2893,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       connectedAudio={connectedAudio}
       onChange={(next) => updateNodeData<'video_generation'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'video_generation'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onRun={(promptOverride) => generateVideo(id, promptOverride)}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
       onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
@@ -2948,6 +2960,7 @@ const AudioGenerationNodeAdapter = memo(function AudioGenerationNodeAdapter({ id
         void separateAudio(id);
       }}
       onTitleChange={(nextTitle) => updateNodeData<'audio_generation'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onUpload={() => notifyVideoGenerationReferenceUpload?.(id)}
       onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
         targetKind: 'node',
@@ -2998,6 +3011,7 @@ const VideoUpscaleNodeAdapter = memo(function VideoUpscaleNodeAdapter({ id, data
       sourceVideoAvailable={Boolean(sourceVideo)}
       onChange={(next) => updateNodeData<'video_upscale'>(id, next)}
       onTitleChange={(nextTitle) => updateNodeData<'video_upscale'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onRun={() => runVideoUpscale(id)}
       onSelectNode={handleSelectNode}
     />
@@ -3036,6 +3050,7 @@ const AITextResultNodeAdapter = memo(function AITextResultNodeAdapter({ id, data
         data={data as AITextResultNodeData}
         selected={selected}
         onTitleChange={(nextTitle) => updateNodeData<'ai_text_result'>(id, { title: nextTitle })}
+        titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       />
       <CardSideHandle type="source" position={Position.Right} visible={isActive} />
     </div>
@@ -3179,6 +3194,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
           accessoriesVisible={isActive}
           onReplace={handleReplace}
           onTitleChange={(nextTitle) => updateNodeData<'image'>(id, { title: nextTitle })}
+          titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
           onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
           onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
         />
@@ -3283,6 +3299,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
           accessoriesVisible={isActive}
           onReplace={handleReplace}
           onTitleChange={(nextTitle) => updateNodeData<'uploaded_image'>(id, { title: nextTitle })}
+          titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
           onSelectNode={() => notifyImageGenerationNodeSelect?.(id)}
           onShowInfo={() => notifyCanvasImageInfoRequest?.(id)}
           onCardLayout={(layout) => { cardLayoutRef.current = layout; }}
@@ -3378,6 +3395,7 @@ const UploadedAudioNodeAdapter = memo(function UploadedAudioNodeAdapter({ id, da
       accessoriesVisible={isActive}
       onReplace={handleReplace}
       onTitleChange={(nextTitle) => updateNodeData<'audio'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onSelectNode={() => notifyCanvasNodeSelect?.(id)}
       onLoadedMetadata={(durationSeconds) => updateNodeData<'audio'>(id, { durationSeconds })}
       onDownload={handleDownload}
@@ -4003,6 +4021,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
           accessoriesVisible={isActive}
           onReplace={handleReplace}
           onTitleChange={(nextTitle) => updateNodeData<'video'>(id, { title: nextTitle })}
+          titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
           onSelectNode={() => notifyCanvasImageInfoRequest?.(id)}
           videoRef={videoRef}
           controlsVisible={!clipControlsOpen}
@@ -4161,6 +4180,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
       sourceImage={sourceImage}
       accessoriesVisible={isActive}
       onTitleChange={(nextTitle) => updateNodeData<'panorama-360'>(id, { title: nextTitle })}
+      titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
       onViewChange={handleViewChange}
       onNavigationActiveChange={(active) => notifyPanorama360NavigationActiveChange?.(id, active)}
       onUploadPanorama={(file) => notifyPanorama360UploadRequest?.(id, file)}
@@ -4922,7 +4942,91 @@ function layoutGroupNodes(groupId: string, mode: GroupLayoutMode) {
 type CanvasNodeRenderData = CanvasNode['data'] & {
   canvasNodeActive?: boolean;
   canvasFocusRequestId?: number;
+  canvasTitleEditRequestId?: number;
 };
+
+type BrowserSaveFileHandle = {
+  createWritable(): Promise<{
+    write(data: Blob): Promise<void>;
+    close(): Promise<void>;
+  }>;
+};
+
+function downloadNodeExportUrl(url: string, fileName: string) {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.rel = 'noopener';
+  anchor.click();
+}
+
+async function saveNodeExport(exportData: NodeExport): Promise<'saved' | 'cancelled'> {
+  let blob: Blob | null = null;
+
+  if (exportData.kind === 'text') {
+    blob = new Blob([exportData.text], { type: exportData.mimeType });
+  } else {
+    try {
+      blob = await fetch(exportData.url).then((response) => {
+        if (!response.ok) {
+          throw new Error(`Download failed (${response.status})`);
+        }
+
+        return response.blob();
+      });
+    } catch {
+      downloadNodeExportUrl(exportData.url, exportData.fileName);
+      return 'saved';
+    }
+  }
+
+  if (!blob) {
+    return 'cancelled';
+  }
+
+  const downloadBlob = blob;
+  const extension = exportData.fileName.split('.').pop() || 'txt';
+  const mimeType = exportData.mimeType.split(';')[0] || 'application/octet-stream';
+  const saveFilePicker = (window as Window & {
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string;
+      types?: Array<{
+        description?: string;
+        accept: Record<string, string[]>;
+      }>;
+    }) => Promise<BrowserSaveFileHandle>;
+  }).showSaveFilePicker;
+
+  if (saveFilePicker) {
+    try {
+      const handle = await saveFilePicker({
+        suggestedName: exportData.fileName,
+        types: [{
+          description: 'File',
+          accept: { [mimeType]: [`.${extension}`] },
+        }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(downloadBlob);
+      await writable.close();
+      return 'saved';
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return 'cancelled';
+      }
+
+      throw error;
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(downloadBlob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = exportData.fileName;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  return 'saved';
+}
 
 type EmptyCanvasWelcomeAction = 'text' | 'image_generation' | 'video_generation' | 'audio_generation';
 
@@ -9301,6 +9405,8 @@ type CanvasAgentDockProps = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   onCreateSourceNodes: (attachments: AgentTaskAttachment[]) => Record<string, string>;
+  pendingReferenceAttachment?: AgentTaskAttachment | null;
+  onPendingReferenceAttachmentConsumed?: (result: 'added' | 'duplicate') => void;
   onQuickReferenceSelect: (
     onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
   ) => void;
@@ -9325,6 +9431,8 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   nodes,
   edges,
   onCreateSourceNodes,
+  pendingReferenceAttachment,
+  onPendingReferenceAttachmentConsumed,
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
@@ -9384,6 +9492,8 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         edges={edges}
         onClose={() => setOpen(false)}
         onCreateSourceNodes={onCreateSourceNodes}
+        pendingReferenceAttachment={pendingReferenceAttachment}
+        onPendingReferenceAttachmentConsumed={onPendingReferenceAttachmentConsumed}
         onQuickReferenceSelect={handleQuickReferenceSelect}
         onConfirmPlan={onConfirmPlan}
         onConfirmGeneration={onConfirmGeneration}
@@ -9463,6 +9573,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     nodeId: string;
     requestId: number;
   } | null>(null);
+  const [nodeTitleEditRequest, setNodeTitleEditRequest] = useState<{
+    nodeId: string;
+    requestId: number;
+  } | null>(null);
   const [panorama360NavigationNodeId, setPanorama360NavigationNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -9485,6 +9599,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     screen: { x: number; y: number };
     canvas: { x: number; y: number };
   } | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<{
+    nodeId: string;
+    screen: { x: number; y: number };
+  } | null>(null);
+  const [pendingAgentReferenceAttachment, setPendingAgentReferenceAttachment] =
+    useState<AgentTaskAttachment | null>(null);
   const closeAddMenuTimeoutRef = useRef<number | null>(null);
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
@@ -9571,6 +9691,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           canvasFocusRequestId: nodeFocusRequest?.nodeId === n.id
             ? nodeFocusRequest.requestId
             : undefined,
+          canvasTitleEditRequestId: nodeTitleEditRequest?.nodeId === n.id
+            ? nodeTitleEditRequest.requestId
+            : undefined,
         },
         selected: selectedNodeIds.has(n.id),
         dragHandle:
@@ -9603,7 +9726,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
 
     return nodes;
-  }, [activeNodeId, connectionMenu, nodeFocusRequest, quickReferenceConnect, storeNodes, selectedNodeIds]);
+  }, [activeNodeId, connectionMenu, nodeFocusRequest, nodeTitleEditRequest, quickReferenceConnect, storeNodes, selectedNodeIds]);
   const [rfNodes, setRfNodes] = useState<ReactFlowNode[]>(derivedRfNodes);
 
   useEffect(() => {
@@ -9843,6 +9966,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
+    setNodeContextMenu(null);
   }, []);
 
   useEffect(() => {
@@ -10140,6 +10264,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const startQuickReferenceConnect = useCallback((mode: QuickReferenceConnectMode) => {
     setQuickReferenceConnect(mode);
     setAddMenu(null);
+    setNodeContextMenu(null);
     clearConnectionMenu();
     setImageInfoPopover(null);
     setImageLightbox(null);
@@ -11143,6 +11268,37 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     selectSingleNode(node.id);
     }, [addEdgeStore, applyQuickReferenceSelection, clearEdgeSelection, quickReferenceConnect, selectSingleNode, showProjectMessage, storeEdges, storeNodes]);
 
+  const handleNodeContextMenu = useCallback((
+    event: React.MouseEvent,
+    node: ReactFlowNode,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setSelectedNodeIds((current) => {
+      if (current.has(node.id)) {
+        selectedNodeIdsRef.current = current;
+        return current;
+      }
+
+      const next = new Set([node.id]);
+      selectedNodeIdsRef.current = next;
+      return next;
+    });
+    setActiveNodeId(node.id);
+    setSelectedGroupId(null);
+    clearEdgeSelection();
+    clearConnectionMenu();
+    setContextMenu(null);
+    setAddMenu(null);
+    setImageInfoPopover(null);
+    setImageLightbox(null);
+    setNodeContextMenu({
+      nodeId: node.id,
+      screen: { x: event.clientX, y: event.clientY },
+    });
+  }, [clearConnectionMenu, clearEdgeSelection]);
+
   const handleNodeDoubleClick = useCallback((
     event: React.MouseEvent,
     node: ReactFlowNode,
@@ -11444,6 +11600,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
     if (event.button === 0) {
       setContextMenu(null);
+      setNodeContextMenu(null);
     }
 
     if (quickReferenceConnect) {
@@ -11572,12 +11729,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     handlePaneMouseUp(event);
   }, [handlePaneMouseUp]);
 
-  const handleCopySelectedNodes = useCallback(() => {
-    if (selectedNodeIds.size === 0) {
+  const copyNodeIdsToInternalClipboard = useCallback((nodeIds: Set<string>) => {
+    if (nodeIds.size === 0) {
       return false;
     }
 
-    const selectedNodes = storeNodes.filter((node) => selectedNodeIds.has(node.id));
+    const selectedNodes = storeNodes.filter((node) => nodeIds.has(node.id));
 
     if (selectedNodes.length === 0) {
       return false;
@@ -11587,12 +11744,114 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     connectedCopyBufferRef.current = createConnectedCopyBuffer(
       selectedNodes,
       storeEdges,
-      selectedNodeIds,
+      nodeIds,
     );
     pasteCountRef.current = 0;
     setHasCopiedNodes(true);
     return true;
-  }, [selectedNodeIds, storeEdges, storeNodes]);
+  }, [storeEdges, storeNodes]);
+
+  const handleCopySelectedNodes = useCallback(() => {
+    return copyNodeIdsToInternalClipboard(selectedNodeIds);
+  }, [copyNodeIdsToInternalClipboard, selectedNodeIds]);
+
+  const nodeContextTarget = useMemo(() => (
+    nodeContextMenu
+      ? storeNodes.find((node) => node.id === nodeContextMenu.nodeId) ?? null
+      : null
+  ), [nodeContextMenu, storeNodes]);
+  const nodeContextAttachment = useMemo(() => (
+    nodeContextTarget ? createAgentAttachmentFromNode(nodeContextTarget) : null
+  ), [nodeContextTarget]);
+  const nodeContextClipboardText = useMemo(() => (
+    nodeContextTarget ? getNodeClipboardText(nodeContextTarget) : null
+  ), [nodeContextTarget]);
+  const nodeContextExport = useMemo(() => (
+    nodeContextTarget ? getNodeExport(nodeContextTarget) : null
+  ), [nodeContextTarget]);
+
+  const handleNodeContextAddToConversation = useCallback(() => {
+    if (!nodeContextAttachment) {
+      return;
+    }
+
+    setPendingAgentReferenceAttachment(nodeContextAttachment);
+    notifyAgentPanelOpenRequest?.();
+    setNodeContextMenu(null);
+  }, [nodeContextAttachment]);
+
+  const handleNodeContextCopyContent = useCallback(() => {
+    if (!nodeContextClipboardText) {
+      return;
+    }
+
+    setNodeContextMenu(null);
+    void navigator.clipboard.writeText(nodeContextClipboardText)
+      .then(() => showProjectMessage('已复制'))
+      .catch((error) => showProjectMessage(error instanceof Error ? error.message : '复制失败'));
+  }, [nodeContextClipboardText, showProjectMessage]);
+
+  const handleNodeContextSaveAs = useCallback(() => {
+    if (!nodeContextExport) {
+      return;
+    }
+
+    setNodeContextMenu(null);
+    void saveNodeExport(nodeContextExport)
+      .then((result) => {
+        if (result === 'saved') {
+          showProjectMessage('已保存');
+        }
+      })
+      .catch((error) => showProjectMessage(error instanceof Error ? error.message : '保存失败'));
+  }, [nodeContextExport, showProjectMessage]);
+
+  const handleNodeContextRename = useCallback(() => {
+    if (!nodeContextTarget || !isNodeRenameable(nodeContextTarget)) {
+      return;
+    }
+
+    setNodeTitleEditRequest({
+      nodeId: nodeContextTarget.id,
+      requestId: Date.now(),
+    });
+    setNodeContextMenu(null);
+  }, [nodeContextTarget]);
+
+  const handleNodeContextCopyNode = useCallback(() => {
+    if (!nodeContextTarget) {
+      return;
+    }
+
+    const ids = selectedNodeIds.has(nodeContextTarget.id)
+      ? selectedNodeIds
+      : new Set([nodeContextTarget.id]);
+
+    if (copyNodeIdsToInternalClipboard(ids)) {
+      showProjectMessage('已复制节点');
+    }
+
+    setNodeContextMenu(null);
+  }, [copyNodeIdsToInternalClipboard, nodeContextTarget, selectedNodeIds, showProjectMessage]);
+
+  const handleNodeContextDelete = useCallback(() => {
+    if (!nodeContextTarget) {
+      return;
+    }
+
+    const ids = selectedNodeIds.has(nodeContextTarget.id)
+      ? Array.from(selectedNodeIds)
+      : [nodeContextTarget.id];
+
+    deleteNodes(ids);
+    clearCanvasNodeUi();
+    setActiveNodeId(null);
+    selectedNodeIdsRef.current = new Set();
+    setSelectedNodeIds(new Set());
+    setSelectedGroupId(null);
+    clearEdgeSelection();
+    setNodeContextMenu(null);
+  }, [clearEdgeSelection, deleteNodes, nodeContextTarget, selectedNodeIds]);
 
   const handlePasteNodes = useCallback(() => {
     if (copiedNodesRef.current.length === 0) {
@@ -12385,6 +12644,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     clientY?: number;
   }) => {
     setContextMenu(null);
+    setNodeContextMenu(null);
 
     if (quickReferenceConnect) {
       return;
@@ -12435,6 +12695,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
 
     setContextMenu(null);
+    setNodeContextMenu(null);
     setAddMenu(null);
     clearConnectionMenu();
     setImageInfoPopover(null);
@@ -12455,6 +12716,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       screen,
       canvas: project(screen),
     });
+    setNodeContextMenu(null);
     setAddMenu(null);
     clearConnectionMenu();
     setImageInfoPopover(null);
@@ -12897,6 +13159,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       closeAddMenuTimeoutRef.current = null;
     }
 
+    setNodeContextMenu(null);
+    setContextMenu(null);
     setAddMenu({
       screen,
       canvas: project({
@@ -13005,6 +13269,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       screen: { x: event.clientX, y: event.clientY },
       canvas: canvasPosition,
     });
+    setNodeContextMenu(null);
+    setContextMenu(null);
     clearConnectionMenu();
   }, [clearConnectionMenu, isNodeInternalTarget, project]);
 
@@ -13976,6 +14242,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         onEdgesChange={onEdgesChange}
         onEdgeClick={handleEdgeClick}
         onNodeClick={handleNodeClick}
+        onNodeContextMenu={handleNodeContextMenu}
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeDragStop={handleNodeDragStop}
         onSelectionChange={handleSelectionChange}
@@ -14136,6 +14403,25 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         />
       ) : null}
 
+      {nodeContextMenu && nodeContextTarget ? (
+        <NodeContextMenu
+          x={nodeContextMenu.screen.x}
+          y={nodeContextMenu.screen.y}
+          canAddToConversation={nodeContextAttachment !== null}
+          canCopyContent={nodeContextClipboardText !== null}
+          canSaveAs={nodeContextExport !== null}
+          canRename={isNodeRenameable(nodeContextTarget)}
+          canCopyNode
+          canDelete
+          onAddToConversation={handleNodeContextAddToConversation}
+          onCopyContent={handleNodeContextCopyContent}
+          onSaveAs={handleNodeContextSaveAs}
+          onRename={handleNodeContextRename}
+          onCopyNode={handleNodeContextCopyNode}
+          onDelete={handleNodeContextDelete}
+        />
+      ) : null}
+
       <CanvasToolbar
         onOpenAddMenu={openAddMenuAtScreen}
         onScheduleCloseAddMenu={scheduleCloseAddMenu}
@@ -14155,6 +14441,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         nodes={storeNodes}
         edges={storeEdges}
         onCreateSourceNodes={handleCreateAgentSourceNodes}
+        pendingReferenceAttachment={pendingAgentReferenceAttachment}
+        onPendingReferenceAttachmentConsumed={(result) => {
+          setPendingAgentReferenceAttachment(null);
+          showProjectMessage(result === 'duplicate' ? '参考图已添加' : '已添加到对话');
+        }}
         onQuickReferenceSelect={(onSelect) => {
           startQuickReferenceConnect({
             targetKind: 'agent',

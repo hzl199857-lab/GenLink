@@ -70,6 +70,7 @@ export interface ImageGenerationNodeProps {
   hidePromptBar?: boolean;
   panActive?: boolean;
   promptFocusRequestId?: number;
+  titleEditRequestId?: number;
 }
 
 function parseAspectRatioValue(value?: string): number | null {
@@ -278,6 +279,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   hidePromptBar,
   panActive,
   promptFocusRequestId,
+  titleEditRequestId,
 }: ImageGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   const [suppressTransientUi, setSuppressTransientUi] = useState(false);
@@ -494,6 +496,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
           <EditableNodeTitle
             value={data.title}
             fallbackValue="Image"
+            editRequestId={titleEditRequestId}
             className="pointer-events-auto text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}

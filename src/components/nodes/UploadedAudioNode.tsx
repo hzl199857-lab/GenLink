@@ -15,6 +15,7 @@ export interface UploadedAudioNodeProps {
   accessoriesVisible?: boolean;
   onReplace?: (file: File) => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
+  titleEditRequestId?: number;
   onSelectNode?: () => void;
   onLoadedMetadata?: (durationSeconds: number) => void;
   onDownload?: () => void;
@@ -35,6 +36,7 @@ export function UploadedAudioNode({
   accessoriesVisible = selected,
   onReplace,
   onTitleChange,
+  titleEditRequestId,
   onSelectNode,
   onLoadedMetadata,
   onSeparateAudio,
@@ -70,6 +72,7 @@ export function UploadedAudioNode({
         <EditableNodeTitle
           value={displayTitle}
           fallbackValue="Audio"
+          editRequestId={titleEditRequestId}
           className="text-[22px] font-medium leading-none"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
           onCommit={onTitleChange}

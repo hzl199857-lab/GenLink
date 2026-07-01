@@ -40,6 +40,7 @@ export interface VideoUpscaleNodeProps {
   onChange?: (next: VideoUpscaleNodeData) => void;
   onRun?: () => void;
   onTitleChange?: (nextTitle: string | undefined) => void;
+  titleEditRequestId?: number;
   onSelectNode?: () => void;
 }
 
@@ -91,6 +92,7 @@ export const VideoUpscaleNode = memo(function VideoUpscaleNode({
   onChange,
   onRun,
   onTitleChange,
+  titleEditRequestId,
   onSelectNode,
 }: VideoUpscaleNodeProps) {
   const isGenerating = data.status === 'generating';
@@ -144,6 +146,7 @@ export const VideoUpscaleNode = memo(function VideoUpscaleNode({
         <EditableNodeTitle
           value={displayTitle}
           fallbackValue="视频超清"
+          editRequestId={titleEditRequestId}
           className="text-[22px] font-medium leading-none"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
           onCommit={onTitleChange}

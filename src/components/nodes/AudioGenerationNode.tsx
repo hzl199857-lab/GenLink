@@ -41,6 +41,7 @@ export interface AudioGenerationNodeProps {
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
   onSeparateAudio?: () => void;
+  titleEditRequestId?: number;
 }
 
 export const AudioGenerationNode = memo(function AudioGenerationNode({
@@ -59,6 +60,7 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
   onPromptPointerDown,
   onPromptFocusWithinChange,
   onSeparateAudio,
+  titleEditRequestId,
 }: AudioGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   const toolbarVisible = selected && !dragging;
@@ -125,6 +127,7 @@ export const AudioGenerationNode = memo(function AudioGenerationNode({
           <EditableNodeTitle
             value={data.title}
             fallbackValue="Audio"
+            editRequestId={titleEditRequestId}
             className="pointer-events-auto text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}

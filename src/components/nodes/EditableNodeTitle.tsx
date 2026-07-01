@@ -8,6 +8,7 @@ export interface EditableNodeTitleProps {
   fallbackValue: string;
   className?: string;
   inputClassName?: string;
+  editRequestId?: number;
   onCommit?: (nextTitle: string | undefined) => void;
 }
 
@@ -21,9 +22,11 @@ export function EditableNodeTitle({
   fallbackValue,
   className,
   inputClassName,
+  editRequestId,
   onCommit,
 }: EditableNodeTitleProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const lastEditRequestIdRef = useRef<number | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value?.trim() || fallbackValue);
 
@@ -35,6 +38,16 @@ export function EditableNodeTitle({
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [editing, fallbackValue, value]);
+
+  useEffect(() => {
+    if (editRequestId === undefined || editRequestId === lastEditRequestIdRef.current) {
+      return;
+    }
+
+    lastEditRequestIdRef.current = editRequestId;
+    setDraft(value?.trim() || fallbackValue);
+    setEditing(true);
+  }, [editRequestId, fallbackValue, value]);
 
   const commit = () => {
     const normalized = normalizeTitle(draft);

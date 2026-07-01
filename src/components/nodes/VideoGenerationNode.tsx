@@ -82,6 +82,7 @@ export interface VideoGenerationNodeProps {
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
   promptFocusRequestId?: number;
+  titleEditRequestId?: number;
 }
 
 function GeneratedVideo({
@@ -138,6 +139,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
   onPromptPointerDown,
   onPromptFocusWithinChange,
   promptFocusRequestId,
+  titleEditRequestId,
 }: VideoGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -247,6 +249,7 @@ export const VideoGenerationNode = memo(function VideoGenerationNode({
           <EditableNodeTitle
             value={data.title}
             fallbackValue="Video"
+            editRequestId={titleEditRequestId}
             className="pointer-events-auto text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}

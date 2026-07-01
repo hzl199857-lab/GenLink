@@ -10,6 +10,7 @@ export interface AITextResultNodeProps {
   id?: string;
   data: AITextResultNodeData;
   selected?: boolean;
+  titleEditRequestId?: number;
   onTitleChange?: (nextTitle: string | undefined) => void;
 }
 
@@ -17,6 +18,7 @@ export function AITextResultNode({
   id,
   data,
   selected = false,
+  titleEditRequestId,
   onTitleChange,
 }: AITextResultNodeProps) {
   // Ensure the date is valid before parsing
@@ -41,6 +43,7 @@ export function AITextResultNode({
         <EditableNodeTitle
           value={data.title}
           fallbackValue="AI Text Result"
+          editRequestId={titleEditRequestId}
           className="text-[12px] font-medium text-gl-text-secondary"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[12px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
           onCommit={onTitleChange}

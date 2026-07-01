@@ -55,6 +55,7 @@ export interface TextNodeProps {
   onUpload?: () => void;
   onQuickReferenceConnect?: () => void;
   onRemoveReference?: (referenceId: string) => void;
+  titleEditRequestId?: number;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
 }
@@ -75,6 +76,7 @@ export const TextNode = memo(function TextNode({
   onUpload,
   onQuickReferenceConnect,
   onRemoveReference,
+  titleEditRequestId,
   onPromptPointerDown,
   onPromptFocusWithinChange,
 }: TextNodeProps) {
@@ -470,6 +472,7 @@ export const TextNode = memo(function TextNode({
           <EditableNodeTitle
             value={data.title}
             fallbackValue="Text"
+            editRequestId={titleEditRequestId}
             className="text-[22px] font-medium leading-none"
             inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
             onCommit={onTitleChange}
