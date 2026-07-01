@@ -220,19 +220,37 @@ jobs:
           mkdir -p "$NPM_CACHE"
           node --version
           npm --version
-          npm_ci() {
-            npm ci \
-              --no-audit \
-              --no-fund \
-              --no-progress \
-              --prefer-offline \
-              --cache "$NPM_CACHE"
+          install_dependencies() {
+            local current_real
+            current_real="$(readlink -f "$CURRENT" 2>/dev/null || true)"
+
+            if [ -n "$current_real" ] \
+              && [ -d "$current_real/node_modules" ] \
+              && [ -f "$current_real/package.json" ] \
+              && [ -f "$current_real/package-lock.json" ] \
+              && cmp -s "$current_real/package.json" "$RELEASE_DIR/package.json" \
+              && cmp -s "$current_real/package-lock.json" "$RELEASE_DIR/package-lock.json"; then
+              echo "Reusing node_modules from current release because package files are unchanged."
+              cp -a "$current_real/node_modules" "$RELEASE_DIR/node_modules"
+              return
+            fi
+
+            npm_ci() {
+              npm ci \
+                --no-audit \
+                --no-fund \
+                --no-progress \
+                --prefer-offline \
+                --cache "$NPM_CACHE"
+            }
+
+            if ! npm_ci; then
+              echo "npm ci failed. Cleaning npm cache and retrying once."
+              npm --cache "$NPM_CACHE" cache clean --force || true
+              npm_ci
+            fi
           }
-          if ! npm_ci; then
-            echo "npm ci failed. Cleaning npm cache and retrying once."
-            npm --cache "$NPM_CACHE" cache clean --force || true
-            npm_ci
-          fi
+          install_dependencies
           npm run build
 
           ln -sfn "$RELEASE_DIR" "$CURRENT"
