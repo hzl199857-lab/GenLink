@@ -18,6 +18,13 @@ describe("mapAgentPanelModelToOpenClaw", () => {
     );
   });
 
+  it("maps GPT 5.4 mini to the configured GenLink OpenClaw text provider", () => {
+    assert.equal(
+      mapAgentPanelModelToOpenClaw({ provider: "comfly", model: "gpt-5.4-mini" }),
+      "genlink_text/gpt-5.4-mini",
+    );
+  });
+
   it("falls back to the configured GenLink OpenClaw text provider when provider is omitted", () => {
     assert.equal(
       mapAgentPanelModelToOpenClaw({ model: "GPT-5.5" }),

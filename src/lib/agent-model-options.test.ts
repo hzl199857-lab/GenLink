@@ -22,6 +22,13 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const { AGENT_MODEL_OPTIONS } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
 
+test("includes GPT 5.4 mini as a selectable agent model", () => {
+  assert.equal(
+    AGENT_MODEL_OPTIONS.some((option) => option.id === "gpt-5.4-mini" && option.label === "GPT-5.4 Mini"),
+    true,
+  );
+});
+
 test("does not include gemini 3.5 flash in agent model options", () => {
   assert.equal(
     AGENT_MODEL_OPTIONS.some((option) => option.id === "gemini-3.5-flash"),
