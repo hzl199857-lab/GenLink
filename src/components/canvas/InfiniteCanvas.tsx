@@ -11,6 +11,7 @@ import {
   Group,
   Image as ImageIcon,
   Grid2x2,
+  Grid3x3,
   Map as MapIcon,
   MousePointer2,
   Plus,
@@ -1226,6 +1227,14 @@ type MultiNodeSelectionBounds = {
   height: number;
 };
 
+type CanvasAlignmentGuide = {
+  id: string;
+  orientation: 'horizontal' | 'vertical';
+  start: number;
+  end: number;
+  position: number;
+};
+
 type ImageGenerationReferenceDimensions = {
   width?: number;
   height?: number;
@@ -1372,6 +1381,86 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     width: 'width' in node ? node.width ?? 360 : 360,
     height: 'height' in node ? node.height ?? 260 : 260,
   };
+}
+
+function getAlignmentGuideNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSelectionBounds {
+  if (node.type === 'text') {
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: TEXT_NODE_CARD_WIDTH,
+      height: TEXT_NODE_CARD_HEIGHT,
+    };
+  }
+
+  if (node.type === 'storyboard_script') {
+    const dimensions = getStoryboardCardSize(node.data as StoryboardScriptNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
+  }
+
+  if (node.type === 'storyboard_grid') {
+    const bounds = getStoryboardGridNodeBounds(node);
+
+    return {
+      ...bounds,
+      y: node.position.y + STORYBOARD_GRID_TITLE_HEIGHT,
+      height: Math.max(0, bounds.height - STORYBOARD_GRID_TITLE_HEIGHT),
+    };
+  }
+
+  if (node.type === 'image_generation') {
+    return getEstimatedNodeBounds(node);
+  }
+
+  if (node.type === 'uploaded_image') {
+    const dimensions = resolveUploadedImageCardDimensions(node.data as UploadedImageNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + IMAGE_NODE_ADAPTER_TOP_PADDING,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
+  }
+
+  if (node.type === 'video') {
+    const dimensions = resolveUploadedVideoCardDimensions(node.data as VideoNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + IMAGE_NODE_ADAPTER_TOP_PADDING,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
+  }
+
+  if (node.type === 'image') {
+    const dimensions = resolveImageNodeCardDimensions(node.data as ImageNodeData);
+
+    return {
+      x: node.position.x,
+      y: node.position.y + IMAGE_NODE_ADAPTER_TOP_PADDING,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
+  }
+
+  if (node.type === 'panorama-360') {
+    return {
+      x: node.position.x,
+      y: node.position.y + 18,
+      width: 720,
+      height: 405,
+    };
+  }
+
+  return getEstimatedNodeBounds(node);
 }
 
 function getBoundsForRects(rects: MultiNodeSelectionBounds[]): MultiNodeSelectionBounds | null {
@@ -2293,7 +2382,13 @@ function createAgentSourceImageNodes(params: {
 function createAgentGenerationNodesAndEdges(params: {
   actions: CanvasAgentAction[];
   startPosition: { x: number; y: number };
-}): { nodes: CanvasNode[]; edges: CanvasEdge[]; focusNodeId: string | null; imageGenerationNodeIds: string[] } {
+}): {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  focusNodeId: string | null;
+  imageGenerationNodeIds: string[];
+  nodeIdMap: Record<string, string>;
+} {
   const textActionIds = new Set(
     params.actions.flatMap((action) => (
       action.type === 'create_text_node' ? [action.clientActionId] : []
@@ -2404,7 +2499,7 @@ function createAgentGenerationNodesAndEdges(params: {
     }
   }
 
-  return { nodes, edges, focusNodeId, imageGenerationNodeIds };
+  return { nodes, edges, focusNodeId, imageGenerationNodeIds, nodeIdMap: Object.fromEntries(createdNodeIds) };
 }
 
 function createMaterialSourceFromImageGenerationData(
@@ -4296,6 +4391,7 @@ const IMAGE_IMPORT_SPACING_X = 48;
 const IMAGE_IMPORT_SPACING_Y = 48;
 const CANVAS_MIN_ZOOM = 0.2;
 const CANVAS_MAX_ZOOM = 2;
+const CANVAS_SNAP_GRID_SIZE = 24;
 const CANVAS_EDGE_STYLE_STORAGE_KEY = 'genlink.canvasEdgeStyle';
 const CANVAS_EDGE_STYLE_CHANGE_EVENT = 'genlink:canvas-edge-style-change';
 const TEXT_NODE_CARD_WIDTH = 511;
@@ -4333,6 +4429,7 @@ const CANVAS_MINIMAP_HEIGHT = 150;
 const CANVAS_MINIMAP_PADDING = 14;
 const MULTI_NODE_SELECTION_PADDING = 14;
 const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
+const CANVAS_ALIGNMENT_GUIDE_TOLERANCE = 2;
 const GROUP_SOURCE_HANDLE_SIZE = 10;
 const GROUP_SOURCE_HANDLE_BADGE_SIZE = 22;
 const GROUP_SOURCE_HANDLE_BADGE_GAP = GROUP_SOURCE_HANDLE_BADGE_SIZE;
@@ -5417,6 +5514,101 @@ function resolveGroupConnectionTarget(mouseEvent: MouseEvent): {
 
 function clampZoomLevel(zoom: number): number {
   return Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, zoom));
+}
+
+function snapCanvasPositionToGrid(position: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Math.round(position.x / CANVAS_SNAP_GRID_SIZE) * CANVAS_SNAP_GRID_SIZE,
+    y: Math.round(position.y / CANVAS_SNAP_GRID_SIZE) * CANVAS_SNAP_GRID_SIZE,
+  };
+}
+
+function getAlignmentGuideAnchors(bounds: MultiNodeSelectionBounds) {
+  return {
+    left: bounds.x,
+    centerX: bounds.x + bounds.width / 2,
+    right: bounds.x + bounds.width,
+    top: bounds.y,
+    centerY: bounds.y + bounds.height / 2,
+    bottom: bounds.y + bounds.height,
+  };
+}
+
+function getCanvasAlignmentGuides(
+  draggingNode: CanvasNode | ReactFlowNode,
+  nodes: Array<CanvasNode | ReactFlowNode>,
+): CanvasAlignmentGuide[] {
+  const draggingBounds = getAlignmentGuideNodeBounds(draggingNode);
+  const draggingAnchors = getAlignmentGuideAnchors(draggingBounds);
+  let horizontalGuide: { guide: CanvasAlignmentGuide; distance: number } | null = null;
+  let verticalGuide: { guide: CanvasAlignmentGuide; distance: number } | null = null;
+
+  for (const node of nodes) {
+    if (node.id === draggingNode.id) {
+      continue;
+    }
+
+    const targetBounds = getAlignmentGuideNodeBounds(node);
+    const targetAnchors = getAlignmentGuideAnchors(targetBounds);
+    const minX = Math.min(draggingBounds.x, targetBounds.x);
+    const maxX = Math.max(
+      draggingBounds.x + draggingBounds.width,
+      targetBounds.x + targetBounds.width,
+    );
+    const minY = Math.min(draggingBounds.y, targetBounds.y);
+    const maxY = Math.max(
+      draggingBounds.y + draggingBounds.height,
+      targetBounds.y + targetBounds.height,
+    );
+
+    for (const draggingY of [draggingAnchors.top, draggingAnchors.centerY, draggingAnchors.bottom]) {
+      for (const targetY of [targetAnchors.top, targetAnchors.centerY, targetAnchors.bottom]) {
+        const distance = Math.abs(draggingY - targetY);
+
+        if (
+          distance <= CANVAS_ALIGNMENT_GUIDE_TOLERANCE &&
+          (!horizontalGuide || distance < horizontalGuide.distance)
+        ) {
+          horizontalGuide = {
+            distance,
+            guide: {
+              id: `h:${node.id}:${targetY}`,
+              orientation: 'horizontal',
+              start: minX,
+              end: maxX,
+              position: targetY,
+            },
+          };
+        }
+      }
+    }
+
+    for (const draggingX of [draggingAnchors.left, draggingAnchors.centerX, draggingAnchors.right]) {
+      for (const targetX of [targetAnchors.left, targetAnchors.centerX, targetAnchors.right]) {
+        const distance = Math.abs(draggingX - targetX);
+
+        if (
+          distance <= CANVAS_ALIGNMENT_GUIDE_TOLERANCE &&
+          (!verticalGuide || distance < verticalGuide.distance)
+        ) {
+          verticalGuide = {
+            distance,
+            guide: {
+              id: `v:${node.id}:${targetX}`,
+              orientation: 'vertical',
+              start: minY,
+              end: maxY,
+              position: targetX,
+            },
+          };
+        }
+      }
+    }
+  }
+
+  return [horizontalGuide?.guide, verticalGuide?.guide].filter(
+    (guide): guide is CanvasAlignmentGuide => guide !== undefined,
+  );
 }
 
 function clampLightboxZoomLevel(zoom: number): number {
@@ -6875,14 +7067,54 @@ const CanvasMiniMap = memo(function CanvasMiniMap({ nodes }: { nodes: CanvasNode
   );
 });
 
+function CanvasAlignmentGuidesOverlay({ guides }: { guides: CanvasAlignmentGuide[] }) {
+  const { x, y, zoom } = useViewport();
+
+  if (guides.length === 0) {
+    return null;
+  }
+
+  return (
+    <Panel position="top-left" className="pointer-events-none m-0 h-full w-full">
+      {guides.map((guide) => {
+        const style = guide.orientation === 'horizontal'
+          ? {
+              left: x + guide.start * zoom,
+              top: y + guide.position * zoom,
+              width: Math.max(1, (guide.end - guide.start) * zoom),
+              height: 1,
+            }
+          : {
+              left: x + guide.position * zoom,
+              top: y + guide.start * zoom,
+              width: 1,
+              height: Math.max(1, (guide.end - guide.start) * zoom),
+            };
+
+        return (
+          <div
+            key={guide.id}
+            className="canvas-alignment-guide"
+            style={style}
+          />
+        );
+      })}
+    </Panel>
+  );
+}
+
 function CanvasViewportControls({
   edgeStyle,
   onToggleEdgeStyle,
+  gridSnapEnabled,
+  onToggleGridSnap,
   onSmartReset,
   nodes,
 }: {
   edgeStyle: CanvasEdgeStyle;
   onToggleEdgeStyle: () => void;
+  gridSnapEnabled: boolean;
+  onToggleGridSnap: () => void;
   onSmartReset: () => void;
   nodes: CanvasNode[];
 }) {
@@ -6898,6 +7130,7 @@ function CanvasViewportControls({
     : '\u5207\u6362\u4e3a\u76f4\u7ebf';
   const resetLabel = '\u91cd\u7f6e (G)';
   const minimapLabel = isMiniMapVisible ? 'Hide minimap' : 'Show minimap';
+  const gridSnapLabel = gridSnapEnabled ? '关闭网格吸附' : '开启网格吸附';
 
   return (
     <>
@@ -6982,6 +7215,22 @@ function CanvasViewportControls({
               <Expand size={15} />
             </button>
             <Tooltip label={resetLabel} side="top" />
+          </div>
+
+          <div className="group/tooltip relative">
+            <button
+              type="button"
+              className={[
+                'canvas-zoom-icon-button',
+                gridSnapEnabled ? 'canvas-zoom-icon-button-active' : '',
+              ].filter(Boolean).join(' ')}
+              onClick={onToggleGridSnap}
+              aria-label={gridSnapLabel}
+              aria-pressed={gridSnapEnabled}
+            >
+              <Grid3x3 size={15} />
+            </button>
+            <Tooltip label={gridSnapLabel} side="top" />
           </div>
 
           <input
@@ -9415,11 +9664,19 @@ type CanvasAgentDockProps = {
     actions: CanvasAgentAction[];
     nodes?: CanvasNode[];
     edges?: CanvasEdge[];
+    nodeIdMap?: Record<string, string>;
     attachments: AgentTaskAttachment[];
     plan: AgentExecutionPlan;
     groupName?: string;
-  }) => { ok: true; imageGenerationNodeId?: string; imageGenerationNodeIds?: string[]; groupId?: string } | { ok: false; error?: string };
+  }) => {
+    ok: true;
+    imageGenerationNodeId?: string;
+    imageGenerationNodeIds?: string[];
+    groupId?: string;
+    nodeIdMap?: Record<string, string>;
+  } | { ok: false; error?: string };
   onConfirmGeneration: (payload: { nodeId?: string; nodeIds?: string[]; groupId?: string }) => boolean;
+  onFocusNode: (nodeId: string) => void;
   onLayoutChange?: (layout: { open: boolean; width: number }) => void;
 };
 
@@ -9437,6 +9694,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
+  onFocusNode,
   onLayoutChange,
 }: CanvasAgentDockProps) {
   const [open, setOpen] = useState(false);
@@ -9498,6 +9756,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         onQuickReferenceSelect={handleQuickReferenceSelect}
         onConfirmPlan={onConfirmPlan}
         onConfirmGeneration={onConfirmGeneration}
+        onFocusNode={onFocusNode}
         onLayoutChange={onLayoutChange}
       />
     </>
@@ -9626,6 +9885,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
+  const [gridSnapEnabled, setGridSnapEnabled] = useState(false);
+  const gridSnapEnabledRef = useRef(gridSnapEnabled);
+  const [alignmentGuides, setAlignmentGuides] = useState<CanvasAlignmentGuide[]>([]);
   const [createDraft, setCreateDraft] = useState<CreateProjectDraft>({
     projectName: '',
     parentHandle: null,
@@ -9649,6 +9911,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [selectedNodeIds]);
 
   useEffect(() => {
+    gridSnapEnabledRef.current = gridSnapEnabled;
+  }, [gridSnapEnabled]);
+
+  useEffect(() => {
     if (
       quickReferenceConnect &&
       quickReferenceConnect.targetKind === 'node' &&
@@ -9667,6 +9933,60 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const handleToggleEdgeStyle = useCallback(() => {
     setStoredCanvasEdgeStyle(edgeStyle === 'straight' ? 'curve' : 'straight');
   }, [edgeStyle]);
+
+  const handleToggleGridSnap = useCallback(() => {
+    setGridSnapEnabled((enabled) => {
+      const nextEnabled = !enabled;
+      gridSnapEnabledRef.current = nextEnabled;
+
+      if (!nextEnabled) {
+        setAlignmentGuides([]);
+      }
+
+      return nextEnabled;
+    });
+  }, []);
+
+  function applyGridSnapToNodeChanges(changes: NodeChange[]): NodeChange[] {
+    if (!gridSnapEnabledRef.current) {
+      return changes;
+    }
+
+    return changes.map((change) => {
+      if (change.type !== 'position' || !change.position || change.dragging !== true) {
+        return change;
+      }
+
+      const position = snapCanvasPositionToGrid(change.position);
+      return {
+        ...change,
+        position,
+        positionAbsolute: position,
+      };
+    });
+  }
+
+  const updateAlignmentGuidesForDrag = useCallback((
+    nodeId: string,
+    position: { x: number; y: number } | undefined,
+  ) => {
+    if (!gridSnapEnabledRef.current || !position) {
+      setAlignmentGuides([]);
+      return;
+    }
+
+    const currentNode = useCanvasStore.getState().nodes.find((candidate) => candidate.id === nodeId);
+
+    if (!currentNode) {
+      setAlignmentGuides([]);
+      return;
+    }
+
+    setAlignmentGuides(getCanvasAlignmentGuides(
+      { ...currentNode, position } as CanvasNode,
+      useCanvasStore.getState().nodes,
+    ));
+  }, []);
 
   const derivedRfNodes = useMemo<ReactFlowNode[]>(() => {
     const nodes: ReactFlowNode[] = storeNodes.map((n) => {
@@ -11417,12 +11737,25 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         continue;
       }
 
-      updateNodePosition(node.id, node.position);
-      syncNodeGroupMembership(node.id, node.position);
+      const nextPosition = gridSnapEnabled
+        ? snapCanvasPositionToGrid(node.position)
+        : node.position;
+      updateNodePosition(node.id, nextPosition);
+      syncNodeGroupMembership(node.id, nextPosition);
+    }
+
+    if (gridSnapEnabled) {
+      setRfNodes((currentNodes) =>
+        currentNodes.map((node) =>
+          selectedIds.has(node.id)
+            ? { ...node, position: snapCanvasPositionToGrid(node.position) }
+            : node,
+        ),
+      );
     }
 
     draggingNodeIdRef.current = null;
-  }, [rfNodes, updateNodePosition]);
+  }, [gridSnapEnabled, rfNodes, updateNodePosition]);
 
   const moveGroupFlowNodes = useCallback((groupId: string, dx: number, dy: number) => {
     const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
@@ -11457,6 +11790,26 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return changes.length > 0 ? applyNodeChanges(changes, currentNodes) : currentNodes;
     });
   }, []);
+
+  const snapGroupToGrid = useCallback((groupId: string): boolean => {
+    const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
+
+    if (!group) {
+      return false;
+    }
+
+    const snappedPosition = snapCanvasPositionToGrid({ x: group.x, y: group.y });
+    const dx = snappedPosition.x - group.x;
+    const dy = snappedPosition.y - group.y;
+
+    if (dx === 0 && dy === 0) {
+      return false;
+    }
+
+    moveGroup(groupId, dx, dy);
+    moveGroupFlowNodes(groupId, dx, dy);
+    return true;
+  }, [moveGroup, moveGroupFlowNodes]);
 
   const handleGroupDragStart = useCallback((groupId: string) => {
     const group = useCanvasStore.getState().groups.find((candidate) => candidate.id === groupId);
@@ -11506,14 +11859,19 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     if (moved && offset && (offset.x !== 0 || offset.y !== 0)) {
       moveGroup(groupId, offset.x, offset.y);
+
+      if (gridSnapEnabled) {
+        snapGroupToGrid(groupId);
+      }
     }
 
     activeGroupDragIdRef.current = null;
     draggingNodeIdRef.current = null;
+    setAlignmentGuides([]);
     window.setTimeout(() => {
       suppressSelectionWhileGroupDraggingRef.current = false;
     }, 80);
-  }, [groupDragOffsets, moveGroup]);
+  }, [gridSnapEnabled, groupDragOffsets, moveGroup, snapGroupToGrid]);
 
   const handleSelectionFramePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || selectedNodeIdsRef.current.size <= 1) {
@@ -11578,6 +11936,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     } else {
       draggingNodeIdRef.current = null;
     }
+    setAlignmentGuides([]);
 
     window.setTimeout(() => {
       skipNextPaneClickClearRef.current = false;
@@ -11593,6 +11952,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 
     multiSelectionFrameDragRef.current = null;
     draggingNodeIdRef.current = null;
+    setAlignmentGuides([]);
     window.setTimeout(() => {
       skipNextPaneClickClearRef.current = false;
     }, 0);
@@ -12465,9 +12825,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, []);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setRfNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
+    const snappedChanges = applyGridSnapToNodeChanges(changes);
+    setRfNodes((currentNodes) => applyNodeChanges(snappedChanges, currentNodes));
 
-    changes.forEach((change) => {
+    snappedChanges.forEach((change) => {
       if (change.type === 'position') {
         if (activeGroupDragIdRef.current) {
           return;
@@ -12480,6 +12841,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         if (change.dragging === true) {
           draggingNodeIdRef.current = change.id;
           const currentNode = useCanvasStore.getState().nodes.find((candidate) => candidate.id === change.id);
+          updateAlignmentGuidesForDrag(change.id, change.position);
 
           if (currentNode && !dragStartPositionsRef.current.has(change.id)) {
             dragStartPositionsRef.current.set(change.id, currentNode.position);
@@ -12498,7 +12860,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             );
           }
         } else if (change.dragging === false) {
-          const stillDragging = changes.some((candidate) =>
+          const stillDragging = snappedChanges.some((candidate) =>
             candidate !== change &&
             candidate.type === 'position' &&
             candidate.dragging === true,
@@ -12507,6 +12869,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           if (!stillDragging) {
             draggingNodeIdRef.current = null;
             storyboardGridDropTargetStore.setSnapshot(null);
+            setAlignmentGuides([]);
           }
           syncNodeGroupMembership(change.id, change.position);
         }
@@ -12539,7 +12902,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         deleteNode(change.id);
       }
     });
-  }, [clearEdgeSelection, updateNodePosition, deleteNode]);
+  }, [clearEdgeSelection, updateAlignmentGuidesForDrag, updateNodePosition, deleteNode]);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     changes.forEach((change) => {
@@ -12592,14 +12955,27 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         }
       }
 
-      updateNodePosition(draggedNode.id, draggedNode.position);
-      syncNodeGroupMembership(draggedNode.id, draggedNode.position);
+      const nextPosition = gridSnapEnabled
+        ? snapCanvasPositionToGrid(draggedNode.position)
+        : draggedNode.position;
+      updateNodePosition(draggedNode.id, nextPosition);
+      syncNodeGroupMembership(draggedNode.id, nextPosition);
+
+      if (gridSnapEnabled) {
+        setRfNodes((currentNodes) =>
+          currentNodes.map((candidate) =>
+            candidate.id === draggedNode.id
+              ? { ...candidate, position: nextPosition }
+              : candidate,
+          ),
+        );
+      }
     }
 
     draggingNodeIdRef.current = null;
     dragStartPositionsRef.current.clear();
     storyboardGridDropTargetStore.setSnapshot(null);
-  }, [showProjectMessage, updateNodePosition, updateStoryboardGridCell]);
+  }, [gridSnapEnabled, showProjectMessage, updateNodePosition, updateStoryboardGridCell]);
 
   const handleEdgeClick = useCallback((
     event: React.MouseEvent,
@@ -13328,6 +13704,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     actions: CanvasAgentAction[];
     nodes?: CanvasNode[];
     edges?: CanvasEdge[];
+    nodeIdMap?: Record<string, string>;
     attachments: AgentTaskAttachment[];
     plan: AgentExecutionPlan;
   }) => {
@@ -13365,6 +13742,28 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           imageGenerationNodeIds: payload.nodes.flatMap((node) => (
             node.type === 'image_generation' ? [node.id] : []
           )),
+          nodeIdMap: payload.actions.reduce<Record<string, string>>((map, action) => {
+            if (
+              action.type !== 'create_text_node' &&
+              action.type !== 'create_uploaded_image_node' &&
+              action.type !== 'create_image_generation_node'
+            ) {
+              return map;
+            }
+
+            const mappedNodeId = payload.nodeIdMap?.[action.clientActionId];
+
+            if (mappedNodeId) {
+              map[action.clientActionId] = mappedNodeId;
+              return map;
+            }
+
+            if (payload.nodes?.some((node) => node.id === action.clientActionId)) {
+              map[action.clientActionId] = action.clientActionId;
+            }
+
+            return map;
+          }, {}),
         }
       : createAgentGenerationNodesAndEdges({
           actions: payload.actions,
@@ -13431,6 +13830,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       imageGenerationNodeIds,
       groupId: agentGroup?.id,
       groupName: agentGroupName,
+      nodeIdMap: result.nodeIdMap,
     };
   }, [
     addEdgeStore,
@@ -14309,9 +14709,12 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           variant={BackgroundVariant.Dots}
           className="gl-canvas-bg"
         />
+        <CanvasAlignmentGuidesOverlay guides={alignmentGuides} />
         <CanvasViewportControls
           edgeStyle={edgeStyle}
           onToggleEdgeStyle={handleToggleEdgeStyle}
+          gridSnapEnabled={gridSnapEnabled}
+          onToggleGridSnap={handleToggleGridSnap}
           onSmartReset={handleSmartResetViewport}
           nodes={storeNodes}
         />
@@ -14455,6 +14858,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         }}
         onConfirmPlan={handleConfirmAgentPlan}
         onConfirmGeneration={handleConfirmAgentGeneration}
+        onFocusNode={(nodeId) => {
+          selectSingleNode(nodeId);
+          focusSingleNodeViewport(nodeId);
+        }}
         onLayoutChange={setAgentPanelLayout}
       />
       <MaterialLibraryPanel

@@ -264,6 +264,11 @@ body {
   color: rgba(245, 247, 250, 0.98);
 }
 
+.canvas-zoom-icon-button-active {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(245, 247, 250, 0.98);
+}
+
 .canvas-zoom-icon-button:active:not(:disabled) {
   transform: scale(0.96);
 }
@@ -429,6 +434,16 @@ body {
     0 0 0 3px rgba(255, 255, 255, 0.08),
     0 8px 18px rgba(0, 0, 0, 0.32);
   cursor: pointer;
+}
+
+.canvas-alignment-guide {
+  position: absolute;
+  z-index: 12;
+  border-radius: 999px;
+  background: rgba(93, 112, 255, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(93, 112, 255, 0.22),
+    0 0 12px rgba(93, 112, 255, 0.4);
 }
 
 .three-view-slider {

@@ -20,6 +20,47 @@ const INTERNAL_AGENT_TEXT_PATTERNS = [
   /\bprofile=/i,
 ];
 
+const INTERNAL_AGENT_TITLE_PATTERNS = [
+  /OpenClaw/i,
+  /规则库/,
+  /工作流/,
+  /workflow/i,
+  /workflow-json/i,
+  /Prompt Pack/i,
+  /creative-doc/i,
+];
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function trimTrailingSentencePunctuation(text: string): string {
+  return text.replace(/[。！？!?，,；;：:\s]+$/g, "").trim();
+}
+
+function summarizeUserTask(text: string, maxLength = 18): string {
+  const normalized = trimTrailingSentencePunctuation(
+    normalizeWhitespace(stripReferenceLikeText(text))
+      .replace(/^(请|帮我|帮忙|麻烦|可以|能不能|能否|我想要|我要|生成|创建|做一个|做一张|画一个|画一张)+/g, "")
+      .trim(),
+  );
+
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength)}...`
+    : normalized;
+}
+
+function stripReferenceLikeText(text: string): string {
+  return text
+    .replace(/\[\[ref:[^\]]+\]\]/g, "")
+    .replace(/@\S+/g, "")
+    .trim();
+}
+
 export function shouldShowAgentInternalText(text: string | undefined): boolean {
   const value = text?.trim();
 
@@ -46,6 +87,32 @@ export function sanitizeAgentChatText(text: string | undefined): string {
     .replace(/\s*Prompt Pack\s*\/\s*/g, "")
     .replace(/\s*OpenClaw\s*/g, "GenLink")
     .replace(/。{2,}/g, "。");
+}
+
+export function formatAgentCanvasNodeChipTitle(input: {
+  title?: string;
+  userPrompt?: string;
+  promptPreview?: string;
+  fallback: string;
+}): string {
+  const title = sanitizeAgentChatText(input.title);
+  const isInternalTitle = !title || INTERNAL_AGENT_TITLE_PATTERNS.some((pattern) => pattern.test(title));
+
+  if (!isInternalTitle) {
+    return title;
+  }
+
+  const userTask = summarizeUserTask(input.userPrompt ?? "");
+  if (userTask) {
+    return userTask;
+  }
+
+  const promptTask = summarizeUserTask(input.promptPreview ?? "");
+  if (promptTask) {
+    return promptTask;
+  }
+
+  return input.fallback;
 }
 
 export function formatAgentChatErrorText(text: string | undefined, fallback: string): string {

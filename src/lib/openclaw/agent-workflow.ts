@@ -137,9 +137,17 @@ function normalizeWorkflowNode(node: Record<string, unknown>): GenericWorkflowNo
   return {
     id: node.id,
     type: node.type,
-    role: stringValue(node.role),
+    role: stringValue(node.role) ?? stringValue(node.agentNodeType) ?? stringValue(node.subType),
     title: stringValue(node.title),
-    data: isRecord(node.data) ? node.data : {},
+    data: {
+      ...(isRecord(node.data) ? node.data : {}),
+      content: stringValue(isRecord(node.data) ? node.data.content : undefined) ?? stringValue(node.content),
+      text: stringValue(isRecord(node.data) ? node.data.text : undefined) ?? stringValue(node.content),
+      prompt: stringValue(isRecord(node.data) ? node.data.prompt : undefined) ?? stringValue(node.prompt),
+      subType: stringValue(isRecord(node.data) ? node.data.subType : undefined) ?? stringValue(node.subType),
+      from: stringValue(isRecord(node.data) ? node.data.from : undefined) ?? stringValue(node.from),
+      agentNodeType: stringValue(isRecord(node.data) ? node.data.agentNodeType : undefined) ?? stringValue(node.agentNodeType),
+    },
   };
 }
 

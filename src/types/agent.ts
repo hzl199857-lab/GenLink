@@ -506,6 +506,7 @@ export type AgentPanelMessage =
       role: "agent";
       type: "execution_plan";
       summary?: string;
+      userPrompt?: string;
       plan: AgentExecutionPlan;
       actions: CanvasAgentAction[];
       nodes?: CanvasNode[];
@@ -513,6 +514,7 @@ export type AgentPanelMessage =
       attachments: AgentTaskAttachment[];
       trace?: CanvasAgentTraceItem[];
       meta?: AgentRunMeta;
+      nodeIdMap?: Record<string, string>;
       imageGenerationNodeId?: string;
       imageGenerationNodeIds?: string[];
       groupId?: string;

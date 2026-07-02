@@ -192,6 +192,43 @@ test("converts workflow-json fallback into text-to-image actions", () => {
   ]);
 });
 
+test("converts workflow-json text nodes with top-level content into text actions", () => {
+  const text = [
+    "```workflow-json",
+    JSON.stringify({
+      name: "扩写提示词文本节点",
+      nodes: [
+        {
+          id: "node_prompt_text_1",
+          type: "text",
+          subType: "text",
+          from: "agent",
+          agentNodeType: "prompt-text",
+          title: "扩写后的提示词",
+          content: "请创作一幅高质量视觉作品：主体清晰、构图稳定、画面具有强烈氛围感。",
+        },
+      ],
+      edges: [],
+    }),
+    "```",
+  ].join("\n");
+
+  const result = createAgentResultFromOpenClawText({
+    request: "创建文本节点",
+    text,
+    model: "genlink_text/gpt-5.5",
+  });
+
+  assert.deepEqual(result.actions, [
+    {
+      type: "create_text_node",
+      clientActionId: "node_prompt_text_1",
+      title: "扩写后的提示词",
+      text: "请创作一幅高质量视觉作品：主体清晰、构图稳定、画面具有强烈氛围感。",
+    },
+  ]);
+});
+
 test("defaults missing image workflow aspectRatio to the rules-library image default", () => {
   const text = [
     "```workflow-json",

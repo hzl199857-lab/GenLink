@@ -79,6 +79,7 @@ import {
   sanitizeAgentChatText,
   shouldShowAgentInternalText,
 } from '@/lib/agent-chat-display';
+import { getAgentCanvasNodeChips } from '@/lib/agent-canvas-node-chips';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_FLOATING_INSET,
@@ -96,6 +97,7 @@ import {
   getPlanfEcomPlanStatusLabel,
   getPlanfEcomSlotKey,
 } from '@/lib/agent-plan-display';
+import { hasBlockingAgentDecision } from '@/lib/agent-submit-state';
 import { applyImageGenerationActionOptionsToMaterializedNodes } from '@/lib/agent-node-preferences';
 import { decideAgentPhaseRoute } from '@/lib/openclaw/agent-phase-policy';
 import type {
@@ -357,6 +359,7 @@ type CanvasAgentPanelProps = {
     actions: CanvasAgentAction[];
     nodes?: CanvasNode[];
     edges?: CanvasEdge[];
+    nodeIdMap?: Record<string, string>;
     attachments: AgentTaskAttachment[];
     plan: AgentExecutionPlan;
   }) => {
@@ -365,8 +368,10 @@ type CanvasAgentPanelProps = {
     imageGenerationNodeIds?: string[];
     groupId?: string;
     groupName?: string;
+    nodeIdMap?: Record<string, string>;
   };
   onConfirmGeneration?: (payload: { nodeId?: string; nodeIds?: string[]; groupId?: string }) => boolean;
+  onFocusNode?: (nodeId: string) => void;
 };
 
 type AgentBusyMode = 'thinking' | 'mcp';
@@ -1639,50 +1644,6 @@ async function requestOpenClawAgentRun(params: {
   return json.result;
 }
 
-function getAgentCanvasNodeChips(message: Extract<AgentPanelMessage, { type: 'execution_plan' }>) {
-  if (message.groupId) {
-    const generationCount = message.imageGenerationNodeIds?.length || 0;
-
-    return [{
-      id: `${message.id}-${message.groupId}`,
-      title: message.groupName || message.plan.title || '批量生成组',
-      typeLabel: generationCount > 0 ? `${generationCount} 个生成任务` : '分组',
-    }];
-  }
-
-  return message.actions
-    .filter((action) => (
-      action.type === 'create_text_node' ||
-      action.type === 'create_uploaded_image_node' ||
-      action.type === 'create_image_generation_node'
-    ))
-    .map((action, index) => {
-      if (action.type === 'create_text_node') {
-        return {
-          id: `${message.id}-${action.clientActionId}-${index}`,
-          title: action.title || message.plan.title || '提示词',
-          typeLabel: '文本节点',
-        };
-      }
-
-      if (action.type === 'create_uploaded_image_node') {
-        const attachment = message.attachments.find((item) => item.id === action.attachmentId);
-
-        return {
-          id: `${message.id}-${action.clientActionId}-${index}`,
-          title: action.title || attachment?.name || '上传图片',
-          typeLabel: '图片节点',
-        };
-      }
-
-      return {
-        id: `${message.id}-${action.clientActionId}-${index}`,
-        title: message.plan.title || '图像生成',
-        typeLabel: message.attachments.length > 0 ? '图生图' : '文生图',
-      };
-    });
-}
-
 function getAgentResultText(message: Extract<AgentPanelMessage, { type: 'execution_plan' }>) {
   if (message.status === 'error') {
     return '\u8282\u70b9\u521b\u5efa\u5931\u8d25\uff0c\u8bf7\u8c03\u6574\u9700\u6c42\u540e\u91cd\u8bd5\u3002';
@@ -1869,10 +1830,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
+  onFocusNode,
 }: CanvasAgentPanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const pendingAttachmentRoleRef = useRef<AgentEcomPlannerAttachmentRole>('product');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const historyPopoverRef = useRef<HTMLDivElement | null>(null);
+  const historyButtonRef = useRef<HTMLButtonElement | null>(null);
   const attachmentsRef = useRef<AgentTaskAttachment[]>([]);
   const planfPresetOpenBeforeOverlayRef = useRef(false);
   const resizeDragRef = useRef<{
@@ -1939,27 +1903,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         requested: referenceUploadNudgeRequested,
         attachmentCount: attachments.length,
       });
-  const hasUserDecisionPending = messages.some((message) => (
-    (message.type === 'attachment_selection' && message.status === 'waiting') ||
-    (
-      message.type === 'execution_plan' &&
-      (
-        message.status === 'waiting_confirmation' ||
-        message.status === 'waiting_generation_confirmation'
-      )
-    ) ||
-    (
-      message.type === 'planf_ecom_plan' &&
-      (
-        message.status === 'waiting_confirmation' ||
-        message.status === 'adjusting'
-      )
-    ) ||
-    (
-      message.type === 'ecom_planner_prompt_markdown' &&
-      message.status === 'waiting_confirmation'
-    )
-  ));
+  const hasUserDecisionPending = hasBlockingAgentDecision(messages);
   const busy = busyMode !== null;
   const activeEcomPlannerPromptStatus = [...messages].reverse().find((message) => (
     message.type === 'ecom_planner_options' &&
@@ -2070,8 +2014,44 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
   const handleOpenHistory = useCallback(() => {
     setHistoryThreads(listAgentThreads(projectId, projectName));
-    setHistoryOpen(true);
+    setHistoryOpen((current) => !current);
   }, [projectId, projectName]);
+
+  useEffect(() => {
+    if (!historyOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (
+        historyPopoverRef.current?.contains(target) ||
+        historyButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      setHistoryOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHistoryOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [historyOpen]);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -2656,6 +2636,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     const attachmentsForExecution = params.selectedAttachments.map((attachment) => ({ ...attachment }));
     const executionResult = onConfirmPlan?.({
       actions: executionActions,
+      nodeIdMap: result.nodeIdMap,
       attachments: attachmentsForExecution,
       plan: result.plan,
     }) ?? { ok: false };
@@ -2667,11 +2648,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         role: 'agent',
         type: 'execution_plan',
         summary: result.summary,
+        userPrompt: params.prompt,
         plan: result.plan,
         actions: executionActions,
         attachments: attachmentsForExecution,
         trace: result.trace,
         meta: result.meta,
+        nodeIdMap: executionResult.nodeIdMap,
         imageGenerationNodeId: executionResult.imageGenerationNodeId,
         imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
         groupId: executionResult.groupId,
@@ -3247,6 +3230,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         role: 'agent',
         type: 'execution_plan',
         summary: `已创建方案 ${promptMessage.optionId} 的 ${promptMessage.imageSlots.length} 个图像生成节点，等待确认生成。`,
+        userPrompt: promptMessage.title,
         plan,
         actions: executionActions,
         attachments: attachmentsForExecution,
@@ -3262,6 +3246,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           usedFallback: false,
           model: 'ecommerce-image-planner',
         },
+        nodeIdMap: executionResult.nodeIdMap,
         imageGenerationNodeId: executionResult.imageGenerationNodeId,
         imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
         groupId: executionResult.groupId,
@@ -3348,6 +3333,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           actions: executionActions,
           nodes: preferenceNodes,
           edges: result.edges,
+          nodeIdMap: result.nodeIdMap,
           attachments: attachmentsForExecution,
           plan: result.plan,
         }) ?? { ok: false };
@@ -3363,6 +3349,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             role: 'agent',
             type: 'execution_plan',
             summary: result.summary,
+            userPrompt: planMessage.session.request,
             plan: result.plan,
             actions: executionActions,
             nodes: preferenceNodes,
@@ -3370,6 +3357,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             attachments: attachmentsForExecution,
             trace: result.trace,
             meta: result.meta,
+            nodeIdMap: executionResult.nodeIdMap,
             imageGenerationNodeId: executionResult.imageGenerationNodeId,
             imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
             groupId: executionResult.groupId,
@@ -3664,6 +3652,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           actions: preferenceActions,
           nodes: preferenceNodes,
           edges: result.edges,
+          nodeIdMap: result.nodeIdMap,
           attachments: attachmentsForExecution,
           plan: result.plan,
         }) ?? { ok: false };
@@ -3675,6 +3664,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             role: 'agent',
             type: 'execution_plan',
             summary: result.summary,
+            userPrompt: anchorMessage.userPrompt ?? planfEcom.session.request,
             plan: result.plan,
             actions: preferenceActions,
             nodes: preferenceNodes,
@@ -3682,6 +3672,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             attachments: attachmentsForExecution,
             trace: result.trace,
             meta: result.meta,
+            nodeIdMap: executionResult.nodeIdMap,
             imageGenerationNodeId: executionResult.imageGenerationNodeId,
             imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
             groupId: executionResult.groupId,
@@ -3807,7 +3798,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         ].join(' ')}
         onPointerDown={handlePanelResizePointerDown}
       />
-      <div className="flex h-14 items-center justify-between border-b border-white/10 px-4">
+      <div className="relative flex h-14 items-center justify-between border-b border-white/10 px-4">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center text-[#d8dadd]">
             <UniqueLoading variant="squares" size="agent-sm" />
@@ -3818,8 +3809,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         </div>
         <div className="flex items-center gap-5">
           <button
+            ref={historyButtonRef}
             type="button"
-            className="flex h-8 w-8 items-center justify-center text-[#aeb4c2] transition hover:text-white"
+            className={[
+              'flex h-8 w-8 items-center justify-center transition hover:text-white',
+              historyOpen ? 'text-white' : 'text-[#aeb4c2]',
+            ].join(' ')}
             aria-label="历史会话"
             title="历史会话"
             onClick={handleOpenHistory}
@@ -3848,12 +3843,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       </div>
 
       {historyOpen ? (
-        <div className="absolute inset-0 z-30 flex flex-col bg-[#1d2025] text-white">
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4">
+        <div
+          ref={historyPopoverRef}
+          className="absolute right-16 top-[58px] z-30 flex w-[286px] flex-col overflow-hidden rounded-[18px] border border-white/[0.09] bg-[#232323] text-white shadow-[0_18px_52px_rgba(0,0,0,0.42)]"
+        >
+          <div className="px-4 pb-1.5 pt-3 text-[12px] font-medium leading-5 text-white/22">过去7天</div>
+          <div className="hidden">
             <div className="text-sm font-semibold text-white/92">历史会话</div>
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center text-white/52 transition hover:text-white"
+              className="hidden"
               aria-label="关闭历史会话"
               title="关闭历史会话"
               onClick={() => setHistoryOpen(false)}
@@ -3862,7 +3861,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             </button>
           </div>
           {historyThreads.length ? (
-            <div className="scrollbar-hide flex-1 overflow-y-auto px-3 py-3">
+            <div className="scrollbar-hide max-h-[210px] overflow-y-auto px-2 pb-2">
               {historyThreads.map((thread) => (
                 <div
                   key={thread.id}
@@ -3871,8 +3870,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   <button
                     type="button"
                     className={[
-                      'block w-full min-w-0 rounded-md px-3 py-2.5 text-left transition',
-                      thread.id === threadId ? 'bg-white/[0.075]' : 'hover:bg-white/[0.045]',
+                      'block w-full min-w-0 rounded-lg px-2.5 py-2 text-left transition',
+                      thread.id === threadId ? 'bg-white/[0.08]' : 'hover:bg-white/[0.055]',
                     ].join(' ')}
                     onClick={() => {
                       setMessages(restoreAgentThreadMessages(thread.messages));
@@ -3880,12 +3879,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       setHistoryOpen(false);
                     }}
                   >
-                    <div className="truncate pr-7 text-[13px] font-semibold leading-5 text-white/88">{thread.title}</div>
-                    <div className="mt-0.5 text-[11px] leading-4 text-white/34">{formatAgentThreadTime(thread.updatedAt)}</div>
+                    <div className="truncate pr-7 text-[13px] font-semibold leading-5 text-white/72">{thread.title}</div>
+                    <div className="mt-0.5 text-[11px] leading-4 text-white/28">{formatAgentThreadTime(thread.updatedAt)}</div>
                   </button>
                   <button
                     type="button"
-                    className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-white/30 opacity-0 transition hover:bg-white/[0.08] hover:text-white/76 group-hover:opacity-100"
+                    className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-white/24 opacity-0 transition hover:bg-white/[0.08] hover:text-white/72 group-hover:opacity-100"
                     aria-label="删除历史会话"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -3898,13 +3897,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       }
                     }}
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={13} />
                   </button>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="mx-4 mt-4 rounded-md border border-dashed border-white/12 px-3 py-4 text-xs text-white/42">
+            <div className="px-4 pb-5 pt-1 text-xs leading-5 text-white/38">
               当前项目还没有 Agent 历史会话。
             </div>
           )}
@@ -3920,10 +3919,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 attachments,
                 message.role === 'user' ? message.attachments : undefined,
               );
-
-              return (
+              const messageBubble = (
                 <div
-                  key={message.id}
                   className={[
                     'rounded-lg px-3 py-2 text-sm leading-6',
                     message.role === 'user'
@@ -3978,55 +3975,71 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   ) : null}
                 </div>
               );
+
+              if (message.role === 'agent') {
+                return (
+                  <div key={message.id} className="flex items-start gap-3 rounded-lg bg-transparent px-1 py-2">
+                    <AgentAvatarMark />
+                    <div className="min-w-0 flex-1">{messageBubble}</div>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={message.id}>{messageBubble}</div>
+              );
             }
 
             if (message.type === 'attachment_selection') {
               return (
-                <div key={message.id} className="rounded-lg bg-[#171b24] p-3">
-                  <div className="text-sm font-semibold">{message.title}</div>
-                  {message.reason ? (
-                    <div className="mt-1 text-xs leading-5 text-white/50">{message.reason}</div>
-                  ) : null}
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    {message.attachments.map((attachment, index) => {
-                      const selected = message.selectedAttachmentId === attachment.id;
+                <div key={message.id} className="flex items-start gap-3 rounded-lg bg-transparent px-1 py-2">
+                  <AgentAvatarMark />
+                  <div className="min-w-0 flex-1 rounded-lg bg-[#171b24] p-3">
+                    <div className="text-sm font-semibold">{message.title}</div>
+                    {message.reason ? (
+                      <div className="mt-1 text-xs leading-5 text-white/50">{message.reason}</div>
+                    ) : null}
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      {message.attachments.map((attachment, index) => {
+                        const selected = message.selectedAttachmentId === attachment.id;
 
-                      return (
-                        <button
-                          key={attachment.id}
-                          type="button"
-                          className={[
-                            'overflow-hidden rounded-md bg-white/[0.04] text-left transition',
-                            selected ? 'bg-white/[0.12]' : 'hover:bg-white/[0.08]',
-                          ].join(' ')}
-                          disabled={message.status !== 'waiting'}
-                          onClick={() => handleSelectAttachmentForPlan(message.id, attachment.id)}
-                        >
-                          <div className="relative aspect-square">
-                            {attachment.previewUrl ? (
-                              <NextImage
-                                src={attachment.previewUrl}
-                                alt={attachment.name || `图片${index + 1}`}
-                                fill
-                                sizes="140px"
-                                className="object-cover"
-                                unoptimized
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
-                                节点
-                              </div>
-                            )}
-                            {selected ? (
-                              <div className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white text-[#11141b]">
-                                <Check size={12} strokeWidth={3} />
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="truncate px-2 py-1.5 text-[11px] text-white/62">{`图片${index + 1}`}</div>
-                        </button>
-                      );
-                    })}
+                        return (
+                          <button
+                            key={attachment.id}
+                            type="button"
+                            className={[
+                              'overflow-hidden rounded-md bg-white/[0.04] text-left transition',
+                              selected ? 'bg-white/[0.12]' : 'hover:bg-white/[0.08]',
+                            ].join(' ')}
+                            disabled={message.status !== 'waiting'}
+                            onClick={() => handleSelectAttachmentForPlan(message.id, attachment.id)}
+                          >
+                            <div className="relative aspect-square">
+                              {attachment.previewUrl ? (
+                                <NextImage
+                                  src={attachment.previewUrl}
+                                  alt={attachment.name || `图片${index + 1}`}
+                                  fill
+                                  sizes="140px"
+                                  className="object-cover"
+                                  unoptimized
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center bg-white/[0.04] text-[11px] text-white/35">
+                                  节点
+                                </div>
+                              )}
+                              {selected ? (
+                                <div className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white text-[#11141b]">
+                                  <Check size={12} strokeWidth={3} />
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="truncate px-2 py-1.5 text-[11px] text-white/62">{`图片${index + 1}`}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               );
@@ -4707,16 +4720,29 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                           <div className="mb-2 text-[11px] text-white/34">画布节点（{nodeChips.length}）</div>
                           <div className="flex flex-wrap gap-2">
                             {nodeChips.map((chip) => (
-                              <div
+                              <button
                                 key={chip.id}
-                                className="flex max-w-full items-center gap-1.5 rounded-md border border-[#19d3ff]/15 bg-[#14212b] px-2.5 py-1.5 text-xs text-white/82"
+                                type="button"
+                                disabled={!chip.nodeId}
+                                title={chip.nodeId ? '定位到画布节点' : undefined}
+                                className={[
+                                  'flex max-w-full items-center gap-1.5 rounded-md border border-[#19d3ff]/15 bg-[#14212b] px-2.5 py-1.5 text-left text-xs text-white/82 outline-none transition',
+                                  chip.nodeId
+                                    ? 'cursor-pointer hover:border-[#19d3ff]/45 hover:bg-[#193043] focus-visible:border-[#19d3ff]/70 focus-visible:ring-1 focus-visible:ring-[#19d3ff]/35'
+                                    : 'cursor-default opacity-80',
+                                ].join(' ')}
+                                onClick={() => {
+                                  if (chip.nodeId) {
+                                    onFocusNode?.(chip.nodeId);
+                                  }
+                                }}
                               >
                                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#19d3ff]" />
                                 <span className="truncate font-medium">{chip.title}</span>
                                 <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/62">
                                   {chip.typeLabel}
                                 </span>
-                              </div>
+                              </button>
                             ))}
                           </div>
                         </div>

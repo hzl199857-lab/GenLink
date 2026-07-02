@@ -17,10 +17,11 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
     fileName: filename,
   });
 
-  module._compile(output.outputText, filename);
+  (module as NodeModule & { _compile(source: string, filename: string): void })._compile(output.outputText, filename);
 };
 
 const {
+  formatAgentCanvasNodeChipTitle,
   formatEcomPlannerOptionErrorText,
   formatAgentChatErrorText,
   sanitizeAgentChatText,
@@ -61,4 +62,26 @@ test("replaces raw internal errors with a concise user-facing fallback", () => {
   const text = "GenLink rules runtime did not return a valid workflow-json. first=bad; repair=bad.";
 
   assert.equal(formatAgentChatErrorText(text, "创建画布节点失败，请稍后重试。"), "创建画布节点失败，请稍后重试。");
+});
+
+test("uses the user task instead of internal workflow names for canvas node chips", () => {
+  assert.equal(
+    formatAgentCanvasNodeChipTitle({
+      title: "OpenClaw 规则库工作流",
+      userPrompt: "一只小狗在草地玩耍",
+      fallback: "图像生成",
+    }),
+    "一只小狗在草地玩耍",
+  );
+});
+
+test("keeps explicit action titles for canvas node chips", () => {
+  assert.equal(
+    formatAgentCanvasNodeChipTitle({
+      title: "草地小狗图",
+      userPrompt: "一只小狗在草地玩耍",
+      fallback: "图像生成",
+    }),
+    "草地小狗图",
+  );
 });
