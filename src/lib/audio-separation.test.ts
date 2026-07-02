@@ -89,7 +89,7 @@ describe("RunningHub audio separation request mapping", () => {
     assert.equal(result.accompaniment.mimeType, "audio/mpeg");
   });
 
-  it("uses result order when RunningHub does not label the two audio files", () => {
+  it("uses RunningHub unlabeled result order as accompaniment then vocal", () => {
     const result = parseRunningHubAudioSeparationResult("rh-task-2", {
       taskId: "rh-task-2",
       status: "SUCCESS",
@@ -105,7 +105,7 @@ describe("RunningHub audio separation request mapping", () => {
       ],
     });
 
-    assert.equal(result.vocal.audioUrl, "https://example.com/output_1.wav");
-    assert.equal(result.accompaniment.audioUrl, "https://example.com/output_2.wav");
+    assert.equal(result.vocal.audioUrl, "https://example.com/output_2.wav");
+    assert.equal(result.accompaniment.audioUrl, "https://example.com/output_1.wav");
   });
 });

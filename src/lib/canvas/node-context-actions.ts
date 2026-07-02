@@ -15,6 +15,16 @@ export type NodeExport =
       mimeType: string;
     };
 
+export type NodeClipboardContent =
+  | {
+      kind: "text";
+      text: string;
+    }
+  | {
+      kind: "image";
+      url: string;
+    };
+
 function clean(value?: string): string {
   return value?.trim() ?? "";
 }
@@ -185,23 +195,32 @@ export function createAgentAttachmentFromNode(node: CanvasNode): AgentTaskAttach
   };
 }
 
-export function getNodeClipboardText(node: CanvasNode): string | null {
+export function getNodeClipboardContent(node: CanvasNode): NodeClipboardContent | null {
   if (node.type === "text") {
-    return clean(node.data.text) || null;
+    const text = clean(node.data.text);
+    return text ? { kind: "text", text } : null;
   }
 
   if (node.type === "storyboard_script") {
-    return clean(node.data.rawJson) || clean(node.data.prompt) || null;
+    const text = clean(node.data.rawJson) || clean(node.data.prompt);
+    return text ? { kind: "text", text } : null;
   }
 
   if (node.type === "ai_text_result") {
-    return clean(node.data.content) || null;
+    const text = clean(node.data.content);
+    return text ? { kind: "text", text } : null;
   }
 
-  const mediaUrl = imageUrlFromNode(node) || videoUrlFromNode(node) || audioUrlFromNode(node);
+  const imageUrl = imageUrlFromNode(node);
+
+  if (imageUrl) {
+    return { kind: "image", url: imageUrl };
+  }
+
+  const mediaUrl = videoUrlFromNode(node) || audioUrlFromNode(node);
 
   if (mediaUrl) {
-    return mediaUrl;
+    return { kind: "text", text: mediaUrl };
   }
 
   if (
@@ -209,10 +228,16 @@ export function getNodeClipboardText(node: CanvasNode): string | null {
     node.type === "video_generation" ||
     node.type === "audio_generation"
   ) {
-    return clean(node.data.prompt) || null;
+    const text = clean(node.data.prompt);
+    return text ? { kind: "text", text } : null;
   }
 
   return null;
+}
+
+export function getNodeClipboardText(node: CanvasNode): string | null {
+  const content = getNodeClipboardContent(node);
+  return content?.kind === "text" ? content.text : null;
 }
 
 function textExport(node: CanvasNode, text: string, fallback: string): NodeExport | null {

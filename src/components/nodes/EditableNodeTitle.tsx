@@ -17,6 +17,10 @@ function normalizeTitle(value: string): string | undefined {
   return next.length > 0 ? next : undefined;
 }
 
+export function getEditableNodeTitleInputClassName(inputClassName?: string) {
+  return [inputClassName, 'pointer-events-auto'].filter(Boolean).join(' ');
+}
+
 export function EditableNodeTitle({
   value,
   fallbackValue,
@@ -35,8 +39,12 @@ export function EditableNodeTitle({
       return;
     }
 
-    inputRef.current?.focus();
-    inputRef.current?.select();
+    const frameId = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
   }, [editing, fallbackValue, value]);
 
   useEffect(() => {
@@ -85,7 +93,7 @@ export function EditableNodeTitle({
             cancel();
           }
         }}
-        className={inputClassName}
+        className={getEditableNodeTitleInputClassName(inputClassName)}
         style={{ width: `${Math.max((draft || fallbackValue).length + 1, 6)}ch` }}
       />
     );

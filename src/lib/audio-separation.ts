@@ -188,14 +188,32 @@ function outputFromResult(result: { url?: string; outputType?: string }): AudioS
   };
 }
 
+function hasSeparatedToken(text: string, token: string): boolean {
+  const normalizedText = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const normalizedToken = token.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  return ` ${normalizedText} `.includes(` ${normalizedToken} `);
+}
+
 function isVocalLike(result: { url?: string; outputType?: string }): boolean {
   const text = `${result.url ?? ""} ${result.outputType ?? ""}`.toLowerCase();
-  return /\b(vocal|voice|vocals|stem_vocal|人声|vocal)\b/.test(text);
+  return (
+    !isAccompanimentLike(result) &&
+    (
+      ["vocal", "vocals", "voice", "stem_vocal"].some((token) => hasSeparatedToken(text, token)) ||
+      /人声/.test(text)
+    )
+  );
 }
 
 function isAccompanimentLike(result: { url?: string; outputType?: string }): boolean {
   const text = `${result.url ?? ""} ${result.outputType ?? ""}`.toLowerCase();
-  return /\b(instrumental|accompaniment|music|bgm|karaoke|no_vocal|伴奏|背景)\b/.test(text);
+  return (
+    ["instrumental", "accompaniment", "music", "bgm", "karaoke", "no_vocal"].some(
+      (token) => hasSeparatedToken(text, token),
+    ) ||
+    /伴奏|背景/.test(text)
+  );
 }
 
 function getRunningHubErrorMessage(response: RunningHubTaskResponse): string {
@@ -245,10 +263,12 @@ export function parseRunningHubAudioSeparationResult(
   response: RunningHubTaskResponse,
 ): AudioSeparationResult {
   const audioResults = (response.results ?? []).filter((item) => item.url?.trim() && isAudioResult(item));
-  const vocal = audioResults.find(isVocalLike) ?? audioResults[0];
-  const accompaniment =
-    audioResults.find((item) => item !== vocal && isAccompanimentLike(item)) ??
-    audioResults.find((item) => item !== vocal);
+  const labeledVocal = audioResults.find(isVocalLike);
+  const labeledAccompaniment = audioResults.find(isAccompanimentLike);
+  const accompaniment = labeledAccompaniment ?? audioResults[0];
+  const vocal =
+    labeledVocal ??
+    audioResults.find((item) => item !== accompaniment);
 
   if (!vocal?.url?.trim() || !accompaniment?.url?.trim()) {
     throw new AudioSeparationApiError(

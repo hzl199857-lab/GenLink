@@ -200,11 +200,12 @@ import { getImageHistoryDisplayPrompt } from '@/lib/image-prompt';
 import { validateCanvasAgentActions } from '@/lib/agent-actions';
 import {
   createAgentAttachmentFromNode,
-  getNodeClipboardText,
+  getNodeClipboardContent,
   getNodeExport,
   isNodeRenameable,
   type NodeExport,
 } from '@/lib/canvas/node-context-actions';
+import { writeClipboardContent } from '@/lib/clipboard-content';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
   CreateProjectDialog,
@@ -11763,8 +11764,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const nodeContextAttachment = useMemo(() => (
     nodeContextTarget ? createAgentAttachmentFromNode(nodeContextTarget) : null
   ), [nodeContextTarget]);
-  const nodeContextClipboardText = useMemo(() => (
-    nodeContextTarget ? getNodeClipboardText(nodeContextTarget) : null
+  const nodeContextClipboardContent = useMemo(() => (
+    nodeContextTarget ? getNodeClipboardContent(nodeContextTarget) : null
   ), [nodeContextTarget]);
   const nodeContextExport = useMemo(() => (
     nodeContextTarget ? getNodeExport(nodeContextTarget) : null
@@ -11781,15 +11782,15 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [nodeContextAttachment]);
 
   const handleNodeContextCopyContent = useCallback(() => {
-    if (!nodeContextClipboardText) {
+    if (!nodeContextClipboardContent) {
       return;
     }
 
     setNodeContextMenu(null);
-    void navigator.clipboard.writeText(nodeContextClipboardText)
-      .then(() => showProjectMessage('已复制'))
+    void writeClipboardContent(nodeContextClipboardContent)
+      .then(() => showProjectMessage(nodeContextClipboardContent.kind === 'image' ? '已复制图片' : '已复制'))
       .catch((error) => showProjectMessage(error instanceof Error ? error.message : '复制失败'));
-  }, [nodeContextClipboardText, showProjectMessage]);
+  }, [nodeContextClipboardContent, showProjectMessage]);
 
   const handleNodeContextSaveAs = useCallback(() => {
     if (!nodeContextExport) {
@@ -14408,7 +14409,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           x={nodeContextMenu.screen.x}
           y={nodeContextMenu.screen.y}
           canAddToConversation={nodeContextAttachment !== null}
-          canCopyContent={nodeContextClipboardText !== null}
+          canCopyContent={nodeContextClipboardContent !== null}
           canSaveAs={nodeContextExport !== null}
           canRename={isNodeRenameable(nodeContextTarget)}
           canCopyNode

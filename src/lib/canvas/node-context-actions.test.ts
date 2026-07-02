@@ -24,6 +24,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   createAgentAttachmentFromNode,
+  getNodeClipboardContent,
   getNodeClipboardText,
   getNodeExport,
   getNodeTitle,
@@ -55,6 +56,18 @@ const textNode: CanvasNode = {
   },
 };
 
+const videoNode: CanvasNode = {
+  id: "video-1",
+  type: "video",
+  position: { x: 0, y: 0 },
+  data: {
+    title: "Motion",
+    videoUrl: "https://example.com/video.mp4",
+    hostedVideoUrl: "https://cdn.example.com/video.mp4",
+    fileName: "motion.mp4",
+  },
+};
+
 test("creates Agent image attachment only from image-capable nodes", () => {
   const attachment = createAgentAttachmentFromNode(imageNode);
 
@@ -65,9 +78,25 @@ test("creates Agent image attachment only from image-capable nodes", () => {
   assert.equal(createAgentAttachmentFromNode(textNode), null);
 });
 
-test("gets clipboard text from text and media nodes", () => {
+test("gets clipboard content from text, image, and media nodes", () => {
+  assert.deepEqual(getNodeClipboardContent(textNode), {
+    kind: "text",
+    text: "Line one\nLine two",
+  });
+  assert.deepEqual(getNodeClipboardContent(imageNode), {
+    kind: "image",
+    url: "https://cdn.example.com/image.png",
+  });
+  assert.deepEqual(getNodeClipboardContent(videoNode), {
+    kind: "text",
+    text: "https://cdn.example.com/video.mp4",
+  });
+});
+
+test("keeps legacy clipboard text helper for text-copyable nodes only", () => {
   assert.equal(getNodeClipboardText(textNode), "Line one\nLine two");
-  assert.equal(getNodeClipboardText(imageNode), "https://cdn.example.com/image.png");
+  assert.equal(getNodeClipboardText(videoNode), "https://cdn.example.com/video.mp4");
+  assert.equal(getNodeClipboardText(imageNode), null);
 });
 
 test("gets export metadata for text and image nodes", () => {
