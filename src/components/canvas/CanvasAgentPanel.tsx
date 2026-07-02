@@ -2443,20 +2443,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         presetPrompts: PLANF_ECOM_PRESETS,
       });
 
-      if (routeDecision.route === 'greet') {
-        setMessages((current) => [
-          ...current,
-          {
-            id: createPanelId('agent-greet'),
-            role: 'agent',
-            type: 'text',
-            content: '我在。告诉我你想在画布上生成、编辑或编排什么内容。',
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return;
-      }
-
       if (routeDecision.route === 'ecom-start' && routeDecision.preset) {
         if (routeDecision.preset === ECOM_PLANNER_PRESET_ID) {
           await runEcomPlannerStaged();
