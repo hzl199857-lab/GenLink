@@ -47,7 +47,8 @@ jobs:
             "EVENT_NAME='$EVENT_NAME' RELEASE_SHA='$RELEASE_SHA' ROLLBACK_RELEASE='$ROLLBACK_RELEASE' bash -se" <<'REMOTE'
           set -euo pipefail
 
-          APP_NAME="genlink-app"
+          APP_NAME="genlink-agent-test"
+          LEGACY_PM2_APP="genlink-app"
           LEGACY_APP="/www/GenLink_app"
           RELEASES="/www/GenLink_releases"
           SHARED="/www/GenLink_shared"
@@ -57,10 +58,57 @@ jobs:
           WORKER_PORT="8080"
           WORKER_VENV="/www/GenLink_worker_venv"
 
+          load_shared_env() {
+            eval "$(
+              ENV_FILE="$SHARED/.env.production" python3 - <<'PY'
+          import os
+          import shlex
+          from pathlib import Path
+
+          env_file = Path(os.environ["ENV_FILE"])
+          for raw_line in env_file.read_text(encoding="utf-8-sig").splitlines():
+              line = raw_line.strip()
+              if not line or line.startswith("#") or "=" not in line:
+                  continue
+              key, value = line.split("=", 1)
+              key = key.strip()
+              value = value.strip().strip('"').strip("'")
+              if key:
+                  print(f"export {key}={shlex.quote(value)}")
+          PY
+            )"
+          }
+
+          remove_env_var() {
+            local key="$1"
+            local file="$SHARED/.env.production"
+
+            if [ -f "$file" ]; then
+              sed -i "/^${key}=/d" "$file"
+            fi
+          }
+
           restart_app() {
             cd "$CURRENT"
+            load_shared_env
+            export NEXT_PUBLIC_APP_VERSION
+            NEXT_PUBLIC_APP_VERSION="$(git rev-parse --short=12 HEAD)"
+            export OPENCLAW_CLI_ENTRY="${OPENCLAW_CLI_ENTRY:-/www/GenLink-runtime/openclaw/openclaw.mjs}"
+            export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-/www/GenLink-runtime/openclaw-genlink.json}"
+            export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-/www/GenLink-runtime/state}"
+            export OPENCLAW_WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/www/GenLink-runtime/workspaces/genlink-planf}"
+            export GENLINK_OPENCLAW_TEXT_BASE_URL="${GENLINK_OPENCLAW_TEXT_BASE_URL:-https://ai.comfly.org/v1}"
+            export OPENCLAW_AGENT_MODEL="${OPENCLAW_AGENT_MODEL:-gpt-5.4-mini}"
+            unset GENLINK_AGENT_BACKEND_URL
+
             pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
-            pm2 start npm --name "$APP_NAME" -- start -- -H 127.0.0.1 -p 3002
+            pm2 delete "$LEGACY_PM2_APP" >/dev/null 2>&1 || true
+            PORT=3002 pm2 start npm --name "$APP_NAME" -- run start -- -p 3002
+            sleep 3
+            if ! curl -fsS "http://127.0.0.1:3002/api/app-version" | grep -q "$NEXT_PUBLIC_APP_VERSION"; then
+              pm2 logs "$APP_NAME" --lines 80 --nostream || true
+              exit 1
+            fi
             pm2 save
           }
 
@@ -195,6 +243,13 @@ jobs:
           fi
 
           upsert_env_var "MEDIA_WORKER_BASE_URL" "http://127.0.0.1:${WORKER_PORT}"
+          upsert_env_var "OPENCLAW_CLI_ENTRY" "/www/GenLink-runtime/openclaw/openclaw.mjs"
+          upsert_env_var "OPENCLAW_CONFIG_PATH" "/www/GenLink-runtime/openclaw-genlink.json"
+          upsert_env_var "OPENCLAW_STATE_DIR" "/www/GenLink-runtime/state"
+          upsert_env_var "OPENCLAW_WORKSPACE_DIR" "/www/GenLink-runtime/workspaces/genlink-planf"
+          upsert_env_var "GENLINK_OPENCLAW_TEXT_BASE_URL" "https://ai.comfly.org/v1"
+          upsert_env_var "OPENCLAW_AGENT_MODEL" "gpt-5.4-mini"
+          remove_env_var "GENLINK_AGENT_BACKEND_URL"
 
           cd "$LEGACY_APP"
           if ! git diff --quiet || ! git diff --cached --quiet; then
