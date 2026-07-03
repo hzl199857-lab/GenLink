@@ -64,7 +64,13 @@ test("multi-node selection exposes the same multi-source connection handle as gr
   assert.match(source, /onStartSelectionConnection: \(nodeIds: string\[\], event: React\.MouseEvent<HTMLElement>\) => void;/);
   assert.match(source, /function getConnectionSourcesFromNodeIds\(nodeIds: Iterable<string>\): GroupConnectionSource\[\]/);
   assert.match(source, /function getGroupConnectionSourcesFromDom\(group: NodeGroup\): GroupConnectionSource\[\][\s\S]*?return getConnectionSourcesFromNodeIds\(group\.nodeIds\);/);
-  assert.match(source, /const selectionSourceHandleCenter = \{[\s\S]*?x: paddedBounds\.width,[\s\S]*?y: paddedBounds\.height \/ 2,/);
   assert.match(source, /onMouseDown=\{\(event\) => onStartSelectionConnection\(selectedNodes\.map\(\(node\) => node\.id\), event\)\}/);
   assert.match(source, /onStartSelectionConnection=\{handleStartSelectionConnection\}/);
+});
+
+test("group and multi-node selection connection handles reuse the node magnetic plus", () => {
+  assert.match(source, /import \{[\s\S]*MagneticSidePlus[\s\S]*\} from '..\/nodes\/CardSideHandle';/);
+  assert.match(source, /<MagneticSidePlus[\s\S]*?edge="right"[\s\S]*?active=\{showSourceHandle\}[\s\S]*?onMouseDown=\{onStartConnection\}/);
+  assert.match(source, /<MagneticSidePlus[\s\S]*?edge="right"[\s\S]*?active=\{true\}[\s\S]*?onMouseDown=\{\(event\) => onStartSelectionConnection\(selectedNodes\.map\(\(node\) => node\.id\), event\)\}/);
+  assert.doesNotMatch(source, /GROUP_SOURCE_HANDLE_BADGE_BASE/);
 });

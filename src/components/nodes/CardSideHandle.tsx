@@ -73,6 +73,210 @@ export interface CardSideHandleProps {
   cardWidth?: number;
 }
 
+export interface MagneticSidePlusProps {
+  edge: 'left' | 'right';
+  active?: boolean;
+  connecting?: boolean;
+  disabled?: boolean;
+  containerRef: React.RefObject<HTMLElement | null>;
+  anchorElementRef: React.RefObject<HTMLElement | null>;
+  topOffset?: number;
+  height?: number | string;
+  className?: string;
+  onMouseDown?: (event: React.MouseEvent<HTMLElement>) => void;
+}
+
+export function MagneticSidePlus({
+  edge,
+  active = false,
+  connecting = false,
+  disabled = false,
+  containerRef,
+  anchorElementRef,
+  topOffset = 0,
+  height = `calc(100% - ${topOffset}px)`,
+  className,
+  onMouseDown,
+}: MagneticSidePlusProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const store = useStoreApi();
+  const [sidePlusState, setSidePlusState] = useState<SidePlusState>({
+    visible: false,
+    magnet: false,
+    left: edge === 'left'
+      ? -SIDE_PLUS_GAP - HANDLE_BADGE_HALF
+      : SIDE_PLUS_GAP - HANDLE_BADGE_HALF,
+    top: 0,
+  });
+  const isLeft = edge === 'left';
+  const shouldShowSidePlus = active || sidePlusState.visible || connecting;
+
+  useEffect(() => {
+    if (disabled || (!active && !connecting)) {
+      return;
+    }
+
+    const anchorElement = anchorElementRef.current;
+
+    if (!anchorElement) {
+      return;
+    }
+
+    const edgeLocalX = isLeft
+      ? anchorElement.offsetLeft
+      : anchorElement.offsetLeft + anchorElement.offsetWidth;
+    const anchorLocalX = edgeLocalX + (isLeft ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP);
+    const anchorLocalY = anchorElement.offsetTop + anchorElement.offsetHeight / 2;
+
+    setSidePlusState((current) => ({
+      ...current,
+      visible: true,
+      magnet: false,
+      left: anchorLocalX - HANDLE_BADGE_HALF,
+      top: anchorLocalY - HANDLE_BADGE_HALF,
+    }));
+  }, [active, anchorElementRef, connecting, disabled, isLeft]);
+
+  useEffect(() => {
+    if (disabled) {
+      return;
+    }
+
+    const updateSidePlusPosition = (event: MouseEvent) => {
+      const overlayElement = rootRef.current;
+      const containerElement = containerRef.current;
+      const anchorElement = anchorElementRef.current;
+
+      if (!overlayElement || !containerElement || !anchorElement) {
+        return;
+      }
+
+      if (isSidePlusPointerBlocked(event.target, overlayElement)) {
+        setSidePlusState((current) => (
+          current.visible || current.magnet
+            ? { ...current, visible: false, magnet: false }
+            : current
+        ));
+        return;
+      }
+
+      const zoom = store.getState().transform?.[2] || 1;
+      const containerRect = containerElement.getBoundingClientRect();
+      const anchorRect = anchorElement.getBoundingClientRect();
+      const edgeScreenX = isLeft ? anchorRect.left : anchorRect.right;
+      const anchorScreenX = edgeScreenX + (isLeft ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP) * zoom;
+      const anchorScreenY = anchorRect.top + anchorRect.height / 2;
+      const dx = event.clientX - anchorScreenX;
+      const dy = event.clientY - anchorScreenY;
+      const distance = Math.hypot(dx, dy);
+      const threshold = SIDE_PLUS_THRESHOLD * zoom;
+      const magnetMax = SIDE_PLUS_MAGNET_MAX * zoom;
+      const shouldMagnet = distance < threshold;
+      const shouldReveal = shouldMagnet || active || connecting;
+
+      let offsetX = 0;
+      let offsetY = 0;
+
+      if (shouldMagnet && !connecting) {
+        const offset = Math.min(distance, magnetMax) / zoom;
+        const angle = Math.atan2(dy, dx);
+
+        offsetX = Math.cos(angle) * offset;
+        offsetY = Math.sin(angle) * offset;
+
+        if (isLeft) {
+          offsetX = Math.min(offsetX, SIDE_PLUS_GAP);
+        } else {
+          offsetX = Math.max(offsetX, -SIDE_PLUS_GAP);
+        }
+      }
+
+      const anchorLocalX = (anchorScreenX - containerRect.left) / zoom;
+      const anchorLocalY = (anchorScreenY - containerRect.top) / zoom;
+      const nextState: SidePlusState = {
+        visible: shouldReveal,
+        magnet: shouldMagnet && !connecting,
+        left: anchorLocalX + offsetX - HANDLE_BADGE_HALF,
+        top: anchorLocalY + offsetY - HANDLE_BADGE_HALF,
+      };
+
+      setSidePlusState((current) => {
+        if (
+          current.visible === nextState.visible &&
+          current.magnet === nextState.magnet &&
+          Math.abs(current.left - nextState.left) < 0.5 &&
+          Math.abs(current.top - nextState.top) < 0.5
+        ) {
+          return current;
+        }
+
+        return nextState;
+      });
+    };
+
+    document.addEventListener('mousemove', updateSidePlusPosition);
+
+    return () => {
+      document.removeEventListener('mousemove', updateSidePlusPosition);
+    };
+  }, [active, anchorElementRef, connecting, containerRef, disabled, isLeft, store]);
+
+  if (disabled) {
+    return null;
+  }
+
+  const zoneLeft = isLeft ? -SIDE_ZONE_WIDTH : 0;
+
+  return (
+    <div
+      ref={rootRef}
+      data-canvas-menu-ignore="true"
+      className={[
+        'pointer-events-none absolute z-20 overflow-visible',
+        className ?? '',
+      ].join(' ')}
+      style={{
+        left: isLeft ? 0 : '100%',
+        top: 0,
+        width: 0,
+        height: '100%',
+      }}
+    >
+      <div
+        className={[
+          'card-side-handle-zone',
+          SIDE_ZONE_BASE,
+        ].join(' ')}
+        style={{
+          left: `${zoneLeft}px`,
+          top: topOffset,
+          width: SIDE_ZONE_WIDTH,
+          height,
+          pointerEvents: shouldShowSidePlus ? 'auto' : 'none',
+        }}
+        onMouseDown={onMouseDown}
+      />
+      <span
+        aria-hidden="true"
+        className={[
+          'card-side-handle-badge',
+          HANDLE_BADGE_BASE,
+          shouldShowSidePlus ? 'opacity-100' : 'opacity-0',
+          sidePlusState.magnet ? 'card-side-plus-btn--magnet' : '',
+          connecting ? 'card-side-plus-btn--active' : '',
+        ].join(' ')}
+        style={{
+          top: `${sidePlusState.top}px`,
+          left: `${sidePlusState.left}px`,
+        }}
+        onMouseDown={onMouseDown}
+      >
+        <Plus size={12} className="pointer-events-none" />
+      </span>
+    </div>
+  );
+}
+
 export function CardSideHandle({
   type,
   position,
@@ -88,15 +292,8 @@ export function CardSideHandle({
   const store = useStoreApi();
   const updateNodeInternals = useUpdateNodeInternals();
   const cleanupRef = useRef<(() => void) | null>(null);
+  const cardAnchorRef = useRef<HTMLDivElement | null>(null);
   const [isConnectingFromPlus, setIsConnectingFromPlus] = useState(false);
-  const [sidePlusState, setSidePlusState] = useState<SidePlusState>({
-    visible: false,
-    magnet: false,
-    left: position === Position.Left
-      ? cardLeftOffset - SIDE_PLUS_GAP - HANDLE_BADGE_HALF
-      : cardLeftOffset + cardWidth + SIDE_PLUS_GAP - HANDLE_BADGE_HALF,
-    top: 0,
-  });
   const shouldMeasureCardBounds = cardWidth <= 0;
   const [measuredCardBounds, setMeasuredCardBounds] = useState({
     left: cardLeftOffset,
@@ -112,10 +309,7 @@ export function CardSideHandle({
   const handleLeft = position === Position.Left
     ? resolvedCardLeft - HANDLE_SIZE / 2
     : cardRightEdge - HANDLE_SIZE / 2;
-  const zoneLeft = position === Position.Left
-    ? resolvedCardLeft - SIDE_ZONE_WIDTH
-    : cardRightEdge;
-  const shouldShowSidePlus = visible || sidePlusState.visible || isConnectingFromPlus;
+  const shouldShowSidePlus = visible || isConnectingFromPlus;
 
   useEffect(() => () => {
     cleanupRef.current?.();
@@ -178,127 +372,12 @@ export function CardSideHandle({
     };
   }, [shouldMeasureCardBounds]);
 
-  useEffect(() => {
-    if (disabled || (!visible && !isConnectingFromPlus)) {
-      return;
-    }
-
-    const containerElement = rootRef.current?.parentElement;
-    const cardElement = containerElement?.querySelector<HTMLElement>('.node-connectable-card');
-
-    if (!containerElement || !cardElement) {
-      return;
-    }
-
-    const edgeLocalX = position === Position.Left
-      ? cardElement.offsetLeft
-      : cardElement.offsetLeft + cardElement.offsetWidth;
-    const anchorLocalX = edgeLocalX + (position === Position.Left ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP);
-    const anchorLocalY = cardElement.offsetTop + cardElement.offsetHeight / 2;
-
-    setSidePlusState((current) => ({
-      ...current,
-      visible: true,
-      magnet: false,
-      left: anchorLocalX - HANDLE_BADGE_HALF,
-      top: anchorLocalY - HANDLE_BADGE_HALF,
-    }));
-  }, [disabled, isConnectingFromPlus, position, visible, resolvedCardLeft, resolvedCardWidth]);
-
-  useEffect(() => {
-    if (disabled) {
-      return;
-    }
-
-    const updateSidePlusPosition = (event: MouseEvent) => {
-      const overlayElement = rootRef.current;
-      const containerElement = overlayElement?.parentElement;
-      const cardElement = containerElement?.querySelector<HTMLElement>('.node-connectable-card');
-
-      if (!overlayElement || !containerElement || !cardElement) {
-        return;
-      }
-
-      if (isSidePlusPointerBlocked(event.target, overlayElement)) {
-        setSidePlusState((current) => (
-          current.visible || current.magnet
-            ? { ...current, visible: false, magnet: false }
-            : current
-        ));
-        return;
-      }
-
-      const zoom = store.getState().transform?.[2] || 1;
-      const containerRect = containerElement.getBoundingClientRect();
-      const cardRect = cardElement.getBoundingClientRect();
-      const edgeScreenX = position === Position.Left ? cardRect.left : cardRect.right;
-      const anchorScreenX = edgeScreenX + (position === Position.Left ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP) * zoom;
-      const anchorScreenY = cardRect.top + cardRect.height / 2;
-      const dx = event.clientX - anchorScreenX;
-      const dy = event.clientY - anchorScreenY;
-      const distance = Math.hypot(dx, dy);
-      const threshold = SIDE_PLUS_THRESHOLD * zoom;
-      const magnetMax = SIDE_PLUS_MAGNET_MAX * zoom;
-      const shouldMagnet = distance < threshold;
-      const shouldReveal = shouldMagnet || visible || isConnectingFromPlus;
-
-      let offsetX = 0;
-      let offsetY = 0;
-
-      if (shouldMagnet && !isConnectingFromPlus) {
-        const offset = Math.min(distance, magnetMax) / zoom;
-        const angle = Math.atan2(dy, dx);
-
-        offsetX = Math.cos(angle) * offset;
-        offsetY = Math.sin(angle) * offset;
-
-        if (position === Position.Left) {
-          offsetX = Math.min(offsetX, SIDE_PLUS_GAP);
-        } else {
-          offsetX = Math.max(offsetX, -SIDE_PLUS_GAP);
-        }
-      }
-
-      const anchorLocalX = (
-        anchorScreenX - containerRect.left
-      ) / zoom;
-      const anchorLocalY = (
-        anchorScreenY - containerRect.top
-      ) / zoom;
-      const nextState: SidePlusState = {
-        visible: shouldReveal,
-        magnet: shouldMagnet && !isConnectingFromPlus,
-        left: anchorLocalX + offsetX - HANDLE_BADGE_HALF,
-        top: anchorLocalY + offsetY - HANDLE_BADGE_HALF,
-      };
-
-      setSidePlusState((current) => {
-        if (
-          current.visible === nextState.visible &&
-          current.magnet === nextState.magnet &&
-          Math.abs(current.left - nextState.left) < 0.5 &&
-          Math.abs(current.top - nextState.top) < 0.5
-        ) {
-          return current;
-        }
-
-        return nextState;
-      });
-    };
-
-    document.addEventListener('mousemove', updateSidePlusPosition);
-
-    return () => {
-      document.removeEventListener('mousemove', updateSidePlusPosition);
-    };
-  }, [disabled, isConnectingFromPlus, position, store, visible]);
-
   const startZoneConnection = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (event.button !== 0 || !nodeId) {
       return;
     }
 
-    if (!shouldShowSidePlus || isSidePlusPointerBlocked(event.target, rootRef.current)) {
+    if (isSidePlusPointerBlocked(event.target, rootRef.current)) {
       return;
     }
 
@@ -651,7 +730,7 @@ export function CardSideHandle({
     window.addEventListener('blur', handleWindowBlur);
     cleanupRef.current = cleanup;
     activeConnectionCleanup = cleanup;
-  }, [handleDomId, nodeId, shouldShowSidePlus, store, type]);
+  }, [handleDomId, nodeId, store, type]);
 
   if (disabled) {
     return null;
@@ -662,6 +741,16 @@ export function CardSideHandle({
       ref={rootRef}
       className="pointer-events-none absolute inset-0 z-20 overflow-visible"
     >
+      <div
+        ref={cardAnchorRef}
+        className="pointer-events-none absolute"
+        style={{
+          left: `${resolvedCardLeft}px`,
+          top: 0,
+          width: `${resolvedCardWidth}px`,
+          height: '100%',
+        }}
+      />
       <Handle
         data-handle-dom-id={handleDomId}
         type={type}
@@ -676,37 +765,17 @@ export function CardSideHandle({
           left: `${handleLeft}px`,
         }}
       />
-      <div
-        className={[
-          'card-side-handle-zone',
-          SIDE_ZONE_BASE,
-        ].join(' ')}
-        style={{
-          left: `${zoneLeft}px`,
-          top: cardTopOffset,
-          width: SIDE_ZONE_WIDTH,
-          height: `calc(100% - ${cardTopOffset}px)`,
-          pointerEvents: shouldShowSidePlus ? 'auto' : 'none',
-        }}
+      <MagneticSidePlus
+        edge={position === Position.Left ? 'left' : 'right'}
+        active={visible || isConnectingFromPlus}
+        connecting={isConnectingFromPlus}
+        disabled={disabled}
+        containerRef={rootRef}
+        anchorElementRef={cardAnchorRef}
+        topOffset={cardTopOffset}
+        height={`calc(100% - ${cardTopOffset}px)`}
         onMouseDown={startZoneConnection}
       />
-      <span
-        aria-hidden="true"
-        className={[
-          'card-side-handle-badge',
-          HANDLE_BADGE_BASE,
-          shouldShowSidePlus ? 'opacity-100' : 'opacity-0',
-          sidePlusState.magnet ? 'card-side-plus-btn--magnet' : '',
-          isConnectingFromPlus ? 'card-side-plus-btn--active' : '',
-        ].join(' ')}
-        style={{
-          top: `${sidePlusState.top}px`,
-          left: `${sidePlusState.left}px`,
-        }}
-        onMouseDown={startZoneConnection}
-      >
-        <Plus size={12} className="pointer-events-none" />
-      </span>
     </div>
   );
 }

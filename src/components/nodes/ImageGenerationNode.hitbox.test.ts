@@ -5,6 +5,7 @@ import { test } from "node:test";
 const source = readFileSync(new URL("./ImageGenerationNode.tsx", import.meta.url), "utf8");
 const toolbarSource = readFileSync(new URL("./ImageGenerationNodeToolbar.tsx", import.meta.url), "utf8");
 const promptBarSource = readFileSync(new URL("./ImageGenerationPromptBar.tsx", import.meta.url), "utf8");
+const cardSideHandleSource = readFileSync(new URL("./CardSideHandle.tsx", import.meta.url), "utf8");
 const canvasSource = readFileSync(new URL("../canvas/InfiniteCanvas.tsx", import.meta.url), "utf8");
 
 test("keeps transparent image generation stage out of the pointer hitbox", () => {
@@ -22,6 +23,15 @@ test("keeps image generation toolbar wrapper pass-through outside actual control
   assert.match(toolbarSource, /className="pointer-events-none absolute left-1\/2/);
   assert.match(toolbarSource, /className="pointer-events-auto flex items-center/);
   assert.match(toolbarSource, /className="group\/tooltip pointer-events-auto relative"/);
+});
+
+test("exports reusable magnetic side plus behavior for canvas overlays", () => {
+  assert.match(cardSideHandleSource, /export interface MagneticSidePlusProps/);
+  assert.match(cardSideHandleSource, /export function MagneticSidePlus/);
+  assert.match(cardSideHandleSource, /SIDE_PLUS_THRESHOLD/);
+  assert.match(cardSideHandleSource, /SIDE_PLUS_MAGNET_MAX/);
+  assert.match(cardSideHandleSource, /card-side-plus-btn--magnet/);
+  assert.match(cardSideHandleSource, /<MagneticSidePlus[\s\S]*?active=\{visible \|\| isConnectingFromPlus\}/);
 });
 
 test("closes image generation prompt bar menus when the selected node changes", () => {

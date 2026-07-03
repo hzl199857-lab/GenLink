@@ -170,7 +170,7 @@ import {
   UPLOADED_AUDIO_CARD_HEIGHT,
   UPLOADED_AUDIO_CARD_WIDTH,
 } from '../nodes/UploadedAudioNode';
-import { CardSideHandle } from '../nodes/CardSideHandle';
+import { CardSideHandle, MagneticSidePlus } from '../nodes/CardSideHandle';
 import {
   ImageGenerationInfoPopover,
   type ImageGenerationInfoPopoverData,
@@ -4445,16 +4445,6 @@ const MULTI_NODE_SELECTION_PADDING = 14;
 const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
 const CANVAS_ALIGNMENT_GUIDE_TOLERANCE = 2;
 const IMAGE_GENERATION_GROUP_TOP_RESERVE = 56;
-const GROUP_SOURCE_HANDLE_SIZE = 10;
-const GROUP_SOURCE_HANDLE_BADGE_SIZE = 22;
-const GROUP_SOURCE_HANDLE_BADGE_GAP = GROUP_SOURCE_HANDLE_BADGE_SIZE;
-const GROUP_SOURCE_HANDLE_ZONE_WIDTH = 56;
-const GROUP_SOURCE_HANDLE_HITBOX_BASE =
-  'z-30 pointer-events-auto rounded-full border-0 bg-transparent transition-[opacity] duration-150 ease-out cursor-crosshair nodrag nopan';
-const GROUP_SOURCE_HANDLE_BADGE_BASE =
-  'pointer-events-none absolute z-40 flex h-[22px] w-[22px] -translate-y-1/2 items-center justify-center rounded-full border border-gl-stroke-medium bg-gl-panel text-gl-text-tertiary transition-[opacity,color,box-shadow,border-color] duration-150 ease-out nodrag nopan';
-const GROUP_SOURCE_HANDLE_ZONE_BASE =
-  'pointer-events-auto absolute z-20 cursor-crosshair nodrag nopan';
 const GROUP_LAYOUT_GAP_X = 48;
 const GROUP_LAYOUT_GAP_Y = 48;
 const VIDEO_UPSCALE_PANEL_WIDTH = 448;
@@ -6022,6 +6012,7 @@ function GroupFrame({
   onDownload,
 }: GroupFrameProps) {
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; moved: boolean } | null>(null);
+  const sourceAnchorRef = useRef<HTMLDivElement | null>(null);
   const [resizing, setResizing] = useState(false);
   const resizeRef = useRef<{
     handle: string;
@@ -6042,10 +6033,6 @@ function GroupFrame({
   const frameColorStyle = getGroupFrameColorStyle(group.backgroundColor, selected);
   const showResizeHandles = selected || hovered || resizing;
   const showSourceHandle = selected || hovered;
-  const sourceHandleCenter = {
-    x: topLeft.x + screenW,
-    y: topLeft.y + screenH / 2,
-  };
 
   const handlePointerDown = (event: React.PointerEvent) => {
     if ((event.target as HTMLElement).closest('.group-frame-no-drag')) return;
@@ -6370,37 +6357,16 @@ function GroupFrame({
           }}
         >
           <div
-            className={GROUP_SOURCE_HANDLE_HITBOX_BASE}
-            style={{
-              position: 'absolute',
-              left: sourceHandleCenter.x - topLeft.x - GROUP_SOURCE_HANDLE_SIZE / 2,
-              top: sourceHandleCenter.y - topLeft.y - GROUP_SOURCE_HANDLE_SIZE / 2,
-              width: GROUP_SOURCE_HANDLE_SIZE,
-              height: GROUP_SOURCE_HANDLE_SIZE,
-            }}
+            ref={sourceAnchorRef}
+            className="pointer-events-none absolute inset-0"
           />
-          <div
-            data-canvas-menu-ignore="true"
-            data-group-id={group.id}
-            className={GROUP_SOURCE_HANDLE_ZONE_BASE}
-            style={{
-              left: screenW + GROUP_SOURCE_HANDLE_SIZE / 2,
-              top: 0,
-              width: GROUP_SOURCE_HANDLE_ZONE_WIDTH,
-              height: screenH,
-            }}
+          <MagneticSidePlus
+            edge="right"
+            active={showSourceHandle}
+            containerRef={sourceAnchorRef}
+            anchorElementRef={sourceAnchorRef}
             onMouseDown={onStartConnection}
           />
-          <span
-            aria-hidden="true"
-            className={GROUP_SOURCE_HANDLE_BADGE_BASE}
-            style={{
-              top: screenH / 2,
-              left: screenW + GROUP_SOURCE_HANDLE_BADGE_GAP,
-            }}
-          >
-            <Plus size={12} className="pointer-events-none" />
-          </span>
         </div>
       ) : null}
 
@@ -6841,6 +6807,7 @@ function MultiNodeSelectionOverlay({
   onSelectionFramePointerCancel,
 }: MultiNodeSelectionOverlayProps) {
   const viewport = useViewport();
+  const sourceAnchorRef = useRef<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState<MultiNodeSelectionBounds | null>(null);
   const selectedNodes = useMemo(
     () => {
@@ -6933,11 +6900,6 @@ function MultiNodeSelectionOverlay({
     width: bounds.width + padding * 2,
     height: bounds.height + padding * 2,
   };
-  const selectionSourceHandleCenter = {
-    x: paddedBounds.width,
-    y: paddedBounds.height / 2,
-  };
-
   return (
     <div
       className="pointer-events-none absolute z-[18]"
@@ -7002,36 +6964,16 @@ function MultiNodeSelectionOverlay({
         }}
       >
         <div
-          className={GROUP_SOURCE_HANDLE_HITBOX_BASE}
-          style={{
-            position: 'absolute',
-            left: selectionSourceHandleCenter.x - GROUP_SOURCE_HANDLE_SIZE / 2,
-            top: selectionSourceHandleCenter.y - GROUP_SOURCE_HANDLE_SIZE / 2,
-            width: GROUP_SOURCE_HANDLE_SIZE,
-            height: GROUP_SOURCE_HANDLE_SIZE,
-          }}
+          ref={sourceAnchorRef}
+          className="pointer-events-none absolute inset-0"
         />
-        <div
-          data-canvas-menu-ignore="true"
-          className={GROUP_SOURCE_HANDLE_ZONE_BASE}
-          style={{
-            left: paddedBounds.width + GROUP_SOURCE_HANDLE_SIZE / 2,
-            top: 0,
-            width: GROUP_SOURCE_HANDLE_ZONE_WIDTH,
-            height: paddedBounds.height,
-          }}
+        <MagneticSidePlus
+          edge="right"
+          active={true}
+          containerRef={sourceAnchorRef}
+          anchorElementRef={sourceAnchorRef}
           onMouseDown={(event) => onStartSelectionConnection(selectedNodes.map((node) => node.id), event)}
         />
-        <span
-          aria-hidden="true"
-          className={GROUP_SOURCE_HANDLE_BADGE_BASE}
-          style={{
-            top: selectionSourceHandleCenter.y,
-            left: paddedBounds.width + GROUP_SOURCE_HANDLE_BADGE_GAP,
-          }}
-        >
-          <Plus size={12} className="pointer-events-none" />
-        </span>
       </div>
     </div>
   );
