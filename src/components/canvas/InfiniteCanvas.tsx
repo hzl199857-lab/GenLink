@@ -14461,7 +14461,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const rects = nodeIds.map((id) => {
       const node = useCanvasStore.getState().nodes.find((n) => n.id === id);
       if (!node) return null;
-      return getEstimatedNodeBounds(node);
+      return getNodeGroupBounds(node);
     }).filter((r): r is NonNullable<typeof r> => r !== null);
 
     if (rects.length === 0) return;

@@ -22,6 +22,7 @@ test("group bounds reserve room above image generation titles", () => {
   assert.match(canvasSource, /function getNodeGroupBounds/);
   assert.match(canvasSource, /if \(node\.type === 'image_generation'\)[\s\S]*?y: bounds\.y - IMAGE_GENERATION_GROUP_TOP_RESERVE,[\s\S]*?height: bounds\.height \+ IMAGE_GENERATION_GROUP_TOP_RESERVE,/);
   assert.match(canvasSource, /getBoundsForRects\(nodes\.map\(\(node\) => getNodeGroupBounds\(node\)\)\)/);
+  assert.match(canvasSource, /const handleGroup = useCallback\(\(nodeIds: string\[\]\) => \{[\s\S]*?return getNodeGroupBounds\(node\);/);
 });
 
 test("image generation crop and annotation start at the visible card origin", () => {
