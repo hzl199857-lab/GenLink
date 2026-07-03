@@ -1492,8 +1492,22 @@ function getBoundsForRects(rects: MultiNodeSelectionBounds[]): MultiNodeSelectio
   };
 }
 
+function getNodeGroupBounds(node: CanvasNode): MultiNodeSelectionBounds {
+  const bounds = getEstimatedNodeBounds(node);
+
+  if (node.type === 'image_generation') {
+    return {
+      ...bounds,
+      y: bounds.y - IMAGE_GENERATION_GROUP_TOP_RESERVE,
+      height: bounds.height + IMAGE_GENERATION_GROUP_TOP_RESERVE,
+    };
+  }
+
+  return bounds;
+}
+
 function getBoundsForNodes(nodes: CanvasNode[], padding = 56): MultiNodeSelectionBounds | null {
-  const bounds = getBoundsForRects(nodes.map((node) => getEstimatedNodeBounds(node)));
+  const bounds = getBoundsForRects(nodes.map((node) => getNodeGroupBounds(node)));
 
   if (!bounds) {
     return null;
@@ -4430,6 +4444,7 @@ const CANVAS_MINIMAP_PADDING = 14;
 const MULTI_NODE_SELECTION_PADDING = 14;
 const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
 const CANVAS_ALIGNMENT_GUIDE_TOLERANCE = 2;
+const IMAGE_GENERATION_GROUP_TOP_RESERVE = 56;
 const GROUP_SOURCE_HANDLE_SIZE = 10;
 const GROUP_SOURCE_HANDLE_BADGE_SIZE = 22;
 const GROUP_SOURCE_HANDLE_BADGE_GAP = GROUP_SOURCE_HANDLE_BADGE_SIZE;
@@ -11239,6 +11254,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [clearEdgeSelection]);
 
   const selectSingleNode = useCallback((nodeId: string) => {
+    clearCanvasNodeUi();
     setSelectedNodeIds((current) =>
       current.size === 1 && current.has(nodeId) ? current : new Set([nodeId]),
     );

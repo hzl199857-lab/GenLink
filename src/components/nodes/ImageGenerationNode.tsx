@@ -708,7 +708,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         />
 
       <ImageGenerationPromptBar
-        key={promptBarVisible ? 'visible' : 'hidden'}
+        key={`prompt-bar-${id}-${promptBarVisible ? 'visible' : 'hidden'}`}
         nodeId={id}
         visible={promptBarVisible}
         prompt={data.prompt || ''}

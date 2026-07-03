@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
 import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, X } from 'lucide-react';
@@ -476,6 +476,16 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const formatMenuRef = useRef<HTMLDivElement | null>(null);
   const parallelMenuRef = useRef<HTMLDivElement | null>(null);
 
+  const closePromptBarMenus = useCallback(() => {
+    setModelMenuOpen(false);
+    setSettingsMenuOpen(false);
+    setFormatMenuOpen(false);
+    setParallelMenuOpen(false);
+    setActiveModelForChannel(null);
+    setHoveredRunningHubChannel(null);
+    setProviderWarning(null);
+  }, []);
+
   useEffect(() => {
     if (!modelMenuOpen && !settingsMenuOpen && !formatMenuOpen && !parallelMenuOpen) {
       return;
@@ -493,15 +503,12 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
         return;
       }
 
-      setModelMenuOpen(false);
-      setSettingsMenuOpen(false);
-      setFormatMenuOpen(false);
-      setParallelMenuOpen(false);
+      closePromptBarMenus();
     };
 
     window.addEventListener('pointerdown', handlePointerDown, true);
     return () => window.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [modelMenuOpen, settingsMenuOpen, formatMenuOpen, parallelMenuOpen]);
+  }, [closePromptBarMenus, modelMenuOpen, settingsMenuOpen, formatMenuOpen, parallelMenuOpen]);
 
   if (!visible) return null;
 

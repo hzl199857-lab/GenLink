@@ -17,6 +17,13 @@ test("uses the visible image generation card as the canvas bounds", () => {
   assert.match(canvasSource, /if \(node\.type === 'image_generation'\)[\s\S]*?width: dimensions\.width,[\s\S]*?height: dimensions\.height,/);
 });
 
+test("group bounds reserve room above image generation titles", () => {
+  assert.match(canvasSource, /const IMAGE_GENERATION_GROUP_TOP_RESERVE = 56;/);
+  assert.match(canvasSource, /function getNodeGroupBounds/);
+  assert.match(canvasSource, /if \(node\.type === 'image_generation'\)[\s\S]*?y: bounds\.y - IMAGE_GENERATION_GROUP_TOP_RESERVE,[\s\S]*?height: bounds\.height \+ IMAGE_GENERATION_GROUP_TOP_RESERVE,/);
+  assert.match(canvasSource, /getBoundsForRects\(nodes\.map\(\(node\) => getNodeGroupBounds\(node\)\)\)/);
+});
+
 test("image generation crop and annotation start at the visible card origin", () => {
   assert.doesNotMatch(canvasSource, /cardStageH/);
   assert.match(canvasSource, /const cardTopOffset = 0;/);
