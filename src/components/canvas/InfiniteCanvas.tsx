@@ -5347,11 +5347,11 @@ function getElementScreenCenter(element: HTMLElement): { x: number; y: number } 
   };
 }
 
-function getGroupConnectionSourcesFromDom(group: NodeGroup): GroupConnectionSource[] {
+function getConnectionSourcesFromNodeIds(nodeIds: Iterable<string>): GroupConnectionSource[] {
   const sources: GroupConnectionSource[] = [];
   const seen = new Set<string>();
 
-  for (const nodeId of group.nodeIds) {
+  for (const nodeId of nodeIds) {
     const nodeElement = document.querySelector<HTMLElement>(
       `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`,
     );
@@ -5383,6 +5383,10 @@ function getGroupConnectionSourcesFromDom(group: NodeGroup): GroupConnectionSour
   }
 
   return sources;
+}
+
+function getGroupConnectionSourcesFromDom(group: NodeGroup): GroupConnectionSource[] {
+  return getConnectionSourcesFromNodeIds(group.nodeIds);
 }
 
 function findClosestConnectionHandle(
@@ -5829,6 +5833,7 @@ type MultiNodeSelectionOverlayProps = {
   groups: NodeGroup[];
   visible: boolean;
   onGroup: (nodeIds: string[]) => void;
+  onStartSelectionConnection: (nodeIds: string[], event: React.MouseEvent<HTMLElement>) => void;
   onSelectionFramePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onSelectionFramePointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
   onSelectionFramePointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -6829,6 +6834,7 @@ function MultiNodeSelectionOverlay({
   groups,
   visible,
   onGroup,
+  onStartSelectionConnection,
   onSelectionFramePointerDown,
   onSelectionFramePointerMove,
   onSelectionFramePointerUp,
@@ -6927,6 +6933,10 @@ function MultiNodeSelectionOverlay({
     width: bounds.width + padding * 2,
     height: bounds.height + padding * 2,
   };
+  const selectionSourceHandleCenter = {
+    x: paddedBounds.width,
+    y: paddedBounds.height / 2,
+  };
 
   return (
     <div
@@ -6981,6 +6991,48 @@ function MultiNodeSelectionOverlay({
         }}
       />
       <div className="pointer-events-none gl-multi-node-selection-frame absolute inset-0" />
+      <div
+        data-canvas-menu-ignore="true"
+        className="group-frame-no-drag nodrag nopan pointer-events-none absolute z-[20] overflow-visible"
+        style={{
+          left: 0,
+          top: 0,
+          width: paddedBounds.width,
+          height: paddedBounds.height,
+        }}
+      >
+        <div
+          className={GROUP_SOURCE_HANDLE_HITBOX_BASE}
+          style={{
+            position: 'absolute',
+            left: selectionSourceHandleCenter.x - GROUP_SOURCE_HANDLE_SIZE / 2,
+            top: selectionSourceHandleCenter.y - GROUP_SOURCE_HANDLE_SIZE / 2,
+            width: GROUP_SOURCE_HANDLE_SIZE,
+            height: GROUP_SOURCE_HANDLE_SIZE,
+          }}
+        />
+        <div
+          data-canvas-menu-ignore="true"
+          className={GROUP_SOURCE_HANDLE_ZONE_BASE}
+          style={{
+            left: paddedBounds.width + GROUP_SOURCE_HANDLE_SIZE / 2,
+            top: 0,
+            width: GROUP_SOURCE_HANDLE_ZONE_WIDTH,
+            height: paddedBounds.height,
+          }}
+          onMouseDown={(event) => onStartSelectionConnection(selectedNodes.map((node) => node.id), event)}
+        />
+        <span
+          aria-hidden="true"
+          className={GROUP_SOURCE_HANDLE_BADGE_BASE}
+          style={{
+            top: selectionSourceHandleCenter.y,
+            left: paddedBounds.width + GROUP_SOURCE_HANDLE_BADGE_GAP,
+          }}
+        >
+          <Plus size={12} className="pointer-events-none" />
+        </span>
+      </div>
     </div>
   );
 }
@@ -14224,6 +14276,23 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     showProjectMessage,
   ]);
 
+  const handleStartSelectionConnection = useCallback((
+    nodeIds: string[],
+    event: React.MouseEvent<HTMLElement>,
+  ) => {
+    handleStartGroupConnection(
+      {
+        id: '__selection__',
+        nodeIds,
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+      },
+      event,
+    );
+  }, [handleStartGroupConnection]);
+
   const toggleHistoryPopover = useCallback((anchor: DOMRect) => {
     setHistoryAnchor((current) => {
       if (current) {
@@ -14741,6 +14810,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           groups={storeGroups}
           visible={!selectedGroupId && !groupDragActive && !selectionInProgress && !paneSelectionDragging}
           onGroup={handleGroup}
+          onStartSelectionConnection={handleStartSelectionConnection}
           onSelectionFramePointerDown={handleSelectionFramePointerDown}
           onSelectionFramePointerMove={handleSelectionFramePointerMove}
           onSelectionFramePointerUp={handleSelectionFramePointerUp}

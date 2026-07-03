@@ -59,3 +59,12 @@ test("alignment guides use main card bounds instead of selection bounds", () => 
   assert.match(guideFunction, /getAlignmentGuideNodeBounds\(node\)/);
   assert.doesNotMatch(guideFunction, /getEstimatedNodeBounds/);
 });
+
+test("multi-node selection exposes the same multi-source connection handle as groups", () => {
+  assert.match(source, /onStartSelectionConnection: \(nodeIds: string\[\], event: React\.MouseEvent<HTMLElement>\) => void;/);
+  assert.match(source, /function getConnectionSourcesFromNodeIds\(nodeIds: Iterable<string>\): GroupConnectionSource\[\]/);
+  assert.match(source, /function getGroupConnectionSourcesFromDom\(group: NodeGroup\): GroupConnectionSource\[\][\s\S]*?return getConnectionSourcesFromNodeIds\(group\.nodeIds\);/);
+  assert.match(source, /const selectionSourceHandleCenter = \{[\s\S]*?x: paddedBounds\.width,[\s\S]*?y: paddedBounds\.height \/ 2,/);
+  assert.match(source, /onMouseDown=\{\(event\) => onStartSelectionConnection\(selectedNodes\.map\(\(node\) => node\.id\), event\)\}/);
+  assert.match(source, /onStartSelectionConnection=\{handleStartSelectionConnection\}/);
+});
