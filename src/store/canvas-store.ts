@@ -69,6 +69,7 @@ import {
   isStoryboardRecord,
   normalizeStoryboardRow,
 } from "@/lib/storyboard/normalize";
+import { uploadReferenceImageBlobToOss } from "@/lib/browser-oss-upload";
 
 type ApiErrorResponse = {
   ok: false;
@@ -1864,7 +1865,7 @@ async function uploadReferenceBlobToOss(
   blob: Blob,
   fileName?: string,
 ): Promise<string> {
-  return uploadImageBlobToOss(blob, fileName, "references");
+  return uploadReferenceImageBlobToOss({ blob, fileName });
 }
 
 async function readReferenceImageBlob(
@@ -2049,7 +2050,7 @@ async function normalizeReferenceImagesViaOss(
         sourceType: image.sourceType,
         urlType: getReferenceImageDebugLabel(cacheKey),
         fileName: image.fileName,
-        error,
+        error: toErrorMessage(error),
       });
       throw error;
     }

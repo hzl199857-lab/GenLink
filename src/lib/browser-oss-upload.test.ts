@@ -22,6 +22,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   getBrowserOssUploadPolicy,
+  uploadReferenceImageBlobToOss,
   uploadImageAsset,
 } = require("./browser-oss-upload.ts") as typeof import("./browser-oss-upload");
 
@@ -105,6 +106,57 @@ test("uses server image upload immediately when policy is server", async () => {
     mode: "server",
   });
   assert.deepEqual(calls.map((call) => call.url), ["/api/image-hosting/upload"]);
+});
+
+test("uploads reference image blobs with direct OSS fallback", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = input.toString();
+    calls.push({ url, init });
+
+    if (url === "/api/image-hosting/upload-url") {
+      return Response.json({
+        ok: true,
+        result: {
+          uploadUrl: "https://bucket.oss-cn-hangzhou.aliyuncs.com/references/file.png?signature=1",
+          imageUrl: "https://cdn.example.com/references/file.png",
+          headers: { "Content-Type": "image/png" },
+        },
+      });
+    }
+
+    if (url.includes("aliyuncs.com")) {
+      throw new TypeError("Failed to fetch");
+    }
+
+    if (url === "/api/image-hosting/upload") {
+      const formData = init?.body as FormData;
+
+      assert.equal(formData.get("folder"), "references");
+      assert.equal(formData.get("fileName"), "reference.png");
+      assert.equal(formData.get("forceOss"), "true");
+
+      return Response.json({
+        ok: true,
+        result: { imageUrl: "https://cdn.example.com/references/file-server.png" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch ${url}`);
+  };
+
+  const result = await uploadReferenceImageBlobToOss({
+    blob: new Blob(["image"], { type: "image/png" }),
+    fileName: "reference.png",
+    fetchImpl,
+  });
+
+  assert.equal(result, "https://cdn.example.com/references/file-server.png");
+  assert.deepEqual(calls.map((call) => call.url), [
+    "/api/image-hosting/upload-url",
+    "https://bucket.oss-cn-hangzhou.aliyuncs.com/references/file.png?signature=1",
+    "/api/image-hosting/upload",
+  ]);
 });
 
 test("defaults to direct-with-fallback unless image upload mode is server", () => {

@@ -191,6 +191,8 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLibraryDialog';
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
+import { PromptLibraryDialog } from './PromptLibraryDialog';
+import { PromptLibraryEntryButton } from './PromptLibraryEntryButton';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { AGENT_PANEL_FLOATING_INSET } from '@/lib/agent-panel-layout';
 import { downloadImageGenerationResult } from '@/lib/image-download';
@@ -216,6 +218,7 @@ import {
 import { DeleteProjectDialog } from '@/components/project/DeleteProjectDialog';
 import { ThreeViewController } from '../nodes/ThreeViewController';
 import type { ThreeViewControllerValue } from '../nodes/ThreeViewController';
+import type { PromptLibraryEntry } from '@/features/prompt-library/types';
 
 let notifyPromptBarInteraction: (() => void) | null = null;
 let notifyImageToolbarAction:
@@ -9890,6 +9893,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [historyAnchor, setHistoryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [materialLibraryAnchor, setMaterialLibraryAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const [pendingMaterialSource, setPendingMaterialSource] = useState<PendingMaterialSource | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
@@ -11256,6 +11260,32 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     setSelectedGroupId(null);
     clearEdgeSelection();
   }, [clearEdgeSelection]);
+
+  const addPromptLibraryEntryToCanvas = useCallback((entry: PromptLibraryEntry) => {
+    const viewport = getViewport();
+    const nodeId = `prompt-library-${entry.kind}-${crypto.randomUUID()}`;
+    const promptText = entry.promptZh?.trim() || entry.promptEn?.trim() || entry.prompt;
+    const center = {
+      x: (window.innerWidth / 2 - viewport.x) / viewport.zoom,
+      y: (window.innerHeight / 2 - viewport.y) / viewport.zoom,
+    };
+    const node: CanvasNode = {
+      id: nodeId,
+      type: entry.kind === 'video' ? 'video_generation' : 'image_generation',
+      position: {
+        x: center.x - 180,
+        y: center.y - 160,
+      },
+      data: {
+        title: entry.title,
+        prompt: promptText,
+      },
+    } as CanvasNode;
+
+    addNodes([node]);
+    selectSingleNode(nodeId);
+    showProjectMessage(`\u5df2\u6dfb\u52a0\u201c${entry.title}\u201d\u5230\u753b\u5e03`);
+  }, [addNodes, getViewport, selectSingleNode, showProjectMessage]);
 
   const focusCreatedNode = useCallback((nodeId: string) => {
     setSelectedNodeIds(new Set([nodeId]));
@@ -14661,6 +14691,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
       />
+      <PromptLibraryEntryButton
+        open={promptLibraryOpen}
+        onClick={() => setPromptLibraryOpen((current) => !current)}
+      />
       <div ref={canvasReadyRootRef} className="h-full w-full">
       <ReactFlow
         nodes={rfNodes}
@@ -14906,6 +14940,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         anchor={historyAnchor}
         onClose={() => setHistoryAnchor(null)}
         onSelectImage={handleSelectHistoryImage}
+      />
+      <PromptLibraryDialog
+        open={promptLibraryOpen}
+        onClose={() => setPromptLibraryOpen(false)}
+        onAddToCanvas={addPromptLibraryEntryToCanvas}
       />
       <ImageGenerationInfoPopover
         open={imageInfoPopover !== null}

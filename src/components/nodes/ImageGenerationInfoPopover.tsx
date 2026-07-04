@@ -52,7 +52,7 @@ export function ImageGenerationInfoPopover({
 
   return (
     <div
-      className="pointer-events-none fixed top-6 z-[70]"
+      className="pointer-events-none fixed top-[72px] z-[70]"
       style={{
         right: `max(12px, min(${resolvedRightOffset}px, calc(100vw - 244px)))`,
       }}

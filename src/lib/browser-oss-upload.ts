@@ -22,6 +22,12 @@ export type UploadImageAssetInput = {
   fetchImpl?: BrowserOssUploadFetch;
 };
 
+export type UploadReferenceImageBlobInput = {
+  blob: Blob;
+  fileName?: string;
+  fetchImpl?: BrowserOssUploadFetch;
+};
+
 export function getBrowserOssUploadPolicy(
   value = process.env.NEXT_PUBLIC_IMAGE_UPLOAD_MODE,
 ): BrowserOssUploadPolicy {
@@ -66,6 +72,20 @@ export async function uploadImageAsset(input: UploadImageAssetInput): Promise<Br
     hostedUrl: target.hostedUrl,
     mode: "direct",
   };
+}
+
+export async function uploadReferenceImageBlobToOss(
+  input: UploadReferenceImageBlobInput,
+): Promise<string> {
+  const result = await uploadImageAsset({
+    data: input.blob,
+    contentType: input.blob.type || "image/png",
+    fileName: input.fileName,
+    folder: "references",
+    fetchImpl: input.fetchImpl,
+  });
+
+  return result.hostedUrl;
 }
 
 async function createImageAssetUploadTarget(
