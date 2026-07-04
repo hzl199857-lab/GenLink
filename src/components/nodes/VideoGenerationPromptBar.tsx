@@ -283,7 +283,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
         onWheelCapture={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
       >
-        <div className="group absolute right-4 top-4">
+        <div className="group absolute right-4 top-4 z-10">
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
@@ -324,7 +324,7 @@ export const VideoGenerationPromptBar = memo(function VideoGenerationPromptBar({
           </div>
 
           <div
-            className="relative overflow-visible"
+            className="relative overflow-hidden"
             style={{
               height: promptHeight,
               transition: 'height 500ms ease-in-out',

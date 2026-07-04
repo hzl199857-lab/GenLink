@@ -1291,6 +1291,18 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     };
   }
 
+  if (node.type === 'video_generation') {
+    const data = node.data as VideoGenerationNodeData;
+    const dimensions = resolveAspectDrivenCardDimensions(data.ratio);
+
+    return {
+      x: node.position.x,
+      y: node.position.y,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
+  }
+
   if (node.type === 'uploaded_image') {
     const dimensions = resolveUploadedImageCardDimensions(node.data as UploadedImageNodeData);
 
@@ -1495,14 +1507,18 @@ function getBoundsForRects(rects: MultiNodeSelectionBounds[]): MultiNodeSelectio
   };
 }
 
-function getNodeGroupBounds(node: CanvasNode): MultiNodeSelectionBounds {
+function getNodeGroupBounds(node: CanvasNode | ReactFlowNode): MultiNodeSelectionBounds {
   const bounds = getEstimatedNodeBounds(node);
 
-  if (node.type === 'image_generation') {
+  if (
+    node.type === 'image_generation' ||
+    node.type === 'video_generation' ||
+    node.type === 'audio_generation'
+  ) {
     return {
       ...bounds,
-      y: bounds.y - IMAGE_GENERATION_GROUP_TOP_RESERVE,
-      height: bounds.height + IMAGE_GENERATION_GROUP_TOP_RESERVE,
+      y: bounds.y - GENERATION_NODE_GROUP_TOP_RESERVE,
+      height: bounds.height + GENERATION_NODE_GROUP_TOP_RESERVE,
     };
   }
 
@@ -4447,7 +4463,7 @@ const CANVAS_MINIMAP_PADDING = 14;
 const MULTI_NODE_SELECTION_PADDING = 14;
 const MULTI_NODE_SELECTION_TOOLBAR_GAP = 10;
 const CANVAS_ALIGNMENT_GUIDE_TOLERANCE = 2;
-const IMAGE_GENERATION_GROUP_TOP_RESERVE = 56;
+const GENERATION_NODE_GROUP_TOP_RESERVE = 56;
 const GROUP_LAYOUT_GAP_X = 48;
 const GROUP_LAYOUT_GAP_Y = 48;
 const VIDEO_UPSCALE_PANEL_WIDTH = 448;
@@ -6366,6 +6382,7 @@ function GroupFrame({
           <MagneticSidePlus
             edge="right"
             active={showSourceHandle}
+            coordinateSpace="screen"
             containerRef={sourceAnchorRef}
             anchorElementRef={sourceAnchorRef}
             onMouseDown={onStartConnection}
@@ -6839,7 +6856,7 @@ function MultiNodeSelectionOverlay({
     let animationFrame = 0;
     const updateBounds = () => {
       const rects = selectedNodes.map((node) => {
-        const estimatedBounds = getEstimatedNodeBounds(node);
+        const estimatedBounds = getNodeGroupBounds(node);
 
         return {
           x: viewport.x + estimatedBounds.x * viewport.zoom,
@@ -6973,6 +6990,7 @@ function MultiNodeSelectionOverlay({
         <MagneticSidePlus
           edge="right"
           active={true}
+          coordinateSpace="screen"
           containerRef={sourceAnchorRef}
           anchorElementRef={sourceAnchorRef}
           onMouseDown={(event) => onStartSelectionConnection(selectedNodes.map((node) => node.id), event)}

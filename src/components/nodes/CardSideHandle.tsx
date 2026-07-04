@@ -63,6 +63,10 @@ function isSidePlusPointerBlocked(target: EventTarget | null, root: HTMLElement 
   return Boolean(target.closest(SIDE_PLUS_POINTER_BLOCKER_SELECTOR));
 }
 
+function getSidePlusWrapperLocalX(edge: 'left' | 'right', overlayElement: HTMLElement) {
+  return edge === 'left' ? 0 : overlayElement.offsetLeft;
+}
+
 export interface CardSideHandleProps {
   type: HandleType;
   position: Position.Left | Position.Right;
@@ -78,6 +82,7 @@ export interface MagneticSidePlusProps {
   active?: boolean;
   connecting?: boolean;
   disabled?: boolean;
+  coordinateSpace?: 'canvas' | 'screen';
   containerRef: React.RefObject<HTMLElement | null>;
   anchorElementRef: React.RefObject<HTMLElement | null>;
   topOffset?: number;
@@ -91,6 +96,7 @@ export function MagneticSidePlus({
   active = false,
   connecting = false,
   disabled = false,
+  coordinateSpace = 'canvas',
   containerRef,
   anchorElementRef,
   topOffset = 0,
@@ -116,9 +122,10 @@ export function MagneticSidePlus({
       return;
     }
 
+    const overlayElement = rootRef.current;
     const anchorElement = anchorElementRef.current;
 
-    if (!anchorElement) {
+    if (!overlayElement || !anchorElement) {
       return;
     }
 
@@ -127,15 +134,16 @@ export function MagneticSidePlus({
       : anchorElement.offsetLeft + anchorElement.offsetWidth;
     const anchorLocalX = edgeLocalX + (isLeft ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP);
     const anchorLocalY = anchorElement.offsetTop + anchorElement.offsetHeight / 2;
+    const wrapperLocalX = getSidePlusWrapperLocalX(edge, overlayElement);
 
     setSidePlusState((current) => ({
       ...current,
       visible: true,
       magnet: false,
-      left: anchorLocalX - HANDLE_BADGE_HALF,
+      left: anchorLocalX - wrapperLocalX - HANDLE_BADGE_HALF,
       top: anchorLocalY - HANDLE_BADGE_HALF,
     }));
-  }, [active, anchorElementRef, connecting, disabled, isLeft]);
+  }, [active, anchorElementRef, connecting, disabled, edge, isLeft]);
 
   useEffect(() => {
     if (disabled) {
@@ -161,16 +169,17 @@ export function MagneticSidePlus({
       }
 
       const zoom = store.getState().transform?.[2] || 1;
+      const localScale = coordinateSpace === 'canvas' ? zoom : 1;
       const containerRect = containerElement.getBoundingClientRect();
       const anchorRect = anchorElement.getBoundingClientRect();
       const edgeScreenX = isLeft ? anchorRect.left : anchorRect.right;
-      const anchorScreenX = edgeScreenX + (isLeft ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP) * zoom;
+      const anchorScreenX = edgeScreenX + (isLeft ? -SIDE_PLUS_GAP : SIDE_PLUS_GAP) * localScale;
       const anchorScreenY = anchorRect.top + anchorRect.height / 2;
       const dx = event.clientX - anchorScreenX;
       const dy = event.clientY - anchorScreenY;
       const distance = Math.hypot(dx, dy);
-      const threshold = SIDE_PLUS_THRESHOLD * zoom;
-      const magnetMax = SIDE_PLUS_MAGNET_MAX * zoom;
+      const threshold = SIDE_PLUS_THRESHOLD * localScale;
+      const magnetMax = SIDE_PLUS_MAGNET_MAX * localScale;
       const shouldMagnet = distance < threshold;
       const shouldReveal = shouldMagnet || active || connecting;
 
@@ -178,7 +187,7 @@ export function MagneticSidePlus({
       let offsetY = 0;
 
       if (shouldMagnet && !connecting) {
-        const offset = Math.min(distance, magnetMax) / zoom;
+        const offset = Math.min(distance, magnetMax) / localScale;
         const angle = Math.atan2(dy, dx);
 
         offsetX = Math.cos(angle) * offset;
@@ -191,12 +200,13 @@ export function MagneticSidePlus({
         }
       }
 
-      const anchorLocalX = (anchorScreenX - containerRect.left) / zoom;
-      const anchorLocalY = (anchorScreenY - containerRect.top) / zoom;
+      const anchorLocalX = (anchorScreenX - containerRect.left) / localScale;
+      const anchorLocalY = (anchorScreenY - containerRect.top) / localScale;
+      const wrapperLocalX = getSidePlusWrapperLocalX(edge, overlayElement);
       const nextState: SidePlusState = {
         visible: shouldReveal,
         magnet: shouldMagnet && !connecting,
-        left: anchorLocalX + offsetX - HANDLE_BADGE_HALF,
+        left: anchorLocalX - wrapperLocalX + offsetX - HANDLE_BADGE_HALF,
         top: anchorLocalY + offsetY - HANDLE_BADGE_HALF,
       };
 
@@ -219,7 +229,7 @@ export function MagneticSidePlus({
     return () => {
       document.removeEventListener('mousemove', updateSidePlusPosition);
     };
-  }, [active, anchorElementRef, connecting, containerRef, disabled, isLeft, store]);
+  }, [active, anchorElementRef, connecting, containerRef, coordinateSpace, disabled, edge, isLeft, store]);
 
   if (disabled) {
     return null;

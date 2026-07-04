@@ -70,7 +70,38 @@ test("multi-node selection exposes the same multi-source connection handle as gr
 
 test("group and multi-node selection connection handles reuse the node magnetic plus", () => {
   assert.match(source, /import \{[\s\S]*MagneticSidePlus[\s\S]*\} from '..\/nodes\/CardSideHandle';/);
-  assert.match(source, /<MagneticSidePlus[\s\S]*?edge="right"[\s\S]*?active=\{showSourceHandle\}[\s\S]*?onMouseDown=\{onStartConnection\}/);
-  assert.match(source, /<MagneticSidePlus[\s\S]*?edge="right"[\s\S]*?active=\{true\}[\s\S]*?onMouseDown=\{\(event\) => onStartSelectionConnection\(selectedNodes\.map\(\(node\) => node\.id\), event\)\}/);
+  assert.match(source, /<MagneticSidePlus[\s\S]*?edge="right"[\s\S]*?active=\{showSourceHandle\}[\s\S]*?coordinateSpace="screen"[\s\S]*?onMouseDown=\{onStartConnection\}/);
+  assert.match(source, /<MagneticSidePlus[\s\S]*?edge="right"[\s\S]*?active=\{true\}[\s\S]*?coordinateSpace="screen"[\s\S]*?onMouseDown=\{\(event\) => onStartSelectionConnection\(selectedNodes\.map\(\(node\) => node\.id\), event\)\}/);
   assert.doesNotMatch(source, /GROUP_SOURCE_HANDLE_BADGE_BASE/);
+});
+
+test("video generation nodes use aspect-driven dimensions for selection bounds", () => {
+  const estimatedBoundsFunction = source.match(
+    /function getEstimatedNodeBounds[\s\S]*?\n}\n\nfunction getAlignmentGuideNodeBounds/,
+  )?.[0] ?? "";
+
+  assert.match(estimatedBoundsFunction, /if \(node\.type === 'video_generation'\)/);
+  assert.match(estimatedBoundsFunction, /const dimensions = resolveAspectDrivenCardDimensions\(data\.ratio\);/);
+  assert.match(estimatedBoundsFunction, /width: dimensions\.width/);
+  assert.match(estimatedBoundsFunction, /height: dimensions\.height/);
+});
+
+test("group bounds reserve generation node title space", () => {
+  const groupBoundsFunction = source.match(
+    /function getNodeGroupBounds[\s\S]*?\n}\n\nfunction getBoundsForNodes/,
+  )?.[0] ?? "";
+
+  assert.match(groupBoundsFunction, /node\.type === 'image_generation'/);
+  assert.match(groupBoundsFunction, /node\.type === 'video_generation'/);
+  assert.match(groupBoundsFunction, /node\.type === 'audio_generation'/);
+  assert.match(groupBoundsFunction, /GENERATION_NODE_GROUP_TOP_RESERVE/);
+});
+
+test("multi-node selection uses group bounds so labels remain inside the frame", () => {
+  const multiNodeSelectionOverlay = source.match(
+    /function MultiNodeSelectionOverlay[\s\S]*?\n}\n\nconst CanvasMiniMap/,
+  )?.[0] ?? "";
+
+  assert.match(multiNodeSelectionOverlay, /const estimatedBounds = getNodeGroupBounds\(node\);/);
+  assert.doesNotMatch(multiNodeSelectionOverlay, /const estimatedBounds = getEstimatedNodeBounds\(node\);/);
 });

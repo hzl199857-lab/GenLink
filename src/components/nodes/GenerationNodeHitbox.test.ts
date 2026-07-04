@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const audioSource = readFileSync(new URL("./AudioGenerationNode.tsx", import.meta.url), "utf8");
 const videoSource = readFileSync(new URL("./VideoGenerationNode.tsx", import.meta.url), "utf8");
+const videoPromptBarSource = readFileSync(new URL("./VideoGenerationPromptBar.tsx", import.meta.url), "utf8");
 const upscaleSource = readFileSync(new URL("./VideoUpscaleNode.tsx", import.meta.url), "utf8");
 
 test("audio generation node uses the visible result card as its hitbox", () => {
@@ -22,6 +23,14 @@ test("video generation node uses the visible video card as its hitbox", () => {
   assert.match(videoSource, /width: `\$\{resolvedCardDimensions\.width\}px`,\s*height: `\$\{resolvedCardDimensions\.height\}px`/);
   assert.match(videoSource, /node-visible-title[^"]*pointer-events-none/);
   assert.match(videoSource, /node-connectable-card[^']*pointer-events-auto/);
+});
+
+test("video generation prompt expand control stays above the prompt input hit area", () => {
+  assert.match(videoPromptBarSource, /className="group absolute right-4 top-4 z-10"/);
+});
+
+test("video generation prompt clips text while expanding", () => {
+  assert.match(videoPromptBarSource, /className="relative overflow-hidden"/);
 });
 
 test("video upscale node keeps the root hitbox on the visible video card", () => {

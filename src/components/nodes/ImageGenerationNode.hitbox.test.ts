@@ -34,6 +34,19 @@ test("exports reusable magnetic side plus behavior for canvas overlays", () => {
   assert.match(cardSideHandleSource, /<MagneticSidePlus[\s\S]*?active=\{visible \|\| isConnectingFromPlus\}/);
 });
 
+test("right side magnetic plus subtracts its rendered wrapper offset", () => {
+  assert.match(cardSideHandleSource, /function getSidePlusWrapperLocalX\(edge: 'left' \| 'right', overlayElement: HTMLElement\)/);
+  assert.match(cardSideHandleSource, /overlayElement\.offsetLeft/);
+  assert.match(cardSideHandleSource, /anchorLocalX - wrapperLocalX \+ offsetX - HANDLE_BADGE_HALF/);
+});
+
+test("magnetic side plus uses canvas zoom only in canvas coordinate overlays", () => {
+  assert.match(cardSideHandleSource, /coordinateSpace\?: 'canvas' \| 'screen';/);
+  assert.match(cardSideHandleSource, /const localScale = coordinateSpace === 'canvas' \? zoom : 1;/);
+  assert.match(cardSideHandleSource, /SIDE_PLUS_GAP : SIDE_PLUS_GAP\) \* localScale/);
+  assert.match(cardSideHandleSource, /\(anchorScreenX - containerRect\.left\) \/ localScale/);
+});
+
 test("closes image generation prompt bar menus when the selected node changes", () => {
   assert.match(promptBarSource, /closePromptBarMenus = useCallback/);
   assert.match(canvasSource, /const selectSingleNode = useCallback\(\(nodeId: string\) => \{\s*clearCanvasNodeUi\(\);/);
