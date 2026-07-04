@@ -240,6 +240,7 @@ export function PromptLibraryDialog({
   const [liveEntries, setLiveEntries] = useState<PromptLibraryEntry[]>([]);
   const [liveFetchedAt, setLiveFetchedAt] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  const [usingRemoteCache, setUsingRemoteCache] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshNotice, setRefreshNotice] = useState<RefreshNotice | null>(null);
   const [query, setQuery] = useState("");
@@ -308,7 +309,8 @@ export function PromptLibraryDialog({
 
       setLiveEntries(body.entries);
       setLiveFetchedAt(body.fetchedAt);
-      setErrors(body.errors);
+      setUsingRemoteCache(Boolean(body.fromCache));
+      setErrors(body.fromCache ? body.errors : []);
       if (body.entries.length > 0) {
         setCommunityCache(body.entries, body.fetchedAt);
       }
@@ -330,6 +332,7 @@ export function PromptLibraryDialog({
       }
     } catch (error) {
       setErrors([error instanceof Error ? error.message : "\u63d0\u793a\u8bcd\u5e93\u540c\u6b65\u5931\u8d25"]);
+      setUsingRemoteCache(true);
       if (manual) {
         showRefreshNotice({
           kind: "error",
@@ -568,7 +571,7 @@ export function PromptLibraryDialog({
             {errors.length > 0 ? (
               <span className="flex h-8 items-center gap-1.5 text-[12px] text-amber-200/80">
                 <WifiOff size={14} />
-                {"\u4f7f\u7528\u7f13\u5b58"}
+                {usingRemoteCache ? "\u4f7f\u7528\u7f13\u5b58" : "\u90e8\u5206\u5931\u8d25"}
               </span>
             ) : null}
           </FilterRow>

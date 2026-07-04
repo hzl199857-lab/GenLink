@@ -329,12 +329,37 @@ async function fetchOpenNanaEntriesByModel(model: string): Promise<PromptLibrary
   return settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }
 
-export async function fetchOpenNanaPromptEntries(): Promise<PromptLibraryEntry[]> {
-  const groups = await Promise.all(
-    OPENNANA_MODELS.map((model) => fetchOpenNanaEntriesByModel(model)),
+export async function fetchOpenNanaPromptEntries(): Promise<{
+  entries: PromptLibraryEntry[];
+  errors: string[];
+  failedModels: string[];
+}> {
+  const settled = await Promise.allSettled(
+    OPENNANA_MODELS.map(async (model) => ({
+      model,
+      entries: await fetchOpenNanaEntriesByModel(model),
+    })),
   );
+  const entries: PromptLibraryEntry[] = [];
+  const errors: string[] = [];
+  const failedModels: string[] = [];
 
-  return sortPromptLibraryEntries(mergePromptLibraryEntries(groups.flat()));
+  settled.forEach((result, index) => {
+    const model = OPENNANA_MODELS[index];
+    if (result.status === "fulfilled") {
+      entries.push(...result.value.entries);
+      return;
+    }
+
+    failedModels.push(model);
+    errors.push(`OpenNana ${model}: ${formatSourceError(result.reason)}`);
+  });
+
+  return {
+    entries: sortPromptLibraryEntries(mergePromptLibraryEntries(entries)),
+    errors,
+    failedModels,
+  };
 }
 
 function formatSourceError(error: unknown): string {
@@ -373,17 +398,29 @@ export async function fetchPromptLibraryCommunityEntries(options?: {
   }
 
   try {
-    const entries = await fetchOpenNanaPromptEntries();
+    const result = await fetchOpenNanaPromptEntries();
+    const cachedFailedModelEntries =
+      memoryCache && result.failedModels.length > 0
+        ? memoryCache.entries.filter((entry) =>
+            result.failedModels.includes(entry.model ?? ""),
+          )
+        : [];
+    const entries = sortPromptLibraryEntries(
+      mergePromptLibraryEntries([...result.entries, ...cachedFailedModelEntries]),
+    );
+    if (entries.length === 0) {
+      throw new Error("OpenNana returned no prompt entries");
+    }
     const fetchedAt = new Date().toISOString();
     memoryCache = {
       entries,
-      errors: [],
+      errors: result.errors,
       fetchedAt,
       fetchedAtMs: Date.now(),
     };
     return {
       entries,
-      errors: [],
+      errors: result.errors,
       fetchedAt,
       fromCache: false,
     };
