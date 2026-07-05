@@ -90,9 +90,14 @@ function PromptCover({
 }) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [failedVideoUrl, setFailedVideoUrl] = useState<string | null>(null);
+  const [loadedImageUrl, setLoadedImageUrl] = useState<string | null>(null);
+  const [loadedVideoUrl, setLoadedVideoUrl] = useState<string | null>(null);
   const videoUrl = entry.videoUrl?.trim();
   const showVideo = Boolean(playable && entry.kind === "video" && videoUrl && failedVideoUrl !== videoUrl);
   const showImage = Boolean(entry.coverUrl && failedUrl !== entry.coverUrl);
+  const imageLoaded = Boolean(entry.coverUrl && loadedImageUrl === entry.coverUrl);
+  const videoLoaded = Boolean(videoUrl && loadedVideoUrl === videoUrl);
+  const showLoading = Boolean((showVideo && !videoLoaded) || (showImage && !imageLoaded));
   const mediaClassName = contain
     ? "block max-h-[386px] w-full object-contain bg-black"
     : "block h-auto w-full";
@@ -102,10 +107,16 @@ function PromptCover({
       className={[
         "relative block overflow-hidden bg-[linear-gradient(135deg,#26272c,#17181b_48%,#222821)]",
         contain ? "flex items-center justify-center bg-black" : "",
-        showImage ? "" : "min-h-[180px]",
+        showImage && !showLoading ? "" : "min-h-[180px]",
         className,
       ].join(" ")}
     >
+      {showLoading ? (
+        <div className="absolute inset-0 z-[1] flex min-h-[180px] flex-col items-center justify-center gap-2 bg-[linear-gradient(135deg,#26272c,#17181b_48%,#222821)] text-white/48">
+          <RefreshCw size={18} className="animate-spin" />
+          <span className="text-[12px] font-medium">{"预览图加载中"}</span>
+        </div>
+      ) : null}
       {showVideo && videoUrl ? (
         <video
           src={videoUrl}
@@ -115,7 +126,8 @@ function PromptCover({
           loop={!playable}
           playsInline
           preload="metadata"
-          className={mediaClassName}
+          className={`${mediaClassName} transition-opacity duration-300 ${videoLoaded ? "opacity-100" : "opacity-0"}`}
+          onLoadedMetadata={() => setLoadedVideoUrl(videoUrl)}
           onError={() => setFailedVideoUrl(videoUrl)}
         />
       ) : showImage && entry.coverUrl ? (
@@ -123,7 +135,8 @@ function PromptCover({
           src={entry.coverUrl}
           alt={entry.title}
           loading="lazy"
-          className={mediaClassName}
+          className={`${mediaClassName} transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+          onLoad={() => setLoadedImageUrl(entry.coverUrl ?? null)}
           onError={() => setFailedUrl(entry.coverUrl ?? null)}
         />
       ) : (
