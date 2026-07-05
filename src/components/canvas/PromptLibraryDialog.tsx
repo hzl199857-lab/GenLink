@@ -270,14 +270,16 @@ export function PromptLibraryDialog({
   }, []);
 
   const communityEntries = useMemo(
-    () =>
-      sortPromptLibraryEntries(
-        mergePromptLibraryEntries([
-          ...liveEntries,
-          ...cachedCommunityPrompts,
-          ...BUNDLED_COMMUNITY_PROMPTS,
-        ]),
-      ),
+    () => {
+      const sourceEntries =
+        liveEntries.length > 0
+          ? liveEntries
+          : cachedCommunityPrompts.length > 0
+            ? cachedCommunityPrompts
+            : BUNDLED_COMMUNITY_PROMPTS;
+
+      return sortPromptLibraryEntries(mergePromptLibraryEntries(sourceEntries));
+    },
     [cachedCommunityPrompts, liveEntries],
   );
 
@@ -322,7 +324,7 @@ export function PromptLibraryDialog({
           kind: body.errors.length > 0 || body.fromCache ? "warning" : "success",
           message:
             body.fromCache
-              ? "\u8fdc\u7a0b\u5237\u65b0\u5931\u8d25\uff0c\u5df2\u4f7f\u7528\u7f13\u5b58"
+              ? "\u8fdc\u7a0b\u6682\u65f6\u4e0d\u7a33\u5b9a\uff0c\u5df2\u4fdd\u7559\u7f13\u5b58"
               : body.errors.length > 0
                 ? "\u5df2\u5237\u65b0\uff0c\u90e8\u5206\u8fdc\u7a0b\u6e90\u5931\u8d25"
                 : newEntryCount > 0
