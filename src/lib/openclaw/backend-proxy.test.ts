@@ -5,7 +5,7 @@ import {
   BackendProxyError,
   getAgentBackendBaseUrl,
   proxyOpenClawRequest,
-} from "./backend-proxy.ts";
+} from "./backend-proxy";
 
 const originalBackendUrl = process.env.GENLINK_AGENT_BACKEND_URL;
 

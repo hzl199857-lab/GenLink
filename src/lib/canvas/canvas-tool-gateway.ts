@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { CanvasAgentAction } from "@/types/agent";
 import type { CanvasEdge, CanvasNode, NodeGroup, NodeType } from "@/types/canvas";
 
+import {
+  validateAgentNodeTypeMatchesCanvasKind,
+  validateCharacterAnchorContent,
+} from "../agent-canvas-global-rules";
 import type { GenLinkCanvasToolName } from "../mcp/genlink-canvas-tools";
 import type { JsonObject } from "../mcp/protocol";
 import type { GLWorkflow, GLWorkflowEdge, GLWorkflowNode } from "../planf-ecom";
@@ -209,6 +213,34 @@ function validateWorkflowNode(node: GLWorkflowNode): CanvasToolValidationResult 
     };
   }
 
+  const kindValidation = validateAgentNodeTypeMatchesCanvasKind({
+    nodeId: node.id,
+    type: node.type,
+    agentNodeType: node.data.agentNodeType,
+  });
+
+  if (!kindValidation.ok) {
+    return kindValidation;
+  }
+
+  if (node.data.subType === "text-image") {
+    const characterValidation = validateCharacterAnchorContent({
+      nodeId: node.id,
+      agentNodeType: node.data.agentNodeType,
+      content: typeof node.data.prompt === "string"
+        ? node.data.prompt
+        : typeof node.data.content === "string"
+          ? node.data.content
+          : typeof node.data.text === "string"
+            ? node.data.text
+            : "",
+    });
+
+    if (!characterValidation.ok) {
+      return characterValidation;
+    }
+  }
+
   if ("toolsType" in node.data) {
     return {
       ok: false,
@@ -272,6 +304,8 @@ export function validateGLWorkflowForCanvas(
   const allowedExistingSourceIds = new Set(
     (options.allowedExistingSourceIds ?? []).map((nodeId) => nodeId.trim()).filter(Boolean),
   );
+  let hasCharacterNode = false;
+  let hasVideoClipNode = false;
 
   for (const node of workflow.nodes as GLWorkflowNode[]) {
     if (!isObject(node)) {
@@ -283,11 +317,20 @@ export function validateGLWorkflowForCanvas(
     }
 
     nodeIds.add(node.id);
+    hasCharacterNode ||= node.data?.agentNodeType === "character";
+    hasVideoClipNode ||= node.data?.agentNodeType === "video_clip";
     const nodeValidation = validateWorkflowNode(node);
 
     if (!nodeValidation.ok) {
       return nodeValidation;
     }
+  }
+
+  if (hasCharacterNode && hasVideoClipNode) {
+    return {
+      ok: false,
+      error: "character anchor nodes and video_clip nodes must not be created in the same workflow",
+    };
   }
 
   for (const edge of workflow.edges as GLWorkflowEdge[]) {

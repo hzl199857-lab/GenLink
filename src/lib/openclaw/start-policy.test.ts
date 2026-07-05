@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
-import { assertRealOpenClawRuntimeEnabled, shouldUseRealOpenClawRuntime } from "./start-policy.ts";
+import { assertRealOpenClawRuntimeEnabled, shouldUseRealOpenClawRuntime } from "./start-policy";
 
 const originalOpenClawRealRuntime = process.env.OPENCLAW_REAL_RUNTIME;
 

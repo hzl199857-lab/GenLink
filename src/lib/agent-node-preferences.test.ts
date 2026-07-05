@@ -66,14 +66,18 @@ describe("applyImageGenerationActionOptionsToMaterializedNodes", () => {
       },
     });
 
-    assert.equal(synced[0].type, "image_generation");
-    if (synced[0].type !== "image_generation") {
+    assert.ok(synced);
+    const syncedNode = synced[0];
+
+    assert.ok(syncedNode);
+    assert.equal(syncedNode.type, "image_generation");
+    if (syncedNode.type !== "image_generation") {
       return;
     }
 
-    assert.equal(synced[0].data.prompt, "final prompt");
-    assert.equal(synced[0].data.provider, "fucheers");
-    assert.equal(synced[0].data.aspectRatio, "3:4");
-    assert.equal(synced[0].data.quality, "2K");
+    assert.equal(syncedNode.data.prompt, "final prompt");
+    assert.equal(syncedNode.data.provider, "fucheers");
+    assert.equal(syncedNode.data.aspectRatio, "3:4");
+    assert.equal(syncedNode.data.quality, "2K");
   });
 });

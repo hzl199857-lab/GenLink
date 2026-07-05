@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
+import type { OpenClawPlanfEcomSession } from "./planf-ecom-session";
+
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
@@ -27,7 +29,7 @@ const {
   parseOpenClawEcomWorkflow,
 } = require("./ecom-protocol.ts") as typeof import("./ecom-protocol");
 
-const session = {
+const session: OpenClawPlanfEcomSession = {
   sessionId: "session-1",
   route: "ecomImageTrack",
   phase: "collecting",
@@ -40,7 +42,7 @@ const session = {
   message: "message",
   thinkingSteps: [],
   fields: [],
-} as const;
+};
 
 const values = {
   productName: "便携式音响",
@@ -469,6 +471,7 @@ test("builds workflow prompt with rules-library handoff and user-upload fanout r
         totalImages: 8,
         deliveryRounds: 1,
         styleMode: "default",
+        extraConstraints: "",
       },
       imageSlots: [],
       options: [],

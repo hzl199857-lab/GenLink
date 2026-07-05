@@ -414,6 +414,8 @@ function getTraceToolLabel(name: CanvasAgentToolName): string {
   switch (name) {
     case 'read_canvas_summary':
       return '\u8bfb\u53d6\u753b\u5e03\u6458\u8981';
+    case 'read_rule_file':
+      return '\u8bfb\u53d6\u89c4\u5219\u6587\u4ef6';
     case 'create_text_node':
       return '\u521b\u5efa\u6587\u672c\u8282\u70b9';
     case 'create_uploaded_image_node':

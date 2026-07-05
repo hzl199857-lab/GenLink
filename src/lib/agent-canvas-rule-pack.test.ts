@@ -20,21 +20,14 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
   (module as NodeModule & { _compile(source: string, filename: string): void })._compile(output.outputText, filename);
 };
 
-const { AGENT_MODEL_OPTIONS } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
+const { buildAgentCanvasRulePack } =
+  require("./agent-canvas-rule-pack.ts") as typeof import("./agent-canvas-rule-pack");
 
-const agentModelOptionIds = AGENT_MODEL_OPTIONS.map((option) => option.id as string);
+test("loads AGENTS.md as the controller entrypoint in the Agent canvas rule pack", () => {
+  const rulePack = buildAgentCanvasRulePack();
 
-test("includes GPT 5.4 mini as a selectable agent model", () => {
-  assert.equal(
-    AGENT_MODEL_OPTIONS.some((option) => option.id === "gpt-5.4-mini" && option.label === "GPT-5.4 Mini"),
-    true,
-  );
-});
-
-test("does not include gemini 3.5 flash in agent model options", () => {
-  assert.equal(agentModelOptionIds.includes("gemini-3.5-flash"), false);
-});
-
-test("does not include automatic agent model selection", () => {
-  assert.equal(agentModelOptionIds.includes("auto"), false);
+  assert.equal(rulePack.loadedFiles[0]?.relativePath, "rules/planf-canvas/AGENTS.md");
+  assert.match(rulePack.prompt, /GenLink Canvas — 智能体总控/);
+  assert.match(rulePack.prompt, /BOOTSTRAP\.md/);
+  assert.match(rulePack.prompt, /workflow-json/);
 });

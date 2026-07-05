@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { mapAgentPanelModelToOpenClaw } from "./model-mapping.ts";
+import { mapAgentPanelModelToOpenClaw } from "./model-mapping";
 
 describe("mapAgentPanelModelToOpenClaw", () => {
   it("maps Vibe panel models to the GenLink OpenClaw text provider", () => {

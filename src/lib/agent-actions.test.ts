@@ -25,6 +25,19 @@ const {
   restoreReferenceMentionLabelsInActions,
 } = require("./agent-actions.ts") as typeof import("./agent-actions");
 
+function imageAttachment(id: string, name: string, sourceNodeId: string) {
+  return {
+    id,
+    kind: "image" as const,
+    name,
+    mimeType: "image/png",
+    imageUrl: "",
+    previewUrl: "",
+    status: "ready" as const,
+    sourceNodeId,
+  };
+}
+
 test("replaces hallucinated existing source connections with real attachment source nodes", () => {
   const actions = attachExistingSourceReferencesToImageActions(
     [
@@ -83,8 +96,8 @@ test("restores explicit reference mention labels in generated image prompts", ()
     ],
     "去掉 [[ref:att-1:%E5%9B%BE%E7%89%871]] 图中人物的眼镜然后戴上 [[ref:att-2:%E5%9B%BE%E7%89%872]] 这个墨镜",
     [
-      { id: "att-1", name: "person.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-1" },
-      { id: "att-2", name: "sunglasses.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-2" },
+      imageAttachment("att-1", "person.png", "source-node-1"),
+      imageAttachment("att-2", "sunglasses.png", "source-node-2"),
     ],
   );
 
@@ -108,8 +121,8 @@ test("prefixes missing explicit reference mention labels in generated image prom
     ],
     "去掉 [[ref:att-1:%E5%9B%BE%E7%89%871]] 图中人物的眼镜然后戴上 [[ref:att-2:%E5%9B%BE%E7%89%872]] 这个墨镜",
     [
-      { id: "att-1", name: "person.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-1" },
-      { id: "att-2", name: "sunglasses.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-2" },
+      imageAttachment("att-1", "person.png", "source-node-1"),
+      imageAttachment("att-2", "sunglasses.png", "source-node-2"),
     ],
   );
 
@@ -133,9 +146,9 @@ test("orders node references and labels by each image node connection order", ()
     ],
     "以 [[ref:att-2:%E5%9B%BE%E7%89%872]] 中的人物为主，穿上 [[ref:att-3:%E5%9B%BE%E7%89%873]] 的上衣，并手持 [[ref:att-1:%E5%9B%BE%E7%89%871]] 中的提包。",
     [
-      { id: "att-1", name: "bag.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-1" },
-      { id: "att-2", name: "person.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-2" },
-      { id: "att-3", name: "top.png", previewUrl: "", status: "ready", sourceNodeId: "source-node-3" },
+      imageAttachment("att-1", "bag.png", "source-node-1"),
+      imageAttachment("att-2", "person.png", "source-node-2"),
+      imageAttachment("att-3", "top.png", "source-node-3"),
     ],
   );
   const actions = attachExistingSourceReferencesToImageActions(

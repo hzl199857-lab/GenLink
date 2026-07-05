@@ -1,7 +1,7 @@
 import type { NodeClipboardContent } from "./canvas/node-context-actions";
 
 export interface ClipboardContentWriterDependencies {
-  clipboard?: Pick<Clipboard, "write" | "writeText">;
+  clipboard?: Pick<Clipboard, "writeText"> & Partial<Pick<Clipboard, "write">>;
   fetch?: typeof fetch;
   ClipboardItem?: typeof globalThis.ClipboardItem;
 }

@@ -3,6 +3,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
+import type { AudioNodeData } from "@/types/canvas";
+
 const require = createRequire(import.meta.url);
 const Module = require("node:module") as typeof import("node:module") & {
   _resolveFilename: (
@@ -88,13 +90,14 @@ test("keeps hosted audio URL when resolving a local preview URL", () => {
 });
 
 test("keeps remote hosted audio URL when applying a persisted local preview", () => {
+  const nodeData: AudioNodeData = {
+    title: "人声",
+    audioUrl: "https://runninghub.example.com/vocal.mp3",
+    hostedAudioUrl: "https://runninghub.example.com/vocal.mp3",
+    fileName: "vocal",
+  };
   const data = applyPersistedAudioPreview(
-    {
-      title: "人声",
-      audioUrl: "https://runninghub.example.com/vocal.mp3",
-      hostedAudioUrl: "https://runninghub.example.com/vocal.mp3",
-      fileName: "vocal",
-    },
+    nodeData,
     {
       previewUrl: "blob:https://app.example.com/vocal-preview",
       fileName: "2026-vocal.mp3",

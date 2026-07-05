@@ -5,7 +5,7 @@ import {
   buildPlanfEcomWorkflow,
   createPlanfEcomWorkflowResponse,
   glWorkflowToCanvasAgentActions,
-} from "./planf-ecom.ts";
+} from "./planf-ecom";
 
 test("builds a GenLink workflow-json for a PlanF e-commerce image request", () => {
   const workflow = buildPlanfEcomWorkflow({

@@ -213,6 +213,7 @@ export type CanvasAgentToolRisk = "read" | "write" | "generate";
 
 export type CanvasAgentToolName =
   | "read_canvas_summary"
+  | "read_rule_file"
   | "create_text_node"
   | "create_uploaded_image_node"
   | "create_image_generation_node"

@@ -65,6 +65,8 @@ const videoNode: CanvasNode = {
     videoUrl: "https://example.com/video.mp4",
     hostedVideoUrl: "https://cdn.example.com/video.mp4",
     fileName: "motion.mp4",
+    width: 1920,
+    height: 1080,
   },
 };
 

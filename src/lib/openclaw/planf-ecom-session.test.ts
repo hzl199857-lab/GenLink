@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
+import type { CanvasAgentAction } from "@/types/agent";
+
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 
@@ -167,7 +169,9 @@ test("fans out remaining full-set images from the confirmed white-bg anchor", ()
   };
   const workflow = createPlanfEcomWorkflowFromAnchor({ session, values, anchor });
   const imageActions = workflow.actions.filter((action) => action.type === "create_image_generation_node");
-  const anchorConnections = workflow.actions.filter((action) => (
+  const anchorConnections = workflow.actions.filter((
+    action,
+  ): action is Extract<CanvasAgentAction, { type: "connect_nodes" }> => (
     action.type === "connect_nodes" &&
     action.sourceRef.kind === "existing" &&
     action.sourceRef.nodeId === anchor.nodeId
@@ -178,8 +182,13 @@ test("fans out remaining full-set images from the confirmed white-bg anchor", ()
   assert.equal(imageActions.some((action) => action.clientActionId === "image-1"), false);
   assert.equal(anchorConnections.length, 7);
   assert.ok(imageActions.every((action) => action.prompt.includes(anchor.outputUrl)));
-  assert.ok(anchorConnections.every((action) => (
-    action.targetRef.kind === "created" &&
-    imageActions.some((imageAction) => imageAction.clientActionId === action.targetRef.clientActionId)
-  )));
+  assert.ok(anchorConnections.every((action) => {
+    if (action.targetRef.kind !== "created") {
+      return false;
+    }
+
+    const targetClientActionId = action.targetRef.clientActionId;
+
+    return imageActions.some((imageAction) => imageAction.clientActionId === targetClientActionId);
+  }));
 });

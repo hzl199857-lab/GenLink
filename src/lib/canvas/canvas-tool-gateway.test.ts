@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { describe, it } from "node:test";
 
 import type { CanvasNode } from "@/types/canvas";
+import type { GLWorkflow } from "../planf-ecom";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -30,7 +31,7 @@ const {
   validateGLWorkflowForCanvas,
 } = require("./canvas-tool-gateway.ts") as typeof import("./canvas-tool-gateway");
 
-function validWorkflow() {
+function validWorkflow(): GLWorkflow {
   return {
     version: "gl-workflow-v1",
     source: "openclaw",

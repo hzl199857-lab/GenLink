@@ -1,15 +1,19 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
 import { NextResponse } from "next/server";
 
-import { AGENT_STEP_RESPONSE_FORMAT } from "@/lib/agent-response-format";
-import { createBatchPromptVariants } from "@/lib/agent-prompt-variants";
+import { AGENT_RUNTIME_RESPONSE_FORMAT } from "@/lib/agent-response-format";
+import { buildAgentCanvasRulePack, type AgentCanvasRulePack } from "@/lib/agent-canvas-rule-pack";
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import {
   getAgentVisionImageIndexByAttachmentId,
   getAgentVisionImages,
 } from "@/lib/agent-vision-images";
+import { materializeAgentWorkflowOutput } from "@/lib/agent-workflow-output";
 import { stripReferenceMentionTokens } from "@/lib/prompt-mentions";
 import type { CanvasRuntimeSnapshot } from "@/lib/canvas/runtime-snapshot";
-import { generateText, VibeApiError, type ImageApiProvider } from "@/lib/vibe";
+import { generateText, VibeApiError, type GenerateTextResult, type ImageApiProvider } from "@/lib/vibe";
 import type {
   AgentExecutionPlan,
   AgentProvider,
@@ -19,13 +23,16 @@ import type {
   CanvasAgentAction,
   CanvasAgentToolCall,
   CanvasAgentToolName,
-  CanvasAgentToolResult,
   CanvasAgentTraceItem,
 } from "@/types/agent";
 
 export const runtime = "nodejs";
 
-const MAX_TOOL_STEPS = 20;
+const MAX_SELF_REPAIR_ATTEMPTS = 1;
+const MAX_RULE_READ_STEPS = 5;
+const MAX_RULE_READ_CHARS = 40_000;
+const RULE_READ_ROOT = path.join(process.cwd(), "rules", "planf-canvas");
+let cachedRulePack: AgentCanvasRulePack | undefined;
 
 type CanvasRuntimeStatus = CanvasRuntimeSnapshot["nodes"][number]["status"];
 
@@ -42,8 +49,6 @@ type AgentRuntimeState = {
   context: AgentTaskContext;
   provider?: AgentProvider;
   model?: string;
-  virtualNodes: Map<string, { id: string; type: "text" | "image" | "image_generation"; title?: string }>;
-  attachmentsById: Map<string, AgentTaskAttachment>;
   actions: CanvasAgentAction[];
   trace: CanvasAgentTraceItem[];
   promptPreview: string;
@@ -59,33 +64,30 @@ type AgentRunResult = {
   meta: AgentRunMeta;
 };
 
-type ModelStep =
+type AgentSelfRepairContext = {
+  attempt: number;
+  diagnostic: string;
+  previousRawOutput: string;
+};
+
+type AgentRuntimeModelStep =
   | {
-      type: "tool_call";
-      thinking?: string;
-      tool: {
-        name: CanvasAgentToolName;
-        input: Record<string, unknown>;
-      };
+      type: "read_rule_file";
+      reason: string | null;
+      filePath: string;
+      summary: null;
+      workflow: null;
     }
   | {
-      type: "final";
-      message: string;
+      type: "workflow";
+      reason: string | null;
+      filePath: null;
+      summary: string;
+      workflow: unknown;
     };
 
 function createRuntimeId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
-}
-
-function isAgentProvider(value: unknown): value is AgentProvider {
-  return (
-    value === "vibe" ||
-    value === "fucheers" ||
-    value === "comfly" ||
-    value === "zhenzhen" ||
-    value === "runninghub" ||
-    value === "grsai"
-  );
 }
 
 function parseAttachment(value: unknown): AgentTaskAttachment | null {
@@ -250,12 +252,6 @@ function isCanvasRuntimeStatus(value: unknown): value is CanvasRuntimeStatus {
   return value === "pending" || value === "running" || value === "finished" || value === "failed";
 }
 
-function parseStringRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
 function extractJsonObject(value: string): string | null {
   const trimmed = value.trim();
 
@@ -275,23 +271,17 @@ function extractJsonObject(value: string): string | null {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : null;
 }
 
-function isToolName(value: unknown): value is CanvasAgentToolName {
-  return (
-    value === "read_canvas_summary" ||
-    value === "create_text_node" ||
-    value === "create_uploaded_image_node" ||
-    value === "create_image_generation_node" ||
-    value === "connect_nodes" ||
-    value === "set_image_generation_options" ||
-    value === "run_image_generation"
-  );
+function parseStringRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
-function parseModelStep(value: string): ModelStep | null {
-  const jsonText = extractJsonObject(value);
+function parseRuntimeModelStep(content: string): AgentRuntimeModelStep {
+  const jsonText = extractJsonObject(content);
 
   if (!jsonText) {
-    return null;
+    throw new Error("模型没有返回 GenLink runtime JSON；请切换支持结构化 JSON 输出的模型或 Provider。");
   }
 
   let parsed: unknown;
@@ -299,35 +289,82 @@ function parseModelStep(value: string): ModelStep | null {
   try {
     parsed = JSON.parse(jsonText);
   } catch {
-    return null;
+    throw new Error("模型返回的 GenLink runtime JSON 无法解析；请切换支持结构化 JSON 输出的模型或 Provider。");
   }
 
   const record = parseStringRecord(parsed);
 
   if (!record || typeof record.type !== "string") {
-    return null;
+    throw new Error("模型返回的 GenLink runtime JSON 缺少 type。");
   }
 
-  if (record.type === "final" && typeof record.message === "string") {
+  if (record.type === "read_rule_file") {
+    if (typeof record.filePath !== "string" || !record.filePath.trim()) {
+      throw new Error("read_rule_file requires filePath");
+    }
+
     return {
-      type: "final",
-      message: record.message,
+      type: "read_rule_file",
+      reason: typeof record.reason === "string" ? record.reason : null,
+      filePath: record.filePath,
+      summary: null,
+      workflow: null,
     };
   }
 
-  const tool = parseStringRecord(record.tool);
+  if (record.type === "workflow") {
+    if (typeof record.summary !== "string" || !record.summary.trim()) {
+      throw new Error("workflow response requires summary");
+    }
 
-  if (record.type !== "tool_call" || !tool || !isToolName(tool.name)) {
-    return null;
+    if (!parseStringRecord(record.workflow)) {
+      throw new Error("workflow response requires workflow object");
+    }
+
+    return {
+      type: "workflow",
+      reason: typeof record.reason === "string" ? record.reason : null,
+      filePath: null,
+      summary: record.summary,
+      workflow: record.workflow,
+    };
+  }
+
+  throw new Error(`Unsupported GenLink runtime step type: ${record.type}`);
+}
+
+function normalizeRuleFilePath(filePath: string): { absolutePath: string; relativePath: string } {
+  const normalizedInput = filePath.replace(/\\/g, "/").replace(/^rules\/planf-canvas\//, "");
+  const absolutePath = path.resolve(RULE_READ_ROOT, normalizedInput);
+  const relativePath = path.relative(RULE_READ_ROOT, absolutePath).replace(/\\/g, "/");
+
+  if (relativePath.startsWith("../") || path.isAbsolute(relativePath) || relativePath === "") {
+    throw new Error("read_rule_file path must stay inside rules/planf-canvas");
+  }
+
+  if (!/\.(?:md|yaml|yml|json|txt)$/i.test(relativePath)) {
+    throw new Error("read_rule_file only supports md/yaml/yml/json/txt files");
   }
 
   return {
-    type: "tool_call",
-    thinking: typeof record.thinking === "string" ? record.thinking : undefined,
-    tool: {
-      name: tool.name,
-      input: parseStringRecord(tool.input) ?? {},
-    },
+    absolutePath,
+    relativePath: `rules/planf-canvas/${relativePath}`,
+  };
+}
+
+function readRuleFileForAgent(filePath: string): { relativePath: string; content: string; truncated: boolean } {
+  const normalized = normalizeRuleFilePath(filePath);
+
+  if (!existsSync(normalized.absolutePath)) {
+    throw new Error(`read_rule_file not found: ${normalized.relativePath}`);
+  }
+
+  const content = readFileSync(normalized.absolutePath, "utf8");
+
+  return {
+    relativePath: normalized.relativePath,
+    content: content.length > MAX_RULE_READ_CHARS ? content.slice(0, MAX_RULE_READ_CHARS) : content,
+    truncated: content.length > MAX_RULE_READ_CHARS,
   };
 }
 
@@ -363,30 +400,9 @@ function enhancePromptLocally(message: string, attachments: AgentTaskAttachment[
   ].join(" ");
 }
 
-function parseRequestedImageCount(message: string): number {
-  const normalized = message
-    .replace(/[一]/g, "1")
-    .replace(/[二两]/g, "2")
-    .replace(/[三]/g, "3")
-    .replace(/[四]/g, "4")
-    .replace(/[五]/g, "5")
-    .replace(/[六]/g, "6")
-    .replace(/[七]/g, "7")
-    .replace(/[八]/g, "8")
-    .replace(/[九]/g, "9")
-    .replace(/[十]/g, "10");
-  const match = normalized.match(/(\d+)\s*(张|个|组|款|幅)/);
-  const count = match ? Number(match[1]) : 1;
-
-  if (!Number.isFinite(count) || count < 2) {
-    return 1;
-  }
-
-  return Math.min(8, Math.floor(count));
-}
-
 function getToolRisk(name: CanvasAgentToolName): CanvasAgentToolCall["risk"] {
   return name === "read_canvas_summary" ||
+    name === "read_rule_file" ||
     name === "genlink_canvas_get_snapshot" ||
     name === "genlink_canvas_get_node" ||
     name === "genlink_canvas_get_job_status"
@@ -407,343 +423,6 @@ function createToolCall(name: CanvasAgentToolName, input: Record<string, unknown
   };
 }
 
-function getStringInput(input: Record<string, unknown>, key: string): string | undefined {
-  const value = input[key];
-
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function hasVirtualNode(state: AgentRuntimeState, id: string): boolean {
-  return state.virtualNodes.has(id) ||
-    state.context.input.attachments.some((attachment) => attachment.sourceNodeId === id);
-}
-
-function executeVirtualTool(
-  call: CanvasAgentToolCall,
-  state: AgentRuntimeState,
-): CanvasAgentToolResult {
-  if (call.name === "read_canvas_summary") {
-    return {
-      id: createRuntimeId("tool-result"),
-      toolCallId: call.id,
-      toolName: call.name,
-      ok: true,
-      message: "已读取画布摘要。",
-      data: state.context.canvasSummary ?? {
-        nodeCount: 0,
-        edgeCount: 0,
-        groupCount: 0,
-      },
-    };
-  }
-
-  if (call.name === "create_uploaded_image_node") {
-    const attachmentId = getStringInput(call.input, "attachmentId");
-    const attachment = attachmentId ? state.attachmentsById.get(attachmentId) : undefined;
-
-    if (!attachment) {
-      return {
-        id: createRuntimeId("tool-result"),
-        toolCallId: call.id,
-        toolName: call.name,
-        ok: false,
-        message: "没有找到可用的上传图片。",
-        error: "attachment_not_found",
-      };
-    }
-
-    const nodeId = attachment.sourceNodeId ?? `virtual-uploaded-${attachment.id}`;
-    state.virtualNodes.set(nodeId, {
-      id: nodeId,
-      type: "image",
-      title: attachment.name,
-    });
-
-    return {
-      id: createRuntimeId("tool-result"),
-      toolCallId: call.id,
-      toolName: call.name,
-      ok: true,
-      message: "已把上传素材放入画布，作为后续图像生成的输入。",
-      createdNodeIds: [nodeId],
-      data: {
-        nodeId,
-        attachmentId: attachment.id,
-      },
-    };
-  }
-
-  if (call.name === "create_text_node") {
-    const text = getStringInput(call.input, "text") ?? state.promptPreview;
-    const clientActionId = getStringInput(call.input, "clientActionId") ?? "text-prompt-1";
-    const title = getStringInput(call.input, "title") ?? "Agent Prompt";
-    const nodeId = `created:${clientActionId}`;
-
-    state.promptPreview = text;
-    state.virtualNodes.set(nodeId, {
-      id: nodeId,
-      type: "text",
-      title,
-    });
-    state.actions.push({
-      type: "create_text_node",
-      clientActionId,
-      title,
-      text,
-    });
-
-    return {
-      id: createRuntimeId("tool-result"),
-      toolCallId: call.id,
-      toolName: call.name,
-      ok: true,
-      message: "已准备创建提示词文本节点。",
-      createdNodeIds: [nodeId],
-      data: {
-        nodeId,
-        clientActionId,
-        text,
-      },
-    };
-  }
-
-  if (call.name === "create_image_generation_node") {
-    const prompt = getStringInput(call.input, "prompt") ?? state.promptPreview;
-    const clientActionId = getStringInput(call.input, "clientActionId") ?? "image-generation-1";
-    const nodeId = `created:${clientActionId}`;
-
-    state.promptPreview = prompt;
-    state.virtualNodes.set(nodeId, {
-      id: nodeId,
-      type: "image_generation",
-      title: getStringInput(call.input, "title") ?? "Agent Image",
-    });
-    state.actions.push({
-      type: "create_image_generation_node",
-      clientActionId,
-      prompt,
-      options: {
-        provider: isAgentProvider(call.input.provider) ? call.input.provider : state.provider,
-        model: getStringInput(call.input, "model") ?? (state.model === "auto" ? undefined : state.model),
-        runningHubChannel: call.input.runningHubChannel === "low-cost" ? "low-cost" : undefined,
-        aspectRatio: getStringInput(call.input, "aspectRatio"),
-        quality: getStringInput(call.input, "quality"),
-      },
-    });
-
-    return {
-      id: createRuntimeId("tool-result"),
-      toolCallId: call.id,
-      toolName: call.name,
-      ok: true,
-      message: "已准备创建图像生成节点，并写入润色后的 prompt。",
-      createdNodeIds: [nodeId],
-      data: {
-        nodeId,
-        clientActionId,
-        prompt,
-      },
-    };
-  }
-
-  if (call.name === "connect_nodes") {
-    const sourceNodeId = getStringInput(call.input, "sourceNodeId");
-    const targetNodeId = getStringInput(call.input, "targetNodeId");
-    const sourceClientActionId = getStringInput(call.input, "sourceClientActionId");
-    const targetClientActionId = getStringInput(call.input, "targetClientActionId");
-    const sourceExists = sourceNodeId ? hasVirtualNode(state, sourceNodeId) : Boolean(sourceClientActionId);
-    const targetExists = targetNodeId ? hasVirtualNode(state, targetNodeId) : Boolean(targetClientActionId);
-
-    if (!sourceExists || !targetExists) {
-      return {
-        id: createRuntimeId("tool-result"),
-        toolCallId: call.id,
-        toolName: call.name,
-        ok: false,
-        message: "连线失败：源节点或目标节点不存在。",
-        error: "node_not_found",
-      };
-    }
-
-    state.actions.push({
-      type: "connect_nodes",
-      sourceRef: sourceClientActionId
-        ? { kind: "created", clientActionId: sourceClientActionId }
-        : { kind: "existing", nodeId: sourceNodeId as string },
-      targetRef: targetClientActionId
-        ? { kind: "created", clientActionId: targetClientActionId }
-        : { kind: "existing", nodeId: targetNodeId as string },
-      sourceHandle: getStringInput(call.input, "sourceHandle"),
-      targetHandle: getStringInput(call.input, "targetHandle"),
-    });
-
-    return {
-      id: createRuntimeId("tool-result"),
-      toolCallId: call.id,
-      toolName: call.name,
-      ok: true,
-      message: "已准备连接上游节点和图像生成节点。",
-      createdEdgeIds: [createRuntimeId("virtual-edge")],
-    };
-  }
-
-  if (call.name === "set_image_generation_options") {
-    return {
-      id: createRuntimeId("tool-result"),
-      toolCallId: call.id,
-      toolName: call.name,
-      ok: true,
-      message: "图像生成参数会在用户确认创建节点时按面板偏好写入。",
-      updatedNodeIds: getStringInput(call.input, "nodeId") ? [getStringInput(call.input, "nodeId") as string] : undefined,
-      data: call.input,
-    };
-  }
-
-  return {
-    id: createRuntimeId("tool-result"),
-    toolCallId: call.id,
-    toolName: call.name,
-    ok: false,
-    message: "触发生成需要用户显式确认，Agent 不会自动执行。",
-    error: "generation_requires_confirmation",
-  };
-}
-
-function executeAndTrace(state: AgentRuntimeState, call: CanvasAgentToolCall): CanvasAgentToolResult {
-  const result = executeVirtualTool(call, state);
-
-  state.trace.push({
-    id: createRuntimeId("trace"),
-    type: "tool_call",
-    call,
-  });
-  state.trace.push({
-    id: createRuntimeId("trace"),
-    type: "tool_result",
-    result,
-  });
-
-  return result;
-}
-
-function normalizeImageEditActions(state: AgentRuntimeState) {
-  const selectedAttachments = getSelectedAttachments(state.context)
-    .filter((attachment) => attachment.sourceNodeId);
-  const requestedCount = parseRequestedImageCount(state.message);
-
-  if (selectedAttachments.length === 0) {
-    return;
-  }
-
-  const textActionIds = new Set(
-    state.actions.flatMap((action) => (
-      action.type === "create_text_node" ? [action.clientActionId] : []
-    )),
-  );
-  const textByActionId = new Map(
-    state.actions.flatMap((action) => (
-      action.type === "create_text_node" ? [[action.clientActionId, action.text] as const] : []
-    )),
-  );
-  const promptByGenerationId = new Map<string, string>();
-
-  for (const action of state.actions) {
-    if (
-      action.type === "connect_nodes" &&
-      action.sourceRef.kind === "created" &&
-      action.targetRef.kind === "created" &&
-      textActionIds.has(action.sourceRef.clientActionId)
-    ) {
-      const prompt = textByActionId.get(action.sourceRef.clientActionId);
-
-      if (prompt) {
-        promptByGenerationId.set(action.targetRef.clientActionId, prompt);
-      }
-    }
-  }
-
-  if (promptByGenerationId.size > 0) {
-    state.actions = state.actions.filter((action) => {
-      if (action.type === "create_text_node") {
-        return false;
-      }
-
-      if (
-        action.type === "connect_nodes" &&
-        action.sourceRef.kind === "created" &&
-        textActionIds.has(action.sourceRef.clientActionId)
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-
-    state.actions = state.actions.map((action) => {
-      if (action.type !== "create_image_generation_node") {
-        return action;
-      }
-
-      const prompt = promptByGenerationId.get(action.clientActionId);
-
-      return prompt
-        ? { ...action, prompt }
-        : action;
-    });
-  }
-
-  let imageGenerationActions = state.actions.filter(
-    (action): action is Extract<CanvasAgentAction, { type: "create_image_generation_node" }> =>
-      action.type === "create_image_generation_node",
-  );
-  const requiredCount = Math.max(requestedCount, imageGenerationActions.length, 1);
-  const prompts = requiredCount > 1
-    ? createBatchPromptVariants(state.message, requiredCount, { hasReferenceImages: true })
-    : [state.promptPreview];
-  const existingGenerationIds = new Set(imageGenerationActions.map((action) => action.clientActionId));
-
-  for (let index = 0; index < requiredCount; index += 1) {
-    const number = index + 1;
-    const existingAction = imageGenerationActions[index];
-    let clientActionId = existingAction?.clientActionId ?? `image-generation-${number}`;
-
-    if (!existingAction) {
-      while (existingGenerationIds.has(clientActionId)) {
-        clientActionId = `image-generation-${number}-${existingGenerationIds.size + 1}`;
-      }
-      executeAndTrace(state, createToolCall("create_image_generation_node", {
-        clientActionId,
-        prompt: prompts[index] ?? state.promptPreview,
-        provider: state.provider,
-        model: state.model === "auto" ? undefined : state.model,
-      }));
-      existingGenerationIds.add(clientActionId);
-      imageGenerationActions = state.actions.filter(
-        (action): action is Extract<CanvasAgentAction, { type: "create_image_generation_node" }> =>
-          action.type === "create_image_generation_node",
-      );
-    }
-
-    for (const attachment of selectedAttachments) {
-      const alreadyConnected = state.actions.some((action) =>
-        action.type === "connect_nodes" &&
-        action.sourceRef.kind === "existing" &&
-        action.sourceRef.nodeId === attachment.sourceNodeId &&
-        action.targetRef.kind === "created" &&
-        action.targetRef.clientActionId === clientActionId,
-      );
-
-      if (!alreadyConnected) {
-        executeAndTrace(state, createToolCall("connect_nodes", {
-          sourceNodeId: attachment.sourceNodeId,
-          targetClientActionId: clientActionId,
-        }));
-      }
-    }
-  }
-}
-
-
 function createRuntimeState(params: {
   message: string;
   context: AgentTaskContext;
@@ -751,18 +430,6 @@ function createRuntimeState(params: {
   model?: string;
 }): AgentRuntimeState {
   const selectedAttachments = getSelectedAttachments(params.context);
-  const attachmentsById = new Map(selectedAttachments.map((attachment) => [attachment.id, attachment]));
-  const virtualNodes = new Map<string, { id: string; type: "text" | "image" | "image_generation"; title?: string }>();
-
-  for (const attachment of selectedAttachments) {
-    if (attachment.sourceNodeId) {
-      virtualNodes.set(attachment.sourceNodeId, {
-        id: attachment.sourceNodeId,
-        type: "image",
-        title: attachment.name,
-      });
-    }
-  }
 
   return {
     message: params.message,
@@ -776,8 +443,6 @@ function createRuntimeState(params: {
     },
     provider: params.provider,
     model: params.model,
-    virtualNodes,
-    attachmentsById,
     actions: [],
     trace: [],
     promptPreview: enhancePromptLocally(params.message, selectedAttachments),
@@ -850,6 +515,8 @@ function getToolDisplayName(name: CanvasAgentToolName): string {
   switch (name) {
     case "read_canvas_summary":
       return "读取画布摘要";
+    case "read_rule_file":
+      return "读取规则文件";
     case "create_text_node":
       return "创建提示词文本节点";
     case "create_uploaded_image_node":
@@ -881,61 +548,76 @@ function getToolDisplayName(name: CanvasAgentToolName): string {
   }
 }
 
+function getCachedAgentCanvasRulePack(): AgentCanvasRulePack {
+  cachedRulePack ??= buildAgentCanvasRulePack();
+
+  return cachedRulePack;
+}
+
 function createAgentSystemPrompt(): string {
+  const rulePack = getCachedAgentCanvasRulePack();
+
   return [
-    "You are GenLink Canvas Agent, an intelligent operator that uses canvas tools.",
-    "Return exactly one JSON object per response. Do not use markdown.",
-    "The API enforces a JSON schema. For tool_call responses, set message to null. For final responses, set tool to null and thinking to null if not needed.",
-    "You must choose one next tool call at a time, wait for tool results in the transcript, then continue.",
-    "Do not return a batch of fixed actions. Think as a tool-using agent.",
-    "Never call run_image_generation. Image generation costs credits and must wait for explicit user confirmation.",
-    "If there are uploaded attachments, this is image-to-image/image editing. Use create_uploaded_image_node for each selected attachment, then create_image_generation_node, then connect_nodes from every source image to each generation node.",
+    "You are GenLink Canvas Agent, an intelligent operator for GenLink Infinite Canvas.",
+    "Return exactly one JSON object that matches the enforced response_format schema. Do not use markdown.",
+    "This runtime supports exactly two step types:",
+    "1. type:\"read_rule_file\" asks the backend to read one rule or skill file under rules/planf-canvas. Set filePath to a relative path such as skills/ecom-image/SKILL.md, and set summary:null, workflow:null.",
+    "2. type:\"workflow\" is the final answer. It must contain summary and a canonical GenLink Canvas workflow-json payload under workflow. Set filePath:null.",
+    "The startup Rule Pack is already loaded below. Do not read AGENTS.md, BOOTSTRAP.md, TOOLS.md, canvas-capabilities.yaml, self-check.md, or engineer files again unless the user task explicitly requires inspecting them.",
+    "Use read_rule_file only when a task-specific skill/reference file is needed. The maximum read budget is 5 files.",
+    "During self-repair, return type:\"workflow\" directly unless the diagnostic explicitly proves that a missing rule file caused the failure.",
+    rulePack.prompt,
+    "The workflow root must be {name,nodes,edges,autoRun}.",
+    "Every node must include id, type, subType, from:\"agent\", agentNodeType, title, content, aspectRatio, duration, sourceNodeId, editAction.",
+    "Use type rh-image for image generation/editing and rh-text only for necessary text nodes. This Agent entry currently materializes image workflows; do not output rh-video nodes here.",
+    "Use subType text-image for from-scratch image generation. Use subType image-image plus editAction:\"redraw\" for uploaded-image or existing-canvas-image edits.",
+    "Never write toolsType, modelCode, resolution, videoWithAudio, negativePrompt, seed, cameraMovement, motionScore, qualitySuffix, upscale, position, or status.",
+    "Never call or imply external image/video generation APIs. You only create a canvas workflow; generation still waits for user confirmation.",
+    "Do not say the image has been generated. Say the workflow/node has been created or prepared.",
+    "Canvas runtime snapshot and selected attachment sourceNodeId values are the source of truth. Never invent node ids.",
+    "If an image-image task has selected attachments with sourceNodeId, every generation node must have an incoming edge from the real sourceNodeId and sourceNodeId must repeat that same real id.",
+    "If the user asks for multiple images, create one rh-image node per requested result. Do not exceed 8 images.",
     "When uploaded attachments include visual inputs, inspect those images directly. Use the visual content to identify product material, color, structure, composition, and scene constraints.",
-    "When uploaded attachments are present, do not create text_node prompt nodes by default. Put the rewritten prompt directly in each create_image_generation_node.prompt.",
-    "If there are no uploaded attachments, this is usually text-to-image: create_text_node, create_image_generation_node, connect_nodes.",
-    "If uploaded attachments are present and the user asks for multiple images, create one image_generation_node per requested result and connect the same source image node(s) to every generation node. Vary clothing, pose, scene, composition, and details. Do not exceed 8 images.",
-    "If there are no uploaded attachments and the user asks for multiple images, create one independent text_node + image_generation_node + connect_nodes chain per image. Vary scene, subject, composition, and details. Do not exceed 8 images.",
-    "Canvas runtime snapshot is the source of truth. Treat status=failed as failed even if previous text implied success. Do not use failed nodes as finished references. Prefer retrying or creating a replacement only when the user asks.",
+    "When uploaded attachments are present, put the rewritten prompt directly in each rh-image node content. Do not create extra explanation nodes by default.",
+    "Canvas runtime snapshot is the source of truth. Treat status=failed as failed even if previous text implied success. Do not use failed nodes as finished references.",
     "When referencing existing canvas images, only use nodes with status=finished and a non-empty outputUrl.",
-    "Always rewrite the user request into a high quality Chinese image prompt. Do not copy the user prompt verbatim.",
-    "For multi-image requests, every create_image_generation_node.prompt must be a complete standalone concrete prompt, not an abstract variation note.",
+    "Always rewrite the user request into a high quality Chinese image prompt in node.content. Do not copy the user prompt verbatim.",
+    "For multi-image requests, every node.content must be a complete standalone concrete prompt, not an abstract variation note.",
     "When the user asks for variants such as different clothing, actions, cities, styles, colors, angles, scenes, props, expressions, or interactions, infer the user's intent and expand the relevant parts into concrete visual choices. These dimensions are examples, not a fixed checklist.",
     "Do not leave generic phrases such as different clothing, different action, different city, different color, different angle, or different scene as the only variation. Use imagination while preserving the user's subject, constraints, and requested visual direction.",
     "For image editing prompts, preserve subject identity, composition, lighting, pose, background unless the user asks to change them.",
-    "Available tools:",
-    JSON.stringify([
-      { name: "read_canvas_summary", input: {} },
-      { name: "create_uploaded_image_node", input: { attachmentId: "string", title: "string optional" } },
-      { name: "create_text_node", input: { clientActionId: "text-prompt-1", title: "Agent Prompt", text: "rewritten prompt" } },
-      { name: "create_image_generation_node", input: { clientActionId: "image-generation-1", prompt: "rewritten prompt", provider: "optional", model: "optional", aspectRatio: "auto", quality: "1K" } },
-      {
-        name: "connect_nodes",
-        input: {
-          sourceNodeId: "existing source node id OR omitted",
-          sourceClientActionId: "created source client action id OR omitted",
-          targetClientActionId: "image-generation-1",
-        },
-      },
-      { name: "set_image_generation_options", input: { nodeId: "optional", aspectRatio: "auto", quality: "1K" } },
-    ]),
-    "Response schema for tool call:",
+    "Response example:",
     JSON.stringify({
-      type: "tool_call",
-      thinking: "short Chinese explanation of why this tool is next",
-      tool: {
-        name: "read_canvas_summary",
-        input: {},
+      type: "workflow",
+      reason: null,
+      filePath: null,
+      summary: "已创建图片工作流，等待用户确认生成。",
+      workflow: {
+        name: "图片工作流",
+        autoRun: true,
+        nodes: [{
+          id: "node_1",
+          type: "rh-image",
+          subType: "text-image",
+          from: "agent",
+          agentNodeType: "illustration",
+          title: "图片节点",
+          content: "完整中文提示词",
+          aspectRatio: "1:1",
+          duration: null,
+          sourceNodeId: null,
+          editAction: null,
+        }],
+        edges: [],
       },
-    }),
-    "Response schema for final:",
-    JSON.stringify({
-      type: "final",
-      message: "short Chinese final message; tell the user generation still needs confirmation",
     }),
   ].join("\n");
 }
 
-function createAgentUserPrompt(state: AgentRuntimeState): string {
+function createAgentUserPrompt(
+  state: AgentRuntimeState,
+  selfRepair?: AgentSelfRepairContext,
+): string {
   const visionImageIndexByAttachmentId = getAgentVisionImageIndexByAttachmentId(
     state.context.input.attachments,
   );
@@ -979,6 +661,22 @@ function createAgentUserPrompt(state: AgentRuntimeState): string {
       visualInputIndex: visionImageIndexByAttachmentId.get(attachment.id),
       sourceNodeId: attachment.sourceNodeId,
     })),
+    selfRepair: selfRepair
+      ? {
+          attempt: selfRepair.attempt,
+          mode: "full_rewrite_only",
+          diagnostic: selfRepair.diagnostic,
+          previousRawOutput: selfRepair.previousRawOutput,
+          instructions: [
+            "The previous output failed GenLink engineer validation.",
+            "Do not patch or partially edit the previous JSON.",
+            "Fully rewrite one complete new JSON object matching the response_format schema.",
+            "Keep the original user task and canvas/attachment facts unchanged.",
+            "Fix the diagnostic cause directly; do not remove required references to avoid the failure.",
+            "If the task uses selected sourceNodeId values, keep real incoming edges and matching sourceNodeId fields.",
+          ],
+        }
+      : undefined,
     toolTranscript: state.trace.map((item) => {
       if (item.type === "thinking") {
         return {
@@ -1010,6 +708,28 @@ function createAgentUserPrompt(state: AgentRuntimeState): string {
   });
 }
 
+async function generateAgentWorkflowCandidate(params: {
+  state: AgentRuntimeState;
+  provider?: AgentProvider;
+  model?: string;
+  apiKey?: string;
+  selfRepair?: AgentSelfRepairContext;
+}): Promise<GenerateTextResult> {
+  return generateText({
+    prompt: createAgentUserPrompt(params.state, params.selfRepair),
+    systemPrompt: createAgentSystemPrompt(),
+    provider: params.provider as ImageApiProvider | undefined,
+    model: params.model === "auto" ? undefined : params.model,
+    apiKey: params.apiKey,
+    images: getAgentVisionImages(params.state.context.input.attachments).map((image) => ({
+      url: image.url,
+    })),
+    temperature: params.selfRepair ? 0.1 : 0.2,
+    maxTokens: 4000,
+    responseFormat: AGENT_RUNTIME_RESPONSE_FORMAT,
+  });
+}
+
 async function runAgentLoop(params: {
   message: string;
   context: AgentTaskContext;
@@ -1018,64 +738,171 @@ async function runAgentLoop(params: {
   apiKey?: string;
 }): Promise<AgentRunResult> {
   const state = createRuntimeState(params);
-  let lastRawOutput = "";
+  const allowedExistingSourceIds = state.context.input.attachments
+    .map((attachment) => attachment.sourceNodeId?.trim())
+    .filter((nodeId): nodeId is string => Boolean(nodeId));
+  let response: GenerateTextResult | undefined;
+  let materialized: ReturnType<typeof materializeAgentWorkflowOutput> | undefined;
+  let repairContext: AgentSelfRepairContext | undefined;
 
-  for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
-    const response = await generateText({
-      prompt: createAgentUserPrompt(state),
-      systemPrompt: createAgentSystemPrompt(),
-      provider: params.provider as ImageApiProvider | undefined,
-      model: params.model === "auto" ? undefined : params.model,
-      apiKey: params.apiKey,
-      images: getAgentVisionImages(state.context.input.attachments).map((image) => ({
-        url: image.url,
-      })),
-      temperature: 0.2,
-      maxTokens: 1200,
-      responseFormat: AGENT_STEP_RESPONSE_FORMAT,
+  for (let attempt = 0; attempt <= MAX_SELF_REPAIR_ATTEMPTS; attempt += 1) {
+    let diagnostic: string | undefined;
+
+    for (let readCount = 0; readCount <= MAX_RULE_READ_STEPS; readCount += 1) {
+      response = await generateAgentWorkflowCandidate({
+        state,
+        provider: params.provider,
+        model: params.model,
+        apiKey: params.apiKey,
+        selfRepair: repairContext,
+      });
+
+      try {
+        const step = parseRuntimeModelStep(response.content);
+
+        if (step.type === "read_rule_file") {
+          if (readCount >= MAX_RULE_READ_STEPS) {
+            diagnostic = `read_rule_file budget exceeded: maximum ${MAX_RULE_READ_STEPS} files before final workflow`;
+            break;
+          }
+
+          const call = createToolCall("read_rule_file", {
+            filePath: step.filePath,
+            reason: step.reason,
+          });
+          state.trace.push({
+            id: createRuntimeId("trace"),
+            type: "tool_call",
+            call,
+          });
+
+          try {
+            const file = readRuleFileForAgent(step.filePath);
+            state.trace.push({
+              id: createRuntimeId("trace"),
+              type: "tool_result",
+              result: {
+                id: createRuntimeId("tool-result"),
+                toolCallId: call.id,
+                toolName: call.name,
+                ok: true,
+                message: "rule file loaded",
+                data: file,
+              },
+            });
+          } catch (error) {
+            state.trace.push({
+              id: createRuntimeId("trace"),
+              type: "tool_result",
+              result: {
+                id: createRuntimeId("tool-result"),
+                toolCallId: call.id,
+                toolName: call.name,
+                ok: false,
+                message: "rule file read failed",
+                error: error instanceof Error ? error.message : "read_rule_file failed",
+              },
+            });
+          }
+
+          continue;
+        }
+
+        materialized = materializeAgentWorkflowOutput({
+          output: {
+            summary: step.summary,
+            workflow: step.workflow,
+          },
+          provider: params.provider,
+          model: params.model === "auto" ? undefined : params.model,
+          allowedExistingSourceIds,
+        });
+
+        if (attempt > 0) {
+          state.trace.push({
+            id: createRuntimeId("trace"),
+            type: "thinking",
+            content: `Self-Repair PASS: 第 ${attempt} 次重写后的 workflow-json 已通过 GenLink engineer validation。`,
+          });
+        }
+
+        break;
+      } catch (error) {
+        diagnostic = error instanceof Error ? error.message : "Agent workflow validation failed";
+        break;
+      }
+    }
+
+    if (materialized) {
+      break;
+    }
+
+    diagnostic ??= "Agent workflow validation failed";
+
+    if (attempt >= MAX_SELF_REPAIR_ATTEMPTS) {
+      throw new Error(`Agent workflow self-repair failed: ${diagnostic}`);
+    }
+
+    state.trace.push({
+      id: createRuntimeId("trace"),
+      type: "thinking",
+      content: [
+        "Self-Repair Diagnostic:",
+        diagnostic,
+        "Action: re-inject diagnostic and ask the model to fully rewrite the workflow JSON. Backend will not patch fields or add edges.",
+      ].join("\n"),
     });
-
-    lastRawOutput = response.content;
-    const modelStep = parseModelStep(response.content);
-
-    if (!modelStep) {
-      throw new Error("模型返回的工具调用 JSON 无法解析；请切换支持结构化 JSON 输出的模型或 Provider。");
-    }
-
-    if (modelStep.type === "final") {
-      state.finalResponse = modelStep.message;
-      state.trace.push({
-        id: createRuntimeId("trace"),
-        type: "final",
-        content: modelStep.message,
-      });
-      normalizeImageEditActions(state);
-
-      return createAgentResultFromState(state, {
-        usedModel: true,
-        usedFallback: false,
-        model: response.model,
-        modelRawOutput: lastRawOutput,
-      });
-    }
-
-    if (modelStep.thinking?.trim()) {
-      state.trace.push({
-        id: createRuntimeId("trace"),
-        type: "thinking",
-        content: modelStep.thinking.trim(),
-      });
-    }
-
-    const call = createToolCall(modelStep.tool.name, modelStep.tool.input);
-    const result = executeAndTrace(state, call);
-
-    if (!result.ok) {
-      throw new Error(`工具 ${call.name} 执行失败：${result.message}`);
-    }
+    repairContext = {
+      attempt: attempt + 1,
+      diagnostic,
+      previousRawOutput: response?.content ?? "",
+    };
   }
 
-  throw new Error(`模型工具调用超过 ${MAX_TOOL_STEPS} 步；请调整需求后重试。`);
+  if (!response || !materialized) {
+    throw new Error("Agent workflow self-repair failed: model did not produce a valid workflow JSON");
+  }
+
+  const call = createToolCall("genlink_canvas_create_workflow", {
+    workflow: materialized.workflow,
+  });
+
+  state.actions = materialized.actions;
+  state.promptPreview = materialized.promptPreview ?? state.promptPreview;
+  state.finalResponse = materialized.summary;
+  state.trace.push({
+    id: createRuntimeId("trace"),
+    type: "tool_call",
+    call,
+  });
+  state.trace.push({
+    id: createRuntimeId("trace"),
+    type: "tool_result",
+    result: {
+      id: createRuntimeId("tool-result"),
+      toolCallId: call.id,
+      toolName: call.name,
+      ok: true,
+      message: "workflow-json 已通过 GenLink engineer validation 并转换为画布 actions。",
+      createdNodeIds: materialized.workflow.nodes.map((node) => node.id),
+      createdEdgeIds: materialized.workflow.edges.map((edge) => edge.id),
+      data: {
+        workflowName: materialized.workflow.name,
+      },
+    },
+  });
+  state.trace.push({
+    id: createRuntimeId("trace"),
+    type: "final",
+    content: materialized.summary,
+  });
+
+  return createAgentResultFromState(state, {
+    usedModel: true,
+    usedFallback: false,
+    model: response.model,
+    modelRawOutput: response.content,
+  });
 }
 
 export async function POST(request: Request) {

@@ -35,6 +35,8 @@ const auth = {
   },
 };
 
+type JsonObject = Record<string, unknown>;
+
 describe("GenLink canvas MCP server", () => {
   it("initializes with MCP tool capability", async () => {
     const response = await handleGenLinkCanvasMcpRequest({
@@ -43,14 +45,18 @@ describe("GenLink canvas MCP server", () => {
       method: "initialize",
     }, auth);
 
+    assert.ok(response);
     assert.equal(response.jsonrpc, "2.0");
     assert.equal(response.id, 1);
     assert.ok("result" in response);
 
     if ("result" in response) {
-      assert.equal(response.result.protocolVersion, "2024-11-05");
-      assert.deepEqual(response.result.capabilities, { tools: {} });
-      assert.equal(response.result.serverInfo.name, "genlink-canvas");
+      const result = response.result as JsonObject;
+      const serverInfo = result.serverInfo as JsonObject;
+
+      assert.equal(result.protocolVersion, "2024-11-05");
+      assert.deepEqual(result.capabilities, { tools: {} });
+      assert.equal(serverInfo.name, "genlink-canvas");
     }
   });
 
@@ -61,11 +67,14 @@ describe("GenLink canvas MCP server", () => {
       method: "tools/list",
     }, auth);
 
+    assert.ok(response);
     assert.ok("result" in response);
 
     if ("result" in response) {
-      assert.ok(response.result.tools.length >= 8);
-      assert.equal(response.result.tools[0].name, "genlink_canvas_get_snapshot");
+      const result = response.result as { tools: Array<{ name: string }> };
+
+      assert.ok(result.tools.length >= 8);
+      assert.equal(result.tools[0].name, "genlink_canvas_get_snapshot");
     }
   });
 
@@ -76,6 +85,7 @@ describe("GenLink canvas MCP server", () => {
       method: "bad/method",
     }, auth);
 
+    assert.ok(response);
     assert.ok("error" in response);
 
     if ("error" in response) {
@@ -94,6 +104,7 @@ describe("GenLink canvas MCP server", () => {
       },
     }, auth);
 
+    assert.ok(response);
     assert.ok("error" in response);
 
     if ("error" in response) {
@@ -113,6 +124,7 @@ describe("GenLink canvas MCP server", () => {
       },
     }, auth);
 
+    assert.ok(response);
     assert.ok("error" in response);
 
     if ("error" in response) {
