@@ -4996,7 +4996,7 @@ function layoutGroupNodes(groupId: string, mode: GroupLayoutMode) {
     .filter((node) => groupNodeIds.has(node.id))
     .map((node) => ({
       node,
-      bounds: getEstimatedNodeBounds(node),
+      bounds: getNodeGroupBounds(node),
     }))
     .sort((a, b) => a.bounds.y - b.bounds.y || a.bounds.x - b.bounds.x);
 
@@ -9905,6 +9905,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const imageInfoPopoverRightOffset = agentPanelLayout.open
     ? agentPanelLayout.width + AGENT_PANEL_FLOATING_INSET + 16
     : 24;
+  const promptLibraryButtonRightOffset = agentPanelLayout.open
+    ? agentPanelLayout.width + AGENT_PANEL_FLOATING_INSET + 12
+    : 20;
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
   const [cropMode, setCropMode] = useState<CropOverlayData | null>(null);
   const [annotationMode, setAnnotationMode] = useState<ImageAnnotationOverlayData | null>(null);
@@ -14711,6 +14714,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       />
       <PromptLibraryEntryButton
         open={promptLibraryOpen}
+        rightOffset={promptLibraryButtonRightOffset}
         onClick={() => setPromptLibraryOpen((current) => !current)}
       />
       <div ref={canvasReadyRootRef} className="h-full w-full">

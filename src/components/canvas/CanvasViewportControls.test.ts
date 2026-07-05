@@ -105,3 +105,12 @@ test("multi-node selection uses group bounds so labels remain inside the frame",
   assert.match(multiNodeSelectionOverlay, /const estimatedBounds = getNodeGroupBounds\(node\);/);
   assert.doesNotMatch(multiNodeSelectionOverlay, /const estimatedBounds = getEstimatedNodeBounds\(node\);/);
 });
+
+test("group layout uses group bounds so generation labels remain inside the frame", () => {
+  const layoutGroupNodesFunction = source.match(
+    /function layoutGroupNodes[\s\S]*?\n}\n\ntype CanvasNodeRenderData/,
+  )?.[0] ?? "";
+
+  assert.match(layoutGroupNodesFunction, /bounds: getNodeGroupBounds\(node\)/);
+  assert.doesNotMatch(layoutGroupNodesFunction, /bounds: getEstimatedNodeBounds\(node\)/);
+});
