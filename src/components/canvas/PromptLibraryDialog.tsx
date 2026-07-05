@@ -311,8 +311,9 @@ export function PromptLibraryDialog({
 
       setLiveEntries(body.entries);
       setLiveFetchedAt(body.fetchedAt);
-      setUsingRemoteCache(Boolean(body.fromCache && body.entries.length === 0));
-      setErrors(body.fromCache && body.entries.length === 0 ? body.errors : []);
+      const fallbackCache = body.cacheReason === "fallback";
+      setUsingRemoteCache(fallbackCache);
+      setErrors(fallbackCache ? body.errors : []);
       if (body.entries.length > 0) {
         setCommunityCache(body.entries, body.fetchedAt);
       }
@@ -320,12 +321,12 @@ export function PromptLibraryDialog({
       if (manual) {
         const currentIds = new Set(communityEntriesRef.current.map((entry) => entry.id));
         const newEntryCount = body.entries.filter((entry) => !currentIds.has(entry.id)).length;
-        const emptyCacheFallback = Boolean(body.fromCache && body.entries.length === 0);
+        const fallbackCache = body.cacheReason === "fallback";
         showRefreshNotice({
-          kind: body.errors.length > 0 || emptyCacheFallback ? "warning" : "success",
+          kind: body.errors.length > 0 || fallbackCache ? "warning" : "success",
           message:
-            emptyCacheFallback
-              ? "\u8fdc\u7a0b\u6682\u65f6\u4e0d\u7a33\u5b9a\uff0c\u6682\u65e0\u53ef\u7528\u7f13\u5b58"
+            fallbackCache
+              ? "\u8fdc\u7a0b\u6682\u65f6\u4e0d\u7a33\u5b9a\uff0c\u5df2\u4fdd\u7559\u7f13\u5b58"
               : body.errors.length > 0
                 ? "\u5df2\u5237\u65b0\uff0c\u90e8\u5206\u8fdc\u7a0b\u6e90\u5931\u8d25"
                 : newEntryCount > 0
@@ -486,7 +487,11 @@ export function PromptLibraryDialog({
               <div className="text-[15px] font-semibold text-white/90">{"\u63d0\u793a\u8bcd\u5e93"}</div>
               <div className="mt-0.5 text-[11px] text-white/38">
                 {fetchedAtLabel ? `${"\u66f4\u65b0\u4e8e"} ${fetchedAtLabel}` : "OpenNana \u793e\u533a\u6e90\u540c\u6b65\u4e2d"}
-                {errors.length > 0 ? " · \u8fdc\u7a0b\u5931\u8d25\uff0c\u6b63\u5728\u4f7f\u7528\u7f13\u5b58" : ""}
+                {errors.length > 0
+                  ? usingRemoteCache
+                    ? " \u00b7 \u8fdc\u7a0b\u6682\u65f6\u4e0d\u7a33\u5b9a\uff0c\u5df2\u4fdd\u7559\u7f13\u5b58"
+                    : " \u00b7 \u90e8\u5206\u8fdc\u7a0b\u6e90\u5931\u8d25"
+                  : ""}
               </div>
             </div>
           </div>

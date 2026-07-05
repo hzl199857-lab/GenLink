@@ -41,6 +41,7 @@ export interface PromptLibraryCommunityResponse {
   fetchedAt: string;
   errors: string[];
   fromCache?: boolean;
+  cacheReason?: "memory" | "fallback";
 }
 
 export interface PromptLibraryErrorResponse {

@@ -69,6 +69,8 @@ let memoryCache:
     }
   | null = null;
 
+type PromptLibraryCacheReason = "memory" | "fallback";
+
 function decodeHtml(value: string): string {
   return value
     .replace(/\\u003c/g, "<")
@@ -383,6 +385,7 @@ export async function fetchPromptLibraryCommunityEntries(options?: {
   errors: string[];
   fetchedAt: string;
   fromCache: boolean;
+  cacheReason?: PromptLibraryCacheReason;
 }> {
   if (
     !options?.forceRefresh &&
@@ -391,9 +394,10 @@ export async function fetchPromptLibraryCommunityEntries(options?: {
   ) {
     return {
       entries: memoryCache.entries,
-      errors: memoryCache.errors,
+      errors: [],
       fetchedAt: memoryCache.fetchedAt,
-      fromCache: true,
+      fromCache: false,
+      cacheReason: "memory",
     };
   }
 
@@ -432,6 +436,7 @@ export async function fetchPromptLibraryCommunityEntries(options?: {
         errors,
         fetchedAt: memoryCache.fetchedAt,
         fromCache: true,
+        cacheReason: "fallback",
       };
     }
 

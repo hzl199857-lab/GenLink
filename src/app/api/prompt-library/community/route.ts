@@ -17,7 +17,7 @@ export async function GET(request: Request): Promise<NextResponse<PromptLibraryA
   try {
     const { searchParams } = new URL(request.url);
     const forceRefresh = searchParams.get("force") === "1";
-    const { entries, errors, fetchedAt, fromCache } = await fetchPromptLibraryCommunityEntries({
+    const { entries, errors, fetchedAt, fromCache, cacheReason } = await fetchPromptLibraryCommunityEntries({
       forceRefresh,
     });
     const responseEntries = entries.length > 0 ? entries : BUNDLED_COMMUNITY_PROMPTS;
@@ -27,6 +27,7 @@ export async function GET(request: Request): Promise<NextResponse<PromptLibraryA
       errors,
       fetchedAt,
       fromCache,
+      cacheReason,
     };
 
     return NextResponse.json(body);
