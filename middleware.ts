@@ -5,6 +5,7 @@ const PUBLIC_PAGE_PATHS = new Set(["/login", "/register"]);
 const PUBLIC_API_PREFIXES = [
   "/api/auth",
   "/api/app-version",
+  "/api/prompt-library/community",
 ];
 
 function isPublicApiPath(pathname: string): boolean {
