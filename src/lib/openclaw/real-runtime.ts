@@ -1,11 +1,10 @@
 import "server-only";
 
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { ImageApiProvider } from "@/lib/vibe";
-import { ensureOpenClawConfigHasAgentModels } from "./config-models";
 
 export type RealOpenClawRunInput = {
   message: string;
@@ -66,10 +65,6 @@ function getOpenClawStateDir(): string {
   return process.env.OPENCLAW_STATE_DIR?.trim() || DEFAULT_OPENCLAW_STATE;
 }
 
-function getGeneratedOpenClawConfigPath(): string {
-  return path.join(getOpenClawStateDir(), "openclaw-genlink.generated.json");
-}
-
 function getOpenClawWorkspaceDir(): string {
   return process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_OPENCLAW_WORKSPACE;
 }
@@ -109,24 +104,6 @@ function assertOpenClawRuntimeAvailable(): void {
   if (!existsSync(entryDir)) {
     throw new RealOpenClawRuntimeError(
       `OpenClaw runtime directory does not exist: ${entryDir}`,
-    );
-  }
-}
-
-function prepareOpenClawConfig(): string {
-  const sourcePath = getOpenClawConfigPath();
-  const generatedPath = getGeneratedOpenClawConfigPath();
-
-  try {
-    const nextConfig = ensureOpenClawConfigHasAgentModels(readFileSync(sourcePath, "utf8"));
-
-    mkdirSync(path.dirname(generatedPath), { recursive: true });
-    writeFileSync(generatedPath, nextConfig, "utf8");
-
-    return generatedPath;
-  } catch (error) {
-    throw new RealOpenClawRuntimeError(
-      `OpenClaw config preparation failed: ${error instanceof Error ? error.message : "unknown error"}`,
     );
   }
 }
@@ -226,8 +203,6 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     );
   }
 
-  const configPath = prepareOpenClawConfig();
-
   return await new Promise((resolve, reject) => {
     const args = [
       getOpenClawEntry(),
@@ -251,7 +226,7 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       cwd: path.dirname(getOpenClawEntry()),
       env: {
         ...process.env,
-        OPENCLAW_CONFIG_PATH: configPath,
+        OPENCLAW_CONFIG_PATH: getOpenClawConfigPath(),
         OPENCLAW_STATE_DIR: getOpenClawStateDir(),
         GENLINK_OPENCLAW_TEXT_BASE_URL: resolveTextBaseUrl(input.provider),
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,

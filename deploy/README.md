@@ -58,8 +58,8 @@ sudo certbot --nginx -d genlink.zerinnai.online
 - `NEXT_PUBLIC_REFERENCE_IMAGE_UPLOAD_MODE` should be `oss` in production.
 - `ALIYUN_OSS_PUBLIC_BASE_URL` is the browser-accessible public URL.
 - `ALIYUN_OSS_INTERNAL_ENDPOINT` is only for server-side uploads from Aliyun.
-- `OPENCLAW_CONFIG_PATH` should point to the deployed OpenClaw source config.
-- `OPENCLAW_STATE_DIR` must be writable by the PM2 process. GenLink writes a generated OpenClaw config there before each real Agent run so Agent panel models such as `gpt-5.4-mini` stay in sync with `src/lib/agent-model-options.ts`.
+- `OPENCLAW_CONFIG_PATH` should point to the deployed OpenClaw config when `OPENCLAW_REAL_RUNTIME=1` is enabled for PlanF/OpenClaw workflows.
+- `OPENCLAW_STATE_DIR` must be writable by the PM2 process when `OPENCLAW_REAL_RUNTIME=1`.
 
 For an OSS bucket in Hangzhou, the internal endpoint usually looks like:
 

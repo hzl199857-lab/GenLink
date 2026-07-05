@@ -1596,26 +1596,30 @@ async function requestOpenClawPlanfEcomReplan(
   };
 }
 
-async function requestOpenClawAgentRun(params: {
+async function requestAgentRun(params: {
   message: string;
   context: AgentTaskContext;
   provider: AgentProvider;
   model: string;
 }): Promise<AgentRunPanelResult> {
   const textRunConfig = resolveAgentTextRunConfig(params.provider);
-  const response = await fetch('/api/openclaw/agent/run', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const response = await fetchAgentApi(
+    '/api/agent/run',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: params.message,
+        context: params.context,
+        provider: textRunConfig.provider,
+        model: params.model,
+        apiKey: textRunConfig.apiKey,
+      }),
     },
-    body: JSON.stringify({
-      message: params.message,
-      context: params.context,
-      provider: textRunConfig.provider,
-      model: params.model,
-      apiKey: textRunConfig.apiKey,
-    }),
-  });
+    'Agent 请求失败',
+  );
   const json = await readJsonResponse<
     | {
         ok: true;
@@ -2535,7 +2539,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         return;
       }
 
-      result = await requestOpenClawAgentRun({
+      result = await requestAgentRun({
         message: params.prompt,
         context: requestContext,
         provider,
