@@ -189,6 +189,14 @@ export interface GenerateTextParams {
   videos?: Array<{
     url: string;
   }>;
+  responseFormat?: {
+    type: "json_object" | "json_schema";
+    json_schema?: {
+      name: string;
+      strict?: boolean;
+      schema: Record<string, unknown>;
+    };
+  };
 }
 
 export interface GenerateTextResult {
@@ -2334,6 +2342,9 @@ export async function generateTextStream(
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const isClaude = isClaudeModel(requestedModel);
+  if (isClaude && params.responseFormat) {
+    throw new VibeApiError(400, "Structured response_format is not supported for Claude text models");
+  }
   if (hasTextVideos(params)) {
     assertVideoTextSupport(textProvider, requestedModel);
   }
@@ -2387,6 +2398,7 @@ export async function generateTextStream(
         temperature: params.temperature ?? 0.7,
         max_tokens: params.maxTokens,
         stream: true,
+        ...(params.responseFormat ? { response_format: params.responseFormat } : {}),
       };
 
   let upstreamResponse: Response;
@@ -2574,6 +2586,9 @@ export async function generateText(
   }
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
+  if (isClaudeModel(requestedModel) && params.responseFormat) {
+    throw new VibeApiError(400, "Structured response_format is not supported for Claude text models");
+  }
   if (hasTextVideos(params)) {
     assertVideoTextSupport(textProvider, requestedModel);
   }
@@ -2656,6 +2671,7 @@ export async function generateText(
       ],
       temperature: params.temperature ?? 0.7,
       max_tokens: params.maxTokens,
+      ...(params.responseFormat ? { response_format: params.responseFormat } : {}),
     },
     params.apiKey,
     createHeaders,

@@ -2559,7 +2559,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           role: 'agent',
           type: 'text',
           variant: 'retryable_error',
-          content: '出现了点小问题，建议重试一次',
+          content: errorText,
           retryLabel: '重新生成',
           retryPrompt: params.prompt,
           retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),

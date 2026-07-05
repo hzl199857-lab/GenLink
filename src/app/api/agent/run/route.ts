@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { AGENT_STEP_RESPONSE_FORMAT } from "@/lib/agent-response-format";
 import { createBatchPromptVariants } from "@/lib/agent-prompt-variants";
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import {
@@ -823,7 +824,7 @@ function createAgentResultFromState(state: AgentRuntimeState, meta: AgentRunMeta
         },
         {
           label: "Agent 模型",
-          value: meta.usedModel ? `${state.provider ?? "auto"} / ${meta.model ?? "auto"}` : "本地兜底规划",
+          value: meta.usedModel ? `${state.provider ?? "auto"} / ${meta.model ?? "auto"}` : "未使用模型",
         },
       ],
       steps: toolLabels.length > 0
@@ -884,6 +885,7 @@ function createAgentSystemPrompt(): string {
   return [
     "You are GenLink Canvas Agent, an intelligent operator that uses canvas tools.",
     "Return exactly one JSON object per response. Do not use markdown.",
+    "The API enforces a JSON schema. For tool_call responses, set message to null. For final responses, set tool to null and thinking to null if not needed.",
     "You must choose one next tool call at a time, wait for tool results in the transcript, then continue.",
     "Do not return a batch of fixed actions. Think as a tool-using agent.",
     "Never call run_image_generation. Image generation costs credits and must wait for explicit user confirmation.",
@@ -1030,13 +1032,14 @@ async function runAgentLoop(params: {
       })),
       temperature: 0.2,
       maxTokens: 1200,
+      responseFormat: AGENT_STEP_RESPONSE_FORMAT,
     });
 
     lastRawOutput = response.content;
     const modelStep = parseModelStep(response.content);
 
     if (!modelStep) {
-      throw new Error("模型返回的工具调用 JSON 无法解析；本地兜底卡已禁用。");
+      throw new Error("模型返回的工具调用 JSON 无法解析；请切换支持结构化 JSON 输出的模型或 Provider。");
     }
 
     if (modelStep.type === "final") {
@@ -1072,7 +1075,7 @@ async function runAgentLoop(params: {
     }
   }
 
-  throw new Error(`模型工具调用超过 ${MAX_TOOL_STEPS} 步；本地兜底卡已禁用。`);
+  throw new Error(`模型工具调用超过 ${MAX_TOOL_STEPS} 步；请调整需求后重试。`);
 }
 
 export async function POST(request: Request) {
@@ -1115,7 +1118,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           ok: false,
-          error: error instanceof Error ? error.message : "模型调用失败；本地兜底卡已禁用。",
+          error: error instanceof Error ? error.message : "模型调用失败；请切换支持结构化 JSON 输出的模型或 Provider。",
         },
         { status: 502 },
       );
