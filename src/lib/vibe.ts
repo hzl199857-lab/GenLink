@@ -93,6 +93,10 @@ const RUNNINGHUB_BASE_URL = normalizeBaseUrl(
 const GRSAI_BASE_URL = normalizeBaseUrl(
   process.env.GRSAI_BASE_URL ?? "https://grsai.dakka.com.cn",
 );
+const GRSAI_TEXT_BASE_URL = normalizeBaseUrl(
+  process.env.GRSAI_TEXT_BASE_URL ??
+    (GRSAI_BASE_URL.endsWith("/v1") ? GRSAI_BASE_URL : `${GRSAI_BASE_URL}/v1`),
+);
 const IMAGE_API_PROVIDER = resolveApiProvider(
   process.env.IMAGE_API_PROVIDER,
 );
@@ -795,6 +799,17 @@ function getConfiguredZhenzhenTextBaseUrl(): string {
   return ZHENZHEN_TEXT_BASE_URL;
 }
 
+function getConfiguredGrsaiTextBaseUrl(): string {
+  if (!GRSAI_TEXT_BASE_URL) {
+    throw new VibeApiError(
+      500,
+      "GRSAI_BASE_URL (or GRSAI_TEXT_BASE_URL) is not configured for TEXT_API_PROVIDER=grsai",
+    );
+  }
+
+  return GRSAI_TEXT_BASE_URL;
+}
+
 function toT8ImageSizeParams(size?: string): {
   aspect_ratio?: string;
   image_size?: "1K" | "2K" | "4K";
@@ -1064,7 +1079,7 @@ function getProviderLabel(baseUrl: string, fallback = "Upstream API"): string {
     return "RunningHub";
   }
 
-  if (baseUrl === GRSAI_BASE_URL) {
+  if (baseUrl === GRSAI_BASE_URL || baseUrl === GRSAI_TEXT_BASE_URL) {
     return "Grsai";
   }
 
@@ -2317,10 +2332,6 @@ export async function generateTextStream(
     throw new VibeApiError(400, "RunningHub is not configured for text generation");
   }
 
-  if (isGrsaiProvider(textProvider)) {
-    throw new VibeApiError(400, "Grsai is not configured for text generation");
-  }
-
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const isClaude = isClaudeModel(requestedModel);
   if (hasTextVideos(params)) {
@@ -2335,9 +2346,13 @@ export async function generateTextStream(
       ? getConfiguredComflyTextBaseUrl()
       : textProvider === "zhenzhen"
         ? getConfiguredZhenzhenTextBaseUrl()
+        : textProvider === "grsai"
+          ? getConfiguredGrsaiTextBaseUrl()
         : getVibeCompatibleBaseUrl(textProvider);
   const providerLabel = isComflyCompatibleProvider(textProvider)
     ? getComflyCompatibleProviderLabel(textProvider)
+    : textProvider === "grsai"
+      ? "Grsai"
     : getVibeCompatibleProviderLabel(textProvider);
   const path = isClaude ? "/messages" : "/chat/completions";
   const body = isClaude
@@ -2558,10 +2573,6 @@ export async function generateText(
     throw new VibeApiError(400, "RunningHub is not configured for text generation");
   }
 
-  if (isGrsaiProvider(textProvider)) {
-    throw new VibeApiError(400, "Grsai is not configured for text generation");
-  }
-
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   if (hasTextVideos(params)) {
     assertVideoTextSupport(textProvider, requestedModel);
@@ -2575,9 +2586,13 @@ export async function generateText(
       ? getConfiguredComflyTextBaseUrl()
       : textProvider === "zhenzhen"
         ? getConfiguredZhenzhenTextBaseUrl()
+        : textProvider === "grsai"
+          ? getConfiguredGrsaiTextBaseUrl()
         : getVibeCompatibleBaseUrl(textProvider);
   const providerLabel = isComflyCompatibleProvider(textProvider)
     ? getComflyCompatibleProviderLabel(textProvider)
+    : textProvider === "grsai"
+      ? "Grsai"
     : getVibeCompatibleProviderLabel(textProvider);
 
   if (isClaudeModel(requestedModel)) {

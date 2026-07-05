@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { decideAgentPhaseRoute } from "@/lib/openclaw/agent-phase-policy";
 import { buildOpenClawAgentMessage, createAgentResultFromOpenClawText } from "@/lib/openclaw/agent-workflow";
 import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
 import { RealOpenClawRuntimeError, runRealOpenClaw } from "@/lib/openclaw/real-runtime";
-import type { AgentProvider, AgentTaskAttachment, AgentTaskContext } from "@/types/agent";
+import type { AgentTaskAttachment, AgentTaskContext } from "@/types/agent";
 import type { ImageApiProvider } from "@/lib/vibe";
 
 export const runtime = "nodejs";
@@ -19,25 +20,8 @@ type OpenClawAgentRunRequestBody = {
   apiKey?: unknown;
 };
 
-function isAgentProvider(value: unknown): value is AgentProvider {
-  return (
-    value === "vibe" ||
-    value === "fucheers" ||
-    value === "comfly" ||
-    value === "zhenzhen" ||
-    value === "runninghub" ||
-    value === "grsai"
-  );
-}
-
 function parseProvider(value: unknown): ImageApiProvider | undefined {
-  return value === "vibe" ||
-    value === "fucheers" ||
-    value === "comfly" ||
-    value === "zhenzhen" ||
-    value === "grsai"
-    ? value
-    : undefined;
+  return isAgentTextProvider(value) ? value : undefined;
 }
 
 function parseAttachment(value: unknown): AgentTaskAttachment | null {
@@ -164,7 +148,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const provider = isAgentProvider(body.provider) ? parseProvider(body.provider) : undefined;
+    const provider = parseProvider(body.provider);
     const model = typeof body.model === "string" ? body.model : undefined;
     const selectedAttachments = getSelectedAttachments(context);
     const phaseDecision = decideAgentPhaseRoute({

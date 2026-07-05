@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import {
   createPlanfEcomWorkflowFromAnchor,
@@ -245,13 +246,7 @@ async function runOpenClawWorkflow(input: {
   model?: string;
   apiKey?: string;
 }) {
-  const openClawProvider = input.provider === "vibe" ||
-    input.provider === "fucheers" ||
-    input.provider === "comfly" ||
-    input.provider === "zhenzhen" ||
-    input.provider === "grsai"
-    ? input.provider
-    : undefined;
+  const openClawProvider = isAgentTextProvider(input.provider) ? input.provider : undefined;
   const mappedModel = mapAgentPanelModelToOpenClaw({
     provider: openClawProvider,
     model: input.model,

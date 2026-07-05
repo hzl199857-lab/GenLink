@@ -74,6 +74,11 @@ import {
 } from '@/lib/agent-ecom-planner';
 import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
 import {
+  AGENT_TEXT_PROVIDER_OPTIONS,
+  AGENT_TEXT_PROVIDERS,
+  isAgentTextProvider,
+} from '@/lib/agent-provider-options';
+import {
   formatEcomPlannerOptionErrorText,
   formatAgentChatErrorText,
   sanitizeAgentChatText,
@@ -127,17 +132,6 @@ import {
 
 const SHOW_AGENT_TRACE_IN_CHAT = false;
 const SHOW_PLANF_ECOM_RUNTIME_IN_CHAT = false;
-
-const AGENT_PROVIDERS: Array<{ id: AgentProvider; label: string }> = [
-  { id: 'vibe', label: 'Vibe' },
-  { id: 'fucheers', label: 'Fucheers' },
-  { id: 'comfly', label: 'Comfly' },
-  { id: 'zhenzhen', label: 'Zhenzhen' },
-  { id: 'runninghub', label: 'RunningHub' },
-  { id: 'grsai', label: 'GRS AI' },
-];
-
-const TEXT_CAPABLE_AGENT_PROVIDERS: AgentProvider[] = ['vibe', 'fucheers', 'comfly', 'zhenzhen'];
 
 type AgentRunPanelResult = {
   summary: string;
@@ -733,10 +727,6 @@ function AgentAvatarMark() {
   );
 }
 
-function isTextCapableAgentProvider(provider: AgentProvider): boolean {
-  return TEXT_CAPABLE_AGENT_PROVIDERS.includes(provider);
-}
-
 function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
   provider: AgentProvider;
   apiKey: string;
@@ -745,9 +735,9 @@ function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
     preferredProvider,
     readStoredSelectedApiProvider('text'),
     readStoredSelectedApiProvider('image'),
-    ...TEXT_CAPABLE_AGENT_PROVIDERS,
+    ...AGENT_TEXT_PROVIDERS,
   ].filter((provider, index, providers) => (
-    isTextCapableAgentProvider(provider) && providers.indexOf(provider) === index
+    isAgentTextProvider(provider) && providers.indexOf(provider) === index
   ));
 
   for (const candidate of candidates) {
@@ -765,7 +755,7 @@ function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
   }
 
   return {
-    provider: isTextCapableAgentProvider(preferredProvider) ? preferredProvider : 'vibe',
+    provider: isAgentTextProvider(preferredProvider) ? preferredProvider : 'vibe',
     apiKey: '',
   };
 }
@@ -4860,7 +4850,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 <AgentPanelSelect
                   label="Provider"
                   value={provider}
-                  options={AGENT_PROVIDERS.map((option) => ({
+                  options={AGENT_TEXT_PROVIDER_OPTIONS.map((option) => ({
                     value: option.id,
                     label: option.label,
                   }))}

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import {
   buildOpenClawEcomConfirmMessage,
@@ -106,13 +107,7 @@ export async function POST(request: Request) {
     }
 
     const provider = typeof body.provider === "string" ? body.provider : undefined;
-    const openClawProvider = provider === "vibe" ||
-      provider === "fucheers" ||
-      provider === "comfly" ||
-      provider === "zhenzhen" ||
-      provider === "grsai"
-      ? provider
-      : undefined;
+    const openClawProvider = isAgentTextProvider(provider) ? provider : undefined;
     const model = typeof body.model === "string" ? body.model : undefined;
     const response = await (async () => {
       try {

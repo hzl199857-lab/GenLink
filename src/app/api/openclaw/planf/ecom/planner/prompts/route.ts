@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { generateText, VibeApiError, type ImageApiProvider } from "@/lib/vibe";
 import {
   buildAgentEcomPlannerPromptSlots,
@@ -66,13 +67,7 @@ type PromptImageSlot = {
 };
 
 function parseProvider(value: unknown): ImageApiProvider | undefined {
-  return value === "vibe" ||
-    value === "fucheers" ||
-    value === "comfly" ||
-    value === "zhenzhen" ||
-    value === "grsai"
-    ? value
-    : undefined;
+  return isAgentTextProvider(value) ? value : undefined;
 }
 
 function parseOptionId(value: unknown): "A" | "B" | "C" {

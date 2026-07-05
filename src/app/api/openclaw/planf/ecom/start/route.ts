@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
 import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
 import {
@@ -40,13 +41,7 @@ function parsePreset(value: unknown): PlanfEcomPresetId | undefined {
 }
 
 function parseProvider(value: unknown): ImageApiProvider | undefined {
-  return value === "vibe" ||
-    value === "fucheers" ||
-    value === "comfly" ||
-    value === "zhenzhen" ||
-    value === "grsai"
-    ? value
-    : undefined;
+  return isAgentTextProvider(value) ? value : undefined;
 }
 
 function buildRealOpenClawStartMessage(params: {

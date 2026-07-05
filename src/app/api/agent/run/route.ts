@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createBatchPromptVariants } from "@/lib/agent-prompt-variants";
+import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import {
   getAgentVisionImageIndexByAttachmentId,
   getAgentVisionImages,
@@ -1094,7 +1095,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const provider = isAgentProvider(body.provider) ? body.provider : undefined;
+    const provider = isAgentTextProvider(body.provider) ? body.provider : undefined;
     const model = typeof body.model === "string" ? body.model : undefined;
 
     try {
