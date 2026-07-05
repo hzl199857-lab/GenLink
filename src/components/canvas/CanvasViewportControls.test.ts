@@ -27,6 +27,19 @@ test("canvas viewport controls expose a grid snap toggle", () => {
   assert.match(source, /<Grid3x3 size=\{15\}/);
 });
 
+test("canvas edges default to curve style", () => {
+  const storedStyleReader = source.match(
+    /function readStoredCanvasEdgeStyle\(\): CanvasEdgeStyle \{[\s\S]*?\n\}/,
+  )?.[0] ?? "";
+  const serverSnapshot = source.match(
+    /function getServerCanvasEdgeStyleSnapshot\(\): CanvasEdgeStyle \{[\s\S]*?\n\}/,
+  )?.[0] ?? "";
+
+  assert.match(storedStyleReader, /return 'curve';/);
+  assert.match(storedStyleReader, /\? 'straight'\s*: 'curve'/);
+  assert.match(serverSnapshot, /return 'curve';/);
+});
+
 test("grid snap is applied after node and group drag ends", () => {
   assert.match(source, /function snapCanvasPositionToGrid/);
   assert.match(source, /const CANVAS_SNAP_GRID_SIZE = 24;/);

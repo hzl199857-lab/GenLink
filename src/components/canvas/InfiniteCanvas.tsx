@@ -5712,12 +5712,12 @@ function clampLightboxPan(
 
 function readStoredCanvasEdgeStyle(): CanvasEdgeStyle {
   if (typeof window === 'undefined') {
-    return 'straight';
+    return 'curve';
   }
 
-  return window.localStorage.getItem(CANVAS_EDGE_STYLE_STORAGE_KEY) === 'curve'
-    ? 'curve'
-    : 'straight';
+  return window.localStorage.getItem(CANVAS_EDGE_STYLE_STORAGE_KEY) === 'straight'
+    ? 'straight'
+    : 'curve';
 }
 
 function subscribeToCanvasEdgeStyleChange(onStoreChange: () => void): () => void {
@@ -5726,7 +5726,7 @@ function subscribeToCanvasEdgeStyleChange(onStoreChange: () => void): () => void
 }
 
 function getServerCanvasEdgeStyleSnapshot(): CanvasEdgeStyle {
-  return 'straight';
+  return 'curve';
 }
 
 function useStoredCanvasEdgeStyle(): CanvasEdgeStyle {
