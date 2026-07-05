@@ -311,8 +311,8 @@ export function PromptLibraryDialog({
 
       setLiveEntries(body.entries);
       setLiveFetchedAt(body.fetchedAt);
-      setUsingRemoteCache(Boolean(body.fromCache));
-      setErrors(body.fromCache ? body.errors : []);
+      setUsingRemoteCache(Boolean(body.fromCache && body.entries.length === 0));
+      setErrors(body.fromCache && body.entries.length === 0 ? body.errors : []);
       if (body.entries.length > 0) {
         setCommunityCache(body.entries, body.fetchedAt);
       }
@@ -320,11 +320,12 @@ export function PromptLibraryDialog({
       if (manual) {
         const currentIds = new Set(communityEntriesRef.current.map((entry) => entry.id));
         const newEntryCount = body.entries.filter((entry) => !currentIds.has(entry.id)).length;
+        const emptyCacheFallback = Boolean(body.fromCache && body.entries.length === 0);
         showRefreshNotice({
-          kind: body.errors.length > 0 || body.fromCache ? "warning" : "success",
+          kind: body.errors.length > 0 || emptyCacheFallback ? "warning" : "success",
           message:
-            body.fromCache
-              ? "\u8fdc\u7a0b\u6682\u65f6\u4e0d\u7a33\u5b9a\uff0c\u5df2\u4fdd\u7559\u7f13\u5b58"
+            emptyCacheFallback
+              ? "\u8fdc\u7a0b\u6682\u65f6\u4e0d\u7a33\u5b9a\uff0c\u6682\u65e0\u53ef\u7528\u7f13\u5b58"
               : body.errors.length > 0
                 ? "\u5df2\u5237\u65b0\uff0c\u90e8\u5206\u8fdc\u7a0b\u6e90\u5931\u8d25"
                 : newEntryCount > 0
