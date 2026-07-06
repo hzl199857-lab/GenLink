@@ -3,17 +3,14 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import {
-  AtSign,
   Check,
   ChevronRight,
   Clock3,
   Copy,
   ImagePlus,
   Loader2,
-  MessageSquare,
   MessageSquarePlus,
   Send,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
   X,
@@ -5230,13 +5227,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 <Sparkles size={13} />
                 Agent
               </button>
-              <button type="button" className="flex h-8 w-8 items-center justify-center rounded-full text-white/38 transition hover:bg-white/[0.08] hover:text-white/70" aria-label="引用图片">
-                <AtSign size={16} />
-              </button>
               <button
                 type="button"
                 className={[
-                  'flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/[0.08] hover:text-white/70',
+                  'flex h-8 min-w-[46px] items-center justify-center rounded-full px-3 text-xs font-medium transition hover:bg-white/[0.08] hover:text-white/70',
                   planfRouteMode === 'auto' && !planfPresetOpen
                     ? 'text-white/38'
                     : 'bg-white/[0.08] text-[#19d3ff]',
@@ -5250,15 +5244,15 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   setGenerationPreferenceOpen(false);
                 }}
               >
-                <MessageSquare size={15} />
+                电商
               </button>
               <button
                 type="button"
                 className={[
-                  'flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-white/[0.08] hover:text-white/70',
+                  'flex h-8 min-w-[46px] items-center justify-center rounded-full px-3 text-xs font-medium transition hover:bg-white/[0.08] hover:text-white/70',
                   generationPreferenceOpen ? 'bg-white/[0.08] text-[#19d3ff]' : 'text-white/38',
                 ].join(' ')}
-                aria-label="生成偏好"
+                aria-label="模型设置"
                 aria-expanded={generationPreferenceOpen}
                 title={`${getImageModelLabel(resolvedImagePreference.model)} / ${resolvedImagePreference.aspectRatio} / ${resolvedImagePreference.quality}`}
                 onClick={() => {
@@ -5271,7 +5265,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                   setSettingsOpen(false);
                 }}
               >
-                <SlidersHorizontal size={15} />
+                模型
               </button>
             </div>
 
