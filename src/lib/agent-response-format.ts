@@ -122,7 +122,7 @@ export const AGENT_RUNTIME_RESPONSE_FORMAT = {
       properties: {
         type: {
           type: "string",
-          enum: ["read_rule_file", "workflow"],
+          enum: ["read_rule_file", "workflow", "chat"],
         },
         reason: { type: ["string", "null"] },
         filePath: { type: ["string", "null"] },

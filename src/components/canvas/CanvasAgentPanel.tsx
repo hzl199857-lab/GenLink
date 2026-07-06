@@ -2436,6 +2436,20 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         presetPrompts: PLANF_ECOM_PRESETS,
       });
 
+      if (routeDecision.nextAction === 'reply') {
+        setMessages((current) => [
+          ...current,
+          {
+            id: createPanelId('agent-text-reply'),
+            role: 'agent',
+            type: 'text',
+            content: '你好，我在。你可以直接告诉我想在画布上创建或修改什么内容。',
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
       if (routeDecision.route === 'ecom-start' && routeDecision.preset) {
         if (routeDecision.preset === ECOM_PLANNER_PRESET_ID) {
           await runEcomPlannerStaged();
@@ -2466,7 +2480,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               role: 'agent',
               type: 'text',
               variant: 'retryable_error',
-              content: '出现了点小问题，建议重试一次',
+              content: errorText,
               retryLabel: '重新生成',
               retryPrompt: params.prompt,
               retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),
@@ -2507,7 +2521,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                 role: 'agent',
                 type: 'text',
                 variant: 'retryable_error',
-                content: '出现了点小问题，建议重试一次',
+                content: errorText,
                 retryLabel: '重新生成',
                 retryPrompt: params.prompt,
                 retryTaskAttachments: params.taskAttachments.map((attachment) => ({ ...attachment })),

@@ -83,5 +83,6 @@ test("defines a strict JSON schema response format for Agent runtime steps", () 
   assert.deepEqual(schema.required, ["type", "reason", "filePath", "summary", "workflow"]);
   assert.ok(schema.properties?.type?.enum?.includes("read_rule_file"));
   assert.ok(schema.properties?.type?.enum?.includes("workflow"));
+  assert.ok(schema.properties?.type?.enum?.includes("chat"));
   assert.equal(workflowSchema?.properties?.nodes?.items?.additionalProperties, false);
 });

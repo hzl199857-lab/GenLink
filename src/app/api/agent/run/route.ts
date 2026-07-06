@@ -84,6 +84,13 @@ type AgentRuntimeModelStep =
       filePath: null;
       summary: string;
       workflow: unknown;
+    }
+  | {
+      type: "chat";
+      reason: string | null;
+      filePath: null;
+      summary: string;
+      workflow: null;
     };
 
 function createRuntimeId(prefix: string): string {
@@ -330,6 +337,20 @@ function parseRuntimeModelStep(content: string): AgentRuntimeModelStep {
     };
   }
 
+  if (record.type === "chat") {
+    if (typeof record.summary !== "string" || !record.summary.trim()) {
+      throw new Error("chat response requires summary");
+    }
+
+    return {
+      type: "chat",
+      reason: typeof record.reason === "string" ? record.reason : null,
+      filePath: null,
+      summary: record.summary,
+      workflow: null,
+    };
+  }
+
   throw new Error(`Unsupported GenLink runtime step type: ${record.type}`);
 }
 
@@ -560,9 +581,10 @@ function createAgentSystemPrompt(): string {
   return [
     "You are GenLink Canvas Agent, an intelligent operator for GenLink Infinite Canvas.",
     "Return exactly one JSON object that matches the enforced response_format schema. Do not use markdown.",
-    "This runtime supports exactly two step types:",
+    "This runtime supports exactly three step types:",
     "1. type:\"read_rule_file\" asks the backend to read one rule or skill file under rules/planf-canvas. Set filePath to a relative path such as skills/ecom-image/SKILL.md, and set summary:null, workflow:null.",
     "2. type:\"workflow\" is the final answer. It must contain summary and a canonical GenLink Canvas workflow-json payload under workflow. Set filePath:null.",
+    "3. type:\"chat\" is the final answer for greetings, status questions, clarifying questions, or any message that does not ask to create, edit, connect, run, or inspect canvas content. It must contain summary, set filePath:null and workflow:null, and must not create canvas nodes.",
     "The startup Rule Pack is already loaded below. Do not read AGENTS.md, BOOTSTRAP.md, TOOLS.md, canvas-capabilities.yaml, self-check.md, or engineer files again unless the user task explicitly requires inspecting them.",
     "Use read_rule_file only when a task-specific skill/reference file is needed. The maximum read budget is 5 files.",
     "During self-repair, return type:\"workflow\" directly unless the diagnostic explicitly proves that a missing rule file caused the failure.",
@@ -586,6 +608,7 @@ function createAgentSystemPrompt(): string {
     "When the user asks for variants such as different clothing, actions, cities, styles, colors, angles, scenes, props, expressions, or interactions, infer the user's intent and expand the relevant parts into concrete visual choices. These dimensions are examples, not a fixed checklist.",
     "Do not leave generic phrases such as different clothing, different action, different city, different color, different angle, or different scene as the only variation. Use imagination while preserving the user's subject, constraints, and requested visual direction.",
     "For image editing prompts, preserve subject identity, composition, lighting, pose, background unless the user asks to change them.",
+    "If the user only says hello or asks a conversational question, return type:\"chat\" and reply in Chinese in summary.",
     "Response example:",
     JSON.stringify({
       type: "workflow",
@@ -806,6 +829,22 @@ async function runAgentLoop(params: {
           }
 
           continue;
+        }
+
+        if (step.type === "chat") {
+          state.finalResponse = step.summary;
+          state.trace.push({
+            id: createRuntimeId("trace"),
+            type: "final",
+            content: step.summary,
+          });
+
+          return createAgentResultFromState(state, {
+            usedModel: true,
+            usedFallback: false,
+            model: response.model,
+            modelRawOutput: response.content,
+          });
         }
 
         materialized = materializeAgentWorkflowOutput({

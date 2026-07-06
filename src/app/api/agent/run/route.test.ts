@@ -216,3 +216,60 @@ test("Agent run route lets the model read a planf canvas rule file before final 
     Module._load = originalLoad;
   }
 });
+
+test("Agent run route returns chat replies without creating canvas actions", async () => {
+  const calls: Array<{ prompt: string; responseFormat?: { json_schema?: { name?: string } } }> = [];
+
+  installRouteMocks(async (params) => {
+    calls.push(params as { prompt: string; responseFormat?: { json_schema?: { name?: string } } });
+
+    return {
+      content: JSON.stringify({
+        type: "chat",
+        reason: "User only greeted the agent.",
+        filePath: null,
+        summary: "你好，我在。你可以告诉我想在画布上创建或修改什么内容。",
+        workflow: null,
+      }),
+      model: "gpt-5.4-mini",
+    };
+  });
+
+  try {
+    delete require.cache[require.resolve("./route.ts")];
+    const { POST } = require("./route.ts") as typeof import("./route");
+    const response = await POST(new Request("http://localhost/api/agent/run", {
+      method: "POST",
+      body: JSON.stringify({
+        message: "你好",
+        provider: "comfly",
+        model: "gpt-5.4-mini",
+        context: {
+          input: {
+            message: "你好",
+            attachments: [],
+            referencedAttachmentIds: [],
+          },
+        },
+      }),
+    }));
+    const json = await response.json() as {
+      ok: boolean;
+      result?: {
+        summary: string;
+        actions: unknown[];
+        trace: Array<{ type: string; content?: string }>;
+      };
+    };
+
+    assert.equal(response.status, 200);
+    assert.equal(json.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.responseFormat?.json_schema?.name, "genlink_agent_runtime_step");
+    assert.equal(json.result?.actions.length, 0);
+    assert.match(json.result?.summary ?? "", /你好/);
+    assert.ok(json.result?.trace.some((item) => item.type === "final" && /你好/.test(item.content ?? "")));
+  } finally {
+    Module._load = originalLoad;
+  }
+});
