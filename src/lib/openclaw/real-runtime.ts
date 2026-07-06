@@ -169,10 +169,10 @@ function resolveTextModel(): string | undefined {
   return process.env.OPENCLAW_AGENT_MODEL?.trim() || undefined;
 }
 
-function resolveTextBaseUrl(provider?: ImageApiProvider): string {
+export function resolveTextBaseUrl(provider?: ImageApiProvider): string {
   const explicit = process.env.GENLINK_OPENCLAW_TEXT_BASE_URL?.trim();
 
-  if (explicit) {
+  if (!provider && explicit) {
     return explicit;
   }
 
