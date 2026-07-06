@@ -5003,7 +5003,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           ) : null}
 
           {planfPresetOpen ? (
-            <div className="mb-3 rounded-xl border border-white/10 bg-[#15171c] p-3 shadow-[0_12px_34px_rgba(0,0,0,0.24)]">
+            <div className="mb-8 rounded-xl border border-white/10 bg-[#15171c] p-3 shadow-[0_12px_34px_rgba(0,0,0,0.24)]">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2 text-[12px] text-white/44">
                   <span className="h-1.5 w-1.5 rounded-full bg-[#19d3ff]" />
