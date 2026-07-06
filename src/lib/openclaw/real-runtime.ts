@@ -21,11 +21,68 @@ export type RealOpenClawRunResult = {
   meta?: Record<string, unknown>;
 };
 
+export type RealOpenClawRuntimeDiagnostic = {
+  kind:
+    | "missing_api_key"
+    | "missing_runtime"
+    | "workspace_sync_failed"
+    | "process_start_failed"
+    | "process_timeout"
+    | "provider_timeout"
+    | "provider_network"
+    | "provider_http_error"
+    | "invalid_json"
+    | "empty_output"
+    | "process_failed";
+  provider?: ImageApiProvider;
+  model?: string;
+  baseUrlHost?: string;
+  elapsedMs?: number;
+  timeoutMs?: number;
+  exitCode?: number | null;
+  stderrPreview?: string;
+  stdoutPreview?: string;
+};
+
+export type PublicRealOpenClawRuntimeDiagnostic = Omit<
+  RealOpenClawRuntimeDiagnostic,
+  "stderrPreview" | "stdoutPreview"
+>;
+
 export class RealOpenClawRuntimeError extends Error {
-  constructor(message: string) {
+  public readonly publicMessage?: string;
+  public readonly diagnostic?: RealOpenClawRuntimeDiagnostic;
+
+  constructor(
+    message: string,
+    options: {
+      publicMessage?: string;
+      diagnostic?: RealOpenClawRuntimeDiagnostic;
+    } = {},
+  ) {
     super(message);
     this.name = "RealOpenClawRuntimeError";
+    this.publicMessage = options.publicMessage;
+    this.diagnostic = options.diagnostic;
   }
+}
+
+export function getPublicRealOpenClawRuntimeDiagnostic(
+  diagnostic?: RealOpenClawRuntimeDiagnostic,
+): PublicRealOpenClawRuntimeDiagnostic | undefined {
+  if (!diagnostic) {
+    return undefined;
+  }
+
+  return {
+    kind: diagnostic.kind,
+    provider: diagnostic.provider,
+    model: diagnostic.model,
+    baseUrlHost: diagnostic.baseUrlHost,
+    elapsedMs: diagnostic.elapsedMs,
+    timeoutMs: diagnostic.timeoutMs,
+    exitCode: diagnostic.exitCode,
+  };
 }
 
 const DEFAULT_OPENCLAW_ENTRY = path.join(
@@ -137,6 +194,92 @@ function resolveTextBaseUrl(provider?: ImageApiProvider): string {
   }
 }
 
+function getBaseUrlHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return "invalid-url";
+  }
+}
+
+function getProviderLabel(provider?: ImageApiProvider): string {
+  switch (provider) {
+    case "fucheers":
+      return "Fucheers";
+    case "comfly":
+      return "Comfly";
+    case "zhenzhen":
+      return "贞贞 AI 工坊";
+    case "grsai":
+      return "Grsai";
+    case "vibe":
+      return "Vibe API";
+    default:
+      return "当前文本模型服务";
+  }
+}
+
+function previewOpenClawOutput(text: string): string | undefined {
+  const trimmed = text.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimmed
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/(api[_-]?key["'=:\s]+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]")
+    .slice(0, 800);
+}
+
+function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
+  if (/timed?\s*out|timeout|AbortError|LLM request timed out/i.test(output)) {
+    return "provider_timeout";
+  }
+
+  if (/ENOTFOUND|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed|network|TLS|certificate/i.test(output)) {
+    return "provider_network";
+  }
+
+  if (/\bHTTP\s*(4\d\d|5\d\d)\b|status\s*(=|:)\s*(4\d\d|5\d\d)|request failed with status/i.test(output)) {
+    return "provider_http_error";
+  }
+
+  return "process_failed";
+}
+
+function buildRuntimePublicMessage(diagnostic: RealOpenClawRuntimeDiagnostic): string {
+  const providerLabel = getProviderLabel(diagnostic.provider);
+  const modelText = diagnostic.model ? `，模型 ${diagnostic.model}` : "";
+  const hostText = diagnostic.baseUrlHost ? `，目标 ${diagnostic.baseUrlHost}` : "";
+
+  if (diagnostic.kind === "provider_timeout" || diagnostic.kind === "process_timeout") {
+    return `${providerLabel} 在服务器侧请求超时${modelText}${hostText}。如果本地可用但线上不可用，请优先检查阿里云服务器到该服务的网络连通性和反向代理超时时间。`;
+  }
+
+  if (diagnostic.kind === "provider_network") {
+    return `${providerLabel} 在服务器侧网络请求失败${modelText}${hostText}。请检查阿里云服务器 DNS、TLS、防火墙或到该服务的出站连通性。`;
+  }
+
+  if (diagnostic.kind === "provider_http_error") {
+    return `${providerLabel} 返回了上游 HTTP 错误${modelText}${hostText}。请检查该 provider 的 API Key、模型名和后台错误记录。`;
+  }
+
+  if (diagnostic.kind === "missing_api_key") {
+    return `${providerLabel} 缺少 API Key，请先在 API 设置里保存该 provider 的文本模型 Key。`;
+  }
+
+  if (diagnostic.kind === "missing_runtime") {
+    return "服务器上的 GenLink 规则运行时未安装或路径配置不正确。";
+  }
+
+  if (diagnostic.kind === "workspace_sync_failed") {
+    return "服务器同步 GenLink 规则文件失败，请检查规则目录和运行时工作目录权限。";
+  }
+
+  return `${providerLabel} 规则运行失败${modelText}${hostText}。请查看服务器日志中的 openclaw-runtime 诊断信息。`;
+}
+
 function resolveTextApiKey(input: RealOpenClawRunInput): string {
   const requestKey = input.apiKey?.trim();
 
@@ -186,22 +329,75 @@ function extractText(raw: unknown): string {
 
 export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<RealOpenClawRunResult> {
   const apiKey = resolveTextApiKey(input);
+  const provider = input.provider;
+  const baseUrl = resolveTextBaseUrl(provider);
+  const baseUrlHost = getBaseUrlHost(baseUrl);
+  const startedAt = Date.now();
+  const model = input.model ?? resolveTextModel();
 
   if (!apiKey) {
+    const diagnostic: RealOpenClawRuntimeDiagnostic = {
+      kind: "missing_api_key",
+      provider,
+      model,
+      baseUrlHost,
+    };
+
     throw new RealOpenClawRuntimeError(
       "OPENCLAW_REAL_RUNTIME=1 requires an Agent panel API key, GENLINK_OPENCLAW_TEXT_API_KEY, or VIBE_API_KEY",
+      {
+        publicMessage: buildRuntimePublicMessage(diagnostic),
+        diagnostic,
+      },
     );
   }
 
-  assertOpenClawRuntimeAvailable();
+  try {
+    assertOpenClawRuntimeAvailable();
+  } catch (error) {
+    if (error instanceof RealOpenClawRuntimeError) {
+      const diagnostic: RealOpenClawRuntimeDiagnostic = {
+        kind: "missing_runtime",
+        provider,
+        model,
+        baseUrlHost,
+      };
+
+      throw new RealOpenClawRuntimeError(error.message, {
+        publicMessage: buildRuntimePublicMessage(diagnostic),
+        diagnostic,
+      });
+    }
+
+    throw error;
+  }
 
   try {
     syncCoreRulesToOpenClawWorkspace();
   } catch (error) {
+    const diagnostic: RealOpenClawRuntimeDiagnostic = {
+      kind: "workspace_sync_failed",
+      provider,
+      model,
+      baseUrlHost,
+      elapsedMs: Date.now() - startedAt,
+    };
+
     throw new RealOpenClawRuntimeError(
       `OpenClaw workspace sync failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      {
+        publicMessage: buildRuntimePublicMessage(diagnostic),
+        diagnostic,
+      },
     );
   }
+
+  console.info("[openclaw-runtime] start", {
+    provider,
+    model,
+    baseUrlHost,
+    timeoutMs: input.timeoutMs,
+  });
 
   return await new Promise((resolve, reject) => {
     const args = [
@@ -216,7 +412,6 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       "--message",
       input.message,
     ];
-    const model = input.model ?? resolveTextModel();
 
     if (model) {
       args.push("--model", model);
@@ -228,7 +423,7 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
         ...process.env,
         OPENCLAW_CONFIG_PATH: getOpenClawConfigPath(),
         OPENCLAW_STATE_DIR: getOpenClawStateDir(),
-        GENLINK_OPENCLAW_TEXT_BASE_URL: resolveTextBaseUrl(input.provider),
+        GENLINK_OPENCLAW_TEXT_BASE_URL: baseUrl,
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,
       },
       windowsHide: true,
@@ -238,7 +433,25 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     let stderr = "";
     const timeout = setTimeout(() => {
       child.kill();
-      reject(new RealOpenClawRuntimeError(`OpenClaw timed out after ${Math.round(input.timeoutMs / 1000)}s`));
+      const diagnostic: RealOpenClawRuntimeDiagnostic = {
+        kind: "process_timeout",
+        provider,
+        model,
+        baseUrlHost,
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs: input.timeoutMs,
+        stderrPreview: previewOpenClawOutput(stderr),
+        stdoutPreview: previewOpenClawOutput(stdout),
+      };
+
+      console.error("[openclaw-runtime] timeout", diagnostic);
+      reject(new RealOpenClawRuntimeError(
+        `OpenClaw timed out after ${Math.round(input.timeoutMs / 1000)}s`,
+        {
+          publicMessage: buildRuntimePublicMessage(diagnostic),
+          diagnostic,
+        },
+      ));
     }, input.timeoutMs + 5_000);
 
     child.stdout.setEncoding("utf8");
@@ -251,14 +464,50 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     });
     child.on("error", (error) => {
       clearTimeout(timeout);
-      reject(new RealOpenClawRuntimeError(`OpenClaw process failed to start: ${error.message}`));
+      const diagnostic: RealOpenClawRuntimeDiagnostic = {
+        kind: "process_start_failed",
+        provider,
+        model,
+        baseUrlHost,
+        elapsedMs: Date.now() - startedAt,
+      };
+
+      console.error("[openclaw-runtime] process start failed", {
+        ...diagnostic,
+        error: error.message,
+      });
+      reject(new RealOpenClawRuntimeError(
+        `OpenClaw process failed to start: ${error.message}`,
+        {
+          publicMessage: buildRuntimePublicMessage(diagnostic),
+          diagnostic,
+        },
+      ));
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
 
       if (code !== 0) {
+        const output = stderr.trim() || stdout.trim();
+        const diagnostic: RealOpenClawRuntimeDiagnostic = {
+          kind: classifyOpenClawFailure(output),
+          provider,
+          model,
+          baseUrlHost,
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: input.timeoutMs,
+          exitCode: code,
+          stderrPreview: previewOpenClawOutput(stderr),
+          stdoutPreview: previewOpenClawOutput(stdout),
+        };
+
+        console.error("[openclaw-runtime] process failed", diagnostic);
         reject(new RealOpenClawRuntimeError(
-          `OpenClaw exited with code ${code}: ${stderr.trim() || stdout.trim() || "no output"}`,
+          `OpenClaw exited with code ${code}: ${output || "no output"}`,
+          {
+            publicMessage: buildRuntimePublicMessage(diagnostic),
+            diagnostic,
+          },
         ));
         return;
       }
@@ -268,9 +517,27 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
         const text = extractText(raw);
 
         if (!text) {
-          throw new RealOpenClawRuntimeError("OpenClaw returned no visible text payload");
+          const diagnostic: RealOpenClawRuntimeDiagnostic = {
+            kind: "empty_output",
+            provider,
+            model,
+            baseUrlHost,
+            elapsedMs: Date.now() - startedAt,
+            stdoutPreview: previewOpenClawOutput(stdout),
+          };
+
+          throw new RealOpenClawRuntimeError("OpenClaw returned no visible text payload", {
+            publicMessage: buildRuntimePublicMessage(diagnostic),
+            diagnostic,
+          });
         }
 
+        console.info("[openclaw-runtime] success", {
+          provider,
+          model,
+          baseUrlHost,
+          elapsedMs: Date.now() - startedAt,
+        });
         resolve({
           text,
           raw,
@@ -279,7 +546,34 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
             : undefined,
         });
       } catch (error) {
-        reject(error);
+        if (error instanceof RealOpenClawRuntimeError) {
+          console.error("[openclaw-runtime] output failed", error.diagnostic ?? {
+            provider,
+            model,
+            baseUrlHost,
+            elapsedMs: Date.now() - startedAt,
+          });
+          reject(error);
+          return;
+        }
+
+        const diagnostic: RealOpenClawRuntimeDiagnostic = {
+          kind: "invalid_json",
+          provider,
+          model,
+          baseUrlHost,
+          elapsedMs: Date.now() - startedAt,
+          stdoutPreview: previewOpenClawOutput(stdout),
+        };
+
+        console.error("[openclaw-runtime] invalid output", diagnostic);
+        reject(new RealOpenClawRuntimeError(
+          error instanceof Error ? error.message : "OpenClaw returned invalid output",
+          {
+            publicMessage: buildRuntimePublicMessage(diagnostic),
+            diagnostic,
+          },
+        ));
       }
     });
   });

@@ -8,7 +8,11 @@ import {
   type OpenClawPlanfEcomSession,
   type PlanfEcomPresetId,
 } from "@/lib/openclaw/planf-ecom-session";
-import { runRealOpenClaw } from "@/lib/openclaw/real-runtime";
+import {
+  RealOpenClawRuntimeError,
+  getPublicRealOpenClawRuntimeDiagnostic,
+  runRealOpenClaw,
+} from "@/lib/openclaw/real-runtime";
 import {
   normalizeOpenClawFormFieldsForPreset,
   parseOpenClawFormFields,
@@ -17,6 +21,7 @@ import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
 import type { ImageApiProvider } from "@/lib/vibe";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const FORM_FIELDS_MODEL_TIMEOUT_MS = 5 * 60_000;
 
@@ -184,12 +189,13 @@ export async function POST(request: Request) {
         stack: error.stack,
       });
 
-      if (
-        error.name === "RealOpenClawRuntimeError" ||
-        error.message.startsWith("OpenClaw ")
-      ) {
+      if (error instanceof RealOpenClawRuntimeError) {
         return NextResponse.json(
-          { ok: false, error: error.message },
+          {
+            ok: false,
+            error: error.publicMessage ?? error.message,
+            diagnostic: getPublicRealOpenClawRuntimeDiagnostic(error.diagnostic),
+          },
           { status: 502 },
         );
       }

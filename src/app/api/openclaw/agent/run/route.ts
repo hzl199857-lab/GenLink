@@ -4,11 +4,16 @@ import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { decideAgentPhaseRoute } from "@/lib/openclaw/agent-phase-policy";
 import { buildOpenClawAgentMessage, createAgentResultFromOpenClawText } from "@/lib/openclaw/agent-workflow";
 import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
-import { RealOpenClawRuntimeError, runRealOpenClaw } from "@/lib/openclaw/real-runtime";
+import {
+  RealOpenClawRuntimeError,
+  getPublicRealOpenClawRuntimeDiagnostic,
+  runRealOpenClaw,
+} from "@/lib/openclaw/real-runtime";
 import type { AgentTaskAttachment, AgentTaskContext } from "@/types/agent";
 import type { ImageApiProvider } from "@/lib/vibe";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const OPENCLAW_AGENT_TIMEOUT_MS = 5 * 60_000;
 
@@ -188,7 +193,11 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof RealOpenClawRuntimeError) {
       return NextResponse.json(
-        { ok: false, error: error.message },
+        {
+          ok: false,
+          error: error.publicMessage ?? error.message,
+          diagnostic: getPublicRealOpenClawRuntimeDiagnostic(error.diagnostic),
+        },
         { status: 504 },
       );
     }
