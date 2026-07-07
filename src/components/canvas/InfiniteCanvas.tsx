@@ -189,7 +189,11 @@ import { CanvasAgentPanel } from './CanvasAgentPanel';
 import UniqueLoading from '../ui/grid-loading';
 import { CanvasToolbar } from './CanvasToolbar';
 import { GenerationHistoryPopover } from './GenerationHistoryPopover';
-import { MaterialLibraryDialog, type PendingMaterialSource } from './MaterialLibraryDialog';
+import {
+  MaterialLibraryDialog,
+  type MaterialLibraryDialogMode,
+  type PendingMaterialSource,
+} from './MaterialLibraryDialog';
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { PromptLibraryDialog } from './PromptLibraryDialog';
 import { PromptLibraryEntryButton } from './PromptLibraryEntryButton';
@@ -233,6 +237,7 @@ let notifyImageNodeCropRequest:
 let notifyMaterialLibraryRequest:
   | ((source: PendingMaterialSource) => void)
   | null = null;
+const MATERIAL_LIBRARY_REQUEST_EVENT = 'genlink:material-library-request';
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
@@ -2597,6 +2602,19 @@ function createMaterialSourceFromUploadedImageData(
   };
 }
 
+function requestMaterialLibrarySave(source: PendingMaterialSource): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent<PendingMaterialSource>(MATERIAL_LIBRARY_REQUEST_EVENT, {
+        detail: source,
+      }),
+    );
+    return;
+  }
+
+  notifyMaterialLibraryRequest?.(source);
+}
+
 const TextNodeAdapter = memo(function TextNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateText = useCanvasStore((s) => s.generateTextFromTextNode);
@@ -2797,6 +2815,14 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
             focusNodeViewport();
             setThreeViewControllerNodeId(threeViewOpen ? null : id);
             handleSelectNode();
+            return;
+          }
+
+          if (action === 'organize') {
+            const source = createMaterialSourceFromImageGenerationData(imageData);
+            if (source) {
+              requestMaterialLibrarySave(source);
+            }
             return;
           }
 
@@ -3218,7 +3244,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
       case 'organize': {
         const source = createMaterialSourceFromImageNodeData(imageData);
         if (source) {
-          notifyMaterialLibraryRequest?.(source);
+          requestMaterialLibrarySave(source);
         }
         break;
       }
@@ -9844,8 +9870,15 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     (s) => s.addReferenceMediaToAudioGenerationNode,
   );
   const updateInlineReferenceMedia = useCanvasStore((s) => s.updateInlineReferenceMedia);
+  const materialFolders = useCanvasStore((s) => s.materialFolders);
   const materials = useCanvasStore((s) => s.materials);
+  const addMaterialFolder = useCanvasStore((s) => s.addMaterialFolder);
+  const renameMaterialFolder = useCanvasStore((s) => s.renameMaterialFolder);
+  const deleteMaterialFolder = useCanvasStore((s) => s.deleteMaterialFolder);
   const addMaterial = useCanvasStore((s) => s.addMaterial);
+  const renameMaterial = useCanvasStore((s) => s.renameMaterial);
+  const moveMaterial = useCanvasStore((s) => s.moveMaterial);
+  const duplicateMaterial = useCanvasStore((s) => s.duplicateMaterial);
   const deleteMaterial = useCanvasStore((s) => s.deleteMaterial);
   const storeGroups = useCanvasStore((s) => s.groups);
   const createGroup = useCanvasStore((s) => s.createGroup);
@@ -9915,7 +9948,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [historyOpenKey, setHistoryOpenKey] = useState(0);
   const [materialLibraryAnchor, setMaterialLibraryAnchor] = useState<{ x: number; y: number } | null>(null);
   const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
+  const [materialDialogMode, setMaterialDialogMode] = useState<MaterialLibraryDialogMode>('save');
+  const [materialDialogOpenKey, setMaterialDialogOpenKey] = useState(0);
   const [pendingMaterialSource, setPendingMaterialSource] = useState<PendingMaterialSource | null>(null);
+  const [movingMaterial, setMovingMaterial] = useState<MaterialLibraryItem | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
@@ -10251,6 +10287,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
   const [apiSettings, setApiSettings] = useState<StoredApiSettings>(() => readStoredApiSettings());
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
+  const materialUploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const contextMenuUploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   const referenceUploadNodeIdRef = React.useRef<string | null>(null);
@@ -10702,14 +10739,30 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, []);
 
   useEffect(() => {
-    notifyMaterialLibraryRequest = (source) => {
+    const openMaterialLibraryDialog = (source: PendingMaterialSource) => {
+      setMaterialDialogMode('save');
+      setMaterialDialogOpenKey((value) => value + 1);
       setPendingMaterialSource(source);
+      setMovingMaterial(null);
       setImageInfoPopover(null);
       setImageLightbox(null);
     };
 
+    const handleMaterialLibraryRequest = (event: Event) => {
+      const source = (event as CustomEvent<PendingMaterialSource>).detail;
+      if (source) {
+        openMaterialLibraryDialog(source);
+      }
+    };
+
+    notifyMaterialLibraryRequest = openMaterialLibraryDialog;
+    window.addEventListener(MATERIAL_LIBRARY_REQUEST_EVENT, handleMaterialLibraryRequest);
+
     return () => {
-      notifyMaterialLibraryRequest = null;
+      window.removeEventListener(MATERIAL_LIBRARY_REQUEST_EVENT, handleMaterialLibraryRequest);
+      if (notifyMaterialLibraryRequest === openMaterialLibraryDialog) {
+        notifyMaterialLibraryRequest = null;
+      }
     };
   }, []);
 
@@ -10723,7 +10776,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           return;
         }
 
-        notifyMaterialLibraryRequest?.(source);
+        requestMaterialLibrarySave(source);
         return;
       }
 
@@ -11001,7 +11054,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           return;
         }
 
-        notifyMaterialLibraryRequest?.(source);
+        requestMaterialLibrarySave(source);
         return;
       }
 
@@ -14322,12 +14375,85 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const existing = materials.find(
       (candidate) =>
         candidate.name.trim() === item.name.trim() &&
-        candidate.category === item.category,
+        candidate.category === item.category &&
+        (candidate.folderId ?? null) === (item.folderId ?? null),
     );
     addMaterial(item);
     setPendingMaterialSource(null);
+    setMovingMaterial(null);
     showProjectMessage(existing ? 'Material already exists' : 'Added to material library');
   }, [addMaterial, materials, showProjectMessage]);
+
+  const closeMaterialDialog = useCallback(() => {
+    setPendingMaterialSource(null);
+    setMovingMaterial(null);
+  }, []);
+
+  const handleConfirmMoveMaterial = useCallback((
+    itemId: string,
+    target: { category: MaterialLibraryItem['category']; folderId?: string },
+  ) => {
+    moveMaterial(itemId, target);
+    setMovingMaterial(null);
+    setPendingMaterialSource(null);
+    showProjectMessage('Material moved');
+  }, [moveMaterial, showProjectMessage]);
+
+  const handleRequestMoveMaterial = useCallback((item: MaterialLibraryItem) => {
+    setMaterialDialogMode('move');
+    setMaterialDialogOpenKey((value) => value + 1);
+    setMovingMaterial(item);
+    setPendingMaterialSource(null);
+  }, []);
+
+  const handleMaterialAiRoleClick = useCallback(() => {
+    showProjectMessage('AI 角色功能开发中');
+  }, [showProjectMessage]);
+
+  const handleOpenMaterialUpload = useCallback(() => {
+    const input = materialUploadInputRef.current;
+    if (!input) {
+      return;
+    }
+    input.value = '';
+    openFileInput(input);
+  }, []);
+
+  const handleMaterialUploadInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      showProjectMessage('素材库上传暂只支持图片');
+      return;
+    }
+
+    void readImageFile(file, { folder: 'references' })
+      .then((data) => {
+        setMaterialDialogMode('save');
+        setMaterialDialogOpenKey((value) => value + 1);
+        setMovingMaterial(null);
+        setPendingMaterialSource({
+          defaultName: data.title?.trim() || data.fileName?.trim() || file.name.replace(/\.[^.]+$/, ''),
+          imageUrl: data.generatedOutputFileName ? `output:${data.generatedOutputFileName}` : data.imageUrl,
+          hostedImageUrl: data.hostedImageUrl || data.imageUrl,
+          fileName: data.fileName,
+          outputFileName: data.generatedOutputFileName,
+          sourceNodeType: 'image',
+          width: data.width,
+          height: data.height,
+          sizeBytes: data.sizeBytes,
+        });
+      })
+      .catch((error) => {
+        console.error('material upload failed', error);
+        showProjectMessage(error instanceof Error ? error.message : '素材上传失败');
+      });
+  }, [showProjectMessage]);
 
   const handleSelectHistoryImage = useCallback(async (item: ImageHistoryItem) => {
     const viewportBeforeInsert = getViewport();
@@ -14952,9 +15078,18 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         open={materialLibraryAnchor !== null}
         anchor={materialLibraryAnchor}
         materials={materials}
+        folders={materialFolders}
         onClose={() => setMaterialLibraryAnchor(null)}
         onSelectMaterial={handleSelectMaterial}
+        onUploadMaterial={handleOpenMaterialUpload}
+        onCreateFolder={addMaterialFolder}
+        onRenameFolder={renameMaterialFolder}
+        onDeleteFolder={deleteMaterialFolder}
+        onRenameMaterial={renameMaterial}
+        onMoveMaterial={handleRequestMoveMaterial}
+        onDuplicateMaterial={duplicateMaterial}
         onDeleteMaterial={deleteMaterial}
+        onAiRoleClick={handleMaterialAiRoleClick}
       />
       <GenerationHistoryPopover
         key={historyOpenKey}
@@ -14980,10 +15115,16 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         onClose={() => setImageLightbox(null)}
       />
       <MaterialLibraryDialog
+        key={`material-dialog-${materialDialogOpenKey}`}
+        mode={materialDialogMode}
         source={pendingMaterialSource}
+        movingMaterial={movingMaterial}
         existingMaterials={materials}
-        onClose={() => setPendingMaterialSource(null)}
-        onConfirm={handleConfirmAddMaterial}
+        folders={materialFolders}
+        onClose={closeMaterialDialog}
+        onCreateFolder={addMaterialFolder}
+        onConfirmSave={handleConfirmAddMaterial}
+        onConfirmMove={handleConfirmMoveMaterial}
       />
       <CropOverlay
         data={cropMode}
@@ -15004,6 +15145,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         multiple
         className="sr-only"
         onChange={handleUploadInputChange}
+      />
+      <input
+        ref={materialUploadInputRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={handleMaterialUploadInputChange}
       />
       <ApiSettingsPanel
         key={apiSettingsOpen ? 'api-settings-open' : 'api-settings-closed'}

@@ -2,56 +2,130 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
-import { ChevronDown, X } from 'lucide-react';
-import type { MaterialLibraryCategory, MaterialLibraryItem } from '@/types/canvas';
+import { ChevronDown, Folder, FolderPlus, ImageIcon, X } from 'lucide-react';
+import type {
+  MaterialLibraryCategory,
+  MaterialLibraryFolder,
+  MaterialLibraryItem,
+} from '@/types/canvas';
 
 export const MATERIAL_LIBRARY_CATEGORIES: MaterialLibraryCategory[] = [
   '人物',
   '场景',
   '物品',
   '风格',
+  '音效',
+  '文本',
   '其他',
 ];
 
 export type PendingMaterialSource = Omit<
   MaterialLibraryItem,
-  'id' | 'name' | 'category' | 'createdAt'
+  'id' | 'name' | 'category' | 'folderId' | 'createdAt'
 > & {
   defaultName: string;
 };
 
+export type MaterialLibraryDialogMode = 'save' | 'move';
+
 export interface MaterialLibraryDialogProps {
+  mode: MaterialLibraryDialogMode;
   source: PendingMaterialSource | null;
+  movingMaterial: MaterialLibraryItem | null;
   existingMaterials: MaterialLibraryItem[];
+  folders: MaterialLibraryFolder[];
   onClose: () => void;
-  onConfirm: (item: Omit<MaterialLibraryItem, 'id' | 'createdAt'>) => void;
+  onCreateFolder: (folder: Omit<MaterialLibraryFolder, 'id' | 'createdAt'>) => MaterialLibraryFolder;
+  onConfirmSave: (item: Omit<MaterialLibraryItem, 'id' | 'createdAt'>) => void;
+  onConfirmMove: (
+    itemId: string,
+    target: { category: MaterialLibraryCategory; folderId?: string },
+  ) => void;
 }
 
-type MaterialLibraryDialogDraft = {
+type Draft = {
   sourceId: string | null;
   name: string;
-  category: MaterialLibraryCategory | '';
-  categoryOpen: boolean;
+  category: MaterialLibraryCategory;
+  folderId?: string;
+  expanded: Set<MaterialLibraryCategory>;
   error: string | null;
+  creatingFolder: boolean;
+  folderName: string;
 };
 
+function sourceKey(source: PendingMaterialSource | null, movingMaterial: MaterialLibraryItem | null): string | null {
+  if (source) {
+    return [
+      'save',
+      source.defaultName,
+      source.imageUrl,
+      source.hostedImageUrl ?? '',
+      source.outputFileName ?? '',
+    ].join('|');
+  }
+
+  if (movingMaterial) {
+    return ['move', movingMaterial.id, movingMaterial.category, movingMaterial.folderId ?? ''].join('|');
+  }
+
+  return null;
+}
+
+function getImageUrl(source: PendingMaterialSource | null, movingMaterial: MaterialLibraryItem | null): string {
+  if (source) {
+    return source.hostedImageUrl?.trim() || source.imageUrl.trim();
+  }
+
+  return movingMaterial?.hostedImageUrl?.trim() || movingMaterial?.imageUrl.trim() || '';
+}
+
 export function MaterialLibraryDialog({
+  mode,
   source,
+  movingMaterial,
   existingMaterials,
+  folders,
   onClose,
-  onConfirm,
+  onCreateFolder,
+  onConfirmSave,
+  onConfirmMove,
 }: MaterialLibraryDialogProps) {
-  const [draft, setDraft] = useState<MaterialLibraryDialogDraft>({
+  const active = mode === 'save' ? source !== null : movingMaterial !== null;
+  const key = sourceKey(source, movingMaterial);
+  const [draft, setDraft] = useState<Draft>({
     sourceId: null,
     name: '',
-    category: '',
-    categoryOpen: false,
+    category: '人物',
+    folderId: undefined,
+    expanded: new Set(['人物']),
     error: null,
+    creatingFolder: false,
+    folderName: '',
   });
-  const panelRef = useRef<HTMLDivElement>(null);
+  const folderNameInputRef = useRef<HTMLInputElement>(null);
+  const folderCommitLockRef = useRef(false);
+
+  const currentDraft = useMemo<Draft>(() => {
+    if (draft.sourceId === key) {
+      return draft;
+    }
+
+    const category = movingMaterial?.category ?? '人物';
+    return {
+      sourceId: key,
+      name: source?.defaultName.trim() || movingMaterial?.name.trim() || '图片素材',
+      category,
+      folderId: movingMaterial?.folderId,
+      expanded: new Set([category]),
+      error: null,
+      creatingFolder: false,
+      folderName: '',
+    };
+  }, [draft, key, movingMaterial, source]);
 
   useEffect(() => {
-    if (!source) {
+    if (!active) {
       return;
     }
 
@@ -63,196 +137,328 @@ export function MaterialLibraryDialog({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, source]);
+  }, [active, onClose]);
 
-  const sourceDraftId = source
-    ? [
-        source.defaultName,
-        source.imageUrl,
-        source.hostedImageUrl ?? '',
-        source.outputFileName ?? '',
-      ].join('|')
-    : null;
-  const activeDraft =
-    source && draft.sourceId === sourceDraftId
-      ? draft
-      : {
-          sourceId: sourceDraftId,
-          name: source?.defaultName.trim() || '图片素材',
-          category: '' as const,
-          categoryOpen: false,
-          error: null,
-        };
-  const name = activeDraft.name;
-  const category = activeDraft.category;
-  const categoryOpen = activeDraft.categoryOpen;
-  const error = activeDraft.error;
-  const updateDraft = (partial: Partial<MaterialLibraryDialogDraft>) => {
+  useEffect(() => {
+    if (!active || !currentDraft.creatingFolder) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      folderNameInputRef.current?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [active, currentDraft.creatingFolder]);
+
+  if (!active) {
+    return null;
+  }
+
+  const imageUrl = getImageUrl(source, movingMaterial);
+  const selectedFolder = currentDraft.folderId
+    ? folders.find((folder) => folder.id === currentDraft.folderId)
+    : undefined;
+  const selectedFolderId =
+    selectedFolder && selectedFolder.category === currentDraft.category ? selectedFolder.id : undefined;
+
+  const updateDraft = (partial: Partial<Draft>) => {
     setDraft((current) => ({
-      ...(current.sourceId === sourceDraftId ? current : activeDraft),
+      ...(current.sourceId === key ? current : currentDraft),
       ...partial,
     }));
   };
 
-  const duplicate = useMemo(() => {
-    const normalizedName = name.trim();
+  const selectTarget = (category: MaterialLibraryCategory, folderId?: string) => {
+    updateDraft({
+      category,
+      folderId,
+      error: null,
+    });
+  };
 
-    if (!normalizedName || !category) {
-      return false;
+  const toggleCategory = (category: MaterialLibraryCategory) => {
+    updateDraft({
+      category,
+      folderId: undefined,
+      error: null,
+      expanded: (() => {
+        const next = new Set(currentDraft.expanded);
+        if (next.has(category)) {
+          next.delete(category);
+        } else {
+          next.add(category);
+        }
+        return next;
+      })(),
+    });
+  };
+
+  const duplicate = existingMaterials.some(
+    (item) =>
+      item.id !== movingMaterial?.id &&
+      item.name.trim() === currentDraft.name.trim() &&
+      item.category === currentDraft.category &&
+      (item.folderId ?? null) === (selectedFolderId ?? null),
+  );
+
+  const renderExistingMaterialRow = (item: MaterialLibraryItem) => (
+    <div
+      key={item.id}
+      className="flex h-9 items-center gap-2 rounded-[8px] px-2 text-white/68"
+    >
+      <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
+        <NextImage
+          src={item.hostedImageUrl?.trim() || item.imageUrl.trim()}
+          alt={item.name}
+          fill
+          unoptimized
+          loading="lazy"
+          sizes="24px"
+          className="object-cover"
+        />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/82">
+        {item.name}
+      </span>
+    </div>
+  );
+
+  const handleCreateFolder = (showError = false) => {
+    if (folderCommitLockRef.current) {
+      return;
     }
 
-    return existingMaterials.some(
-      (item) => item.name.trim() === normalizedName && item.category === category,
-    );
-  }, [category, existingMaterials, name]);
+    folderCommitLockRef.current = true;
+    const name = currentDraft.folderName.trim();
+    if (!name) {
+      updateDraft({
+        creatingFolder: false,
+        folderName: '',
+        error: showError ? '请输入文件夹名称' : null,
+      });
+      return;
+    }
 
-  if (!source) {
-    return null;
-  }
+    const folder = onCreateFolder({
+      name,
+      category: currentDraft.category,
+    });
 
-  const imageUrl = source.hostedImageUrl?.trim() || source.imageUrl.trim();
-  const canCreate = Boolean(name.trim() && category);
+    updateDraft({
+      creatingFolder: false,
+      folderName: '',
+      category: folder.category,
+      folderId: folder.id,
+      expanded: new Set([...currentDraft.expanded, folder.category]),
+      error: null,
+    });
+  };
 
   const handleConfirm = () => {
-    const normalizedName = name.trim();
-
-    if (!normalizedName) {
-      updateDraft({ error: '请输入名称' });
+    if (mode === 'move') {
+      if (!movingMaterial) {
+        return;
+      }
+      onConfirmMove(movingMaterial.id, {
+        category: currentDraft.category,
+        folderId: selectedFolderId,
+      });
       return;
     }
 
-    if (!category) {
-      updateDraft({ error: '请选择分类' });
+    if (!source) {
       return;
     }
 
-    onConfirm({
+    const name = currentDraft.name.trim();
+    if (!name) {
+      updateDraft({ error: '请输入素材名称' });
+      return;
+    }
+
+    onConfirmSave({
       ...source,
-      name: normalizedName,
-      category,
+      name,
+      category: currentDraft.category,
+      folderId: selectedFolderId,
     });
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/32 px-6 backdrop-blur-[3px]"
-      onPointerDown={(event) => {
-        if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
-          onClose();
-        }
-      }}
-    >
-      <div
-        ref={panelRef}
-        className="w-[640px] max-w-[calc(100vw-40px)] overflow-hidden rounded-[9px] border border-white/10 bg-[#1f2023] text-white shadow-[0_24px_64px_rgba(0,0,0,0.48)]"
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        <div className="flex h-12 items-center justify-between border-b border-white/12 px-4">
-          <div className="flex items-center gap-5 text-[13px] font-semibold">
-            <span className="text-white/86">创建素材</span>
-            <span className="text-white/42">添加到素材库</span>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-6 backdrop-blur-[2px]">
+      <div className="w-[430px] overflow-hidden rounded-[16px] border border-[#2f3033] bg-[#111214]/[0.995] text-white shadow-[0_28px_70px_rgba(0,0,0,0.55)] backdrop-blur-[2px]">
+        <div className="flex h-[54px] items-center justify-between px-4">
+          <div className="flex items-center gap-2 text-[16px] font-semibold text-white/94">
+            <Folder size={17} strokeWidth={0} fill="rgba(136,136,140,0.72)" className="text-[#8a8a8e]" />
+            {mode === 'move' ? '移动到文件夹' : '保存到素材库'}
           </div>
           <button
             type="button"
-            aria-label="关闭"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-white/52 transition hover:bg-white/8 hover:text-white/78"
-            onClick={onClose}
+            className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#2b2b2d] px-3 text-[13px] font-semibold text-white/90 transition hover:bg-[#343438]"
+            onClick={() => {
+              folderCommitLockRef.current = false;
+              updateDraft({
+                creatingFolder: true,
+                folderName: '',
+                error: null,
+              });
+            }}
           >
-            <X size={18} strokeWidth={1.8} />
+            <FolderPlus size={14} />
+            新建文件夹
           </button>
         </div>
 
-        <div className="grid grid-cols-[300px_1fr] gap-4 px-4 py-4">
-          <div>
-            <div className="mb-2 text-[12px] font-medium text-white/50">封面</div>
-            <div className="relative h-[377px] overflow-hidden rounded-[10px] bg-black/28 ring-1 ring-white/10">
-              <NextImage
-                src={imageUrl}
-                alt={name || '素材封面'}
-                fill
-                unoptimized
-                sizes="300px"
-                className="object-cover"
-              />
+        <div className="px-4 pb-4">
+          {mode === 'save' ? (
+            <div className="mb-3 grid grid-cols-[72px_1fr] gap-3">
+              <div className="relative h-[72px] overflow-hidden rounded-[8px] bg-black/30 ring-1 ring-[#333438]">
+                {imageUrl ? (
+                  <NextImage
+                    src={imageUrl}
+                    alt={currentDraft.name || '素材预览'}
+                    fill
+                    unoptimized
+                    sizes="72px"
+                    className="object-cover"
+                  />
+                ) : (
+                  <ImageIcon className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/36" />
+                )}
+              </div>
+              <label className="flex min-w-0 flex-col gap-1 text-[12px] font-medium text-white/48">
+                素材名称
+                <input
+                  value={currentDraft.name}
+                  className="h-9 rounded-[11px] border border-[#2f3033] bg-black/18 px-3 text-[13px] text-white outline-none transition placeholder:text-white/30 focus:border-[#3a3a3c]"
+                  placeholder="图片素材"
+                  onChange={(event) => updateDraft({ name: event.target.value, error: null })}
+                />
+              </label>
             </div>
+          ) : null}
+
+          {currentDraft.creatingFolder ? (
+            <input
+              ref={folderNameInputRef}
+              value={currentDraft.folderName}
+              className="mb-3 h-9 w-full rounded-[11px] border border-[#2f3033] bg-black/18 px-3 text-[13px] text-white outline-none transition placeholder:text-white/30 focus:border-[#3a3a3c]"
+              placeholder="文件夹名称"
+              onBlur={() => handleCreateFolder()}
+              onChange={(event) => updateDraft({ folderName: event.target.value, error: null })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  handleCreateFolder(true);
+                }
+
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  updateDraft({ creatingFolder: false, folderName: '', error: null });
+                }
+              }}
+            />
+          ) : null}
+
+          <div className="max-h-[286px] overflow-y-auto py-1">
+            {MATERIAL_LIBRARY_CATEGORIES.map((category) => {
+              const categoryMaterials = existingMaterials.filter((item) => item.category === category);
+              const rootMaterials = categoryMaterials.filter((item) => !item.folderId);
+              const categoryFolders = folders.filter((folder) => folder.category === category);
+              const categorySelected = currentDraft.category === category && !selectedFolderId;
+              const isExpanded = currentDraft.expanded.has(category);
+
+              return (
+                <div key={category} className="mb-1">
+                  <button
+                    type="button"
+                    className={[
+                      'flex h-10 w-full items-center gap-2 rounded-[8px] px-2 text-left text-[14px] font-semibold transition',
+                      categorySelected
+                        ? 'bg-white/10 text-white'
+                        : 'text-white/78 hover:bg-white/10 hover:text-white',
+                    ].join(' ')}
+                    onClick={() => toggleCategory(category)}
+                  >
+                    <ChevronDown
+                      size={15}
+                      className={isExpanded ? 'text-white/68' : '-rotate-90 text-white/44'}
+                    />
+                    <Folder size={22} strokeWidth={0} fill="rgba(136,136,140,0.72)" className="text-[#8a8a8e]" />
+                    <span>{category}</span>
+                  </button>
+
+                  {isExpanded ? (
+                    <div className="ml-[17px] border-l border-[#2a2b2e] pl-5">
+                      {rootMaterials.map(renderExistingMaterialRow)}
+                      {categoryFolders.map((folder) => {
+                        const selected = selectedFolderId === folder.id;
+                        const childMaterials = categoryMaterials.filter((item) => item.folderId === folder.id);
+
+                        return (
+                          <div key={folder.id} className="mb-1">
+                            <button
+                              type="button"
+                              className={[
+                                'flex h-9 w-full items-center gap-2 rounded-[8px] px-2 text-left text-[13px] font-semibold transition',
+                                selected
+                                  ? 'bg-white/10 text-white'
+                                  : 'text-white/70 hover:bg-white/10 hover:text-white',
+                              ].join(' ')}
+                              onClick={() => selectTarget(category, folder.id)}
+                            >
+                              <Folder size={19} strokeWidth={0} fill="rgba(136,136,140,0.68)" className="text-[#8a8a8e]" />
+                              <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                            </button>
+                            {childMaterials.length > 0 ? (
+                              <div className="ml-5 border-l border-[#2a2b2e] pl-3">
+                                {childMaterials.map(renderExistingMaterialRow)}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
 
-          <div className="flex min-w-0 flex-col">
-            <label className="mb-2 text-[12px] font-medium text-white/50" htmlFor="material-name">
-              名称 <span className="text-[#ff6b6b]">*</span>
-            </label>
-            <input
-              id="material-name"
-              value={name}
-              onChange={(event) => {
-                updateDraft({
-                  name: event.target.value,
-                  error: null,
-                });
-              }}
-              className="h-10 rounded-[8px] border border-white/12 bg-black/18 px-3 text-[14px] text-white outline-none transition placeholder:text-white/28 focus:border-white/28"
-              placeholder="图片素材"
-            />
+          <div className="mt-2 min-h-5 text-[12px] text-[#ff8b8b]">
+            {currentDraft.error ?? (duplicate ? '该位置已存在同名素材，保存后会复用已有素材' : '')}
+          </div>
 
-            <label className="mb-2 mt-5 text-[12px] font-medium text-white/50" htmlFor="material-category">
-              分类 <span className="text-[#ff6b6b]">*</span>
-            </label>
-            <div className="relative">
-              <button
-                id="material-category"
-                type="button"
-                aria-expanded={categoryOpen}
-                className="flex h-9 w-full items-center justify-between rounded-[8px] border border-white/14 bg-black/18 px-3 text-left text-[13px] text-white/78 outline-none transition hover:border-white/24"
-                onClick={() => updateDraft({ categoryOpen: !categoryOpen })}
-              >
-                <span className={category ? 'text-white/84' : 'text-white/32'}>
-                  {category || '请选择'}
-                </span>
-                <ChevronDown
-                  size={14}
-                  className={categoryOpen ? 'rotate-180 text-white/46 transition' : 'text-white/46 transition'}
-                />
-              </button>
-
-              {categoryOpen ? (
-                <div className="absolute left-0 right-0 top-[42px] z-10 overflow-hidden rounded-[8px] border border-white/12 bg-[#202124] py-1 shadow-[0_16px_34px_rgba(0,0,0,0.36)]">
-                  {MATERIAL_LIBRARY_CATEGORIES.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className="flex h-10 w-full items-center px-3 text-left text-[13px] text-white/78 transition hover:bg-white/8 hover:text-white"
-                      onClick={() => {
-                        updateDraft({
-                          category: option,
-                          categoryOpen: false,
-                          error: null,
-                        });
-                      }}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-3 min-h-5 text-[12px] text-[#ff8b8b]">
-              {error ?? (duplicate ? '已存在同名同分类素材，将使用已有素材去重' : '')}
-            </div>
-
-            <div className="mt-auto flex justify-end pt-6">
-              <button
-                type="button"
-                disabled={!canCreate}
-                className="h-9 rounded-[9px] bg-[#CCFF00] px-4 text-[13px] font-semibold text-[#141510] shadow-[0_10px_24px_rgba(204,255,0,0.22)] transition hover:bg-[#d7ff33] disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/32 disabled:shadow-none"
-                onClick={handleConfirm}
-              >
-                创建
-              </button>
-            </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              className="h-9 rounded-[9px] bg-[#2b2b2d] px-4 text-[13px] font-semibold text-white/78 transition hover:bg-[#343438] hover:text-white"
+              onClick={onClose}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="h-9 rounded-[9px] bg-[#f2f2f0] px-4 text-[13px] font-semibold text-[#161616] shadow-[0_8px_20px_rgba(0,0,0,0.22)] transition hover:bg-white"
+              onClick={handleConfirm}
+            >
+              {mode === 'move' ? '移动' : '保存'}
+            </button>
           </div>
         </div>
       </div>
+
+      <button type="button" aria-label="关闭" className="fixed inset-0 -z-10 cursor-default" onClick={onClose} />
+      <button
+        type="button"
+        aria-label="关闭"
+        className="fixed right-6 top-6 flex h-8 w-8 items-center justify-center rounded-full text-white/52 transition hover:bg-white/10 hover:text-white"
+        onClick={onClose}
+      >
+        <X size={18} />
+      </button>
     </div>
   );
 }

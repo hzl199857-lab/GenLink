@@ -1,6 +1,7 @@
 import type {
   CanvasEdge,
   CanvasNode,
+  MaterialLibraryFolder,
   MaterialLibraryItem,
   NodeGroup,
   ProjectSnapshot,
@@ -12,6 +13,7 @@ interface BuildProjectSnapshotParams {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups?: NodeGroup[];
+  materialFolders?: MaterialLibraryFolder[];
   materials?: MaterialLibraryItem[];
   thumbnailFileName?: string;
   createdAt?: string;
@@ -28,6 +30,7 @@ export function buildProjectSnapshot({
   nodes,
   edges,
   groups,
+  materialFolders,
   materials,
   thumbnailFileName,
   createdAt,
@@ -42,6 +45,7 @@ export function buildProjectSnapshot({
     nodes,
     edges,
     groups: groups && groups.length > 0 ? groups : undefined,
+    materialFolders: materialFolders && materialFolders.length > 0 ? materialFolders : undefined,
     materials: materials && materials.length > 0 ? materials : undefined,
     thumbnailFileName: thumbnailFileName?.trim() || undefined,
     createdAt: nextCreatedAt,
@@ -50,13 +54,14 @@ export function buildProjectSnapshot({
 }
 
 export function getProjectSnapshotSignature(
-  value: Pick<ProjectSnapshot, "name" | "nodes" | "edges" | "groups" | "materials">,
+  value: Pick<ProjectSnapshot, "name" | "nodes" | "edges" | "groups" | "materialFolders" | "materials">,
 ): string {
   return JSON.stringify({
     name: value.name,
     nodes: value.nodes,
     edges: value.edges,
     groups: value.groups ?? [],
+    materialFolders: value.materialFolders ?? [],
     materials: value.materials ?? [],
   });
 }

@@ -39,6 +39,7 @@ import type {
   ImageGenerationNodeData,
   ImageGenerationRunOptions,
   ImageNodeData,
+  MaterialLibraryFolder,
   MaterialLibraryItem,
   NodeGroup,
   NodeType,
@@ -346,6 +347,7 @@ type CanvasHistorySnapshot = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
 };
 
@@ -2388,6 +2390,7 @@ function createSnapshot(state: {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
 }): ProjectSnapshot {
   return buildProjectSnapshot({
@@ -2396,6 +2399,7 @@ function createSnapshot(state: {
     nodes: sanitizeNodesForPersistence(state.nodes),
     edges: state.edges,
     groups: state.groups,
+    materialFolders: state.materialFolders,
     materials: sanitizeMaterialsForPersistence(state.materials),
     thumbnailFileName: state.currentProjectThumbnailFileName,
     createdAt: state.projectCreatedAt ?? undefined,
@@ -2996,7 +3000,7 @@ function sanitizeMaterialsForPersistence(materials: MaterialLibraryItem[]): Mate
 }
 
 function getPersistentProjectSnapshotSignature(
-  value: Pick<ProjectSnapshot, "name" | "nodes" | "edges" | "groups" | "materials">,
+  value: Pick<ProjectSnapshot, "name" | "nodes" | "edges" | "groups" | "materialFolders" | "materials">,
 ): string {
   return getProjectSnapshotSignature({
     ...value,
@@ -3121,6 +3125,7 @@ function computeDirtyState(state: {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
   lastSavedSignature: string;
 }): boolean {
@@ -3129,6 +3134,7 @@ function computeDirtyState(state: {
     nodes: state.nodes,
     edges: state.edges,
     groups: state.groups,
+    materialFolders: state.materialFolders,
     materials: state.materials,
   });
 
@@ -3140,6 +3146,7 @@ function createCanvasHistorySnapshot(state: {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
 }): CanvasHistorySnapshot {
   return {
@@ -3147,6 +3154,7 @@ function createCanvasHistorySnapshot(state: {
     nodes: state.nodes,
     edges: state.edges,
     groups: state.groups,
+    materialFolders: state.materialFolders,
     materials: state.materials,
   };
 }
@@ -3157,6 +3165,7 @@ function getCanvasHistorySignature(snapshot: CanvasHistorySnapshot): string {
     nodes: snapshot.nodes,
     edges: snapshot.edges,
     groups: snapshot.groups,
+    materialFolders: snapshot.materialFolders,
     materials: snapshot.materials,
   });
 }
@@ -4446,6 +4455,7 @@ export interface CanvasState {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
+  materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
   loading: boolean;
   error: string | null;
@@ -4482,7 +4492,16 @@ export interface CanvasState {
   removeNodeFromGroup: (groupId: string, nodeId: string) => void;
   updateGroupBounds: (groupId: string, bounds: Partial<{ x: number; y: number; width: number; height: number }>) => void;
   moveGroup: (groupId: string, dx: number, dy: number) => void;
+  addMaterialFolder: (folder: Omit<MaterialLibraryFolder, "id" | "createdAt">) => MaterialLibraryFolder;
+  renameMaterialFolder: (folderId: string, name: string) => void;
+  deleteMaterialFolder: (folderId: string) => void;
   addMaterial: (item: Omit<MaterialLibraryItem, "id" | "createdAt">) => MaterialLibraryItem;
+  renameMaterial: (id: string, name: string) => void;
+  moveMaterial: (
+    id: string,
+    target: { category: MaterialLibraryItem["category"]; folderId?: string },
+  ) => void;
+  duplicateMaterial: (id: string) => MaterialLibraryItem | null;
   deleteMaterial: (id: string) => void;
 
   generateTextFromTextNode: (textNodeId: string) => Promise<void>;
@@ -4671,6 +4690,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   nodes: [],
   edges: [],
   groups: [],
+  materialFolders: [],
   materials: [],
   loading: false,
   error: null,
@@ -4681,6 +4701,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     nodes: [],
     edges: [],
     groups: [],
+    materialFolders: [],
     materials: [],
   }),
   saveMessage: null,
@@ -5176,12 +5197,96 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  addMaterialFolder: (folder) => {
+    const normalizedName = folder.name.trim();
+    const existing = get().materialFolders.find(
+      (candidate) =>
+        candidate.name.trim() === normalizedName &&
+        candidate.category === folder.category,
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const nextFolder: MaterialLibraryFolder = {
+      ...folder,
+      name: normalizedName,
+      id: crypto.randomUUID(),
+      createdAt: nowIso(),
+    };
+
+    set((state) => ({
+      ...createUndoHistoryUpdate(state),
+      materialFolders: [...state.materialFolders, nextFolder],
+      dirty: true,
+      error: null,
+    }));
+
+    return nextFolder;
+  },
+
+  renameMaterialFolder: (folderId, name) => {
+    const normalizedName = name.trim();
+
+    if (!normalizedName) {
+      return;
+    }
+
+    set((state) => {
+      const folder = state.materialFolders.find((candidate) => candidate.id === folderId);
+
+      if (!folder || folder.name === normalizedName) {
+        return state;
+      }
+
+      const duplicate = state.materialFolders.some(
+        (candidate) =>
+          candidate.id !== folderId &&
+          candidate.category === folder.category &&
+          candidate.name.trim() === normalizedName,
+      );
+
+      if (duplicate) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materialFolders: state.materialFolders.map((candidate) =>
+          candidate.id === folderId ? { ...candidate, name: normalizedName } : candidate,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  deleteMaterialFolder: (folderId) => {
+    set((state) => {
+      if (!state.materialFolders.some((folder) => folder.id === folderId)) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materialFolders: state.materialFolders.filter((folder) => folder.id !== folderId),
+        materials: state.materials.map((item) =>
+          item.folderId === folderId ? { ...item, folderId: undefined } : item,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
   addMaterial: (item) => {
     const normalizedName = item.name.trim();
     const existing = get().materials.find(
       (candidate) =>
         candidate.name.trim() === normalizedName &&
-        candidate.category === item.category,
+        candidate.category === item.category &&
+        (candidate.folderId ?? null) === (item.folderId ?? null),
     );
 
     if (existing) {
@@ -5203,6 +5308,110 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
 
     return nextItem;
+  },
+
+  renameMaterial: (id, name) => {
+    const normalizedName = name.trim();
+
+    if (!normalizedName) {
+      return;
+    }
+
+    set((state) => {
+      const item = state.materials.find((candidate) => candidate.id === id);
+
+      if (!item || item.name === normalizedName) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materials: state.materials.map((candidate) =>
+          candidate.id === id ? { ...candidate, name: normalizedName } : candidate,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  moveMaterial: (id, target) => {
+    set((state) => {
+      const item = state.materials.find((candidate) => candidate.id === id);
+
+      if (!item) {
+        return state;
+      }
+
+      const folder = target.folderId
+        ? state.materialFolders.find((candidate) => candidate.id === target.folderId)
+        : undefined;
+      const folderId = folder && folder.category === target.category ? folder.id : undefined;
+
+      if (item.category === target.category && (item.folderId ?? undefined) === folderId) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materials: state.materials.map((candidate) =>
+          candidate.id === id
+            ? {
+                ...candidate,
+                category: target.category,
+                folderId,
+              }
+            : candidate,
+        ),
+        dirty: true,
+        error: null,
+      };
+    });
+  },
+
+  duplicateMaterial: (id) => {
+    let duplicated: MaterialLibraryItem | null = null;
+
+    set((state) => {
+      const item = state.materials.find((candidate) => candidate.id === id);
+
+      if (!item) {
+        return state;
+      }
+
+      const baseName = `${item.name.trim() || "素材"} 副本`;
+      let nextName = baseName;
+      let suffix = 2;
+
+      while (
+        state.materials.some(
+          (candidate) =>
+            candidate.category === item.category &&
+            (candidate.folderId ?? null) === (item.folderId ?? null) &&
+            candidate.name.trim() === nextName,
+        )
+      ) {
+        nextName = `${baseName} ${suffix}`;
+        suffix += 1;
+      }
+
+      const nextItem: MaterialLibraryItem = {
+        ...item,
+        id: crypto.randomUUID(),
+        name: nextName,
+        createdAt: nowIso(),
+      };
+      duplicated = nextItem;
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materials: [...state.materials, nextItem],
+        dirty: true,
+        error: null,
+      };
+    });
+
+    return duplicated;
   },
 
   deleteMaterial: (id) => {
@@ -5573,6 +5782,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: state.nodes,
         edges: state.edges,
         groups: state.groups,
+        materialFolders: state.materialFolders,
         materials: state.materials,
         lastSavedSignature: state.lastSavedSignature,
       }),
@@ -5612,6 +5822,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: previous.nodes,
         edges: previous.edges,
         groups: previous.groups,
+        materialFolders: previous.materialFolders,
         materials: previous.materials,
         undoStack: state.undoStack.slice(0, -1),
         redoStack: [...state.redoStack, current].slice(-CANVAS_HISTORY_LIMIT),
@@ -5638,6 +5849,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: next.nodes,
         edges: next.edges,
         groups: next.groups,
+        materialFolders: next.materialFolders,
         materials: next.materials,
         undoStack: [...state.undoStack, current].slice(-CANVAS_HISTORY_LIMIT),
         redoStack: state.redoStack.slice(0, -1),
@@ -9315,6 +9527,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [],
       edges: [],
       groups: [],
+      materialFolders: [],
       materials: [],
       loading: false,
       error: null,
@@ -9325,6 +9538,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: [],
         edges: [],
         groups: [],
+        materialFolders: [],
         materials: [],
       }),
       saveMessage: null,
@@ -9389,6 +9603,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: loadedNodes,
         edges: hydrated.snapshot.edges,
         groups: hydrated.snapshot.groups ?? [],
+        materialFolders: hydrated.snapshot.materialFolders ?? [],
         materials: hydrated.snapshot.materials ?? [],
         loading: false,
         error: null,
@@ -9455,6 +9670,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             nodes: state.nodes,
             edges: state.edges,
             groups: state.groups,
+            materialFolders: state.materialFolders,
             materials: state.materials,
             lastSavedSignature: state.lastSavedSignature,
           }),
@@ -9501,6 +9717,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: loadedNodes,
       edges: snapshot.edges,
       groups: snapshot.groups ?? [],
+      materialFolders: snapshot.materialFolders ?? [],
       materials: snapshot.materials ?? [],
       loading: false,
       error: null,

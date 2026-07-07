@@ -52,3 +52,27 @@ test("closes image generation prompt bar menus when the selected node changes", 
   assert.match(canvasSource, /const selectSingleNode = useCallback\(\(nodeId: string\) => \{\s*clearCanvasNodeUi\(\);/);
   assert.match(source, /key=\{`prompt-bar-\$\{id\}-\$\{promptBarVisible \? 'visible' : 'hidden'\}`\}/);
 });
+
+test("image generation organize action opens the material save dialog directly", () => {
+  assert.match(
+    canvasSource,
+    /if \(action === 'organize'\) \{\s*const source = createMaterialSourceFromImageGenerationData\(imageData\);[\s\S]*?requestMaterialLibrarySave\(source\);[\s\S]*?return;[\s\S]*?\}\s*notifyImageToolbarAction\?\.\(action, data as ImageGenerationNodeData\);/,
+  );
+});
+
+test("material save dialog remounts for repeated organize requests", () => {
+  assert.match(canvasSource, /const \[materialDialogOpenKey, setMaterialDialogOpenKey\] = useState\(0\);/);
+  assert.match(
+    canvasSource,
+    /const openMaterialLibraryDialog = \(source: PendingMaterialSource\) => \{\s*setMaterialDialogMode\('save'\);[\s\S]*?setMaterialDialogOpenKey\(\(value\) => value \+ 1\);[\s\S]*?setPendingMaterialSource\(source\);/,
+  );
+  assert.match(canvasSource, /<MaterialLibraryDialog\s+key=\{`material-dialog-\$\{materialDialogOpenKey\}`\}/);
+});
+
+test("material save requests use a window event instead of depending on a global callback", () => {
+  assert.match(canvasSource, /const MATERIAL_LIBRARY_REQUEST_EVENT = 'genlink:material-library-request';/);
+  assert.match(canvasSource, /function requestMaterialLibrarySave\(source: PendingMaterialSource\): void \{/);
+  assert.match(canvasSource, /window\.dispatchEvent\(\s*new CustomEvent<PendingMaterialSource>\(MATERIAL_LIBRARY_REQUEST_EVENT,/);
+  assert.match(canvasSource, /window\.addEventListener\(MATERIAL_LIBRARY_REQUEST_EVENT, handleMaterialLibraryRequest\);/);
+  assert.match(canvasSource, /if \(notifyMaterialLibraryRequest === openMaterialLibraryDialog\) \{/);
+});
