@@ -540,12 +540,22 @@ export type MaterialLibraryCategory =
   | "场景"
   | "物品"
   | "风格"
+  | "音效"
+  | "文本"
   | "其他";
+
+export interface MaterialLibraryFolder {
+  id: string;
+  name: string;
+  category: MaterialLibraryCategory;
+  createdAt: string;
+}
 
 export interface MaterialLibraryItem {
   id: string;
   name: string;
   category: MaterialLibraryCategory;
+  folderId?: string;
   imageUrl: string;
   hostedImageUrl?: string;
   fileName?: string;
@@ -564,6 +574,7 @@ export interface ProjectSnapshot {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups?: NodeGroup[];
+  materialFolders?: MaterialLibraryFolder[];
   materials?: MaterialLibraryItem[];
   thumbnailFileName?: string;
   createdAt: string;

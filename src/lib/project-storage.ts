@@ -6,6 +6,7 @@ import type {
   CanvasNode,
   ImageGenerationNodeData,
   MaterialLibraryCategory,
+  MaterialLibraryFolder,
   MaterialLibraryItem,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
@@ -285,15 +286,61 @@ function normalizeMaterialCategory(value: unknown): MaterialLibraryCategory | nu
     value === "场景" ||
     value === "物品" ||
     value === "风格" ||
+    value === "音效" ||
+    value === "文本" ||
     value === "其他"
     ? value
     : null;
 }
 
-function normalizeMaterialLibraryItems(value: unknown): MaterialLibraryItem[] | undefined {
+function normalizeMaterialLibraryFolders(value: unknown): MaterialLibraryFolder[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
+
+  const seen = new Set<string>();
+  const folders = value.flatMap((item, index): MaterialLibraryFolder[] => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const category = normalizeMaterialCategory(record.category);
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    const id =
+      typeof record.id === "string" && record.id.trim()
+        ? record.id.trim()
+        : `material-folder-${index}`;
+
+    if (!category || !name || seen.has(id)) {
+      return [];
+    }
+
+    seen.add(id);
+
+    return [{
+      id,
+      name,
+      category,
+      createdAt:
+        typeof record.createdAt === "string" && record.createdAt.trim()
+          ? record.createdAt
+          : new Date(0).toISOString(),
+    }];
+  });
+
+  return folders.length > 0 ? folders : undefined;
+}
+
+function normalizeMaterialLibraryItems(
+  value: unknown,
+  folders: MaterialLibraryFolder[] = [],
+): MaterialLibraryItem[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const folderById = new Map(folders.map((folder) => [folder.id, folder]));
 
   const items = value.flatMap((item, index): MaterialLibraryItem[] => {
     if (!item || typeof item !== "object") {
@@ -309,6 +356,12 @@ function normalizeMaterialLibraryItems(value: unknown): MaterialLibraryItem[] | 
       return [];
     }
 
+    const folderId =
+      typeof record.folderId === "string" && record.folderId.trim()
+        ? record.folderId.trim()
+        : undefined;
+    const folder = folderId ? folderById.get(folderId) : undefined;
+
     return [{
       id:
         typeof record.id === "string" && record.id.trim()
@@ -316,6 +369,7 @@ function normalizeMaterialLibraryItems(value: unknown): MaterialLibraryItem[] | 
           : `material-${index}`,
       name,
       category,
+      folderId: folder && folder.category === category ? folder.id : undefined,
       imageUrl,
       hostedImageUrl:
         typeof record.hostedImageUrl === "string" && record.hostedImageUrl.trim()
@@ -803,9 +857,12 @@ async function readProjectSnapshotInternal(
     throw new Error("\u9879\u76ee\u6587\u4ef6\u635f\u574f\uff0c\u65e0\u6cd5\u8bfb\u53d6");
   }
 
+  const materialFolders = normalizeMaterialLibraryFolders(parsed.materialFolders);
+
   return {
     ...parsed,
-    materials: normalizeMaterialLibraryItems(parsed.materials),
+    materialFolders,
+    materials: normalizeMaterialLibraryItems(parsed.materials, materialFolders ?? []),
     thumbnailFileName:
       typeof parsed.thumbnailFileName === "string" && parsed.thumbnailFileName.trim()
         ? parsed.thumbnailFileName
