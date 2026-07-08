@@ -272,11 +272,15 @@ jobs:
           ln -sfn "$SHARED/prisma/dev.db" "$RELEASE_DIR/prisma/dev.db"
 
           NPM_CACHE="$SHARED/npm-cache"
+          NPM_REGISTRY="https://registry.npmmirror.com"
           DEPLOY_NPM_VERSION="11.12.1"
           DEPLOY_NPM="npx -y npm@${DEPLOY_NPM_VERSION}"
+          export npm_config_registry="$NPM_REGISTRY"
+          export NPM_CONFIG_REGISTRY="$NPM_REGISTRY"
           mkdir -p "$NPM_CACHE"
           node --version
           npm --version
+          npm config get registry
           $DEPLOY_NPM --version
           install_dependencies() {
             local current_real

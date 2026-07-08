@@ -10,3 +10,9 @@ test("pins the remote npm used for deployment installs", () => {
   assert.match(source, /\$DEPLOY_NPM ci/);
   assert.match(source, /\$DEPLOY_NPM --cache "\$NPM_CACHE" cache clean --force/);
 });
+
+test("uses the China npm mirror for remote deployment installs", () => {
+  assert.match(source, /NPM_REGISTRY="https:\/\/registry\.npmmirror\.com"/);
+  assert.match(source, /export npm_config_registry="\$NPM_REGISTRY"/);
+  assert.match(source, /export NPM_CONFIG_REGISTRY="\$NPM_REGISTRY"/);
+});
