@@ -2908,7 +2908,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
                 })
                 .catch((error) => {
                   console.error('three view generation failed', error);
-                  const message = error instanceof Error ? error.message : '3D view generation failed';
+                  const message = error instanceof Error ? error.message : '3D 视图生成失败';
                   useCanvasStore.getState().setSaveMessage(message);
                   window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
                 });
@@ -2964,7 +2964,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
     video: HTMLVideoElement,
   ) => {
     if (!video.videoWidth || !video.videoHeight) {
-      useCanvasStore.getState().setSaveMessage('Video is not ready');
+      useCanvasStore.getState().setSaveMessage('视频尚未准备好');
       window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
       return;
     }
@@ -3029,7 +3029,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
 
       notifyCanvasNodeSelect?.(nextNodeId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'extract video frame failed';
+      const message = error instanceof Error ? error.message : '提取视频帧失败';
       useCanvasStore.getState().setSaveMessage(message);
       window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
     }
@@ -3055,7 +3055,7 @@ const VideoGenerationNodeAdapter = memo(function VideoGenerationNodeAdapter({ id
       }
       case 'video-upscale': {
         if (!videoUrl) {
-          useCanvasStore.getState().setSaveMessage('No video is available for upscale');
+          useCanvasStore.getState().setSaveMessage('没有可用于超分的视频');
           window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
           break;
         }
@@ -3344,7 +3344,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
         const dimension = action === 'split-2x2-crop' ? 2 : action === 'split-3x3-crop' ? 3 : 5;
         void splitImageNodeToGrid(id, dimension).catch((error) => {
           console.error('split image node failed', error);
-          const message = error instanceof Error ? error.message : 'split image failed';
+          const message = error instanceof Error ? error.message : '图片分割失败';
           useCanvasStore.getState().setSaveMessage(message);
           window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
         });
@@ -3417,7 +3417,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
                 })
                 .catch((error) => {
                   console.error('three view generation failed', error);
-                  const message = error instanceof Error ? error.message : '3D view generation failed';
+                  const message = error instanceof Error ? error.message : '3D 视图生成失败';
                   useCanvasStore.getState().setSaveMessage(message);
                   window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
                 });
@@ -3523,7 +3523,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
                 })
                 .catch((error) => {
                   console.error('three view generation failed', error);
-                  const message = error instanceof Error ? error.message : '3D view generation failed';
+                  const message = error instanceof Error ? error.message : '3D 视图生成失败';
                   useCanvasStore.getState().setSaveMessage(message);
                   window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
                 });
@@ -4100,7 +4100,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     const video = videoRef.current;
 
     if (!video || !video.videoWidth || !video.videoHeight) {
-      setClipMessage('Video is not ready');
+      setClipMessage('视频尚未准备好');
       setClipOpen(true);
       return;
     }
@@ -4192,7 +4192,7 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
               void extractFrame('last');
             } else if (action === 'video-upscale') {
               if (!hasVideo) {
-                setClipMessage('No video is available for upscale');
+                setClipMessage('没有可用于超分的视频');
                 setClipOpen(true);
                 return;
               }
@@ -4383,7 +4383,7 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
         .then((nextNodeId) => notifyCanvasNodeSelect?.(nextNodeId))
         .catch((error) => {
           console.error('create panorama screenshot node failed', error);
-          const message = error instanceof Error ? error.message : 'Create panorama screenshot failed';
+          const message = error instanceof Error ? error.message : '创建全景截图失败';
           useCanvasStore.getState().setSaveMessage(message);
           window.setTimeout(() => useCanvasStore.getState().setSaveMessage(null), 2200);
         })}
@@ -7778,7 +7778,7 @@ async function loadStoryboardGridImage(image: StoryboardGridCellImage): Promise<
   ].filter((url): url is string => Boolean(url))));
 
   if (urls.length === 0) {
-    throw new Error('Image is unavailable');
+    throw new Error('图片不可用');
   }
 
   let lastError: unknown = null;
@@ -10729,7 +10729,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     setImageInfoPopover(null);
     setImageLightbox(null);
     clearEdgeSelection();
-    showProjectMessage('Select an image node to connect');
+    showProjectMessage('请选择一个图片节点进行连接');
   }, [clearConnectionMenu, clearEdgeSelection, showProjectMessage]);
 
   const stopQuickReferenceConnect = useCallback(() => {
@@ -10840,7 +10840,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const source = createMaterialSourceFromImageGenerationData(data);
 
         if (!source) {
-          showProjectMessage('Current node has no image for the material library');
+          showProjectMessage('当前节点没有可保存到素材库的图片');
           return;
         }
 
@@ -11118,7 +11118,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         const source = createMaterialSourceFromUploadedImageData(data);
 
         if (!source) {
-          showProjectMessage('Current node has no image for the material library');
+          showProjectMessage('当前节点没有可保存到素材库的图片');
           return;
         }
 
@@ -11374,7 +11374,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         setActiveNodeId(nodeId);
         clearEdgeSelection();
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : 'Connect failed');
+        setSaveMessage(error instanceof Error ? error.message : '连接失败');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     };
@@ -12727,7 +12727,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     file: File,
   ) => {
     if (!file.type.startsWith('image/')) {
-      showProjectMessage('Please select an image file');
+      showProjectMessage('请选择图片文件');
       return;
     }
 
@@ -12842,13 +12842,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       updateNodeData<'image'>(imageNode.id, {
         status: 'error',
         statusMessage: undefined,
-        errorMessage: error instanceof Error ? error.message : 'Compose failed',
+        errorMessage: error instanceof Error ? error.message : '合成失败',
       });
       updateNodeData<'storyboard_grid'>(nodeId, {
         status: 'idle',
         errorMessage: undefined,
       });
-      showProjectMessage(error instanceof Error ? error.message : 'Compose failed');
+      showProjectMessage(error instanceof Error ? error.message : '合成失败');
     }
   }, [addNodes, clearEdgeSelection, showProjectMessage, updateNodeData]);
 
@@ -13474,7 +13474,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             });
         });
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : 'Upload text reference failed');
+        setSaveMessage(error instanceof Error ? error.message : '上传文本参考失败');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     } else if (files.length > 0 && storyboardReferenceUploadNodeId) {
@@ -13514,7 +13514,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             });
         });
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : 'Upload storyboard reference failed');
+        setSaveMessage(error instanceof Error ? error.message : '上传分镜参考失败');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     } else if (files.length > 0 && videoReferenceUploadNodeId) {
@@ -13566,7 +13566,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
             });
         });
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : 'Upload video reference failed');
+        setSaveMessage(error instanceof Error ? error.message : '上传视频参考失败');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     } else if (files.length > 0 && referenceUploadNodeId) {
@@ -13646,7 +13646,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
           await addUploadedAudios(audioFiles, audioPosition);
         }
       })().catch((error) => {
-        setSaveMessage(error instanceof Error ? error.message : 'Import failed');
+        setSaveMessage(error instanceof Error ? error.message : '导入失败');
         window.setTimeout(() => setSaveMessage(null), 2200);
       });
     }
@@ -13762,7 +13762,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         await addUploadedAudios(audioFiles, audioPosition);
       }
     })().catch((error) => {
-      setSaveMessage(error instanceof Error ? error.message : 'Import failed');
+      setSaveMessage(error instanceof Error ? error.message : '导入失败');
       window.setTimeout(() => setSaveMessage(null), 2200);
     });
   }, [addUploadedAudios, addUploadedImages, addUploadedVideos, handleSelectMaterial, materials, project, setSaveMessage]);
@@ -13924,7 +13924,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       clearEdgeSelection();
       setAddMenu(null);
       clearConnectionMenu();
-      showProjectMessage('Agent nodes created');
+      showProjectMessage('已创建 Agent 节点');
     }
 
     return result.nodeIdsByAttachmentId;
@@ -14019,7 +14019,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     };
 
     if (result.nodes.length === 0) {
-      showProjectMessage('Agent returned no nodes');
+      showProjectMessage('Agent 没有返回节点');
       return { ok: false };
     }
 
@@ -14060,7 +14060,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     clearEdgeSelection();
     setAddMenu(null);
     clearConnectionMenu();
-    showProjectMessage('Agent nodes created');
+    showProjectMessage('已创建 Agent 节点');
     return {
       ok: true,
       imageGenerationNodeId: focusNodeId ?? undefined,
@@ -14102,7 +14102,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     );
 
     if (imageGenerationNodeIds.length === 0) {
-      showProjectMessage('No image generation nodes selected');
+      showProjectMessage('未选中图片生成节点');
       return false;
     }
 
@@ -14112,13 +14112,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       const failedCount = results.filter((result) => result.status === 'rejected').length;
 
       if (failedCount > 0) {
-        showProjectMessage(`${failedCount} image generation jobs failed`);
+        showProjectMessage(`${failedCount} 个图片生成任务失败`);
       }
     });
     showProjectMessage(
       imageGenerationNodeIds.length > 1
-        ? `Started ${imageGenerationNodeIds.length} image generation jobs`
-        : 'Image generation started',
+        ? `已开始 ${imageGenerationNodeIds.length} 个图片生成任务`
+        : '已开始图片生成',
     );
     return true;
   }, [generateImageFromImageGenerationNode, showProjectMessage]);
@@ -14326,7 +14326,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const sources = getGroupConnectionSourcesFromDom(group);
 
     if (sources.length === 0) {
-      showProjectMessage('No source nodes found');
+      showProjectMessage('没有找到可连接的源节点');
       return;
     }
 
@@ -14418,7 +14418,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         );
 
         if (addedCount === 0) {
-          showProjectMessage('No new connections added');
+          showProjectMessage('没有新增连接');
         }
       } else {
         suppressNextPaneClearRef.current = true;
@@ -14509,7 +14509,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     addMaterial(item);
     setPendingMaterialSource(null);
     setMovingMaterial(null);
-    showProjectMessage(existing ? 'Material already exists' : 'Added to material library');
+    showProjectMessage(existing ? '素材已存在' : '已添加到素材库');
   }, [addMaterial, materials, showProjectMessage]);
 
   const closeMaterialDialog = useCallback(() => {
@@ -14524,7 +14524,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     moveMaterial(itemId, target);
     setMovingMaterial(null);
     setPendingMaterialSource(null);
-    showProjectMessage('Material moved');
+    showProjectMessage('素材已移动');
   }, [moveMaterial, showProjectMessage]);
 
   const handleRequestMoveMaterial = useCallback((item: MaterialLibraryItem) => {
@@ -14591,7 +14591,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     try {
       resolvedImage = await resolveHistoryImageUrls(item);
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : 'Image is unavailable');
+      showProjectMessage(error instanceof Error ? error.message : '图片不可用');
       return;
     }
 
@@ -14765,7 +14765,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         await cropImageGenerationNode(nodeId, cropRect);
       }
     } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : 'Crop failed');
+      setSaveMessage(error instanceof Error ? error.message : '裁剪失败');
       window.setTimeout(() => setSaveMessage(null), 2200);
     }
   }, [cropImageGenerationNode, cropImageNode, cropUploadedImageNode, cropMode?.nodeType, setSaveMessage]);
@@ -14806,13 +14806,13 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const changed = layoutGroupNodes(groupId, mode);
 
     if (!changed) {
-      showProjectMessage('No layoutable nodes in group');
+      showProjectMessage('组内没有可布局的节点');
     }
   }, [showProjectMessage]);
 
   const handleSaveProject = useCallback(async () => {
     await saveProject();
-    setSaveMessage('Project saved');
+    setSaveMessage('项目已保存');
     window.setTimeout(() => {
       setSaveMessage(null);
     }, 2200);
@@ -14841,15 +14841,15 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
-      showProjectMessage('No project is currently open');
+      showProjectMessage('当前没有打开的项目');
       return;
     }
 
     try {
       await renameProject(project, nextName);
-      showProjectMessage('Renamed successfully');
+      showProjectMessage('重命名成功');
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : 'Rename failed');
+      showProjectMessage(error instanceof Error ? error.message : '重命名失败');
     }
   }, [renameProject, showProjectMessage]);
 
@@ -14871,7 +14871,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         parentDirectoryLabel: getProjectDirectoryLabel(parentHandle),
       }));
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : 'Select folder failed');
+      showProjectMessage(error instanceof Error ? error.message : '选择文件夹失败');
     }
   }, [showProjectMessage]);
 
@@ -14895,9 +14895,9 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         parentHandle: null,
         parentDirectoryLabel: '',
       });
-      showProjectMessage('Project folder cleared');
+      showProjectMessage('已清除项目文件夹');
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : 'Update project folder failed');
+      showProjectMessage(error instanceof Error ? error.message : '更新项目文件夹失败');
     } finally {
       setProjectDialogBusy(false);
     }
@@ -14907,7 +14907,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
-      showProjectMessage('No project is currently open');
+      showProjectMessage('当前没有打开的项目');
       return;
     }
 
@@ -14918,7 +14918,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
-      showProjectMessage('No project is currently open');
+      showProjectMessage('当前没有打开的项目');
       setDeleteProjectDialogOpen(false);
       return;
     }
@@ -14926,10 +14926,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     try {
       await deleteProject(project);
       setDeleteProjectDialogOpen(false);
-      showProjectMessage('Project deleted');
+      showProjectMessage('项目已删除');
       onBackToLibrary?.();
     } catch (error) {
-      showProjectMessage(error instanceof Error ? error.message : 'Delete failed');
+      showProjectMessage(error instanceof Error ? error.message : '删除失败');
     }
   }, [deleteProject, onBackToLibrary, showProjectMessage]);
 
