@@ -13,7 +13,8 @@ export type NodeType =
   | "ai_text_result"
   | "image"
   | "uploaded_image"
-  | "panorama-360";
+  | "panorama-360"
+  | "director";
 
 export interface BaseCanvasNode<
   TType extends NodeType = NodeType,
@@ -486,6 +487,10 @@ export interface Panorama360NodeData {
   };
 }
 
+export interface DirectorNodeData {
+  title?: string;
+}
+
 export type CanvasNodeData =
   | { type: "text"; data: TextNodeData }
   | { type: "storyboard_script"; data: StoryboardScriptNodeData }
@@ -499,7 +504,8 @@ export type CanvasNodeData =
   | { type: "ai_text_result"; data: AITextResultNodeData }
   | { type: "image"; data: ImageNodeData }
   | { type: "uploaded_image"; data: UploadedImageNodeData }
-  | { type: "panorama-360"; data: Panorama360NodeData };
+  | { type: "panorama-360"; data: Panorama360NodeData }
+  | { type: "director"; data: DirectorNodeData };
 
 export type CanvasNode =
   | BaseCanvasNode<"text", TextNodeData>
@@ -514,7 +520,8 @@ export type CanvasNode =
   | BaseCanvasNode<"ai_text_result", AITextResultNodeData>
   | BaseCanvasNode<"image", ImageNodeData>
   | BaseCanvasNode<"uploaded_image", UploadedImageNodeData>
-  | BaseCanvasNode<"panorama-360", Panorama360NodeData>;
+  | BaseCanvasNode<"panorama-360", Panorama360NodeData>
+  | BaseCanvasNode<"director", DirectorNodeData>;
 
 export interface CanvasEdge {
   id: string;

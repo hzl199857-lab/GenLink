@@ -8,6 +8,7 @@ import type {
   AudioNodeData,
   CanvasEdge,
   CanvasNode,
+  DirectorNodeData,
   ImageGenerationResultItem,
   ImageGenerationNodeData,
   ImageNodeData,
@@ -101,7 +102,8 @@ function isNodeType(value: string): value is NodeType {
     value === "ai_text_result" ||
     value === "image" ||
     value === "uploaded_image" ||
-    value === "panorama-360"
+    value === "panorama-360" ||
+    value === "director"
   );
 }
 
@@ -1059,6 +1061,18 @@ function normalizePanorama360NodeData(value: unknown): Panorama360NodeData {
   };
 }
 
+function normalizeDirectorNodeData(value: unknown): DirectorNodeData {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+  return {
+    title: typeof record.title === "string" && record.title.trim()
+      ? record.title
+      : "导演台",
+  };
+}
+
 function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
   const parsed = parseNodeJson(record.data);
 
@@ -1171,6 +1185,13 @@ function nodeFromDbRecord(record: DbCanvasNodeRecord): CanvasNode {
         type: "panorama-360",
         position: { x: record.positionX, y: record.positionY },
         data: normalizePanorama360NodeData(parsed),
+      };
+    case "director":
+      return {
+        id: record.id,
+        type: "director",
+        position: { x: record.positionX, y: record.positionY },
+        data: normalizeDirectorNodeData(parsed),
       };
   }
 }

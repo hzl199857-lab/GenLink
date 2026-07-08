@@ -109,6 +109,7 @@ import type {
   CanvasNode,
   AudioGenerationNodeData,
   AudioNodeData,
+  DirectorNodeData,
   ImageHistoryItem,
   MaterialLibraryItem,
   NodeGroup,
@@ -160,6 +161,14 @@ import { VideoUpscaleNode } from '../nodes/VideoUpscaleNode';
 import { getVideoModelLabel } from '../nodes/VideoGenerationPromptBar';
 import { AITextResultNode } from '../nodes/AITextResultNode';
 import { Panorama360Node } from '../nodes/Panorama360Node';
+import {
+  DirectorNode,
+  DIRECTOR_NODE_CARD_HEIGHT,
+  DIRECTOR_NODE_CARD_WIDTH,
+  DIRECTOR_NODE_TITLE_HEIGHT,
+} from '../nodes/DirectorNode';
+import { DirectorDeskFullscreen } from '@/components/director-desk/DirectorDeskFullscreen';
+import type { DirectorDeskCaptureToCanvas } from '@/components/director-desk/editor/io/hostBridge';
 import { UploadedImageNode } from '../nodes/UploadedImageNode';
 import {
   UploadedVideoNode,
@@ -242,6 +251,9 @@ let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
 let notifyCanvasNodeSelect:
+  | ((nodeId: string) => void)
+  | null = null;
+let notifyDirectorDeskOpen:
   | ((nodeId: string) => void)
   | null = null;
 let notifyCanvasImageInfoRequest:
@@ -1181,6 +1193,16 @@ function resolveMiniMapVisibleNodeRect(
     };
   }
 
+  if (node.type === 'director') {
+    return {
+      x: node.position.x,
+      y: node.position.y + DIRECTOR_NODE_TITLE_HEIGHT,
+      width: DIRECTOR_NODE_CARD_WIDTH,
+      height: DIRECTOR_NODE_CARD_HEIGHT,
+      radius: 12,
+    };
+  }
+
   if (node.type === 'image') {
     const dimensions = resolveImageNodeCardDimensions(node.data as ImageNodeData);
 
@@ -1386,6 +1408,15 @@ function getEstimatedNodeBounds(node: CanvasNode | ReactFlowNode): MultiNodeSele
     };
   }
 
+  if (node.type === 'director') {
+    return {
+      x: node.position.x,
+      y: node.position.y - 8,
+      width: DIRECTOR_NODE_CARD_WIDTH,
+      height: DIRECTOR_NODE_TITLE_HEIGHT + DIRECTOR_NODE_CARD_HEIGHT + 8,
+    };
+  }
+
   if (node.type === 'ai_text_result') {
     return {
       x: node.position.x,
@@ -1477,6 +1508,15 @@ function getAlignmentGuideNodeBounds(node: CanvasNode | ReactFlowNode): MultiNod
       y: node.position.y + 18,
       width: 720,
       height: 405,
+    };
+  }
+
+  if (node.type === 'director') {
+    return {
+      x: node.position.x,
+      y: node.position.y + DIRECTOR_NODE_TITLE_HEIGHT,
+      width: DIRECTOR_NODE_CARD_WIDTH,
+      height: DIRECTOR_NODE_CARD_HEIGHT,
     };
   }
 
@@ -4352,6 +4392,31 @@ const Panorama360NodeAdapter = memo(function Panorama360NodeAdapter({ id, data, 
   );
 });
 
+const DirectorNodeAdapter = memo(function DirectorNodeAdapter({ id, data, selected }: NodeProps) {
+  const renderData = data as CanvasNodeRenderData;
+  const isActive = !!selected && !!renderData.canvasNodeActive;
+
+  return (
+    <div className="relative group">
+      <DirectorNode
+        data={data as DirectorNodeData}
+        selected={selected}
+        onOpen={() => {
+          notifyCanvasNodeSelect?.(id);
+          notifyDirectorDeskOpen?.(id);
+        }}
+      />
+      <CardSideHandle
+        type="source"
+        position={Position.Right}
+        visible={isActive}
+        cardTopOffset={DIRECTOR_NODE_TITLE_HEIGHT}
+        cardWidth={DIRECTOR_NODE_CARD_WIDTH}
+      />
+    </div>
+  );
+});
+
 const StoryboardGridNodeAdapter = memo(function StoryboardGridNodeAdapter({ id, data, selected }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const dropTarget = useSyncExternalStore(
@@ -4440,6 +4505,7 @@ const nodeTypes = {
   image: ImageNodeAdapter,
   uploaded_image: UploadedImageNodeAdapter,
   'panorama-360': Panorama360NodeAdapter,
+  director: DirectorNodeAdapter,
 };
 
 const EDGE_DELETE_BUTTON_SIZE = 20;
@@ -9840,6 +9906,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const generateTextFromTextNode = useCanvasStore((s) => s.generateTextFromTextNode);
   const generateImageFromImageGenerationNode = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
   const createPanorama360FromImageNode = useCanvasStore((s) => s.createPanorama360FromImageNode);
+  const createDirectorDeskCaptureNode = useCanvasStore((s) => s.createDirectorDeskCaptureNode);
 
   const addNodeAtCenter = useCanvasStore((s) => s.addNodeAtCenter);
   const addNodes = useCanvasStore((s) => s.addNodes);
@@ -9955,6 +10022,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
+  const [openDirectorNodeId, setOpenDirectorNodeId] = useState<string | null>(null);
   const [gridSnapEnabled, setGridSnapEnabled] = useState(false);
   const gridSnapEnabledRef = useRef(gridSnapEnabled);
   const [alignmentGuides, setAlignmentGuides] = useState<CanvasAlignmentGuide[]>([]);
@@ -11372,6 +11440,37 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     });
   }, [clearEdgeSelection]);
 
+  const handleDirectorDeskCaptures = useCallback(async (
+    directorNodeId: string,
+    captures: DirectorDeskCaptureToCanvas[],
+  ) => {
+    if (captures.length === 0) {
+      return;
+    }
+
+    try {
+      const createdNodeIds: string[] = [];
+
+      for (const capture of captures) {
+        const createdNodeId = await createDirectorDeskCaptureNode(directorNodeId, capture);
+        createdNodeIds.push(createdNodeId);
+      }
+
+      const lastCreatedNodeId = createdNodeIds[createdNodeIds.length - 1];
+      if (lastCreatedNodeId) {
+        focusCreatedNode(lastCreatedNodeId);
+      }
+
+      showProjectMessage(
+        captures.length === 1
+          ? '已发送截图到画布'
+          : `已发送 ${captures.length} 张截图到画布`,
+      );
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '发送截图到画布失败');
+    }
+  }, [createDirectorDeskCaptureNode, focusCreatedNode, showProjectMessage]);
+
   useEffect(() => {
     notifyImageGenerationNodeSelect = (nodeId) => {
       selectSingleNode(nodeId);
@@ -11395,6 +11494,18 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       }
     };
   }, [selectSingleNode]);
+
+  useEffect(() => {
+    notifyDirectorDeskOpen = (nodeId) => {
+      setOpenDirectorNodeId(nodeId);
+    };
+
+    return () => {
+      if (notifyDirectorDeskOpen) {
+        notifyDirectorDeskOpen = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     notifyCanvasImageInfoRequest = (nodeId) => {
@@ -12762,6 +12873,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     handlePasteNodes,
     handlePasteNodesWithUpstream,
     handleSmartResetViewport,
+    openDirectorNodeId,
     project,
     quickReferenceConnect,
     redo,
@@ -12783,6 +12895,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       handlePasteNodes,
       handlePasteNodesWithUpstream,
       handleSmartResetViewport,
+      openDirectorNodeId,
       project,
       quickReferenceConnect,
       redo,
@@ -12802,6 +12915,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     handlePasteNodes,
     handlePasteNodesWithUpstream,
     handleSmartResetViewport,
+    openDirectorNodeId,
     project,
     quickReferenceConnect,
     redo,
@@ -12814,6 +12928,10 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const shortcuts = clipboardShortcutRef.current;
+
+      if (shortcuts.openDirectorNodeId) {
+        return;
+      }
 
       if (event.key === 'Escape') {
         shortcuts.closeContextMenu();
@@ -12898,6 +13016,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
       const shortcuts = clipboardShortcutRef.current;
+
+      if (shortcuts.openDirectorNodeId) {
+        return;
+      }
+
       const editableTextSelected = hasEditableTextSelection(event.target);
       const canvasHasSelection =
         shortcuts.selectedNodeIds.size > 0 || shortcuts.selectedEdgeId !== null;
@@ -14041,6 +14164,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       focusCreatedNode(node.id);
     }
 
+    if (action === 'director' && addMenu) {
+      const node = addNodeAtCenter('director', addMenu.canvas);
+      focusCreatedNode(node.id);
+    }
+
     if (action === 'upload' && addMenu) {
       openUploadPicker(addMenu.canvas);
     }
@@ -14960,6 +15088,16 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         />
       </ReactFlow>
       </div>
+
+      {openDirectorNodeId ? (
+        <DirectorDeskFullscreen
+          nodeId={openDirectorNodeId}
+          onClose={() => setOpenDirectorNodeId(null)}
+          onSendCapturesToCanvas={(captures) =>
+            void handleDirectorDeskCaptures(openDirectorNodeId, captures)
+          }
+        />
+      ) : null}
 
       <GroupConnectionPreviewOverlay preview={groupConnectionPreview} />
 

@@ -25,6 +25,7 @@ require.extensions[".ts"] = transpileTypeScriptModule;
 require.extensions[".tsx"] = transpileTypeScriptModule;
 
 const {
+  getEffectiveAudioPlaybackSrc,
   getProxiedAudioPlaybackSrc,
   shouldUseAudioWaveformProxy,
   shouldNotifyAudioDuration,
@@ -55,5 +56,31 @@ test("builds a playable proxy URL only for remote HTTP audio", () => {
   assert.equal(
     getProxiedAudioPlaybackSrc("blob:https://example.com/audio"),
     "blob:https://example.com/audio",
+  );
+});
+
+test("resets playback URL state when the audio source changes", () => {
+  assert.equal(
+    getEffectiveAudioPlaybackSrc({
+      src: "https://example.com/next.mp3",
+      proxiedPlaybackSrc: "/api/image-hosting/read?url=next",
+      playbackSrcState: {
+        sourceSrc: "https://example.com/previous.mp3",
+        playbackSrc: "/api/image-hosting/read?url=previous",
+      },
+    }),
+    "/api/image-hosting/read?url=next",
+  );
+
+  assert.equal(
+    getEffectiveAudioPlaybackSrc({
+      src: "https://example.com/next.mp3",
+      proxiedPlaybackSrc: "/api/image-hosting/read?url=next",
+      playbackSrcState: {
+        sourceSrc: "https://example.com/next.mp3",
+        playbackSrc: "/fallback/next.mp3",
+      },
+    }),
+    "/fallback/next.mp3",
   );
 });

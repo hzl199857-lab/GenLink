@@ -44,6 +44,7 @@ type HoverPreview = {
 
 const DEFAULT_PANEL_BOTTOM = 18;
 const MINIMAP_PANEL_GAP = 12;
+const MATERIAL_LIBRARY_PREVIEW_HIDE_DELAY_MS = 220;
 
 export interface MaterialLibraryPanelProps {
   open: boolean;
@@ -135,6 +136,16 @@ export function MaterialLibraryPanel({
   const [materialMenu, setMaterialMenu] = useState<MaterialMenuState>(null);
   const [folderMenu, setFolderMenu] = useState<FolderMenuState>(null);
   const [bottomOffset, setBottomOffset] = useState(DEFAULT_PANEL_BOTTOM);
+  const hidePreviewTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (hidePreviewTimerRef.current !== null) {
+        window.clearTimeout(hidePreviewTimerRef.current);
+        hidePreviewTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -202,6 +213,27 @@ export function MaterialLibraryPanel({
     return map;
   }, [folders]);
 
+  const cancelHidePreview = () => {
+    if (hidePreviewTimerRef.current === null) {
+      return;
+    }
+    window.clearTimeout(hidePreviewTimerRef.current);
+    hidePreviewTimerRef.current = null;
+  };
+
+  const scheduleHidePreview = (event?: React.MouseEvent<HTMLElement>) => {
+    const nextTarget = event?.relatedTarget;
+    if (nextTarget instanceof Node && previewRef.current?.contains(nextTarget)) {
+      return;
+    }
+
+    cancelHidePreview();
+    hidePreviewTimerRef.current = window.setTimeout(() => {
+      hidePreviewTimerRef.current = null;
+      setHoverPreview(null);
+    }, MATERIAL_LIBRARY_PREVIEW_HIDE_DELAY_MS);
+  };
+
   if (!open) {
     return null;
   }
@@ -230,12 +262,14 @@ export function MaterialLibraryPanel({
   };
 
   const showPreview = (item: MaterialLibraryItem, element: HTMLElement) => {
+    cancelHidePreview();
     const rect = element.getBoundingClientRect();
     const top = Math.min(Math.max(90, rect.top - 48), window.innerHeight - 330);
     setHoverPreview({ item, top });
   };
 
   const hidePreview = () => {
+    cancelHidePreview();
     setHoverPreview(null);
   };
 
@@ -250,13 +284,7 @@ export function MaterialLibraryPanel({
         event.dataTransfer.setData('text/plain', item.name);
       }}
       onMouseEnter={(event) => showPreview(item, event.currentTarget)}
-      onMouseLeave={(event) => {
-        const nextTarget = event.relatedTarget;
-        if (nextTarget instanceof Node && previewRef.current?.contains(nextTarget)) {
-          return;
-        }
-        hidePreview();
-      }}
+      onMouseLeave={scheduleHidePreview}
       onClick={() => setHoverPreview((current) => current ?? { item, top: 160 })}
     >
       <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
@@ -438,7 +466,8 @@ export function MaterialLibraryPanel({
           ref={previewRef}
           className="fixed left-[418px] z-[75] w-[280px] overflow-hidden rounded-[14px] border border-[#3a3a3c] bg-[#111214]/[0.995] text-white shadow-[0_22px_56px_rgba(0,0,0,0.52)] backdrop-blur-[2px]"
           style={{ top: hoverPreview.top }}
-          onMouseLeave={hidePreview}
+          onMouseEnter={cancelHidePreview}
+          onMouseLeave={scheduleHidePreview}
         >
           <div className="relative h-[190px] bg-black/30">
             <NextImage
@@ -463,12 +492,13 @@ export function MaterialLibraryPanel({
             <button
               type="button"
               className="mt-3 h-10 w-full rounded-[9px] bg-white/30 text-[13px] font-semibold text-white transition hover:bg-white/40"
-              onClick={() =>
+              onClick={() => {
                 onSelectMaterial(hoverPreview.item, {
                   x: window.innerWidth / 2,
                   y: window.innerHeight / 2,
-                })
-              }
+                });
+                hidePreview();
+              }}
             >
               应用到画布
             </button>

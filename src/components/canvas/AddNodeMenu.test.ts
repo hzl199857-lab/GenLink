@@ -59,6 +59,22 @@ test("renders hover detail descriptions for add-node actions", () => {
   assert.match(html, /\u56fe\u7247\u3001\u89c6\u9891\u3001\u97f3\u9891\u6587\u4ef6/u);
 });
 
+test("renders the director console entry as a function node action", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AddNodeMenu, {
+      x: 24,
+      y: 36,
+    }),
+  );
+
+  const functionIndex = html.indexOf("\u529f\u80fd\u8282\u70b9");
+  const directorIndex = html.indexOf("\u5bfc\u6f14\u53f0");
+
+  assert.notEqual(directorIndex, -1);
+  assert.ok(functionIndex < directorIndex);
+  assert.match(html, /\u642d\u5efa\u573a\u666f\u5e76\u8fdb\u884c\u591a\u89c6\u89d2\u622a\u56fe/u);
+});
+
 test("uses expandable hover and keyboard focus animation classes", () => {
   const html = renderToStaticMarkup(
     React.createElement(AddNodeMenu, {

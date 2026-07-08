@@ -27,6 +27,11 @@ type PlaybackState = {
   playing: boolean;
 };
 
+type PlaybackSrcState = {
+  sourceSrc: string;
+  playbackSrc: string;
+};
+
 const waveformCache = new Map<string, Promise<WaveformCacheEntry>>();
 
 function buildLoadingPeaks(count: number): number[] {
@@ -73,6 +78,18 @@ export function getProxiedAudioPlaybackSrc(src: string): string {
   }
 
   return `/api/image-hosting/read?url=${encodeURIComponent(trimmedSrc)}`;
+}
+
+export function getEffectiveAudioPlaybackSrc({
+  src,
+  proxiedPlaybackSrc,
+  playbackSrcState,
+}: {
+  src: string;
+  proxiedPlaybackSrc: string;
+  playbackSrcState: PlaybackSrcState;
+}): string {
+  return playbackSrcState.sourceSrc === src ? playbackSrcState.playbackSrc : proxiedPlaybackSrc;
 }
 
 async function fetchAudioWaveformArrayBuffer(src: string): Promise<ArrayBuffer> {
@@ -181,7 +198,15 @@ export function AudioWaveformPlayer({
   const proxiedPlaybackSrc = useMemo(() => getProxiedAudioPlaybackSrc(src), [src]);
   const bars = compact ? 48 : 72;
   const waveformKey = `${src}:${bars}`;
-  const [playbackSrc, setPlaybackSrc] = useState(proxiedPlaybackSrc);
+  const [playbackSrcState, setPlaybackSrcState] = useState<PlaybackSrcState>({
+    sourceSrc: src,
+    playbackSrc: proxiedPlaybackSrc,
+  });
+  const playbackSrc = getEffectiveAudioPlaybackSrc({
+    src,
+    proxiedPlaybackSrc,
+    playbackSrcState,
+  });
   const [waveformState, setWaveformState] = useState<WaveformState>({
     key: waveformKey,
     peaks: [],
@@ -201,10 +226,6 @@ export function AudioWaveformPlayer({
   const duration = playbackState.src === src ? playbackState.duration : durationSeconds ?? 0;
   const playing = playbackState.src === src ? playbackState.playing : false;
   const canInteract = duration > 0;
-
-  useEffect(() => {
-    setPlaybackSrc(proxiedPlaybackSrc);
-  }, [proxiedPlaybackSrc]);
 
   useEffect(() => {
     durationSecondsRef.current = durationSeconds;
@@ -461,7 +482,10 @@ export function AudioWaveformPlayer({
       }));
     }).catch(() => {
       if (playbackSrc !== proxiedPlaybackSrc) {
-        setPlaybackSrc(proxiedPlaybackSrc);
+        setPlaybackSrcState({
+          sourceSrc: src,
+          playbackSrc: proxiedPlaybackSrc,
+        });
         setPlaybackState((current) => ({
           src,
           currentTime: current.src === src ? current.currentTime : 0,
