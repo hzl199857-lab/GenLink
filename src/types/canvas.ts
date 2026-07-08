@@ -570,6 +570,8 @@ export interface MaterialLibraryItem {
   sourceNodeType?: "image_generation" | "image" | "uploaded_image";
   width?: number;
   height?: number;
+  displayWidth?: number;
+  displayHeight?: number;
   sizeBytes?: number;
   format?: string;
   createdAt: string;

@@ -391,6 +391,8 @@ function normalizeMaterialLibraryItems(
           : undefined,
       width: typeof record.width === "number" ? record.width : undefined,
       height: typeof record.height === "number" ? record.height : undefined,
+      displayWidth: typeof record.displayWidth === "number" ? record.displayWidth : undefined,
+      displayHeight: typeof record.displayHeight === "number" ? record.displayHeight : undefined,
       sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
       format:
         typeof record.format === "string" && record.format.trim()

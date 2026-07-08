@@ -2385,6 +2385,16 @@ function createImageNodeFromMaterial(
   const imageUrl = item.hostedImageUrl?.trim() || item.imageUrl.trim();
   const width = item.width || 320;
   const height = item.height || 320;
+  const displayDimensions = resolveImageNodeCardDimensions({
+    title: item.name,
+    imageUrl,
+    prompt: item.name || item.fileName || item.outputFileName || 'Image',
+    generatedAt: item.createdAt || new Date().toISOString(),
+    width,
+    height,
+    displayWidth: item.displayWidth,
+    displayHeight: item.displayHeight,
+  });
 
   return createImportedImageNode(
     {
@@ -2395,6 +2405,8 @@ function createImageNodeFromMaterial(
       generatedAt: item.createdAt || new Date().toISOString(),
       width,
       height,
+      displayWidth: displayDimensions.width,
+      displayHeight: displayDimensions.height,
       sizeBytes: item.sizeBytes,
     },
     position,
@@ -2617,6 +2629,8 @@ function createMaterialSourceFromImageNodeData(data: ImageNodeData): PendingMate
     sourceNodeType: 'image',
     width: data.width,
     height: data.height,
+    displayWidth: data.displayWidth,
+    displayHeight: data.displayHeight,
     sizeBytes: data.sizeBytes,
   };
 }
@@ -2638,6 +2652,8 @@ function createMaterialSourceFromUploadedImageData(
     sourceNodeType: 'uploaded_image',
     width: data.width,
     height: data.height,
+    displayWidth: data.displayWidth,
+    displayHeight: data.displayHeight,
     sizeBytes: data.sizeBytes,
   };
 }
@@ -3366,6 +3382,8 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
       prompt: next.prompt,
       width: next.width,
       height: next.height,
+      displayWidth: undefined,
+      displayHeight: undefined,
       sizeBytes: next.sizeBytes,
       generatedAt: next.generatedAt,
       generatedOutputFileName: undefined,
@@ -3463,7 +3481,11 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
 
   const handleReplace = async (file: File) => {
     const next = toUploadedImageNodeData(await readImageFile(file));
-    updateNodeData<'uploaded_image'>(id, next);
+    updateNodeData<'uploaded_image'>(id, {
+      ...next,
+      displayWidth: undefined,
+      displayHeight: undefined,
+    });
   };
 
   const handleToolbarAction = (action: ImageGenerationToolbarAction) => {
