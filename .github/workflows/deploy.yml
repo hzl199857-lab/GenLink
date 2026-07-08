@@ -272,9 +272,12 @@ jobs:
           ln -sfn "$SHARED/prisma/dev.db" "$RELEASE_DIR/prisma/dev.db"
 
           NPM_CACHE="$SHARED/npm-cache"
+          DEPLOY_NPM_VERSION="11.12.1"
+          DEPLOY_NPM="npx -y npm@${DEPLOY_NPM_VERSION}"
           mkdir -p "$NPM_CACHE"
           node --version
           npm --version
+          $DEPLOY_NPM --version
           install_dependencies() {
             local current_real
             current_real="$(readlink -f "$CURRENT" 2>/dev/null || true)"
@@ -291,7 +294,7 @@ jobs:
             fi
 
             npm_ci() {
-              npm ci \
+              $DEPLOY_NPM ci \
                 --no-audit \
                 --no-fund \
                 --no-progress \
@@ -301,7 +304,7 @@ jobs:
 
             if ! npm_ci; then
               echo "npm ci failed. Cleaning npm cache and retrying once."
-              npm --cache "$NPM_CACHE" cache clean --force || true
+              $DEPLOY_NPM --cache "$NPM_CACHE" cache clean --force || true
               npm_ci
             fi
           }
