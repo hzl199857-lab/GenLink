@@ -877,15 +877,25 @@ function resolveImageJobSizeFromHistory(
     if (aspectRatio === "2:3") return "1664x2496";
     if (aspectRatio === "5:4") return "2240x1792";
     if (aspectRatio === "4:5") return "1792x2240";
-    if (aspectRatio === "2:1") return "2048x1024";
+    if (aspectRatio === "2:1") return "2880x1440";
     if (aspectRatio === "21:9") return "3024x1296";
     if (aspectRatio === "9:21") return "1296x3024";
     return "2048x2048";
   }
 
-  if (aspectRatio === "2:1") return "1024x512";
+  if (aspectRatio === "16:9") return "1280x720";
+  if (aspectRatio === "9:16") return "720x1280";
+  if (aspectRatio === "4:3") return "1152x864";
+  if (aspectRatio === "3:4") return "864x1152";
+  if (aspectRatio === "3:2") return "1248x832";
+  if (aspectRatio === "2:3") return "832x1248";
+  if (aspectRatio === "5:4") return "1120x896";
+  if (aspectRatio === "4:5") return "896x1120";
+  if (aspectRatio === "2:1") return "1440x720";
+  if (aspectRatio === "21:9") return "1456x624";
+  if (aspectRatio === "9:21") return "624x1456";
 
-  return undefined;
+  return "1024x1024";
 }
 
 function buildImageJobResult(

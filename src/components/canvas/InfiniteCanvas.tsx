@@ -2378,13 +2378,64 @@ function toUploadedImageNodeData(data: ImportedImageData): UploadedImageNodeData
   };
 }
 
-function createImageNodeFromMaterial(
+function hasMaterialImageDimensions(item: MaterialLibraryItem): boolean {
+  return Boolean(item.width && item.height && item.width > 0 && item.height > 0);
+}
+
+function materialMatchesImageGenerationNode(
+  item: MaterialLibraryItem,
+  data: ImageGenerationNodeData,
+): boolean {
+  const materialUrls = new Set([
+    item.imageUrl.trim(),
+    item.hostedImageUrl?.trim(),
+    item.outputFileName ? `output:${item.outputFileName}` : undefined,
+  ].filter((value): value is string => Boolean(value)));
+  const generatedUrls = [
+    data.generatedImageUrl?.trim(),
+    data.generatedHostedImageUrl?.trim(),
+    data.generatedOutputFileName ? `output:${data.generatedOutputFileName}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+
+  return generatedUrls.some((url) => materialUrls.has(url));
+}
+
+function resolveMaterialSourceDisplayDimensions(
+  item: MaterialLibraryItem,
+  nodes: CanvasNode[],
+): { width: number; height: number } | undefined {
+  if (item.displayWidth && item.displayHeight && item.displayWidth > 0 && item.displayHeight > 0) {
+    return undefined;
+  }
+
+  for (const candidate of nodes) {
+    if (candidate.type !== 'image_generation') {
+      continue;
+    }
+
+    const data = candidate.data as ImageGenerationNodeData;
+    if (!materialMatchesImageGenerationNode(item, data)) {
+      continue;
+    }
+
+    const referenceImages = useCanvasStore.getState().getConnectedImagesForImageGenerationNode(candidate.id);
+    return resolveImageGenerationCardDimensions(data, referenceImages);
+  }
+
+  return undefined;
+}
+
+async function createImageNodeFromMaterial(
   item: MaterialLibraryItem,
   position: { x: number; y: number },
-): CanvasNode {
+  sourceDisplayDimensions?: { width: number; height: number },
+): Promise<CanvasNode> {
   const imageUrl = item.hostedImageUrl?.trim() || item.imageUrl.trim();
-  const width = item.width || 320;
-  const height = item.height || 320;
+  const resolvedDimensions = !hasMaterialImageDimensions(item)
+    ? await readImageDimensionsFromUrl(imageUrl).catch(() => null)
+    : null;
+  const width = resolvedDimensions?.width || item.width || 320;
+  const height = resolvedDimensions?.height || item.height || 320;
   const displayDimensions = resolveImageNodeCardDimensions({
     title: item.name,
     imageUrl,
@@ -2392,8 +2443,8 @@ function createImageNodeFromMaterial(
     generatedAt: item.createdAt || new Date().toISOString(),
     width,
     height,
-    displayWidth: item.displayWidth,
-    displayHeight: item.displayHeight,
+    displayWidth: sourceDisplayDimensions?.width ?? item.displayWidth,
+    displayHeight: sourceDisplayDimensions?.height ?? item.displayHeight,
   });
 
   return createImportedImageNode(
@@ -2594,6 +2645,7 @@ function createAgentGenerationNodesAndEdges(params: {
 
 function createMaterialSourceFromImageGenerationData(
   data: ImageGenerationNodeData,
+  displayDimensions?: { width: number; height: number },
 ): PendingMaterialSource | null {
   const imageUrl = data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim();
 
@@ -2610,6 +2662,8 @@ function createMaterialSourceFromImageGenerationData(
     sourceNodeType: 'image_generation',
     width: data.generatedImageWidth,
     height: data.generatedImageHeight,
+    displayWidth: displayDimensions?.width,
+    displayHeight: displayDimensions?.height,
     sizeBytes: data.generatedImageSizeBytes,
     format: data.generatedImageFormat,
   };
@@ -2875,7 +2929,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
           }
 
           if (action === 'organize') {
-            const source = createMaterialSourceFromImageGenerationData(imageData);
+            const source = createMaterialSourceFromImageGenerationData(imageData, cardDimensions);
             if (source) {
               requestMaterialLibrarySave(source);
             }
@@ -13712,12 +13766,15 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       },
       storeNodes,
     );
-    const node = createImageNodeFromMaterial(item, position);
+    void (async () => {
+      const sourceDisplayDimensions = resolveMaterialSourceDisplayDimensions(item, storeNodes);
+      const node = await createImageNodeFromMaterial(item, position, sourceDisplayDimensions);
 
-    addNodes([node]);
-    setSelectedNodeIds(new Set([node.id]));
-    setActiveNodeId(node.id);
-    clearEdgeSelection();
+      addNodes([node]);
+      setSelectedNodeIds(new Set([node.id]));
+      setActiveNodeId(node.id);
+      clearEdgeSelection();
+    })();
   }, [addNodes, clearEdgeSelection, project, storeNodes]);
 
   const handleMediaDrop = useCallback((event: React.DragEvent) => {

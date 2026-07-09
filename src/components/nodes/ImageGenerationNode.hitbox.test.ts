@@ -56,7 +56,7 @@ test("closes image generation prompt bar menus when the selected node changes", 
 test("image generation organize action opens the material save dialog directly", () => {
   assert.match(
     canvasSource,
-    /if \(action === 'organize'\) \{\s*const source = createMaterialSourceFromImageGenerationData\(imageData\);[\s\S]*?requestMaterialLibrarySave\(source\);[\s\S]*?return;[\s\S]*?\}\s*notifyImageToolbarAction\?\.\(action, data as ImageGenerationNodeData\);/,
+    /if \(action === 'organize'\) \{\s*const source = createMaterialSourceFromImageGenerationData\(imageData, cardDimensions\);[\s\S]*?requestMaterialLibrarySave\(source\);[\s\S]*?return;[\s\S]*?\}\s*notifyImageToolbarAction\?\.\(action, data as ImageGenerationNodeData\);/,
   );
 });
 

@@ -23,9 +23,31 @@ test("material items preserve explicit display dimensions", () => {
 });
 
 test("applying a material writes a canvas display size for the image node", () => {
-  assert.match(canvasSource, /const displayDimensions = resolveImageNodeCardDimensions\(\{[\s\S]*?width,[\s\S]*?height,[\s\S]*?displayWidth: item\.displayWidth,[\s\S]*?displayHeight: item\.displayHeight,[\s\S]*?\}\);/);
+  assert.match(canvasSource, /const displayDimensions = resolveImageNodeCardDimensions\(\{[\s\S]*?width,[\s\S]*?height,[\s\S]*?displayWidth: sourceDisplayDimensions\?\.width \?\? item\.displayWidth,[\s\S]*?displayHeight: sourceDisplayDimensions\?\.height \?\? item\.displayHeight,[\s\S]*?\}\);/);
   assert.match(canvasSource, /displayWidth: displayDimensions\.width,/);
   assert.match(canvasSource, /displayHeight: displayDimensions\.height,/);
+});
+
+test("applying legacy materials resolves missing natural image dimensions before creating the node", () => {
+  assert.match(canvasSource, /async function createImageNodeFromMaterial/);
+  assert.match(canvasSource, /const resolvedDimensions = !hasMaterialImageDimensions\(item\)[\s\S]*?await readImageDimensionsFromUrl\(imageUrl\)\.catch\(\(\) => null\)/);
+  assert.match(canvasSource, /const width = resolvedDimensions\?\.width \|\| item\.width \|\| 320;/);
+  assert.match(canvasSource, /const node = await createImageNodeFromMaterial\(item, position, sourceDisplayDimensions\);/);
+});
+
+test("saving image generation nodes to materials carries the current card display size", () => {
+  assert.match(canvasSource, /function createMaterialSourceFromImageGenerationData\(\s*data: ImageGenerationNodeData,\s*displayDimensions\?: \{ width: number; height: number \},\s*\)/);
+  assert.match(canvasSource, /displayWidth: displayDimensions\?\.width,/);
+  assert.match(canvasSource, /displayHeight: displayDimensions\?\.height,/);
+  assert.match(canvasSource, /const source = createMaterialSourceFromImageGenerationData\(imageData, cardDimensions\);/);
+});
+
+test("applying legacy image-generation materials reuses the matching source node card size", () => {
+  assert.match(canvasSource, /function resolveMaterialSourceDisplayDimensions\(\s*item: MaterialLibraryItem,\s*nodes: CanvasNode\[],\s*\): \{ width: number; height: number \} \| undefined/);
+  assert.match(canvasSource, /candidate\.type !== 'image_generation'/);
+  assert.match(canvasSource, /resolveImageGenerationCardDimensions\(data, referenceImages\)/);
+  assert.match(canvasSource, /const sourceDisplayDimensions = resolveMaterialSourceDisplayDimensions\(item, storeNodes\);/);
+  assert.match(canvasSource, /createImageNodeFromMaterial\(item, position, sourceDisplayDimensions\)/);
 });
 
 test("saving canvas image nodes to materials carries their current display size", () => {
