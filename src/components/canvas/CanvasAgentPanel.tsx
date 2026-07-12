@@ -20,6 +20,8 @@ import { buildAgentTaskContext, getReferencedAgentAttachmentIds } from '@/lib/ag
 import { buildCanvasRuntimeSnapshot } from '@/lib/canvas/runtime-snapshot';
 import UniqueLoading from '@/components/ui/grid-loading';
 import {
+  canSaveAgentDraftForScope,
+  createAgentDraftScopeKey,
   deleteAgentThread,
   loadAgentDraft,
   listAgentThreads,
@@ -45,6 +47,8 @@ import {
   getApiProviderLabel,
   readStoredApiKey,
   readStoredSelectedApiProvider,
+  readUserScopedCanvasSetting,
+  writeUserScopedCanvasSetting,
   type ApiProvider,
 } from '@/store/canvas-store';
 import {
@@ -330,6 +334,7 @@ type OpenClawPlanfEcomStartResponse =
     };
 
 type CanvasAgentPanelProps = {
+  userId: string;
   open: boolean;
   projectId?: string;
   projectName: string;
@@ -1807,6 +1812,7 @@ function isPlanfPresetPromptDraft(draftValue: string): boolean {
 }
 
 export const CanvasAgentPanel = memo(function CanvasAgentPanel({
+  userId,
   open,
   projectId,
   projectName,
@@ -1843,19 +1849,24 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }
 
     return resolveStoredAgentPanelWidth(
-      window.localStorage.getItem(AGENT_PANEL_WIDTH_STORAGE_KEY),
+      readUserScopedCanvasSetting(AGENT_PANEL_WIDTH_STORAGE_KEY, userId),
       window.innerWidth,
     );
   });
   const [panelResizing, setPanelResizing] = useState(false);
   const [attachments, setAttachments] = useState<AgentTaskAttachment[]>([]);
   const [draft, setDraft] = useState('');
+  const draftScopeKey = useMemo(
+    () => createAgentDraftScopeKey(userId, projectId, projectName),
+    [projectId, projectName, userId],
+  );
+  const hydratedDraftScopeRef = useRef<string | null>(null);
   const [provider, setProvider] = useState<AgentProvider>('vibe');
   const [model, setModel] = useState<string>(AGENT_MODEL_OPTIONS[0].id);
   const [messages, setMessages] = useState<AgentPanelMessage[]>([]);
   const [busyMode, setBusyMode] = useState<AgentBusyMode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyThreads, setHistoryThreads] = useState(() => listAgentThreads(projectId, projectName));
+  const [historyThreads, setHistoryThreads] = useState(() => listAgentThreads(userId, projectId, projectName));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planfPresetOpen, setPlanfPresetOpen] = useState(false);
   const [selectedPlanfPresetId, setSelectedPlanfPresetId] = useState<PlanfEcomPresetId | null>(null);
@@ -1914,7 +1925,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         const nextWidth = clampAgentPanelWidth(current, window.innerWidth);
 
         if (nextWidth !== current) {
-          window.localStorage.setItem(AGENT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth));
+          writeUserScopedCanvasSetting(AGENT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth), userId);
         }
 
         return nextWidth;
@@ -1923,7 +1934,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
     window.addEventListener('resize', handleWindowResize);
     return () => window.removeEventListener('resize', handleWindowResize);
-  }, []);
+  }, [userId]);
 
   const handlePanelResizePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) {
@@ -1952,7 +1963,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       );
 
       setPanelWidth(nextWidth);
-      window.localStorage.setItem(AGENT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth));
+      writeUserScopedCanvasSetting(AGENT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth), userId);
     };
 
     const stopDragging = () => {
@@ -1968,7 +1979,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', stopDragging);
     window.addEventListener('pointercancel', stopDragging);
-  }, [panelWidth]);
+  }, [panelWidth, userId]);
 
   const handleNewThread = useCallback(() => {
     setMessages([]);
@@ -2006,9 +2017,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   }, [selectedPlanfPresetId]);
 
   const handleOpenHistory = useCallback(() => {
-    setHistoryThreads(listAgentThreads(projectId, projectName));
+    setHistoryThreads(listAgentThreads(userId, projectId, projectName));
     setHistoryOpen((current) => !current);
-  }, [projectId, projectName]);
+  }, [projectId, projectName, userId]);
 
   useEffect(() => {
     if (!historyOpen) {
@@ -2059,17 +2070,28 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   }, []);
 
   useEffect(() => {
+    const scopeKey = draftScopeKey;
     const timer = window.setTimeout(() => {
-      setDraft(loadAgentDraft(projectId, projectName));
-      setHistoryThreads(listAgentThreads(projectId, projectName));
+      hydratedDraftScopeRef.current = scopeKey;
+      setDraft(loadAgentDraft(userId, projectId, projectName));
+      setHistoryThreads(listAgentThreads(userId, projectId, projectName));
     }, 0);
 
-    return () => window.clearTimeout(timer);
-  }, [projectId, projectName]);
+    return () => {
+      window.clearTimeout(timer);
+      if (hydratedDraftScopeRef.current === scopeKey) {
+        hydratedDraftScopeRef.current = null;
+      }
+    };
+  }, [draftScopeKey, projectId, projectName, userId]);
 
   useEffect(() => {
-    saveAgentDraft(projectId, projectName, draft);
-  }, [draft, projectId, projectName]);
+    if (!canSaveAgentDraftForScope(hydratedDraftScopeRef.current, draftScopeKey)) {
+      return;
+    }
+
+    saveAgentDraft(userId, projectId, projectName, draft);
+  }, [draft, draftScopeKey, projectId, projectName, userId]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -2077,6 +2099,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }
 
     const saved = saveAgentThread({
+      userId,
       threadId,
       projectId,
       projectName,
@@ -2087,8 +2110,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       window.setTimeout(() => setThreadId(saved.id), 0);
     }
 
-    window.setTimeout(() => setHistoryThreads(listAgentThreads(projectId, projectName)), 0);
-  }, [messages, projectId, projectName, threadId]);
+    window.setTimeout(() => setHistoryThreads(listAgentThreads(userId, projectId, projectName)), 0);
+  }, [messages, projectId, projectName, threadId, userId]);
 
   useEffect(() => {
     if (!open) {
@@ -3881,8 +3904,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     aria-label="删除历史会话"
                     onClick={(event) => {
                       event.stopPropagation();
-                      deleteAgentThread(thread.id);
-                      setHistoryThreads(listAgentThreads(projectId, projectName));
+                      deleteAgentThread(userId, thread.id);
+                      setHistoryThreads(listAgentThreads(userId, projectId, projectName));
 
                       if (thread.id === threadId) {
                         setMessages([]);

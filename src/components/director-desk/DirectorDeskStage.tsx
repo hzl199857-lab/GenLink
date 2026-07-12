@@ -3,21 +3,17 @@
 import { useEffect } from 'react';
 import { DirectorDeskShell } from './app/layout/DirectorDeskShell';
 import { DirectorCanvas } from './editor/canvas/DirectorCanvas';
-import { useDirectorStore } from './editor/store/directorStore';
+import { directorStageScopeLifecycle } from './directorStageScopeLifecycle';
 
 export interface DirectorDeskStageProps {
   nodeId: string;
+  userId: string;
 }
 
-export function DirectorDeskStage({ nodeId }: DirectorDeskStageProps) {
+export function DirectorDeskStage({ nodeId, userId }: DirectorDeskStageProps) {
   useEffect(() => {
-    const store = useDirectorStore.getState();
-    store.openScopedScene(nodeId);
-
-    return () => {
-      useDirectorStore.getState().saveLatestSnapshot();
-    };
-  }, [nodeId]);
+    return directorStageScopeLifecycle.activate(nodeId, userId);
+  }, [nodeId, userId]);
 
   return (
     <DirectorDeskShell>

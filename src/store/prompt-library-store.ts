@@ -1,9 +1,32 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 import type { PromptLibraryEntry } from "@/features/prompt-library/types";
+import { migrateLegacyStorageValue, userStorageKey } from "@/lib/browser-user-storage";
+
+const PROMPT_LIBRARY_STORAGE_KEY = "prompt-library-storage";
+const NOOP_STORAGE: StateStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+};
+const BROWSER_STORAGE: StateStorage = {
+  getItem: (name) => typeof window === "undefined" ? null : window.localStorage.getItem(name),
+  setItem: (name, value) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(name, value);
+    }
+  },
+  removeItem: (name) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(name);
+    }
+  },
+};
+let promptHydrationQueue = Promise.resolve();
+let promptHydrationRequestId = 0;
 
 export interface PromptLibraryState {
   favoritePrompts: Record<string, PromptLibraryEntry>;
@@ -97,8 +120,70 @@ export const usePromptLibraryStore = create<PromptLibraryState>()(
       },
     }),
     {
-      name: "prompt-library-storage",
+      name: PROMPT_LIBRARY_STORAGE_KEY,
       version: 1,
+      skipHydration: true,
+      storage: createJSONStorage(() => BROWSER_STORAGE),
     },
   ),
 );
+
+function resetPromptLibraryMemory(): void {
+  usePromptLibraryStore.persist.setOptions({
+    name: PROMPT_LIBRARY_STORAGE_KEY,
+    storage: createJSONStorage(() => NOOP_STORAGE),
+  });
+  usePromptLibraryStore.setState({
+    favoritePrompts: {},
+    communityPrompts: [],
+    communityFetchedAt: null,
+  });
+}
+
+export function deactivatePromptLibraryStore(): void {
+  promptHydrationRequestId += 1;
+  resetPromptLibraryMemory();
+}
+
+async function hydratePromptLibraryForUserNow(userId: string, requestId: number): Promise<void> {
+  if (typeof window === "undefined") {
+    resetPromptLibraryMemory();
+    return;
+  }
+
+  migrateLegacyStorageValue(userId, PROMPT_LIBRARY_STORAGE_KEY, window.localStorage);
+  const name = userStorageKey(userId, PROMPT_LIBRARY_STORAGE_KEY);
+
+  usePromptLibraryStore.persist.setOptions({
+    name,
+    storage: createJSONStorage(() => NOOP_STORAGE),
+  });
+  usePromptLibraryStore.setState({
+    favoritePrompts: {},
+    communityPrompts: [],
+    communityFetchedAt: null,
+  });
+  usePromptLibraryStore.persist.setOptions({
+    name,
+    storage: createJSONStorage(() => BROWSER_STORAGE),
+  });
+  await usePromptLibraryStore.persist.rehydrate();
+
+  if (requestId !== promptHydrationRequestId) {
+    resetPromptLibraryMemory();
+  }
+}
+
+export function hydratePromptLibraryForUser(userId: string): Promise<void> {
+  const requestId = ++promptHydrationRequestId;
+  const hydration = promptHydrationQueue.then(async () => {
+    if (requestId !== promptHydrationRequestId) {
+      return;
+    }
+
+    await hydratePromptLibraryForUserNow(userId, requestId);
+  });
+
+  promptHydrationQueue = hydration.catch(() => undefined);
+  return hydration;
+}

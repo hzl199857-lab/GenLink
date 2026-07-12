@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { migrateLegacyStorageValue, userStorageKey } from "../../../../lib/browser-user-storage";
 import { MANNEQUIN_POSE_PRESETS } from "../presets/mannequinPosePresets";
 import { GEOMETRY_PRIMITIVE_OPTIONS } from "../schema/directorProject";
 import type {
@@ -136,7 +137,7 @@ export interface DirectorActions {
   copySelectedObjects: () => void;
   pasteClipboardObjects: () => void;
   undo: () => void;
-  openScopedScene: (scopeId: string | null | undefined) => void;
+  openScopedScene: (scopeId: string | null | undefined, userId?: string | null) => void;
   replaceProject: (project: DirectorProject) => void;
   saveLatestSnapshot: () => void;
   restoreLatestSnapshot: () => void;
@@ -205,8 +206,9 @@ function getInitialDirectorScenePersistenceScopeId() {
 }
 
 let directorScenePersistenceScopeId: string | null = getInitialDirectorScenePersistenceScopeId();
+let directorStorageUserId: string | null = null;
 
-function getDirectorSceneStorageKey(scopeId: string | null | undefined = directorScenePersistenceScopeId) {
+function getDirectorSceneStorageBaseKey(scopeId: string | null | undefined = directorScenePersistenceScopeId) {
   const normalizedScopeId = normalizeDirectorScenePersistenceScopeId(scopeId);
   return normalizedScopeId ? `${DIRECTOR_SCENE_STORAGE_KEY_PREFIX}${normalizedScopeId}` : DIRECTOR_SCENE_STORAGE_KEY;
 }
@@ -214,6 +216,22 @@ function getDirectorSceneStorageKey(scopeId: string | null | undefined = directo
 function setDirectorScenePersistenceScopeId(scopeId: string | null | undefined) {
   const normalizedScopeId = normalizeDirectorScenePersistenceScopeId(scopeId);
   directorScenePersistenceScopeId = normalizedScopeId || null;
+}
+
+function setDirectorStorageUserId(userId: string | null | undefined) {
+  directorStorageUserId = typeof userId === "string" && userId.trim() ? userId.trim() : null;
+}
+
+function readUserScopedDirectorStorageValue(baseKey: string, storage: Storage) {
+  if (!directorStorageUserId) return null;
+
+  return migrateLegacyStorageValue(directorStorageUserId, baseKey, storage);
+}
+
+function writeUserScopedDirectorStorageValue(baseKey: string, value: string, storage: Storage) {
+  if (!directorStorageUserId) return;
+
+  storage.setItem(userStorageKey(directorStorageUserId, baseKey), value);
 }
 
 function createTransform(
@@ -270,7 +288,7 @@ function readPersistedLocalModelAssets() {
   if (!storage) return [];
 
   try {
-    const snapshot = storage.getItem(LOCAL_MODEL_LIBRARY_STORAGE_KEY);
+    const snapshot = readUserScopedDirectorStorageValue(LOCAL_MODEL_LIBRARY_STORAGE_KEY, storage);
     if (!snapshot) return [];
 
     const parsed = JSON.parse(snapshot);
@@ -294,7 +312,11 @@ function writePersistedLocalModelAssets(assets: DirectorAssetRef[]) {
   if (!storage) return;
 
   try {
-    storage.setItem(LOCAL_MODEL_LIBRARY_STORAGE_KEY, JSON.stringify(assets.filter(isLocalModelLibraryAsset)));
+    writeUserScopedDirectorStorageValue(
+      LOCAL_MODEL_LIBRARY_STORAGE_KEY,
+      JSON.stringify(assets.filter(isLocalModelLibraryAsset)),
+      storage,
+    );
   } catch {
     // Local model files can exceed browser storage limits; keep the current scene usable if persistence fails.
   }
@@ -380,7 +402,11 @@ function writePersistedDirectorState(state: DirectorState) {
   if (!storage) return;
 
   try {
-    storage.setItem(getDirectorSceneStorageKey(), JSON.stringify(state));
+    writeUserScopedDirectorStorageValue(
+      getDirectorSceneStorageBaseKey(),
+      JSON.stringify(state),
+      storage,
+    );
   } catch {
     // Keep the editor usable if the browser storage quota is exceeded.
   }
@@ -398,7 +424,10 @@ function readPersistedDirectorState(options: DirectorStateOptions = {}): Directo
   if (!storage) return null;
 
   try {
-    const snapshot = storage.getItem(getDirectorSceneStorageKey(options.persistenceScopeId));
+    const snapshot = readUserScopedDirectorStorageValue(
+      getDirectorSceneStorageBaseKey(options.persistenceScopeId),
+      storage,
+    );
     if (!snapshot) return null;
 
     const parsed = JSON.parse(snapshot) as unknown;
@@ -1033,7 +1062,7 @@ function trimUndoStack(stack: DirectorState[]) {
 
 export const useDirectorStore = create<DirectorStore>((set, get) => {
   const initialRuntimeState = createRuntimeStateFromPersistedState(
-    createInitialDirectorState({ includePersistedLocalAssets: true, includePersistedScene: true })
+    createInitialDirectorState()
   );
 
   function commitMutation(
@@ -2011,9 +2040,16 @@ export const useDirectorStore = create<DirectorStore>((set, get) => {
       });
       writePersistedDirectorState(previousState);
     },
-    openScopedScene: (scopeId) => {
+    openScopedScene: (scopeId, userId) => {
       const currentState = get() as DirectorRuntimeState;
+      const previousStorageUserId = directorStorageUserId;
       setDirectorScenePersistenceScopeId(scopeId);
+      if (userId !== undefined) {
+        setDirectorStorageUserId(userId);
+      }
+      const preserveClipboard = Boolean(
+        directorStorageUserId && directorStorageUserId === previousStorageUserId,
+      );
       const snapshot = createInitialDirectorState({
         includePersistedLocalAssets: true,
         includePersistedScene: true,
@@ -2023,8 +2059,8 @@ export const useDirectorStore = create<DirectorStore>((set, get) => {
 
       set({
         ...runtimeState,
-        clipboard: currentState.clipboard,
-        clipboardPasteCount: currentState.clipboardPasteCount,
+        clipboard: preserveClipboard ? currentState.clipboard : [],
+        clipboardPasteCount: preserveClipboard ? currentState.clipboardPasteCount : 0,
         undoStack: [],
       });
       writePersistedDirectorState(snapshot);

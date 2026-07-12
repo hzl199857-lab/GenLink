@@ -1,3 +1,5 @@
+import { migrateLegacyStorageValue, userStorageKey } from '@/lib/browser-user-storage';
+
 export type UpdateRefreshAppMode = 'hero' | 'library' | 'canvas';
 
 export type UpdateRefreshViewport = {
@@ -66,25 +68,29 @@ function normalizeRestoreState(value: unknown): UpdateRefreshRestoreState | null
   };
 }
 
-export function writeUpdateRefreshAppMode(mode: UpdateRefreshAppMode) {
+export function writeUpdateRefreshAppMode(userId: string, mode: UpdateRefreshAppMode) {
   if (!canUseSessionStorage()) return;
-  window.sessionStorage.setItem(ACTIVE_MODE_KEY, mode);
+  migrateLegacyStorageValue(userId, ACTIVE_MODE_KEY, window.sessionStorage);
+  window.sessionStorage.setItem(userStorageKey(userId, ACTIVE_MODE_KEY), mode);
 }
 
-export function readUpdateRefreshAppMode(): UpdateRefreshAppMode | null {
+export function readUpdateRefreshAppMode(userId: string): UpdateRefreshAppMode | null {
   if (!canUseSessionStorage()) return null;
 
-  const value = window.sessionStorage.getItem(ACTIVE_MODE_KEY);
+  migrateLegacyStorageValue(userId, ACTIVE_MODE_KEY, window.sessionStorage);
+  const value = window.sessionStorage.getItem(userStorageKey(userId, ACTIVE_MODE_KEY));
   return isAppMode(value) ? value : null;
 }
 
 export function writeUpdateRefreshRestoreState(
+  userId: string,
   state: Omit<UpdateRefreshRestoreState, 'createdAt'>,
 ) {
   if (!canUseSessionStorage()) return;
 
+  migrateLegacyStorageValue(userId, RESTORE_KEY, window.sessionStorage);
   window.sessionStorage.setItem(
-    RESTORE_KEY,
+    userStorageKey(userId, RESTORE_KEY),
     JSON.stringify({
       ...state,
       createdAt: Date.now(),
@@ -92,40 +98,42 @@ export function writeUpdateRefreshRestoreState(
   );
 }
 
-export function readUpdateRefreshRestoreState(): UpdateRefreshRestoreState | null {
+export function readUpdateRefreshRestoreState(userId: string): UpdateRefreshRestoreState | null {
   if (!canUseSessionStorage()) return null;
 
   try {
-    const raw = window.sessionStorage.getItem(RESTORE_KEY);
+    migrateLegacyStorageValue(userId, RESTORE_KEY, window.sessionStorage);
+    const raw = window.sessionStorage.getItem(userStorageKey(userId, RESTORE_KEY));
     if (!raw) return null;
 
     const state = normalizeRestoreState(JSON.parse(raw));
     if (!state) {
-      clearUpdateRefreshRestoreState();
+      clearUpdateRefreshRestoreState(userId);
       return null;
     }
 
     return state;
   } catch {
-    clearUpdateRefreshRestoreState();
+    clearUpdateRefreshRestoreState(userId);
     return null;
   }
 }
 
 export function mergeUpdateRefreshRestoreViewport(
+  userId: string,
   projectId: string,
   viewport: UpdateRefreshViewport,
 ) {
-  const state = readUpdateRefreshRestoreState();
+  const state = readUpdateRefreshRestoreState(userId);
   if (!state || state.mode !== 'canvas' || state.projectId !== projectId) return;
 
-  writeUpdateRefreshRestoreState({
+  writeUpdateRefreshRestoreState(userId, {
     ...state,
     viewport,
   });
 }
 
-export function clearUpdateRefreshRestoreState() {
+export function clearUpdateRefreshRestoreState(userId: string) {
   if (!canUseSessionStorage()) return;
-  window.sessionStorage.removeItem(RESTORE_KEY);
+  window.sessionStorage.removeItem(userStorageKey(userId, RESTORE_KEY));
 }

@@ -17,6 +17,7 @@ const DirectorDeskStage = lazy(() =>
 
 export interface DirectorDeskFullscreenProps {
   nodeId: string;
+  userId: string;
   onClose: () => void;
   onSendCapturesToCanvas?: (captures: DirectorDeskCaptureToCanvas[]) => void | Promise<void>;
 }
@@ -27,6 +28,7 @@ function stopDirectorDeskEventPropagation(event: SyntheticEvent) {
 
 export function DirectorDeskFullscreen({
   nodeId,
+  userId,
   onClose,
   onSendCapturesToCanvas,
 }: DirectorDeskFullscreenProps) {
@@ -107,7 +109,7 @@ export function DirectorDeskFullscreen({
             </div>
           }
         >
-          <DirectorDeskStage nodeId={nodeId} />
+          <DirectorDeskStage nodeId={nodeId} userId={userId} />
         </Suspense>
       </div>
     </div>

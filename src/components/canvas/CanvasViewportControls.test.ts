@@ -29,7 +29,7 @@ test("canvas viewport controls expose a grid snap toggle", () => {
 
 test("canvas edges default to curve style", () => {
   const storedStyleReader = source.match(
-    /function readStoredCanvasEdgeStyle\(\): CanvasEdgeStyle \{[\s\S]*?\n\}/,
+    /function readStoredCanvasEdgeStyle\(userId: string\): CanvasEdgeStyle \{[\s\S]*?\n\}/,
   )?.[0] ?? "";
   const serverSnapshot = source.match(
     /function getServerCanvasEdgeStyleSnapshot\(\): CanvasEdgeStyle \{[\s\S]*?\n\}/,
@@ -37,6 +37,10 @@ test("canvas edges default to curve style", () => {
 
   assert.match(storedStyleReader, /return 'curve';/);
   assert.match(storedStyleReader, /\? 'straight'\s*: 'curve'/);
+  assert.match(
+    storedStyleReader,
+    /readUserScopedCanvasSetting\(CANVAS_EDGE_STYLE_STORAGE_KEY, userId\)/,
+  );
   assert.match(serverSnapshot, /return 'curve';/);
 });
 

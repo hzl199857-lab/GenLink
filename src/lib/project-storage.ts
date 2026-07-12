@@ -17,8 +17,10 @@ import type {
 import { buildProjectSnapshot } from "@/lib/project-snapshot";
 
 const PROJECT_DB_NAME = "genlink-project-library";
-const PROJECT_DB_VERSION = 1;
+export const PROJECT_DB_VERSION = 2;
 const PROJECT_STORE_NAME = "projects";
+const PROJECT_OWNER_INDEX_NAME = "ownerUserId";
+export const PROJECT_OWNERSHIP_ERROR = "该项目属于其他用户，无法覆盖";
 const PROJECT_FILE_NAME = "project.json";
 const OUTPUT_DIRECTORY_NAME = "output";
 const OUTPUT_HISTORY_FILE_NAME = "history.json";
@@ -26,6 +28,7 @@ const THUMBNAIL_IMAGE_EXTENSION_PATTERN = /\.(png|jpe?g|webp|gif|bmp|svg|avif)$/
 
 type PersistedProjectRecord = {
   id: string;
+  ownerUserId?: string;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -74,6 +77,7 @@ type OutputHistoryManifest = {
 
 export interface ProjectLibraryItem {
   id: string;
+  ownerUserId: string;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -137,13 +141,27 @@ export function applyPersistedAudioPreview<T extends AudioGenerationNodeData | A
 function toProjectLibraryItem(
   record: PersistedProjectRecord,
 ): ProjectLibraryItem {
+  if (!record.ownerUserId) {
+    throw new Error(PROJECT_OWNERSHIP_ERROR);
+  }
+
   return {
     id: record.id,
+    ownerUserId: record.ownerUserId,
     name: record.name,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     directoryName: record.directoryName,
   };
+}
+
+export function assertProjectOwner(
+  project: { ownerUserId?: string },
+  userId: string,
+): void {
+  if (!userId.trim() || project.ownerUserId !== userId) {
+    throw new Error(PROJECT_OWNERSHIP_ERROR);
+  }
 }
 
 function sortProjects<T extends { updatedAt: string }>(items: T[]): T[] {
@@ -587,9 +605,12 @@ function openProjectDb(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error ?? new Error("\u9879\u76ee\u5e93\u521d\u59cb\u5316\u5931\u8d25"));
     request.onupgradeneeded = () => {
       const database = request.result;
+      const store = database.objectStoreNames.contains(PROJECT_STORE_NAME)
+        ? request.transaction!.objectStore(PROJECT_STORE_NAME)
+        : database.createObjectStore(PROJECT_STORE_NAME, { keyPath: "id" });
 
-      if (!database.objectStoreNames.contains(PROJECT_STORE_NAME)) {
-        database.createObjectStore(PROJECT_STORE_NAME, { keyPath: "id" });
+      if (!store.indexNames.contains(PROJECT_OWNER_INDEX_NAME)) {
+        store.createIndex(PROJECT_OWNER_INDEX_NAME, "ownerUserId", { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -632,23 +653,76 @@ function requestAsPromise<T>(request: IDBRequest<T>): Promise<T> {
 
 async function persistProjectRecord(
   record: PersistedProjectRecord,
+  userId: string,
 ): Promise<void> {
+  assertProjectOwner({ ownerUserId: userId }, userId);
   await withProjectStore("readwrite", async (store) => {
-    await requestAsPromise(store.put(record));
+    const existing = await requestAsPromise(store.get(record.id)) as PersistedProjectRecord | undefined;
+
+    if (existing?.ownerUserId && existing.ownerUserId !== userId) {
+      throw new Error(PROJECT_OWNERSHIP_ERROR);
+    }
+
+    await requestAsPromise(store.put({ ...record, ownerUserId: userId }));
   });
 }
 
-async function removeProjectRecord(projectId: string): Promise<void> {
+async function removeProjectRecord(projectId: string, userId: string): Promise<void> {
+  assertProjectOwner({ ownerUserId: userId }, userId);
   await withProjectStore("readwrite", async (store) => {
+    const existing = await requestAsPromise(store.get(projectId)) as PersistedProjectRecord | undefined;
+
+    if (!existing) {
+      return;
+    }
+
+    if (!existing.ownerUserId) {
+      existing.ownerUserId = userId;
+      await requestAsPromise(store.put(existing));
+    }
+
+    assertProjectOwner(existing, userId);
     await requestAsPromise(store.delete(projectId));
   });
 }
 
-async function readAllProjectRecords(): Promise<PersistedProjectRecord[]> {
-  return withProjectStore("readonly", async (store) => {
+async function readAllProjectRecords(userId: string): Promise<PersistedProjectRecord[]> {
+  assertProjectOwner({ ownerUserId: userId }, userId);
+  return withProjectStore("readwrite", async (store) => {
     const request = store.getAll();
     const result = await requestAsPromise(request);
-    return (result as PersistedProjectRecord[]) ?? [];
+    const records = (result as PersistedProjectRecord[]) ?? [];
+
+    for (const record of records) {
+      if (!record.ownerUserId) {
+        record.ownerUserId = userId;
+        await requestAsPromise(store.put(record));
+      }
+    }
+
+    return records.filter((record) => record.ownerUserId === userId);
+  });
+}
+
+async function requireStoredProjectOwner(
+  project: ProjectHandleRecord,
+  userId: string,
+): Promise<void> {
+  assertProjectOwner(project, userId);
+
+  await withProjectStore("readwrite", async (store) => {
+    const record = await requestAsPromise(store.get(project.id)) as PersistedProjectRecord | undefined;
+
+    if (!record) {
+      throw new Error(PROJECT_OWNERSHIP_ERROR);
+    }
+
+    if (!record.ownerUserId) {
+      record.ownerUserId = userId;
+      await requestAsPromise(store.put(record));
+    }
+
+    assertProjectOwner(record, userId);
   });
 }
 
@@ -1012,6 +1086,7 @@ export async function pickProjectParentDirectory(): Promise<FileSystemDirectoryH
 export async function createProjectAtParentDirectory(params: {
   parentHandle: FileSystemDirectoryHandle;
   projectName: string;
+  userId: string;
 }): Promise<CreateProjectResult> {
   const sanitizedName = sanitizeDirectoryName(params.projectName);
 
@@ -1043,6 +1118,7 @@ export async function createProjectAtParentDirectory(params: {
 
     const record: PersistedProjectRecord = {
       id: snapshot.id,
+      ownerUserId: params.userId,
       name: sanitizedName,
       createdAt: snapshot.createdAt,
       updatedAt: snapshot.updatedAt,
@@ -1051,7 +1127,7 @@ export async function createProjectAtParentDirectory(params: {
       parentHandle: params.parentHandle,
     };
 
-    await persistProjectRecord(record);
+    await persistProjectRecord(record, params.userId);
 
     return {
       project: {
@@ -1069,6 +1145,7 @@ export async function createProjectAtParentDirectory(params: {
 
 export async function importProjectsFromParentDirectory(
   parentHandle: FileSystemDirectoryHandle,
+  userId: string,
 ): Promise<ImportProjectsResult> {
   await requestDirectoryPermission(parentHandle);
 
@@ -1081,6 +1158,7 @@ export async function importProjectsFromParentDirectory(
     const projectName = sanitizeDirectoryName(snapshot.name || parentHandle.name);
     const record: PersistedProjectRecord = {
       id: snapshot.id,
+      ownerUserId: userId,
       name: projectName || parentHandle.name,
       createdAt: snapshot.createdAt || timestamp,
       updatedAt: snapshot.updatedAt || timestamp,
@@ -1089,7 +1167,7 @@ export async function importProjectsFromParentDirectory(
       parentHandle,
     };
 
-    await persistProjectRecord(record);
+    await persistProjectRecord(record, userId);
 
     return {
       projects: [{
@@ -1099,7 +1177,11 @@ export async function importProjectsFromParentDirectory(
       }],
       skippedCount,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
+      throw error;
+    }
+
     // If the selected directory is not itself a project, scan its children.
   }
 
@@ -1121,6 +1203,7 @@ export async function importProjectsFromParentDirectory(
       const projectName = sanitizeDirectoryName(snapshot.name || projectHandle.name);
       const record: PersistedProjectRecord = {
         id: snapshot.id,
+        ownerUserId: userId,
         name: projectName || projectHandle.name,
         createdAt: snapshot.createdAt || timestamp,
         updatedAt: snapshot.updatedAt || timestamp,
@@ -1129,13 +1212,17 @@ export async function importProjectsFromParentDirectory(
         parentHandle,
       };
 
-      await persistProjectRecord(record);
+      await persistProjectRecord(record, userId);
       importedProjects.push({
         ...toProjectLibraryItem(record),
         projectHandle,
         parentHandle,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
+        throw error;
+      }
+
       skippedCount += 1;
     }
   }
@@ -1148,7 +1235,9 @@ export async function importProjectsFromParentDirectory(
 
 export async function loadProjectSnapshot(
   project: ProjectHandleRecord,
+  userId: string,
 ): Promise<ProjectSnapshot> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle, false);
   return readProjectSnapshotInternal(project.projectHandle);
 }
@@ -1156,7 +1245,9 @@ export async function loadProjectSnapshot(
 export async function saveProjectSnapshot(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
+  userId: string,
 ): Promise<{ project: ProjectHandleRecord; snapshot: ProjectSnapshot }> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle);
   const existingSnapshot = await readProjectSnapshotInternal(project.projectHandle).catch(() => null);
   const thumbnailFileName = snapshot.thumbnailFileName ?? existingSnapshot?.thumbnailFileName;
@@ -1180,7 +1271,7 @@ export async function saveProjectSnapshot(
     updatedAt: nextSnapshot.updatedAt,
   };
 
-  await persistProjectRecord(nextRecord);
+  await persistProjectRecord(nextRecord, userId);
 
   return {
     project: {
@@ -1192,8 +1283,8 @@ export async function saveProjectSnapshot(
   };
 }
 
-export async function listProjectLibrary(): Promise<ProjectHandleRecord[]> {
-  const records = await readAllProjectRecords();
+export async function listProjectLibrary(userId: string): Promise<ProjectHandleRecord[]> {
+  const records = await readAllProjectRecords(userId);
   const validProjects: ProjectHandleRecord[] = [];
   const invalidProjectIds: string[] = [];
 
@@ -1213,19 +1304,21 @@ export async function listProjectLibrary(): Promise<ProjectHandleRecord[]> {
     }
   }
 
-  await Promise.all(invalidProjectIds.map((projectId) => removeProjectRecord(projectId)));
+  await Promise.all(invalidProjectIds.map((projectId) => removeProjectRecord(projectId, userId)));
 
   return validProjects;
 }
 
-export async function getStoredProjectRecordCount(): Promise<number> {
-  return (await readAllProjectRecords()).length;
+export async function getStoredProjectRecordCount(userId: string): Promise<number> {
+  return (await readAllProjectRecords(userId)).length;
 }
 
 export async function renameProjectDirectory(
   project: ProjectHandleRecord,
   nextName: string,
+  userId: string,
 ): Promise<ProjectHandleRecord> {
+  await requireStoredProjectOwner(project, userId);
   const sanitizedName = sanitizeDirectoryName(nextName);
 
   if (!sanitizedName) {
@@ -1273,7 +1366,7 @@ export async function renameProjectDirectory(
       projectHandle: nextHandle,
     };
 
-    await persistProjectRecord(nextRecord);
+    await persistProjectRecord(nextRecord, userId);
 
     return {
       ...toProjectLibraryItem(nextRecord),
@@ -1288,9 +1381,11 @@ export async function renameProjectDirectory(
 
 export async function duplicateProjectDirectory(
   project: ProjectHandleRecord,
+  userId: string,
 ): Promise<ProjectHandleRecord> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.parentHandle);
-  const allProjects = await readAllProjectRecords();
+  const allProjects = await readAllProjectRecords(userId);
   const existingNames = new Set(allProjects.map((item) => item.directoryName));
   const nextName = getUniqueCopyName(project.name, existingNames);
   const nextHandle = await project.parentHandle.getDirectoryHandle(nextName, {
@@ -1318,6 +1413,7 @@ export async function duplicateProjectDirectory(
 
     const nextRecord: PersistedProjectRecord = {
       id: copiedSnapshot.id,
+      ownerUserId: userId,
       name: nextName,
       createdAt: copiedSnapshot.createdAt,
       updatedAt: copiedSnapshot.updatedAt,
@@ -1326,7 +1422,7 @@ export async function duplicateProjectDirectory(
       parentHandle: project.parentHandle,
     };
 
-    await persistProjectRecord(nextRecord);
+    await persistProjectRecord(nextRecord, userId);
 
     return {
       ...toProjectLibraryItem(nextRecord),
@@ -1341,16 +1437,20 @@ export async function duplicateProjectDirectory(
 
 export async function deleteProjectDirectory(
   project: ProjectHandleRecord,
+  userId: string,
 ): Promise<void> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.parentHandle);
   await project.parentHandle.removeEntry(project.directoryName, { recursive: true });
-  await removeProjectRecord(project.id);
+  await removeProjectRecord(project.id, userId);
 }
 
 export async function persistGeneratedOutput(
   project: ProjectHandleRecord,
   params: PersistProjectOutputParams,
+  userId: string,
 ): Promise<PersistProjectOutputResult> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle);
   const outputHandle = await project.projectHandle.getDirectoryHandle(OUTPUT_DIRECTORY_NAME, {
     create: true,
@@ -1759,7 +1859,9 @@ function withResolvedImagePreviewUrl(
 export async function hydrateProjectSnapshotPreviewUrls(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
+  userId: string,
 ): Promise<{ snapshot: ProjectSnapshot; previewUrls: string[] }> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle, false);
 
   const manifest = await readOutputHistoryManifest(project.projectHandle);
@@ -1936,7 +2038,9 @@ export function revokeObjectUrls(urls: string[]): void {
 
 export async function readProjectHistory(
   project: ProjectHandleRecord,
+  userId: string,
 ): Promise<ProjectOutputHistoryItem[]> {
+  await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle, false);
   const outputHandle = await project.projectHandle.getDirectoryHandle(OUTPUT_DIRECTORY_NAME, {
     create: true,

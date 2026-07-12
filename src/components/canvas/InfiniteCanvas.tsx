@@ -82,8 +82,11 @@ import {
   CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY,
   CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY,
   readStoredApiSettings,
+  readUserScopedCanvasSetting,
   type StoredApiSettings,
+  runCanvasUserScopedOperation,
   useCanvasStore,
+  writeUserScopedCanvasSetting,
 } from '@/store/canvas-store';
 import {
   createProjectAtParentDirectory,
@@ -5879,12 +5882,12 @@ function clampLightboxPan(
   };
 }
 
-function readStoredCanvasEdgeStyle(): CanvasEdgeStyle {
+function readStoredCanvasEdgeStyle(userId: string): CanvasEdgeStyle {
   if (typeof window === 'undefined') {
     return 'curve';
   }
 
-  return window.localStorage.getItem(CANVAS_EDGE_STYLE_STORAGE_KEY) === 'straight'
+  return readUserScopedCanvasSetting(CANVAS_EDGE_STYLE_STORAGE_KEY, userId) === 'straight'
     ? 'straight'
     : 'curve';
 }
@@ -5898,16 +5901,16 @@ function getServerCanvasEdgeStyleSnapshot(): CanvasEdgeStyle {
   return 'curve';
 }
 
-function useStoredCanvasEdgeStyle(): CanvasEdgeStyle {
+function useStoredCanvasEdgeStyle(userId: string): CanvasEdgeStyle {
   return useSyncExternalStore(
     subscribeToCanvasEdgeStyleChange,
-    readStoredCanvasEdgeStyle,
+    () => readStoredCanvasEdgeStyle(userId),
     getServerCanvasEdgeStyleSnapshot,
   );
 }
 
-function setStoredCanvasEdgeStyle(edgeStyle: CanvasEdgeStyle) {
-  window.localStorage.setItem(CANVAS_EDGE_STYLE_STORAGE_KEY, edgeStyle);
+function setStoredCanvasEdgeStyle(userId: string, edgeStyle: CanvasEdgeStyle) {
+  writeUserScopedCanvasSetting(CANVAS_EDGE_STYLE_STORAGE_KEY, edgeStyle, userId);
   window.dispatchEvent(new Event(CANVAS_EDGE_STYLE_CHANGE_EVENT));
 }
 
@@ -9841,11 +9844,13 @@ function mergeStableReactFlowNodes(
 }
 
 interface InnerCanvasProps {
+  userId: string;
   onBackToLibrary?: () => void;
   onCanvasReady?: () => void;
 }
 
 type CanvasAgentDockProps = {
+  userId: string;
   projectId?: string;
   projectName: string;
   nodeCount: number;
@@ -9880,6 +9885,7 @@ type CanvasAgentDockProps = {
 };
 
 const CanvasAgentDock = memo(function CanvasAgentDock({
+  userId,
   projectId,
   projectName,
   nodeCount,
@@ -9940,6 +9946,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         </button>
       ) : null}
       <CanvasAgentPanel
+        userId={userId}
         open={open}
         projectId={projectId}
         projectName={projectName}
@@ -9963,7 +9970,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
 });
 
 // --- Inner Canvas ---
-function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
+function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
   const projectName = useCanvasStore((s) => s.projectName);
@@ -10108,7 +10115,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     parentHandle: null,
     parentDirectoryLabel: '',
   });
-  const edgeStyle = useStoredCanvasEdgeStyle();
+  const edgeStyle = useStoredCanvasEdgeStyle(userId);
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
     : null;
@@ -10146,8 +10153,8 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   }, [quickReferenceConnect, storeNodes]);
 
   const handleToggleEdgeStyle = useCallback(() => {
-    setStoredCanvasEdgeStyle(edgeStyle === 'straight' ? 'curve' : 'straight');
-  }, [edgeStyle]);
+    setStoredCanvasEdgeStyle(userId, edgeStyle === 'straight' ? 'curve' : 'straight');
+  }, [edgeStyle, userId]);
 
   const handleToggleGridSnap = useCallback(() => {
     setGridSnapEnabled((enabled) => {
@@ -10512,14 +10519,14 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         return;
       }
 
-      mergeUpdateRefreshRestoreViewport(currentProject.id, getViewport());
+      mergeUpdateRefreshRestoreViewport(userId, currentProject.id, getViewport());
     };
 
     window.addEventListener(UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT, handleViewportRequest);
     return () => {
       window.removeEventListener(UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT, handleViewportRequest);
     };
-  }, [currentProject?.id, getViewport]);
+  }, [currentProject?.id, getViewport, userId]);
 
   useEffect(() => {
     if (loading || !currentProject?.id) {
@@ -10530,7 +10537,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       return;
     }
 
-    const restoreState = readUpdateRefreshRestoreState();
+    const restoreState = readUpdateRefreshRestoreState(userId);
     if (
       restoreState?.mode !== 'canvas' ||
       restoreState.projectId !== currentProject.id
@@ -10539,7 +10546,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     }
 
     if (!restoreState.viewport) {
-      clearUpdateRefreshRestoreState();
+      clearUpdateRefreshRestoreState(userId);
       return;
     }
 
@@ -10548,7 +10555,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
         void setViewport(restoreState.viewport!, { duration: 0 });
-        clearUpdateRefreshRestoreState();
+        clearUpdateRefreshRestoreState(userId);
       });
     });
 
@@ -10558,7 +10565,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         window.cancelAnimationFrame(secondFrame);
       }
     };
-  }, [currentProject?.id, loading, setViewport]);
+  }, [currentProject?.id, loading, setViewport, userId]);
 
   const openImageAnnotationMode = useCallback((data: ImageAnnotationOverlayData) => {
     cropPrevViewportRef.current = getViewport();
@@ -14800,23 +14807,26 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   ]);
 
   const persistApiSettings = useCallback((values: StoredApiSettings) => {
-    window.localStorage.setItem(CANVAS_TEXT_API_PROVIDER_STORAGE_KEY, values.textProvider);
-    window.localStorage.setItem(CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY, values.imageProvider);
-    window.localStorage.setItem(CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY, values.textApiKeys.vibe);
-    window.localStorage.setItem(CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY, values.textApiKeys.fucheers);
-    window.localStorage.setItem(CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY, values.textApiKeys.comfly);
-    window.localStorage.setItem(CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY, values.textApiKeys.zhenzhen);
-    window.localStorage.setItem(CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY, values.textApiKeys.runninghub);
-    window.localStorage.setItem(CANVAS_TEXT_GRSAI_API_KEY_STORAGE_KEY, values.textApiKeys.grsai);
-    window.localStorage.setItem(CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY, values.imageApiKeys.vibe);
-    window.localStorage.setItem(CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY, values.imageApiKeys.fucheers);
-    window.localStorage.setItem(CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY, values.imageApiKeys.comfly);
-    window.localStorage.setItem(CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen);
-    window.localStorage.setItem(CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY, values.imageApiKeys.runninghub);
-    window.localStorage.setItem(CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY, values.imageApiKeys.grsai);
-    window.localStorage.setItem(CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY, values.runningHubWorkflowApiKey);
+    const settings: Array<[string, string]> = [
+      [CANVAS_TEXT_API_PROVIDER_STORAGE_KEY, values.textProvider],
+      [CANVAS_IMAGE_API_PROVIDER_STORAGE_KEY, values.imageProvider],
+      [CANVAS_TEXT_VIBE_API_KEY_STORAGE_KEY, values.textApiKeys.vibe],
+      [CANVAS_TEXT_FUCHEERS_API_KEY_STORAGE_KEY, values.textApiKeys.fucheers],
+      [CANVAS_TEXT_COMFLY_API_KEY_STORAGE_KEY, values.textApiKeys.comfly],
+      [CANVAS_TEXT_ZHENZHEN_API_KEY_STORAGE_KEY, values.textApiKeys.zhenzhen],
+      [CANVAS_TEXT_RUNNINGHUB_API_KEY_STORAGE_KEY, values.textApiKeys.runninghub],
+      [CANVAS_TEXT_GRSAI_API_KEY_STORAGE_KEY, values.textApiKeys.grsai],
+      [CANVAS_IMAGE_VIBE_API_KEY_STORAGE_KEY, values.imageApiKeys.vibe],
+      [CANVAS_IMAGE_FUCHEERS_API_KEY_STORAGE_KEY, values.imageApiKeys.fucheers],
+      [CANVAS_IMAGE_COMFLY_API_KEY_STORAGE_KEY, values.imageApiKeys.comfly],
+      [CANVAS_IMAGE_ZHENZHEN_API_KEY_STORAGE_KEY, values.imageApiKeys.zhenzhen],
+      [CANVAS_IMAGE_RUNNINGHUB_API_KEY_STORAGE_KEY, values.imageApiKeys.runninghub],
+      [CANVAS_IMAGE_GRSAI_API_KEY_STORAGE_KEY, values.imageApiKeys.grsai],
+      [CANVAS_RUNNINGHUB_WORKFLOW_API_KEY_STORAGE_KEY, values.runningHubWorkflowApiKey],
+    ];
+    settings.forEach(([key, value]) => writeUserScopedCanvasSetting(key, value, userId));
     setApiSettings(values);
-  }, []);
+  }, [userId]);
 
   const handleSaveApiSettings = useCallback((values: StoredApiSettings) => {
     persistApiSettings(values);
@@ -14963,12 +14973,20 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     setProjectDialogBusy(true);
 
     try {
-      const created = await createProjectAtParentDirectory({
-        parentHandle: createDraft.parentHandle,
-        projectName: createDraft.projectName.trim(),
+      const created = await runCanvasUserScopedOperation({
+        getState: useCanvasStore.getState,
+        run: (activeUserId) => createProjectAtParentDirectory({
+          parentHandle: createDraft.parentHandle!,
+          projectName: createDraft.projectName.trim(),
+          userId: activeUserId,
+        }),
+        commit: (result) => attachProject(result.project, result.snapshot),
       });
 
-      attachProject(created.project, created.snapshot);
+      if (!created) {
+        return;
+      }
+
       setProjectDialogOpen(false);
       setCreateDraft({
         projectName: '',
@@ -15172,6 +15190,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
       {openDirectorNodeId ? (
         <DirectorDeskFullscreen
           nodeId={openDirectorNodeId}
+          userId={userId}
           onClose={() => setOpenDirectorNodeId(null)}
           onSendCapturesToCanvas={(captures) =>
             void handleDirectorDeskCaptures(openDirectorNodeId, captures)
@@ -15265,6 +15284,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
         historyOpen={historyAnchor !== null}
       />
       <CanvasAgentDock
+        userId={userId}
         projectId={currentProject?.id}
         projectName={projectName}
         nodeCount={storeNodes.length}
@@ -15416,10 +15436,11 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
 }
 
 // --- Wrapper ---
-export function InfiniteCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
+export function InfiniteCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
   return (
     <ReactFlowProvider>
       <InnerCanvas
+        userId={userId}
         onBackToLibrary={onBackToLibrary}
         onCanvasReady={onCanvasReady}
       />

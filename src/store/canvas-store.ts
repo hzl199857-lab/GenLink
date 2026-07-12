@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { create } from "zustand";
+import { migrateLegacyStorageValue, userStorageKey } from "@/lib/browser-user-storage";
 
 import {
   buildThreeViewPrompt,
@@ -410,12 +411,38 @@ type StoredImageModelSelection = {
   runningHubChannel?: "official" | "low-cost";
 };
 
-function readStoredValue(storageKey: string): string {
-  if (typeof window === "undefined") {
+function resolveStorageUserId(userId?: string): string | null {
+  return userId?.trim() || useCanvasStore.getState().activeUserId;
+}
+
+function readStoredValue(storageKey: string, userId?: string): string {
+  const resolvedUserId = resolveStorageUserId(userId);
+
+  if (typeof window === "undefined" || !resolvedUserId) {
     return "";
   }
 
-  return window.localStorage.getItem(storageKey)?.trim() ?? "";
+  migrateLegacyStorageValue(resolvedUserId, storageKey, window.localStorage);
+  return window.localStorage.getItem(userStorageKey(resolvedUserId, storageKey))?.trim() ?? "";
+}
+
+export function readUserScopedCanvasSetting(storageKey: string, userId?: string): string {
+  return readStoredValue(storageKey, userId);
+}
+
+export function writeUserScopedCanvasSetting(
+  storageKey: string,
+  value: string,
+  userId?: string,
+): void {
+  const resolvedUserId = resolveStorageUserId(userId);
+
+  if (typeof window === "undefined" || !resolvedUserId) {
+    return;
+  }
+
+  migrateLegacyStorageValue(resolvedUserId, storageKey, window.localStorage);
+  window.localStorage.setItem(userStorageKey(resolvedUserId, storageKey), value);
 }
 
 export function normalizeApiProvider(value?: string): ApiProvider {
@@ -528,18 +555,20 @@ export function persistSelectedModel(params: {
   provider: ApiProvider;
   model: string;
   runningHubChannel?: "official" | "low-cost";
+  userId?: string;
 }): void {
   if (typeof window === "undefined") {
     return;
   }
 
-  window.localStorage.setItem(getApiProviderStorageKey(params.kind), params.provider);
-  window.localStorage.setItem(getModelStorageKey(params.kind), params.model);
+  writeUserScopedCanvasSetting(getApiProviderStorageKey(params.kind), params.provider, params.userId);
+  writeUserScopedCanvasSetting(getModelStorageKey(params.kind), params.model, params.userId);
 
   if (params.kind === "image" && params.provider === "runninghub") {
-    window.localStorage.setItem(
+    writeUserScopedCanvasSetting(
       CANVAS_IMAGE_RUNNINGHUB_CHANNEL_STORAGE_KEY,
       params.runningHubChannel === "low-cost" ? "low-cost" : "official",
+      params.userId,
     );
   }
 }
@@ -4475,6 +4504,9 @@ function appendImageGenerationNodeResults(
 }
 
 export interface CanvasState {
+  activeUserId: string | null;
+  userScopeEpoch: number;
+  setActiveUserId: (userId: string | null) => void;
   projectId: string | null;
   projectName: string;
   projectCreatedAt: string | null;
@@ -4718,7 +4750,153 @@ export interface CanvasState {
   setThreeViewControllerNodeId: (nodeId: string | null) => void;
 }
 
+export class StaleCanvasUserScopeError extends Error {
+  constructor() {
+    super("Canvas user scope is stale");
+    this.name = "StaleCanvasUserScopeError";
+  }
+}
+
+export function isStaleCanvasUserScopeError(error: unknown): error is StaleCanvasUserScopeError {
+  return error instanceof StaleCanvasUserScopeError;
+}
+
+type CanvasUserScopeState = Pick<CanvasState, "activeUserId" | "userScopeEpoch">;
+
+export async function runCanvasUserScopedOperation<T>({
+  getState,
+  run,
+  commit,
+}: {
+  getState: () => CanvasUserScopeState;
+  run: (userId: string) => Promise<T>;
+  commit: (value: T) => void;
+}): Promise<T | null> {
+  const { activeUserId: userId, userScopeEpoch: epoch } = getState();
+
+  if (!userId) {
+    throw new Error("请先登录");
+  }
+
+  const value = await run(userId);
+  const currentState = getState();
+
+  if (currentState.activeUserId !== userId || currentState.userScopeEpoch !== epoch) {
+    return null;
+  }
+
+  commit(value);
+  return value;
+}
+
+type CanvasStateUpdate =
+  | Partial<CanvasState>
+  | ((state: CanvasState) => Partial<CanvasState>);
+
+function captureCanvasUserScope(
+  get: () => CanvasState,
+  set: (update: CanvasStateUpdate) => void,
+) {
+  const { activeUserId: userId, userScopeEpoch: epoch } = get();
+
+  if (!userId) {
+    throw new Error("请先登录");
+  }
+
+  const isCurrent = () => {
+    const state = get();
+    return state.activeUserId === userId && state.userScopeEpoch === epoch;
+  };
+  const assertCurrent = () => {
+    if (!isCurrent()) {
+      throw new StaleCanvasUserScopeError();
+    }
+  };
+
+  return {
+    userId,
+    epoch,
+    isCurrent,
+    assertCurrent,
+    wait: async <T>(promise: Promise<T>, onStale?: (value: T) => void): Promise<T> => {
+      try {
+        const value = await promise;
+
+        if (!isCurrent()) {
+          onStale?.(value);
+          throw new StaleCanvasUserScopeError();
+        }
+
+        return value;
+      } catch (error) {
+        assertCurrent();
+        throw error;
+      }
+    },
+    set: (update: CanvasStateUpdate) => {
+      assertCurrent();
+      set(update);
+    },
+    run: <T>(run: () => T): T => {
+      assertCurrent();
+      return run();
+    },
+  };
+}
+
+function revokeStalePersistedPreview(result: { previewUrl: string }) {
+  revokeObjectUrls([result.previewUrl]);
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
+  activeUserId: null,
+  userScopeEpoch: 0,
+  setActiveUserId: (userId) => {
+    const normalizedUserId = userId?.trim() || null;
+    const state = get();
+
+    if (state.activeUserId === normalizedUserId) {
+      return;
+    }
+
+    if (saveMessageClearTimer !== undefined && typeof window !== "undefined") {
+      window.clearTimeout(saveMessageClearTimer);
+      saveMessageClearTimer = undefined;
+    }
+
+    revokeObjectUrls(state.currentProjectPreviewUrls);
+    set({
+      activeUserId: normalizedUserId,
+      userScopeEpoch: state.userScopeEpoch + 1,
+      projectId: null,
+      projectName: "Untitled",
+      projectCreatedAt: null,
+      currentProject: null,
+      currentProjectThumbnailFileName: undefined,
+      currentProjectPreviewUrls: [],
+      nodes: [],
+      edges: [],
+      groups: [],
+      materialFolders: [],
+      materials: [],
+      loading: false,
+      error: null,
+      dirty: false,
+      lastSavedAt: null,
+      lastSavedSignature: getPersistentProjectSnapshotSignature({
+        name: "Untitled",
+        nodes: [],
+        edges: [],
+        groups: [],
+        materialFolders: [],
+        materials: [],
+      }),
+      saveMessage: null,
+      undoStack: [],
+      redoStack: [],
+      threeViewControllerNodeId: null,
+    });
+  },
   projectId: null,
   projectName: "Untitled",
   projectCreatedAt: null,
@@ -5468,6 +5646,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateTextFromTextNode: async (textNodeId) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const textNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "text" }> =>
@@ -5514,7 +5693,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       `Please produce a fresh variation that differs from previous results. Change the angle, wording, details, or composition. Random seed: ${crypto.randomUUID()}`,
     ].filter(Boolean);
 
-    set((state) => ({
+    scope.set((state) => ({
       error: null,
       dirty: true,
       nodes: state.nodes.map((node) =>
@@ -5545,10 +5724,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           ? "gemini-3.1-pro"
           : textNode.data.model;
       const apiKey = assertStoredApiKey("text", textProvider);
-      const requestVideos = await Promise.all(
+      const requestVideos = await scope.wait(Promise.all(
         connectedVideos.map((video) => normalizeVideoForProcessing(video)),
-      );
-      const response = await fetch("/api/ai/text", {
+      ));
+      const response = await scope.wait(fetch("/api/ai/text", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -5568,14 +5747,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           videos: requestVideos,
           stream: true,
         }),
-      });
+      }));
 
       let streamedText = "";
-      const result = await readTextStreamResponse(response, {
+      const result = await scope.wait(readTextStreamResponse(response, {
         onDelta: (delta) => {
           streamedText += delta;
 
-          set((currentState) => ({
+          scope.set((currentState) => ({
             dirty: true,
             nodes: currentState.nodes.map((node) =>
               node.id === textNodeId && node.type === "text"
@@ -5592,9 +5771,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
           }));
         },
-      });
+      }));
 
-      set((state) => ({
+      scope.set((state) => ({
         error: null,
         dirty: true,
         nodes: setTextNodeStatus(
@@ -5616,9 +5795,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((state) => ({
+      scope.set((state) => ({
         error: message,
         dirty: true,
         nodes: setTextNodeStatus(state.nodes, textNodeId, "error", message),
@@ -5627,6 +5809,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateStoryboardFromStoryboardNode: async (storyboardNodeId) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const storyboardNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
@@ -5669,7 +5852,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Prompt or reference media are required");
     }
 
-    set((state) => ({
+    scope.set((state) => ({
       error: null,
       dirty: true,
       nodes: state.nodes.map((node) =>
@@ -5704,10 +5887,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       let requestImages: Array<{ url: string; fileName?: string }>;
 
       try {
-        requestImages = await normalizeStoryboardReferenceImagesForRequest(
+        requestImages = await scope.wait(normalizeStoryboardReferenceImagesForRequest(
           toStoryboardRequestImages(connectedImages),
-        );
+        ));
       } catch (error) {
+        if (isStaleCanvasUserScopeError(error)) {
+          throw error;
+        }
         throw new Error(
           `分镜参考图处理失败：${getStoryboardGenerationErrorMessage(error)}`,
         );
@@ -5717,14 +5903,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         connectedImages,
         requestImages,
       );
-      const requestVideos = await Promise.all(
+      const requestVideos = await scope.wait(Promise.all(
         connectedVideos.map((video) => normalizeVideoForProcessing(video)),
-      );
+      ));
       const referenceVideos = toStoryboardReferenceVideos(
         connectedVideos,
         requestVideos,
       );
-      const response = await fetch("/api/ai/storyboard", {
+      const response = await scope.wait(fetch("/api/ai/storyboard", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -5743,8 +5929,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             url: video.url,
           })),
         }),
-      });
-      const submitted = await readJsonResponse<
+      }));
+      const submitted = await scope.wait(readJsonResponse<
         | {
             ok: true;
             jobId: string;
@@ -5763,7 +5949,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             error?: string;
           }
         | ApiErrorResponse
-      >(response, "Storyboard generation request failed");
+      >(response, "Storyboard generation request failed"));
 
       if (!response.ok || !("ok" in submitted) || submitted.ok === false) {
         throw new Error("error" in submitted ? submitted.error : "Request failed");
@@ -5775,9 +5961,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       const payload = submitted.status === "completed"
         ? submitted.result
-        : await pollStoryboardGenerationJob(submitted.jobId);
+        : await scope.wait(pollStoryboardGenerationJob(submitted.jobId));
 
-      set((state) => ({
+      scope.set((state) => ({
         error: null,
         dirty: true,
         nodes: state.nodes.map((node) =>
@@ -5801,9 +5987,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = getStoryboardGenerationErrorMessage(error);
 
-      set((state) => ({
+      scope.set((state) => ({
         error: message,
         dirty: true,
         nodes: setStoryboardNodeStatus(state.nodes, storyboardNodeId, "error", message),
@@ -5977,6 +6166,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateImageFromImageGenerationNode: async (imageGenerationNodeId, promptOverride, options) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const imageGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -6041,7 +6231,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Prompt is required");
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6096,8 +6286,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (referenceImages.length > 0) {
         if (shouldUploadReferenceImagesToOss) {
           try {
-            requestImages = await normalizeReferenceImagesViaOss(referenceImages);
+            requestImages = await scope.wait(normalizeReferenceImagesViaOss(referenceImages));
           } catch (error) {
+            if (isStaleCanvasUserScopeError(error)) {
+              throw error;
+            }
             if (
               !(error instanceof Error) ||
               !/oss is not configured/i.test(error.message)
@@ -6105,10 +6298,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               throw error;
             }
 
-            requestImages = await normalizeReferenceImagesForRequest(referenceImages);
+            requestImages = await scope.wait(normalizeReferenceImagesForRequest(referenceImages));
           }
         } else {
-          requestImages = await normalizeReferenceImagesForRequest(referenceImages);
+          requestImages = await scope.wait(normalizeReferenceImagesForRequest(referenceImages));
         }
       }
 
@@ -6209,10 +6402,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       const jobRuns = Array.from({ length: parallelCount }, async () => {
         try {
-          const result = await submitImageGenerationJob({
+          const result = await scope.wait(submitImageGenerationJob({
             ...baseJobParams,
             historyNodeData,
-          });
+          }));
           const generatedAt = nowIso();
           const generationResults: ImageGenerationResultItem[] = result.images.map((image) => ({
             status: "completed" as const,
@@ -6226,7 +6419,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             generatedAt,
           }));
 
-          set((currentState) => ({
+          scope.set((currentState) => ({
             dirty: true,
             nodes: appendImageGenerationNodeResults(
               currentState.nodes,
@@ -6237,13 +6430,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
           return generationResults;
         } catch (error) {
+          if (isStaleCanvasUserScopeError(error)) {
+            throw error;
+          }
           const failureResult: ImageGenerationResultItem = {
             status: "error" as const,
             generatedAt: nowIso(),
             errorMessage: toErrorMessage(error),
           };
 
-          set((currentState) => ({
+          scope.set((currentState) => ({
             dirty: true,
             nodes: appendImageGenerationNodeResults(
               currentState.nodes,
@@ -6257,7 +6453,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       });
 
       const generationResults: ImageGenerationResultItem[] = (
-        await Promise.all(jobRuns)
+        await scope.wait(Promise.all(jobRuns))
       ).flat();
       const primaryResult = generationResults.find(
         (result) => result.status === "completed" && result.imageUrl,
@@ -6298,11 +6494,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               shouldFallbackUploadGeneratedResultToOss(result)
             ) {
               try {
-                hostedImageUrl = await uploadGeneratedResultToOss(
+                hostedImageUrl = await scope.wait(uploadGeneratedResultToOss(
                   result,
                   latestImageGenerationNode.data.title,
-                );
+                ));
               } catch (error) {
+                if (isStaleCanvasUserScopeError(error)) {
+                  throw error;
+                }
                 console.warn(
                   "[GenLink generated image OSS upload failed]",
                   {
@@ -6320,7 +6519,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               ? { ...result, hostedImageUrl }
               : result;
 
-            await get().persistProjectOutput({
+            await scope.wait(get().persistProjectOutput({
               sourceKey: `${imageGenerationNodeId}:${result.generatedAt}:${result.imageUrl}`,
               imageUrl: persistedImageUrl,
               fileName: latestImageGenerationNode.data.title,
@@ -6343,10 +6542,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               height: result.height,
               format: result.format,
               sizeBytes: result.sizeBytes,
-            });
+            }));
 
             if (hostedImageUrl) {
-              set((currentState) => ({
+              scope.set((currentState) => ({
                 dirty: true,
                 nodes: currentState.nodes.map((node) => {
                   if (node.id !== imageGenerationNodeId || node.type !== "image_generation") {
@@ -6377,12 +6576,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
               }));
             }
           } catch (error) {
+            if (isStaleCanvasUserScopeError(error)) {
+              return;
+            }
             get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
           }
         }
       })();
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: primaryResult
           ? null
           : failureMessages[0] || "Image generation failed",
@@ -6419,9 +6621,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         edges: currentState.edges,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: message,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6464,6 +6669,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateVideoFromVideoGenerationNode: async (videoGenerationNodeId, promptOverride) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const videoGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
@@ -6546,10 +6752,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             height: image.height,
           }];
         });
-      const requestImages = await normalizeReferenceImagesViaOss([
+      const requestImages = await scope.wait(normalizeReferenceImagesViaOss([
         ...connectedImages,
         ...inlineImages,
-      ]);
+      ]));
       const inlineVideos = (latestVideoGenerationNode.data.referenceVideos ?? [])
         .map((video) => ({
           url: video.hostedUrl?.trim() || video.url.trim(),
@@ -6579,7 +6785,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("First-last-frame mode requires exactly two images");
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6605,7 +6811,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       const provider = latestVideoGenerationNode.data.provider ?? "comfly";
       const apiKey = assertStoredApiKey("video", provider);
-      const response = await fetch("/api/ai/video", {
+      const response = await scope.wait(fetch("/api/ai/video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -6626,11 +6832,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           videos: requestVideos,
           audio: requestAudio,
         }),
-      });
-      const json = await readJsonResponse<VideoGenerationResponse>(
+      }));
+      const json = await scope.wait(readJsonResponse<VideoGenerationResponse>(
         response,
         "Video generation request failed",
-      );
+      ));
 
       if (!response.ok || !json.ok) {
         throw new Error(json.ok ? "Video generation failed" : json.error);
@@ -6640,7 +6846,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Video generation request did not return a task id");
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6660,7 +6866,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const result = await waitForVideoTaskResult({
+      const result = await scope.wait(waitForVideoTaskResult({
         provider,
         apiKey,
         taskId: json.task.taskId,
@@ -6671,7 +6877,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             return;
           }
 
-          set((currentState) => ({
+          scope.set((currentState) => ({
             dirty: true,
             nodes: currentState.nodes.map((node) =>
               node.id === videoGenerationNodeId && node.type === "video_generation"
@@ -6686,11 +6892,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
           }));
         },
-      });
+      }));
 
       const generatedAt = nowIso();
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6735,12 +6941,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         model: result.model,
         format: "mp4",
       }).catch((error) => {
-        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+        if (isStaleCanvasUserScopeError(error)) {
+          return;
+        }
+        scope.run(() => get().setSaveMessage(toProjectOutputSaveErrorMessage(error)));
       });
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: message,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6762,6 +6974,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateAudioFromAudioGenerationNode: async (audioGenerationNodeId, promptOverride) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const audioGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
@@ -6818,11 +7031,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       const readySourceAudio = isRunningHubVoiceClone && sourceAudio
-        ? await uploadAudioReferenceToOss(sourceAudio)
+        ? await scope.wait(uploadAudioReferenceToOss(sourceAudio))
         : sourceAudio;
 
       if (isRunningHubVoiceClone && readySourceAudio && readySourceAudio !== sourceAudio) {
-        set((currentState) => ({
+        scope.set((currentState) => ({
           error: null,
           dirty: true,
           nodes: currentState.nodes.map((node) =>
@@ -6842,7 +7055,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }));
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6873,7 +7086,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const apiKey = isRunningHubVoiceClone
         ? assertStoredRunningHubWorkflowApiKey()
         : assertStoredApiKey("video", provider);
-      const response = await fetch("/api/ai/audio", {
+      const response = await scope.wait(fetch("/api/ai/audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
@@ -6904,11 +7117,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                 vocalGender: latestAudioGenerationNode.data.vocalGender,
               },
         ),
-      });
-      const json = await readJsonResponse<AudioGenerationResponse>(
+      }));
+      const json = await scope.wait(readJsonResponse<AudioGenerationResponse>(
         response,
         "Audio generation request failed",
-      );
+      ));
 
       if (!response.ok || !json.ok) {
         throw new Error(json.ok ? "Audio generation failed" : json.error);
@@ -6918,7 +7131,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Audio generation request did not return a task id");
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -6938,7 +7151,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const result = await waitForAudioTaskResult({
+      const result = await scope.wait(waitForAudioTaskResult({
         provider,
         apiKey,
         taskId: json.task.taskId,
@@ -6948,7 +7161,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             return;
           }
 
-          set((currentState) => ({
+          scope.set((currentState) => ({
             dirty: true,
             nodes: currentState.nodes.map((node) =>
               node.id === audioGenerationNodeId && node.type === "audio_generation"
@@ -6963,10 +7176,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
           }));
         },
-      });
+      }));
       const generatedAt = nowIso();
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -7019,12 +7232,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         format: result.mimeType ? undefined : "mp3",
         sizeBytes: result.sizeBytes,
       }).catch((error) => {
-        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+        if (isStaleCanvasUserScopeError(error)) {
+          return;
+        }
+        scope.run(() => get().setSaveMessage(toProjectOutputSaveErrorMessage(error)));
       });
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: message,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -7046,6 +7265,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   separateAudioFromNode: async (sourceNodeId) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === sourceNodeId);
 
@@ -7073,7 +7293,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ? sourceNode.data.fileName || sourceNode.data.outputFileName
         : sourceNode.data.generatedOutputFileName || sourceNode.data.generatedAudioTitle;
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node): CanvasNode => {
@@ -7109,7 +7329,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }),
       }));
 
-      const response = await fetch("/api/ai/audio-separation", {
+      const response = await scope.wait(fetch("/api/ai/audio-separation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -7118,11 +7338,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           fileName,
           instanceType: "default",
         }),
-      });
-      const json = await readJsonResponse<AudioSeparationResponse>(
+      }));
+      const json = await scope.wait(readJsonResponse<AudioSeparationResponse>(
         response,
         "Audio separation request failed",
-      );
+      ));
 
       if (!response.ok || !json.ok) {
         throw new Error(json.ok ? "Audio separation failed" : json.error);
@@ -7132,10 +7352,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Audio separation request did not return a task id");
       }
 
-      const result = await waitForAudioSeparationResult({
+      const result = await scope.wait(waitForAudioSeparationResult({
         apiKey,
         taskId: json.task.taskId,
-      });
+      }));
       const rightX = sourceNode.position.x + 420 + 80;
       const generatedAt = nowIso();
       const vocalNodeId = crypto.randomUUID();
@@ -7172,7 +7392,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           status: "idle",
         },
       };
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         error: null,
         dirty: true,
@@ -7235,12 +7455,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           format: result.accompaniment.mimeType ? undefined : "mp3",
         }),
       ]).catch((error) => {
-        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+        if (isStaleCanvasUserScopeError(error)) {
+          return;
+        }
+        scope.run(() => get().setSaveMessage(toProjectOutputSaveErrorMessage(error)));
       });
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: message,
         dirty: true,
         nodes: currentState.nodes.map((node): CanvasNode => {
@@ -7320,6 +7546,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   runVideoUpscaleFromNode: async (videoUpscaleNodeId) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const videoUpscaleNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "video_upscale" }> =>
@@ -7361,7 +7588,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Video upscale requires an upstream video");
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -7384,9 +7611,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const requestVideo = await normalizeVideoForProcessing(sourceVideo);
+      const requestVideo = await scope.wait(normalizeVideoForProcessing(sourceVideo));
       const apiKey = assertStoredRunningHubWorkflowApiKey();
-      const response = await fetch("/api/ai/video-upscale", {
+      const response = await scope.wait(fetch("/api/ai/video-upscale", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -7397,11 +7624,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           targetFps: latestVideoUpscaleNode.data.targetFps || "30",
           instanceType: latestVideoUpscaleNode.data.instanceType || "default",
         }),
-      });
-      const json = await readJsonResponse<VideoUpscaleResponse>(
+      }));
+      const json = await scope.wait(readJsonResponse<VideoUpscaleResponse>(
         response,
         "Video upscale request failed",
-      );
+      ));
 
       if (!response.ok || !json.ok) {
         throw new Error(json.ok ? "Video upscale failed" : json.error);
@@ -7411,7 +7638,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         throw new Error("Video upscale request did not return a task id");
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -7430,7 +7657,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         ),
       }));
 
-      const result = await waitForVideoUpscaleTaskResult({
+      const result = await scope.wait(waitForVideoUpscaleTaskResult({
         apiKey,
         taskId: json.task.taskId,
         onProgress: (progress) => {
@@ -7438,7 +7665,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             return;
           }
 
-          set((currentState) => ({
+          scope.set((currentState) => ({
             dirty: true,
             nodes: currentState.nodes.map((node) =>
               node.id === videoUpscaleNodeId && node.type === "video_upscale"
@@ -7453,13 +7680,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
           }));
         },
-      });
+      }));
       const generatedAt = nowIso();
       const videoUpscaleTitle = normalizeVideoUpscaleTitle(latestVideoUpscaleNode.data.title);
       const outputFileName = `${videoUpscaleTitle}.mp4`;
-      const videoMetadata = await readVideoMetadataFromUrl(result.videoUrl).catch(() => null);
+      const videoMetadata = await scope.wait(readVideoMetadataFromUrl(result.videoUrl).catch(() => null));
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: null,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -7508,12 +7735,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         height: videoMetadata?.height,
         format: "mp4",
       }).catch((error) => {
-        get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
+        if (isStaleCanvasUserScopeError(error)) {
+          return;
+        }
+        scope.run(() => get().setSaveMessage(toProjectOutputSaveErrorMessage(error)));
       });
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         error: message,
         dirty: true,
         nodes: currentState.nodes.map((node) =>
@@ -7544,6 +7777,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   splitImageGenerationNodeToGrid: async (imageGenerationNodeId, dimension) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const imageGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -7564,7 +7798,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     try {
-      const sourceImage = await loadImageElement(sourceUrl);
+      const sourceImage = await scope.wait(loadImageElement(sourceUrl));
       const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
       const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
 
@@ -7670,20 +7904,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         sourceY += tileHeight;
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, ...nextNodes],
         dirty: true,
         error: null,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   cropImageGenerationNode: async (imageGenerationNodeId, cropRect) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -7704,7 +7942,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     try {
-      const sourceImage = await loadImageElement(sourceUrl);
+      const sourceImage = await scope.wait(loadImageElement(sourceUrl));
       const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
       const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
 
@@ -7770,20 +8008,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         },
       };
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, nextNode],
         dirty: true,
         error: null,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   splitUploadedImageNodeToGrid: async (nodeId, dimension) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "uploaded_image" }> =>
@@ -7801,7 +8043,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     try {
-      const sourceImage = await loadImageElement(sourceUrl);
+      const sourceImage = await scope.wait(loadImageElement(sourceUrl));
       const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
       const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
 
@@ -7878,20 +8120,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         sourceY += tileHeight;
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, ...nextNodes],
         dirty: true,
         error: null,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   cropUploadedImageNode: async (nodeId, cropRect) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "uploaded_image" }> =>
@@ -7909,7 +8155,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     try {
-      const sourceImage = await loadImageElement(sourceUrl);
+      const sourceImage = await scope.wait(loadImageElement(sourceUrl));
       const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
       const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
 
@@ -7955,20 +8201,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         },
       };
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, nextNode],
         dirty: true,
         error: null,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   splitImageNodeToGrid: async (nodeId, dimension) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image" }> =>
@@ -7986,7 +8236,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     try {
-      const sourceImage = await loadImageElement(sourceUrl);
+      const sourceImage = await scope.wait(loadImageElement(sourceUrl));
       const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
       const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
 
@@ -8063,20 +8313,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         sourceY += tileHeight;
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, ...nextNodes],
         dirty: true,
         error: null,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   cropImageNode: async (nodeId, cropRect) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image" }> =>
@@ -8094,7 +8348,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
 
     try {
-      const sourceImage = await loadImageElement(sourceUrl);
+      const sourceImage = await scope.wait(loadImageElement(sourceUrl));
       const naturalWidth = sourceImage.naturalWidth || sourceImage.width;
       const naturalHeight = sourceImage.naturalHeight || sourceImage.height;
 
@@ -8140,20 +8394,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         },
       };
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: [...currentState.nodes, nextNode],
         dirty: true,
         error: null,
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   createVideoNodeFromProcessedResult: async (params) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === params.sourceNodeId);
 
@@ -8186,7 +8444,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     try {
       if (state.currentProject) {
-        const persisted = await persistGeneratedOutput(state.currentProject, {
+        const persisted = await scope.wait(persistGeneratedOutput(state.currentProject, {
           sourceKey: `${nextNodeId}:video:${params.resultUrl}`,
           imageUrl: params.resultUrl,
           kind: "video",
@@ -8198,12 +8456,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           height,
           format: "mp4",
           sizeBytes: params.sizeBytes,
-        });
+        }, scope.userId), revokeStalePersistedPreview);
 
         persistedPreviewUrl = persisted.previewUrl;
         persistedFileName = persisted.fileName;
       }
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
     }
 
@@ -8220,7 +8481,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       },
     };
 
-    set((currentState) => ({
+    scope.set((currentState) => ({
       ...createUndoHistoryUpdate(currentState),
       nodes: [...currentState.nodes, nextNode],
       currentProjectPreviewUrls: persistedPreviewUrl
@@ -8234,6 +8495,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createImageNodeFromVideoFrame: async (params) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === params.sourceNodeId);
 
@@ -8273,7 +8535,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     try {
       if (state.currentProject) {
-        const persisted = await persistGeneratedOutput(state.currentProject, {
+        const persisted = await scope.wait(persistGeneratedOutput(state.currentProject, {
           sourceKey: `${nextNodeId}:${generatedAt}:${params.dataUrl}`,
           imageUrl: params.dataUrl,
           fileName: title,
@@ -8284,12 +8546,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           width: params.width,
           height: params.height,
           format: "PNG",
-        });
+        }, scope.userId), revokeStalePersistedPreview);
 
         persistedPreviewUrl = persisted.previewUrl;
         persistedFileName = persisted.fileName;
       }
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
     }
 
@@ -8311,7 +8576,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       },
     };
 
-    set((currentState) => ({
+    scope.set((currentState) => ({
       ...createUndoHistoryUpdate(currentState),
       nodes: [...currentState.nodes, nextNode],
       currentProjectPreviewUrls: persistedPreviewUrl
@@ -8325,6 +8590,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateThreeViewImageFromNode: async (nodeId, cameraAngle) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === nodeId);
 
@@ -8338,7 +8604,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Source image is missing");
     }
 
-    const sourceDimensions = await resolveImageSourceDimensions(source);
+    const sourceDimensions = await scope.wait(resolveImageSourceDimensions(source));
     const sourceWidth = sourceDimensions.width ?? source.width;
     const sourceHeight = sourceDimensions.height ?? source.height;
     const imageProvider: ApiProvider = "runninghub";
@@ -8384,14 +8650,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         status: "generating",
       },
     };
-    set((currentState) => ({
+    scope.set((currentState) => ({
       ...createUndoHistoryUpdate(currentState),
       nodes: [...currentState.nodes, placeholderNode],
       dirty: true,
       error: null,
     }));
     try {
-      const requestImages = await normalizeReferenceImagesForRequest([referenceImage]);
+      const requestImages = await scope.wait(normalizeReferenceImagesForRequest([referenceImage]));
       const apiKey = assertStoredRunningHubWorkflowApiKey();
       const historyNodeData: ImageGenerationNodeData = {
         title: nodeTitle,
@@ -8419,7 +8685,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         cameraAngle,
         status: "idle",
       };
-      const result = await submitImageGenerationJob({
+      const result = await scope.wait(submitImageGenerationJob({
         prompt,
         model,
         size: resolveImageSize("2K", "auto", [referenceImage], model, imageProvider),
@@ -8431,7 +8697,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         apiKey,
         images: requestImages,
         historyNodeData,
-      });
+      }));
       const primaryImage = result.images[0];
 
       if (!primaryImage?.imageUrl) {
@@ -8447,7 +8713,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         const currentProject = get().currentProject;
 
         if (currentProject) {
-          const persisted = await persistGeneratedOutput(currentProject, {
+          const persisted = await scope.wait(persistGeneratedOutput(currentProject, {
             sourceKey: `${newNodeId}:${generatedAt}:${primaryImage.imageUrl}`,
             imageUrl: persistedSourceUrl,
             fileName: nodeTitle,
@@ -8480,15 +8746,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             height: primaryImage.height,
             format: primaryImage.format,
             sizeBytes: primaryImage.sizeBytes,
-          });
+          }, scope.userId), revokeStalePersistedPreview);
           persistedPreviewUrl = persisted.previewUrl;
           persistedFileName = persisted.fileName;
         }
       } catch (error) {
+        if (isStaleCanvasUserScopeError(error)) {
+          throw error;
+        }
         get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
       }
 
-      set((currentState) => {
+      scope.set((currentState) => {
         const nextNodes = currentState.nodes.map((node) => {
           if (node.id !== newNodeId || node.type !== "image") {
             return node;
@@ -8526,9 +8795,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         };
       });
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         ...createUndoHistoryUpdate(currentState),
         nodes: currentState.nodes.map((node) =>
           node.id === newNodeId && node.type === "image"
@@ -8551,6 +8823,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createPanorama360ScreenshotNode: async (nodeId, capture) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "panorama-360" }> =>
@@ -8602,7 +8875,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     try {
       if (state.currentProject) {
-        const persisted = await persistGeneratedOutput(state.currentProject, {
+        const persisted = await scope.wait(persistGeneratedOutput(state.currentProject, {
           sourceKey,
           imageUrl,
           fileName: title,
@@ -8613,7 +8886,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           width: capture.width,
           height: capture.height,
           format: "PNG",
-        });
+        }, scope.userId), revokeStalePersistedPreview);
 
         hostedImageUrl = persisted.previewUrl;
         fileName = persisted.fileName;
@@ -8625,6 +8898,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }));
       }
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
     }
 
@@ -8651,7 +8927,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       },
     };
 
-    set((currentState) => ({
+    scope.set((currentState) => ({
       ...createUndoHistoryUpdate(currentState),
       currentProjectPreviewUrls: hostedImageUrl
         ? [...currentState.currentProjectPreviewUrls, hostedImageUrl]
@@ -8665,6 +8941,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createDirectorDeskCaptureNode: async (nodeId, capture) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "director" }> =>
@@ -8683,14 +8960,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const generatedAt = nowIso();
     const captureNodeId = crypto.randomUUID();
     const title = sanitizeDirectorDeskCaptureTitle(capture.fileName);
-    const dimensions = await resolveImageSourceDimensions({
+    const dimensions = await scope.wait(resolveImageSourceDimensions({
       imageUrl,
       fileName: capture.fileName,
       title,
       alt: title,
       width: capture.width,
       height: capture.height,
-    });
+    }));
     const width = dimensions.width ?? capture.width ?? 1280;
     const height = dimensions.height ?? capture.height ?? 720;
     const display = getDisplayDimensionsForImage(width, height);
@@ -8727,7 +9004,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     try {
       if (state.currentProject) {
-        const persisted = await persistGeneratedOutput(state.currentProject, {
+        const persisted = await scope.wait(persistGeneratedOutput(state.currentProject, {
           sourceKey,
           imageUrl,
           fileName: title,
@@ -8738,7 +9015,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           width,
           height,
           format: "PNG",
-        });
+        }, scope.userId), revokeStalePersistedPreview);
 
         hostedImageUrl = persisted.previewUrl;
         fileName = persisted.fileName;
@@ -8750,10 +9027,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }));
       }
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
     }
 
-    set((currentState) => {
+    scope.set((currentState) => {
       const existingCaptureCount = currentState.nodes.filter(
         (node) =>
           node.type === "image" &&
@@ -8799,6 +9079,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createPanorama360FromImageNode: async (nodeId) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === nodeId);
 
@@ -8812,7 +9093,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("Source image is missing");
     }
 
-    const dimensions = await resolveImageSourceDimensions(source);
+    const dimensions = await scope.wait(resolveImageSourceDimensions(source));
     const sourceWidth = dimensions.width ?? source.width;
     const sourceHeight = dimensions.height ?? source.height;
     const sourceIsPanorama = isCloseToPanorama360AspectRatio(sourceWidth, sourceHeight);
@@ -8841,7 +9122,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }
       : null;
 
-    set((currentState) => ({
+    scope.set((currentState) => ({
       ...createUndoHistoryUpdate(currentState),
       nodes: [...currentState.nodes, panoramaNode],
       edges: edge ? [...currentState.edges, edge] : currentState.edges,
@@ -8879,7 +9160,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }],
         status: "idle",
       };
-      const result = await submitImageGenerationJob({
+      const result = await scope.wait(submitImageGenerationJob({
         prompt: PANORAMA_360_PROMPT,
         model: "gpt-image-2",
         size: resolveImageSize("2K", "2:1", [], "gpt-image-2", imageProvider),
@@ -8889,7 +9170,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         provider: imageProvider,
         apiKey,
         historyNodeData,
-      });
+      }));
       const primaryImage = result.images[0];
 
       if (!primaryImage?.imageUrl) {
@@ -8905,7 +9186,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         const currentProject = get().currentProject;
 
         if (currentProject) {
-          const persisted = await persistGeneratedOutput(currentProject, {
+          const persisted = await scope.wait(persistGeneratedOutput(currentProject, {
             sourceKey: `${panoramaNode.id}:${generatedAt}:${primaryImage.imageUrl}`,
             imageUrl: persistedSourceUrl,
             fileName: "360全景图",
@@ -8939,15 +9220,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             height: primaryImage.height,
             format: primaryImage.format,
             sizeBytes: primaryImage.sizeBytes,
-          });
+          }, scope.userId), revokeStalePersistedPreview);
           persistedPreviewUrl = persisted.previewUrl;
           persistedFileName = persisted.fileName;
         }
       } catch (error) {
+        if (isStaleCanvasUserScopeError(error)) {
+          throw error;
+        }
         get().setSaveMessage(toProjectOutputSaveErrorMessage(error));
       }
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         dirty: true,
         error: null,
         currentProjectPreviewUrls: persistedPreviewUrl
@@ -8987,9 +9271,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         }),
       }));
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
 
-      set((currentState) => ({
+      scope.set((currentState) => ({
         dirty: true,
         error: message,
         nodes: currentState.nodes.map((node) => {
@@ -9720,7 +10007,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   saveProject: async () => {
-    set({ loading: true, error: null });
+    const scope = captureCanvasUserScope(get, set);
+    scope.set({ loading: true, error: null });
 
     try {
       const state = get();
@@ -9728,11 +10016,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (!state.currentProject) {
         throw new Error("No project is currently open.");
       }
+      if (!state.activeUserId) {
+        throw new Error("请先登录");
+      }
 
       const snapshot = createSnapshot(state);
-      const { project: updatedProject, snapshot: savedSnapshot } = await saveProjectSnapshot(state.currentProject, snapshot);
+      const { project: updatedProject, snapshot: savedSnapshot } = await scope.wait(saveProjectSnapshot(
+        state.currentProject,
+        snapshot,
+        scope.userId,
+      ));
 
-      set({
+      scope.set({
         projectId: savedSnapshot.id,
         projectName: savedSnapshot.name,
         projectCreatedAt: savedSnapshot.createdAt,
@@ -9748,24 +10043,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
       return savedSnapshot;
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ loading: false, error: message });
+      scope.set({ loading: false, error: message });
       throw error;
     }
   },
 
   loadProject: async (project) => {
-    set({ loading: true, error: null, saveMessage: null });
+    const scope = captureCanvasUserScope(get, set);
+    scope.set({ loading: true, error: null, saveMessage: null });
 
     try {
-      const previousPreviewUrls = get().currentProjectPreviewUrls;
-      const snapshot = await loadProjectSnapshotFromDisk(project);
-      const hydrated = await hydrateProjectSnapshotPreviewUrls(project, snapshot);
+      const state = get();
+      const previousPreviewUrls = state.currentProjectPreviewUrls;
+      if (!state.activeUserId) {
+        throw new Error("请先登录");
+      }
+      const snapshot = await scope.wait(loadProjectSnapshotFromDisk(project, scope.userId));
+      const hydrated = await scope.wait(
+        hydrateProjectSnapshotPreviewUrls(project, snapshot, scope.userId),
+        (result) => revokeObjectUrls(result.previewUrls),
+      );
       const loadedNodes = normalizeLoadedCanvasNodes(hydrated.snapshot.nodes);
 
       revokeObjectUrls(previousPreviewUrls);
 
-      set({
+      scope.set({
         projectId: hydrated.snapshot.id,
         projectName: hydrated.snapshot.name,
         projectCreatedAt: hydrated.snapshot.createdAt,
@@ -9789,50 +10095,67 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         redoStack: [],
       });
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ loading: false, error: message });
+      scope.set({ loading: false, error: message });
       throw error;
     }
   },
 
   listProjects: async () => {
-    set({ error: null });
+    const scope = captureCanvasUserScope(get, set);
+    scope.set({ error: null });
 
     try {
-      return await listProjectLibrary();
+      return await scope.wait(
+        listProjectLibrary(scope.userId),
+        (projects) => revokeObjectUrls(
+          projects.flatMap((project) => project.thumbnailUrl ? [project.thumbnailUrl] : []),
+        ),
+      );
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ error: message });
+      scope.set({ error: message });
       throw error;
     }
   },
 
   deleteProject: async (project) => {
-    set({ loading: true, error: null });
+    const scope = captureCanvasUserScope(get, set);
+    scope.set({ loading: true, error: null });
 
     try {
-      await deleteProjectDirectory(project);
+      await scope.wait(deleteProjectDirectory(project, scope.userId));
 
       if (get().projectId === project.id) {
         get().newProject();
       } else {
-        set({ loading: false, error: null });
+        scope.set({ loading: false, error: null });
       }
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ loading: false, error: message });
+      scope.set({ loading: false, error: message });
       throw error;
     }
   },
 
   renameProject: async (project, nextName) => {
-    set({ loading: true, error: null });
+    const scope = captureCanvasUserScope(get, set);
+    scope.set({ loading: true, error: null });
 
     try {
-      const renamedProject = await renameProjectDirectory(project, nextName);
+      const renamedProject = await scope.wait(renameProjectDirectory(project, nextName, scope.userId));
 
       if (get().projectId === project.id) {
-        set((state) => ({
+        scope.set((state) => ({
           projectName: renamedProject.name,
           currentProject: renamedProject,
           loading: false,
@@ -9848,27 +10171,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           }),
         }));
       } else {
-        set({ loading: false, error: null });
+        scope.set({ loading: false, error: null });
       }
 
       return renamedProject;
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ loading: false, error: message });
+      scope.set({ loading: false, error: message });
       throw error;
     }
   },
 
   duplicateProject: async (project) => {
-    set({ loading: true, error: null });
+    const scope = captureCanvasUserScope(get, set);
+    scope.set({ loading: true, error: null });
 
     try {
-      const duplicatedProject = await duplicateProjectDirectory(project);
-      set({ loading: false, error: null });
+      const duplicatedProject = await scope.wait(duplicateProjectDirectory(project, scope.userId));
+      scope.set({ loading: false, error: null });
       return duplicatedProject;
     } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
       const message = toErrorMessage(error);
-      set({ loading: false, error: message });
+      scope.set({ loading: false, error: message });
       throw error;
     }
   },
@@ -9906,15 +10236,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   persistProjectOutput: async (params) => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
 
     if (!state.currentProject) {
       return;
     }
 
-    const persisted = await persistGeneratedOutput(state.currentProject, params);
+    if (!state.activeUserId) {
+      throw new Error("请先登录");
+    }
 
-    set((currentState) => {
+    const persisted = await scope.wait(persistGeneratedOutput(
+      state.currentProject,
+      params,
+      scope.userId,
+    ), revokeStalePersistedPreview);
+
+    scope.set((currentState) => {
       if (params.kind === "video") {
         const nodeData = params.nodeData as VideoGenerationNodeData | VideoUpscaleNodeData | VideoNodeData;
         const nodes = currentState.nodes.map((node) => {
@@ -10096,12 +10435,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   listCurrentProjectHistory: async () => {
+    const scope = captureCanvasUserScope(get, set);
     const state = get();
 
     if (!state.currentProject) {
       return [];
     }
 
-    return readProjectHistory(state.currentProject);
+    if (!state.activeUserId) {
+      throw new Error("请先登录");
+    }
+
+    return scope.wait(
+      readProjectHistory(state.currentProject, scope.userId),
+      (items) => revokeObjectUrls(items.map((item) => item.previewUrl)),
+    );
   },
 }));

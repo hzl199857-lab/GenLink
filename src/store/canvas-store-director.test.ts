@@ -52,6 +52,7 @@ require.extensions[".tsx"] = transpileTypeScriptModule;
 const { useCanvasStore } = require("./canvas-store.ts") as typeof import("./canvas-store");
 
 test("creates a canvas image from a director desk capture without removing the director node", async () => {
+  useCanvasStore.getState().setActiveUserId("user-a");
   useCanvasStore.setState({
     nodes: [{
       id: "director-1",

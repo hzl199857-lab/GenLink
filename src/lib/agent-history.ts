@@ -1,4 +1,5 @@
 import type { AgentPanelMessage, AgentTaskAttachment } from "@/types/agent";
+import { migrateLegacyStorageValue, userStorageKey } from "@/lib/browser-user-storage";
 
 const AGENT_HISTORY_STORAGE_KEY = "genlink.canvasAgentThreads.v1";
 const AGENT_DRAFT_STORAGE_KEY = "genlink.canvasAgentDrafts.v1";
@@ -29,12 +30,13 @@ function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
-function readStorage(): AgentThreadStorage {
+function readStorage(userId: string): AgentThreadStorage {
   if (!canUseStorage()) {
     return { version: 1, threads: [] };
   }
 
-  const raw = window.localStorage.getItem(AGENT_HISTORY_STORAGE_KEY);
+  migrateLegacyStorageValue(userId, AGENT_HISTORY_STORAGE_KEY, window.localStorage);
+  const raw = window.localStorage.getItem(userStorageKey(userId, AGENT_HISTORY_STORAGE_KEY));
 
   if (!raw) {
     return { version: 1, threads: [] };
@@ -62,13 +64,17 @@ function readStorage(): AgentThreadStorage {
   }
 }
 
-function writeStorage(storage: AgentThreadStorage): boolean {
+function writeStorage(userId: string, storage: AgentThreadStorage): boolean {
   if (!canUseStorage()) {
     return true;
   }
 
   try {
-    window.localStorage.setItem(AGENT_HISTORY_STORAGE_KEY, JSON.stringify(storage));
+    migrateLegacyStorageValue(userId, AGENT_HISTORY_STORAGE_KEY, window.localStorage);
+    window.localStorage.setItem(
+      userStorageKey(userId, AGENT_HISTORY_STORAGE_KEY),
+      JSON.stringify(storage),
+    );
     return true;
   } catch (error) {
     if (
@@ -82,12 +88,13 @@ function writeStorage(storage: AgentThreadStorage): boolean {
   }
 }
 
-function readDraftStorage(): AgentDraftStorage {
+function readDraftStorage(userId: string): AgentDraftStorage {
   if (!canUseStorage()) {
     return { version: 1, drafts: {} };
   }
 
-  const raw = window.localStorage.getItem(AGENT_DRAFT_STORAGE_KEY);
+  migrateLegacyStorageValue(userId, AGENT_DRAFT_STORAGE_KEY, window.localStorage);
+  const raw = window.localStorage.getItem(userStorageKey(userId, AGENT_DRAFT_STORAGE_KEY));
 
   if (!raw) {
     return { version: 1, drafts: {} };
@@ -113,12 +120,16 @@ function readDraftStorage(): AgentDraftStorage {
   }
 }
 
-function writeDraftStorage(storage: AgentDraftStorage): void {
+function writeDraftStorage(userId: string, storage: AgentDraftStorage): void {
   if (!canUseStorage()) {
     return;
   }
 
-  window.localStorage.setItem(AGENT_DRAFT_STORAGE_KEY, JSON.stringify(storage));
+  migrateLegacyStorageValue(userId, AGENT_DRAFT_STORAGE_KEY, window.localStorage);
+  window.localStorage.setItem(
+    userStorageKey(userId, AGENT_DRAFT_STORAGE_KEY),
+    JSON.stringify(storage),
+  );
 }
 
 function createThreadTitle(messages: AgentPanelMessage[]): string {
@@ -207,32 +218,60 @@ function getProjectId(projectId: string | undefined, projectName: string): strin
   return projectId?.trim() || `local:${projectName.trim() || "Untitled"}`;
 }
 
-export function listAgentThreads(projectId: string | undefined, projectName: string): AgentThreadRecord[] {
+export function createAgentDraftScopeKey(
+  userId: string,
+  projectId: string | undefined,
+  projectName: string,
+): string {
+  return JSON.stringify([userId.trim(), getProjectId(projectId, projectName)]);
+}
+
+export function canSaveAgentDraftForScope(
+  hydratedScopeKey: string | null,
+  currentScopeKey: string,
+): boolean {
+  return hydratedScopeKey === currentScopeKey;
+}
+
+export function listAgentThreads(
+  userId: string,
+  projectId: string | undefined,
+  projectName: string,
+): AgentThreadRecord[] {
   const resolvedProjectId = getProjectId(projectId, projectName);
 
-  return readStorage()
+  return readStorage(userId)
     .threads
     .filter((thread) => thread.projectId === resolvedProjectId)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export function deleteAgentThread(threadId: string): void {
-  const storage = readStorage();
+export function deleteAgentThread(userId: string, threadId: string): void {
+  const storage = readStorage(userId);
 
-  writeStorage({
+  writeStorage(userId, {
     version: 1,
     threads: storage.threads.filter((thread) => thread.id !== threadId),
   });
 }
 
-export function loadAgentDraft(projectId: string | undefined, projectName: string): string {
+export function loadAgentDraft(
+  userId: string,
+  projectId: string | undefined,
+  projectName: string,
+): string {
   const resolvedProjectId = getProjectId(projectId, projectName);
 
-  return readDraftStorage().drafts[resolvedProjectId] ?? "";
+  return readDraftStorage(userId).drafts[resolvedProjectId] ?? "";
 }
 
-export function saveAgentDraft(projectId: string | undefined, projectName: string, draft: string): void {
-  const storage = readDraftStorage();
+export function saveAgentDraft(
+  userId: string,
+  projectId: string | undefined,
+  projectName: string,
+  draft: string,
+): void {
+  const storage = readDraftStorage(userId);
   const resolvedProjectId = getProjectId(projectId, projectName);
   const nextDrafts = { ...storage.drafts };
 
@@ -242,16 +281,17 @@ export function saveAgentDraft(projectId: string | undefined, projectName: strin
     delete nextDrafts[resolvedProjectId];
   }
 
-  writeDraftStorage({ version: 1, drafts: nextDrafts });
+  writeDraftStorage(userId, { version: 1, drafts: nextDrafts });
 }
 
 export function saveAgentThread(params: {
+  userId: string;
   threadId?: string;
   projectId?: string;
   projectName: string;
   messages: AgentPanelMessage[];
 }): AgentThreadRecord {
-  const storage = readStorage();
+  const storage = readStorage(params.userId);
   const now = new Date().toISOString();
   const resolvedProjectId = getProjectId(params.projectId, params.projectName);
   const existing = params.threadId
@@ -279,7 +319,7 @@ export function saveAgentThread(params: {
   let projectThreadLimit = MAX_PROJECT_THREADS;
   let nextPrunedThreads = prunedThreads;
 
-  while (!writeStorage({ version: 1, threads: nextPrunedThreads }) && projectThreadLimit > MIN_PROJECT_THREADS_ON_QUOTA) {
+  while (!writeStorage(params.userId, { version: 1, threads: nextPrunedThreads }) && projectThreadLimit > MIN_PROJECT_THREADS_ON_QUOTA) {
     projectThreadLimit = Math.max(MIN_PROJECT_THREADS_ON_QUOTA, Math.floor(projectThreadLimit / 2));
 
     const nextKeptProjectThreadIds = new Set(

@@ -7,6 +7,7 @@ import {
   readUpdateRefreshAppMode,
   writeUpdateRefreshRestoreState,
 } from "@/lib/update-refresh-restore";
+import { authClient } from "@/lib/auth-client";
 import { useCanvasStore } from "@/store/canvas-store";
 
 const VERSION_ENDPOINT = "/api/app-version";
@@ -32,6 +33,8 @@ async function fetchAppVersion(signal?: AbortSignal) {
 }
 
 export function UpdateAvailableToast() {
+  const session = authClient.useSession();
+  const userId = session.data?.user.id ?? null;
   const currentVersionRef = useRef<string | null>(CURRENT_APP_VERSION);
   const latestVersionRef = useRef<string | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -108,9 +111,14 @@ export function UpdateAvailableToast() {
         await state.saveProject();
       }
 
-      const mode = readUpdateRefreshAppMode();
+      if (!userId || state.activeUserId !== userId) {
+        window.location.reload();
+        return;
+      }
+
+      const mode = readUpdateRefreshAppMode(userId);
       if (mode === "library" || mode === "canvas") {
-        writeUpdateRefreshRestoreState({
+        writeUpdateRefreshRestoreState(userId, {
           mode,
           projectId: state.currentProject?.id,
         });

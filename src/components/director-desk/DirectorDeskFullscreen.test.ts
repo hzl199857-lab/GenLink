@@ -33,6 +33,7 @@ test("renders director desk as a fullscreen feature", () => {
   const html = renderToStaticMarkup(
     React.createElement(DirectorDeskFullscreen, {
       nodeId: "director-1",
+      userId: "user-a",
       onClose: () => {},
     }),
   );

@@ -22,7 +22,7 @@ import {
   revokeObjectUrls,
   type ProjectHandleRecord,
 } from '@/lib/project-storage';
-import { useCanvasStore } from '@/store/canvas-store';
+import { runCanvasUserScopedOperation, useCanvasStore } from '@/store/canvas-store';
 import {
   getProjectDirectoryLabel,
   type CreateProjectDraft,
@@ -36,6 +36,7 @@ import {
 } from '@/lib/project-library-layout';
 
 interface ProjectLibraryProps {
+  userId: string;
   onOpenProject: () => void;
   onBackToHero?: () => void;
   onProjectsReady?: (projectCount: number) => void;
@@ -370,6 +371,7 @@ function CreateProjectDialog({
 }
 
 export function ProjectLibrary({
+  userId,
   onOpenProject,
   onBackToHero,
   onProjectsReady,
@@ -505,7 +507,7 @@ export function ProjectLibrary({
 
     try {
       const parentHandle = await pickProjectParentDirectory();
-      const result = await importProjectsFromParentDirectory(parentHandle);
+      const result = await importProjectsFromParentDirectory(parentHandle, userId);
       await refreshProjects();
 
       if (result.projects.length === 0) {
@@ -542,12 +544,20 @@ export function ProjectLibrary({
     setError(null);
 
     try {
-      const created = await createProjectAtParentDirectory({
-        parentHandle: createDraft.parentHandle,
-        projectName: createDraft.projectName.trim(),
+      const created = await runCanvasUserScopedOperation({
+        getState: useCanvasStore.getState,
+        run: (activeUserId) => createProjectAtParentDirectory({
+          parentHandle: createDraft.parentHandle!,
+          projectName: createDraft.projectName.trim(),
+          userId: activeUserId,
+        }),
+        commit: (result) => attachProject(result.project, result.snapshot),
       });
 
-      attachProject(created.project, created.snapshot);
+      if (!created) {
+        return;
+      }
+
       setCreateDialogOpen(false);
       setCreateDraft({
         projectName: '',

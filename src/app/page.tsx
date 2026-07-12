@@ -18,6 +18,11 @@ import {
   writeUpdateRefreshAppMode,
   type UpdateRefreshRestoreState,
 } from '@/lib/update-refresh-restore';
+import { useCanvasStore } from '@/store/canvas-store';
+import {
+  deactivatePromptLibraryStore,
+  hydratePromptLibraryForUser,
+} from '@/store/prompt-library-store';
 
 type Mode = 'hero' | 'library' | 'canvas';
 
@@ -30,22 +35,22 @@ function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const session = authClient.useSession();
-  const [initialRefreshRestore] = useState<UpdateRefreshRestoreState | null>(() =>
-    readUpdateRefreshRestoreState(),
-  );
-  const startsWithRefreshRestore = initialRefreshRestore !== null;
-  const [mode, setMode] = useState<Mode>(startsWithRefreshRestore ? 'library' : 'hero');
+  const userId = session.data?.user.id ?? null;
+  const [readyUserId, setReadyUserId] = useState<string | null>(null);
+  const [initialRefreshRestore, setInitialRefreshRestore] =
+    useState<UpdateRefreshRestoreState | null>(null);
+  const [mode, setMode] = useState<Mode>('hero');
   const [heroLeaving] = useState(false);
   const [appVisible, setAppVisible] = useState(false);
   const [entryLoader, setEntryLoader] = useState<null | 'library' | 'canvas'>(
-    startsWithRefreshRestore ? 'canvas' : null,
+    null,
   );
   const [entryLoaderLeaving, setEntryLoaderLeaving] = useState(false);
   const [knownProjectCount, setKnownProjectCount] = useState<number | null>(null);
-  const [refreshRestoreLoading, setRefreshRestoreLoading] = useState(startsWithRefreshRestore);
+  const [refreshRestoreLoading, setRefreshRestoreLoading] = useState(false);
   const [pendingRefreshRestore, setPendingRefreshRestore] =
     useState<UpdateRefreshRestoreState | null>(
-      initialRefreshRestore?.mode === 'canvas' ? initialRefreshRestore : null,
+      null,
     );
   const entryLoaderStartedAtRef = useRef<number | null>(null);
   const entryLoaderTimerRef = useRef<number | null>(null);
@@ -98,6 +103,60 @@ function HomePageContent() {
   }, [clearEntryLoaderTimer]);
 
   useEffect(() => {
+    if (session.isPending) {
+      return;
+    }
+
+    if (!userId) {
+      useCanvasStore.getState().setActiveUserId(null);
+      deactivatePromptLibraryStore();
+      const timer = window.setTimeout(() => {
+        setInitialRefreshRestore(null);
+        setPendingRefreshRestore(null);
+        setReadyUserId(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    let cancelled = false;
+    clearEntryLoaderTimer();
+    useCanvasStore.getState().setActiveUserId(userId);
+
+    void (async () => {
+      try {
+        await hydratePromptLibraryForUser(userId);
+      } catch {
+        deactivatePromptLibraryStore();
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      const restoreState = readUpdateRefreshRestoreState(userId);
+      setInitialRefreshRestore(restoreState);
+      setMode(restoreState ? 'library' : 'hero');
+      setAppVisible(false);
+      setKnownProjectCount(null);
+      setEntryLoader(restoreState ? 'canvas' : null);
+      setEntryLoaderLeaving(false);
+      setRefreshRestoreLoading(Boolean(restoreState));
+      setPendingRefreshRestore(
+        restoreState?.mode === 'canvas' ? restoreState : null,
+      );
+      entryLoaderStartedAtRef.current = restoreState ? performance.now() : null;
+      handledAppEntryRef.current = false;
+      refreshRestoreStartedRef.current = false;
+      setReadyUserId(userId);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clearEntryLoaderTimer, session.isPending, userId]);
+
+  useEffect(() => {
+    if (!userId || readyUserId !== userId) return;
     if (mode === 'hero') return;
     if (refreshRestoreLoading) return;
 
@@ -105,13 +164,14 @@ function HomePageContent() {
       requestAnimationFrame(() => setAppVisible(true));
     });
     return () => cancelAnimationFrame(id);
-  }, [mode, refreshRestoreLoading]);
+  }, [mode, readyUserId, refreshRestoreLoading, userId]);
 
   useEffect(() => clearEntryLoaderTimer, [clearEntryLoaderTimer]);
 
   useEffect(() => {
-    writeUpdateRefreshAppMode(mode);
-  }, [mode]);
+    if (!userId || readyUserId !== userId) return;
+    writeUpdateRefreshAppMode(userId, mode);
+  }, [mode, readyUserId, userId]);
 
   useEffect(() => {
     if (searchParams.get('app') !== 'library') {
@@ -125,19 +185,13 @@ function HomePageContent() {
   }, []);
 
   useEffect(() => {
-    if (session.isPending || refreshRestoreStartedRef.current) return;
+    if (session.isPending || !userId || readyUserId !== userId || refreshRestoreStartedRef.current) return;
 
-    const restoreState = initialRefreshRestore ?? readUpdateRefreshRestoreState();
+    const restoreState = initialRefreshRestore ?? readUpdateRefreshRestoreState(userId);
     if (!restoreState) return;
 
     refreshRestoreStartedRef.current = true;
     handledAppEntryRef.current = true;
-
-    if (!session.data?.user) {
-      clearUpdateRefreshRestoreState();
-      router.replace('/login');
-      return;
-    }
 
     const timer = window.setTimeout(() => {
       setRefreshRestoreLoading(true);
@@ -148,7 +202,7 @@ function HomePageContent() {
         setPendingRefreshRestore(restoreState);
       } else {
         setPendingRefreshRestore(null);
-        clearUpdateRefreshRestoreState();
+        clearUpdateRefreshRestoreState(userId);
       }
 
       setAppVisible(false);
@@ -163,10 +217,12 @@ function HomePageContent() {
     session.data?.user,
     session.isPending,
     showAppMode,
+    readyUserId,
+    userId,
   ]);
 
   useEffect(() => {
-    if (session.isPending || handledAppEntryRef.current) return;
+    if (session.isPending || readyUserId !== userId || handledAppEntryRef.current) return;
 
     const decision = getHomeEntryDecision({
       appParam: searchParams.get('app'),
@@ -202,6 +258,8 @@ function HomePageContent() {
     session.isPending,
     showAppMode,
     showEntryLoader,
+    readyUserId,
+    userId,
   ]);
 
   const showCanvasAfterProjectOpen = () => {
@@ -234,6 +292,14 @@ function HomePageContent() {
     router.replace('/');
   };
 
+  if (session.isPending || readyUserId !== userId) {
+    return (
+      <main className="fixed inset-0 flex h-full w-full items-center justify-center bg-[#08090b] text-white">
+        <UniqueLoading variant="squares" size="lg" />
+      </main>
+    );
+  }
+
   return (
     <main className="fixed inset-0 h-full w-full overflow-hidden bg-gl-app text-gl-text-primary">
       {mode === 'hero' && (
@@ -242,6 +308,7 @@ function HomePageContent() {
 
       {mode !== 'hero' && (
         <div
+          key={`workspace:${userId}`}
           className="h-full w-full will-change-[opacity,transform,filter]"
           style={{
             opacity: refreshRestoreLoading ? 0 : appVisible ? 1 : 0,
@@ -258,6 +325,7 @@ function HomePageContent() {
         >
           {mode === 'library' ? (
             <ProjectLibrary
+              userId={userId!}
               onOpenProject={showCanvasAfterProjectOpen}
               onBackToHero={backToHero}
               restoreProjectId={
@@ -274,7 +342,7 @@ function HomePageContent() {
                 setEntryLoaderLeaving(false);
                 setAppVisible(true);
                 setPendingRefreshRestore(null);
-                clearUpdateRefreshRestoreState();
+                clearUpdateRefreshRestoreState(userId!);
               }}
               onProjectsReady={(projectCount) => {
                 setKnownProjectCount(projectCount);
@@ -288,6 +356,7 @@ function HomePageContent() {
             />
           ) : (
             <InfiniteCanvas
+              userId={userId!}
               onBackToLibrary={() => {
                 if (shouldShowProjectLibraryEntryLoader(knownProjectCount)) {
                   showEntryLoader('library');
