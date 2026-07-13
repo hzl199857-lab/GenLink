@@ -133,3 +133,11 @@ model Verification {
 
   @@index([identifier])
 }
+
+model RegistrationCodeRequest {
+  id        String   @id
+  email     String
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+}

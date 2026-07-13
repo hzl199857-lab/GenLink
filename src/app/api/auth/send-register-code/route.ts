@@ -8,6 +8,10 @@ import {
   normalizeEmailForVerification,
 } from "@/lib/email-verification";
 import { prisma } from "@/lib/prisma";
+import {
+  getRegistrationCodeRateLimit,
+  REGISTRATION_CODE_RATE_LIMIT_WINDOW_MS,
+} from "@/lib/registration-code-rate-limit";
 import { createRegisterVerificationEmail } from "@/lib/register-verification-email";
 
 export const runtime = "nodejs";
@@ -43,21 +47,48 @@ export async function POST(request: Request) {
     );
   }
 
+  const now = new Date();
   const code = generateEmailVerificationCode();
   const identifier = createEmailVerificationIdentifier(email);
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
+  const rateLimit = await prisma.$transaction(async (tx) => {
+    const windowStart = new Date(now.getTime() - REGISTRATION_CODE_RATE_LIMIT_WINDOW_MS);
+    await tx.registrationCodeRequest.deleteMany({ where: { createdAt: { lt: windowStart } } });
 
-  await prisma.verification.deleteMany({ where: { identifier } });
-  await prisma.verification.create({
-    data: {
-      id: crypto.randomUUID(),
-      identifier,
-      value: hashEmailVerificationCode(code),
-      expiresAt,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
+    const [latestRequest, recentCount] = await Promise.all([
+      tx.registrationCodeRequest.findFirst({
+        where: { email },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+      tx.registrationCodeRequest.count({ where: { email, createdAt: { gte: windowStart } } }),
+    ]);
+    const limit = getRegistrationCodeRateLimit({
+      recentCount,
+      latestRequestAt: latestRequest?.createdAt ?? null,
+      now,
+    });
+
+    if (limit) return limit;
+
+    await tx.verification.deleteMany({ where: { identifier } });
+    await tx.verification.create({
+      data: {
+        id: crypto.randomUUID(),
+        identifier,
+        value: hashEmailVerificationCode(code),
+        expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    await tx.registrationCodeRequest.create({ data: { id: crypto.randomUUID(), email, createdAt: now } });
+    return null;
   });
+
+  if (rateLimit) {
+    return NextResponse.json({ ok: false, error: "请稍后再试" }, { status: 429 });
+  }
 
   const resendApiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || "GenLink <onboarding@resend.dev>";
