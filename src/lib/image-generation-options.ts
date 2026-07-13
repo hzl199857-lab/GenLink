@@ -10,6 +10,12 @@ export const IMAGE_MODELS = [
   { id: "nano-banana-2", label: "Nano banana pro" },
 ] as const satisfies readonly ImageModelOption[];
 
+export const COMFLY_IMAGE_MODELS = [
+  IMAGE_MODELS[0],
+  { id: "gpt-image-2-all", label: "gpt-image-2-all" },
+  IMAGE_MODELS[1],
+] as const satisfies readonly ImageModelOption[];
+
 export const RUNNING_HUB_IMAGE_MODELS = [
   { id: "gpt-image-2", label: "gpt-image-2" },
   { id: "nano-banana-pro", label: "Nano banana pro" },
@@ -53,7 +59,7 @@ export const API_PROVIDERS: ApiProvider[] = [
 export const IMAGE_MODEL_OPTIONS_BY_PROVIDER: Record<ApiProvider, readonly ImageModelOption[]> = {
   vibe: IMAGE_MODELS,
   fucheers: IMAGE_MODELS,
-  comfly: IMAGE_MODELS,
+  comfly: COMFLY_IMAGE_MODELS,
   zhenzhen: IMAGE_MODELS,
   runninghub: RUNNING_HUB_IMAGE_MODELS,
   grsai: GRSAI_IMAGE_MODELS,

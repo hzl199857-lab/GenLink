@@ -19,6 +19,18 @@ test("keeps transparent image generation stage out of the pointer hitbox", () =>
   assert.match(source, /node-connectable-card[^']*pointer-events-auto/);
 });
 
+test("keeps the real result count visible without a hover tooltip", () => {
+  assert.match(
+    source,
+    /aria-label="展开生成结果"[\s\S]*?<span>\{resultCount\}<\/span>[\s\S]*?<ChevronDown size=\{15\} \/>/,
+  );
+  assert.match(
+    source,
+    /aria-label="收起生成结果"[\s\S]*?<span>\{resultCount\}<\/span>[\s\S]*?<ChevronDown size=\{15\} className="rotate-180" \/>/,
+  );
+  assert.doesNotMatch(source, /<Tooltip label="\?+" side="left" \/>/);
+});
+
 test("keeps image generation toolbar wrapper pass-through outside actual controls", () => {
   assert.match(toolbarSource, /className="pointer-events-none absolute left-1\/2/);
   assert.match(toolbarSource, /className="pointer-events-auto flex items-center/);

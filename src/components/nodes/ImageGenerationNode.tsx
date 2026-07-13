@@ -16,7 +16,6 @@ import {
 } from './ImageGenerationNodeToolbar';
 import { ImageGenerationPromptBar } from './ImageGenerationPromptBar';
 import { SilkRunningPreview } from './SilkRunningPreview';
-import { Tooltip } from '@/components/ui/Tooltip';
 import {
   readStoredSelectedApiProvider,
   type ApiProvider,
@@ -584,11 +583,11 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
             )}
 
             {canOpenGallery ? (
-              <div className="group/tooltip absolute right-3 top-3 z-20">
+              <div className="absolute right-3 top-3 z-20">
                 <button
                   type="button"
                   className="image-card-floating-pill nodrag nopan"
-                  aria-label="??????"
+                  aria-label="展开生成结果"
                   onClick={(event) => {
                     event.stopPropagation();
                     onSelectNode?.();
@@ -598,7 +597,6 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                   <span>{resultCount}</span>
                   <ChevronDown size={15} />
                 </button>
-                <Tooltip label="??????" side="left" />
               </div>
             ) : null}
           </div>
@@ -674,20 +672,19 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
           ) : null}
 
           {galleryOpen && resultCount > 1 ? (
-            <div className="group/tooltip absolute right-3 top-3 z-50">
+            <div className="absolute right-3 top-3 z-50">
               <button
                 type="button"
                 className="image-card-floating-pill nodrag nopan"
-                aria-label="????"
+                aria-label="收起生成结果"
                 onClick={(event) => {
                   event.stopPropagation();
                   setGalleryOpen(false);
                 }}
               >
-                <span>??</span>
+                <span>{resultCount}</span>
                 <ChevronDown size={15} className="rotate-180" />
               </button>
-              <Tooltip label="????" side="left" />
             </div>
           ) : null}
         </div>
