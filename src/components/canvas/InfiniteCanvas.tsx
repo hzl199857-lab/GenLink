@@ -140,6 +140,7 @@ import type {
 import type { ZipImageDownloadItem } from '@/lib/image-zip-download';
 
 import { TextNode } from '../nodes/TextNode';
+import { shouldFocusNodeOnDoubleClick } from '@/lib/canvas/node-double-click';
 import { StoryboardScriptNode } from '../nodes/StoryboardScriptNode';
 import {
   getStoryboardGridCellCount,
@@ -11925,7 +11926,7 @@ function InnerCanvas({ onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
     event: React.MouseEvent,
     node: ReactFlowNode,
   ) => {
-    if (!isNodeCardFocusTarget(event.target)) {
+    if (!shouldFocusNodeOnDoubleClick(node.type) || !isNodeCardFocusTarget(event.target)) {
       return;
     }
 
