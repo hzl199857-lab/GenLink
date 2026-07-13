@@ -676,11 +676,6 @@ async function removeProjectRecord(projectId: string, userId: string): Promise<v
       return;
     }
 
-    if (!existing.ownerUserId) {
-      existing.ownerUserId = userId;
-      await requestAsPromise(store.put(existing));
-    }
-
     assertProjectOwner(existing, userId);
     await requestAsPromise(store.delete(projectId));
   });
@@ -688,19 +683,10 @@ async function removeProjectRecord(projectId: string, userId: string): Promise<v
 
 async function readAllProjectRecords(userId: string): Promise<PersistedProjectRecord[]> {
   assertProjectOwner({ ownerUserId: userId }, userId);
-  return withProjectStore("readwrite", async (store) => {
-    const request = store.getAll();
+  return withProjectStore("readonly", async (store) => {
+    const request = store.index(PROJECT_OWNER_INDEX_NAME).getAll(userId);
     const result = await requestAsPromise(request);
-    const records = (result as PersistedProjectRecord[]) ?? [];
-
-    for (const record of records) {
-      if (!record.ownerUserId) {
-        record.ownerUserId = userId;
-        await requestAsPromise(store.put(record));
-      }
-    }
-
-    return records.filter((record) => record.ownerUserId === userId);
+    return (result as PersistedProjectRecord[]) ?? [];
   });
 }
 
@@ -710,16 +696,11 @@ async function requireStoredProjectOwner(
 ): Promise<void> {
   assertProjectOwner(project, userId);
 
-  await withProjectStore("readwrite", async (store) => {
+  await withProjectStore("readonly", async (store) => {
     const record = await requestAsPromise(store.get(project.id)) as PersistedProjectRecord | undefined;
 
     if (!record) {
       throw new Error(PROJECT_OWNERSHIP_ERROR);
-    }
-
-    if (!record.ownerUserId) {
-      record.ownerUserId = userId;
-      await requestAsPromise(store.put(record));
     }
 
     assertProjectOwner(record, userId);
