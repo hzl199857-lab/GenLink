@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import { VibeApiError } from "@/lib/vibe";
 
@@ -102,6 +103,8 @@ async function readRemoteMedia(sourceUrl: string, requestHeaders?: Headers): Pro
 }
 
 export async function GET(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   const sourceUrl = getSupportedMediaUrl(new URL(request.url).searchParams.get("url"), request);
 
   if (!sourceUrl) {

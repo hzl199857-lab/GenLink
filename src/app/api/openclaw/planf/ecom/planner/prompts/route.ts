@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -529,6 +530,8 @@ function wantsNdjsonStream(request: Request): boolean {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   const requestStartedAt = Date.now();
 
   try {

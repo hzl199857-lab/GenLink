@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import type { CanvasToolAuthContext } from "@/lib/canvas/canvas-tool-gateway";
 import { getGenLinkCanvasTool } from "@/lib/mcp/genlink-canvas-tools";
@@ -25,30 +26,31 @@ function isWriteOrGenerateTool(body: unknown): boolean {
   return tool?.risk === "write" || tool?.risk === "generate";
 }
 
-function buildAuthContext(request: Request, body: unknown): CanvasToolAuthContext {
-  const headerUserId = request.headers.get("x-genlink-user-id")?.trim() || "";
-  const devUserId = process.env.NODE_ENV === "production" ? "" : "dev-user";
-  const userId = headerUserId || devUserId;
+function buildAuthContext(
+  request: Request,
+  body: unknown,
+  userId: string,
+): CanvasToolAuthContext {
   const projectId = readScopedValue(body, "projectId") || request.headers.get("x-genlink-project-id")?.trim() || "";
   const canvasId = readScopedValue(body, "canvasId") || request.headers.get("x-genlink-canvas-id")?.trim() || "default";
-  const authenticated = Boolean(userId);
-
   return {
     userId,
     projectId,
     canvasId,
     permissions: {
-      read: authenticated,
-      write: authenticated,
-      generate: authenticated && request.headers.get("x-genlink-confirm-generate") === "1",
+      read: true,
+      write: true,
+      generate: request.headers.get("x-genlink-confirm-generate") === "1",
     },
   };
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const body = await request.json();
-    const auth = buildAuthContext(request, body);
+    const auth = buildAuthContext(request, body, access.session.user.id);
 
     if (isWriteOrGenerateTool(body) && !auth.userId) {
       return NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -486,6 +487,8 @@ async function readPlannerSystemPrompt(): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   const requestStartedAt = Date.now();
   let clientRequestId = `planner-${requestStartedAt}`;
 

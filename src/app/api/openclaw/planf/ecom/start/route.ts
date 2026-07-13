@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
@@ -116,6 +117,8 @@ function applyRuntimeFormFields(
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const proxied = await proxyOpenClawRequest(request);
 

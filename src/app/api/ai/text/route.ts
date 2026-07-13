@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import {
   VibeApiError,
@@ -40,6 +41,8 @@ function parseProvider(value: unknown): ImageApiProvider | undefined {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as TextRequestBody;
 

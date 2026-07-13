@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import type { CreateVideoClipJobRequest } from "@/lib/video/clip-types";
 
@@ -93,6 +94,8 @@ function normalizeRequestBody(body: CreateVideoClipJobRequest): CreateVideoClipJ
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   if (!WORKER_BASE_URL) {
     return jsonError("MEDIA_WORKER_BASE_URL is not configured", 501);
   }

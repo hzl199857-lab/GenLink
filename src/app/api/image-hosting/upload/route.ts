@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
 import { VibeApiError } from "@/lib/vibe";
@@ -14,6 +15,8 @@ interface UploadImageRequestBody {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const contentTypeHeader = request.headers.get("content-type") ?? "";
 

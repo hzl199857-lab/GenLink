@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import {
   AudioSeparationApiError,
@@ -43,6 +44,8 @@ function parseOptionalString(value: unknown): string | undefined {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as AudioSeparationRequestBody;
     const action = parseAction(body.action);

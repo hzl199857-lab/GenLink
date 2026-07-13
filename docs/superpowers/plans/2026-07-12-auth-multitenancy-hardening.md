@@ -678,13 +678,13 @@ const closedRoutes = new Set([
 
 其余 Route 源码必须包含 `requireAuth(`；closed route 必须只返回 404，不读取 Prisma。
 
-- [ ] **Step 3: 确认覆盖测试失败**
+- [x] **Step 3: 确认覆盖测试失败**
 
 Run: `node --test src/lib/auth-guard.test.ts src/lib/api-auth-policy.test.ts`
 
 Expected: FAIL，当前敏感 routes 尚未调用 guard。
 
-- [ ] **Step 4: 在每个敏感 handler 第一段加入 guard**
+- [x] **Step 4: 在每个敏感 handler 第一段加入 guard**
 
 ```ts
 const access = await requireAuth(request);

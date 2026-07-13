@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { after } from "next/server";
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
 import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
@@ -1446,6 +1447,8 @@ async function tryResumePendingComflyJob(job: {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     await cleanupExpiredJobs();
 

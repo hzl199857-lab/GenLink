@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth-guard';
 
 import { getLocalImageDirectory } from '@/lib/image-host';
 
@@ -22,6 +23,8 @@ interface RouteContext {
 }
 
 export async function GET(_request: Request, context: RouteContext) {
+  const access = await requireAuth(_request);
+  if (!access.ok) return access.response;
   const { fileName } = await context.params;
   const decodedFileName = decodeURIComponent(fileName);
 

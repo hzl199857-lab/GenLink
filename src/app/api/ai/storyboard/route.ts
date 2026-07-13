@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { after, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth-guard';
 
 import { prisma } from '@/lib/prisma';
 import {
@@ -272,6 +273,8 @@ async function runStoryboardJob(
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     await cleanupExpiredJobs();
 

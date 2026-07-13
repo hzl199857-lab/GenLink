@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import {
   createPlanfEcomWorkflowResponse,
@@ -44,6 +45,8 @@ function parseString(value: unknown): string | undefined {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as PlanfEcomWorkflowRequestBody;
     const userRequest = parseString(body.request);

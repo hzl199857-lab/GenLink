@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import { AGENT_RUNTIME_RESPONSE_FORMAT } from "@/lib/agent-response-format";
 import { buildAgentCanvasRulePack, type AgentCanvasRulePack } from "@/lib/agent-canvas-rule-pack";
@@ -945,6 +946,8 @@ async function runAgentLoop(params: {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as AgentRunRequestBody;
     const message = typeof body.message === "string" ? body.message.trim() : "";

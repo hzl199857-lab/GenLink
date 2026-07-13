@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,8 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ jobId: string }> },
 ) {
+  const access = await requireAuth(_request);
+  if (!access.ok) return access.response;
   if (!WORKER_BASE_URL) {
     return jsonError("MEDIA_WORKER_BASE_URL is not configured", 501);
   }

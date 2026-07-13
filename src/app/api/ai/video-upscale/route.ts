@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import {
   getRunningHubVideoUpscaleTaskResult,
@@ -57,6 +58,8 @@ function parseRequiredString(value: unknown, message: string): string {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as VideoUpscaleRequestBody;
     const action = parseAction(body.action);

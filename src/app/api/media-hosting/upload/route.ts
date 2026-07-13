@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth-guard";
 
 import { uploadAliyunMediaObject } from "@/lib/media-host";
 import { VibeApiError } from "@/lib/vibe";
@@ -14,6 +15,8 @@ function isAllowedMediaContentType(contentType: string): boolean {
 }
 
 export async function POST(request: Request) {
+  const access = await requireAuth(request);
+  if (!access.ok) return access.response;
   try {
     const formData = await request.formData();
     const file = formData.get("file");
