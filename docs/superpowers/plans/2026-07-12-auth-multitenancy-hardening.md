@@ -694,7 +694,7 @@ const userId = access.session.user.id;
 
 必须覆盖：`agent/run`、全部 `ai/*`、全部 image/media hosting、`mcp`、全部 OpenClaw、`planf/ecom-workflow`、两个 video clip-jobs route 和本地 image file/read route。OPTIONS 可在 guard 前直接返回 CORS 预检响应。
 
-- [ ] **Step 5: 关闭未使用的数据库 API**
+- [x] **Step 5: 关闭未使用的数据库 API**
 
 三个 closed route 的所有方法统一返回：
 
