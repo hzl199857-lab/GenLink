@@ -26,6 +26,17 @@ test("uses accessible sliders with the supported Midjourney ranges", () => {
   assert.match(panelSource, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
+test("keeps slider dragging local until pointer release and blocks ReactFlow gestures", () => {
+  assert.match(panelSource, /const \[draftSettings, setDraftSettings\] = useState\(value\)/);
+  assert.match(panelSource, /const isSliderDraggingRef = useRef\(false\)/);
+  assert.match(panelSource, /className="[^"]*nodrag[^"]*nopan[^"]*nowheel/);
+  assert.match(panelSource, /onPointerDown=\{handleSliderPointerDown\}/);
+  assert.match(panelSource, /onPointerUp=\{handleSliderPointerUp\}/);
+  assert.match(panelSource, /value=\{draftSettings\.stylize\}/);
+  assert.match(panelSource, /value=\{draftSettings\.weird\}/);
+  assert.match(panelSource, /value=\{draftSettings\.chaos\}/);
+});
+
 test("replaces generic Midjourney controls with ratio and a dedicated settings panel", () => {
   assert.match(promptBarSource, /const isMidjourneyModel = isComflyMidjourneyModel\(provider, model\)/);
   assert.match(promptBarSource, /const settingsLabel = isMidjourneyModel\s*\? modelAspectRatio\s*:/);

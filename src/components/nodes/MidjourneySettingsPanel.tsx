@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import type { MidjourneyGenerationSettings } from '@/types/canvas';
 
 const STYLIZE_PRESETS = [50, 100, 250, 750] as const;
@@ -46,9 +47,66 @@ export function MidjourneySettingsPanel({
   value,
   onChange,
 }: MidjourneySettingsPanelProps) {
+  const [draftSettings, setDraftSettings] = useState(value);
+  const draftSettingsRef = useRef(value);
+  const isSliderDraggingRef = useRef(false);
+
+  useEffect(() => {
+    if (isSliderDraggingRef.current) {
+      return;
+    }
+
+    draftSettingsRef.current = value;
+    setDraftSettings(value);
+  }, [value]);
+
+  const updateDraftSettings = (next: Required<MidjourneyGenerationSettings>) => {
+    draftSettingsRef.current = next;
+    setDraftSettings(next);
+  };
+
+  const commitSettings = (next: Required<MidjourneyGenerationSettings>) => {
+    updateDraftSettings(next);
+    onChange(next);
+  };
+
+  const handleSliderChange = (
+    setting: 'stylize' | 'weird' | 'chaos',
+    nextValue: number,
+  ) => {
+    const next: Required<MidjourneyGenerationSettings> = {
+      ...draftSettingsRef.current,
+      [setting]: nextValue,
+    };
+
+    updateDraftSettings(next);
+    if (!isSliderDraggingRef.current) {
+      onChange(next);
+    }
+  };
+
+  const handleSliderPointerDown = (event: PointerEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+    isSliderDraggingRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleSliderPointerUp = (event: PointerEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+    if (!isSliderDraggingRef.current) {
+      return;
+    }
+
+    isSliderDraggingRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onChange(draftSettingsRef.current);
+  };
+
   return (
     <div
-      className="absolute bottom-full left-0 mb-2 w-[360px] rounded-[8px] border border-white/10 bg-[#121417] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate"
+      className="nodrag nopan nowheel absolute bottom-full left-0 mb-2 w-[360px] rounded-[8px] border border-white/10 bg-[#121417] p-4 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate"
       translate="no"
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
@@ -67,12 +125,12 @@ export function MidjourneySettingsPanel({
         <section>
           <div className="mb-2 flex items-center justify-between">
             <label className="text-[13px] font-medium text-gl-text-secondary">风格化</label>
-            <span className="text-[12px] tabular-nums text-gl-text-primary">{value.stylize}</span>
+            <span className="text-[12px] tabular-nums text-gl-text-primary">{draftSettings.stylize}</span>
           </div>
           <PresetButtons
             options={STYLIZE_PRESETS}
-            selected={value.stylize}
-            onSelect={(stylize) => onChange({ ...value, stylize })}
+            selected={draftSettings.stylize}
+            onSelect={(stylize) => commitSettings({ ...draftSettingsRef.current, stylize })}
           />
           <input
             aria-label="风格化"
@@ -80,21 +138,24 @@ export function MidjourneySettingsPanel({
             min={0}
             max={1000}
             step={10}
-            value={value.stylize}
-            onChange={(event) => onChange({ ...value, stylize: Number(event.target.value) })}
-            className="mt-2 h-1.5 w-full cursor-pointer accent-white"
+            value={draftSettings.stylize}
+            onPointerDown={handleSliderPointerDown}
+            onPointerUp={handleSliderPointerUp}
+            onPointerCancel={handleSliderPointerUp}
+            onChange={(event) => handleSliderChange('stylize', Number(event.target.value))}
+            className="nodrag nopan nowheel mt-2 h-1.5 w-full cursor-pointer accent-white"
           />
         </section>
 
         <section>
           <div className="mb-2 flex items-center justify-between">
             <label className="text-[13px] font-medium text-gl-text-secondary">奇异度</label>
-            <span className="text-[12px] tabular-nums text-gl-text-primary">{value.weird}</span>
+            <span className="text-[12px] tabular-nums text-gl-text-primary">{draftSettings.weird}</span>
           </div>
           <PresetButtons
             options={WEIRD_PRESETS}
-            selected={value.weird}
-            onSelect={(weird) => onChange({ ...value, weird })}
+            selected={draftSettings.weird}
+            onSelect={(weird) => commitSettings({ ...draftSettingsRef.current, weird })}
           />
           <input
             aria-label="奇异度"
@@ -102,21 +163,24 @@ export function MidjourneySettingsPanel({
             min={0}
             max={3000}
             step={50}
-            value={value.weird}
-            onChange={(event) => onChange({ ...value, weird: Number(event.target.value) })}
-            className="mt-2 h-1.5 w-full cursor-pointer accent-white"
+            value={draftSettings.weird}
+            onPointerDown={handleSliderPointerDown}
+            onPointerUp={handleSliderPointerUp}
+            onPointerCancel={handleSliderPointerUp}
+            onChange={(event) => handleSliderChange('weird', Number(event.target.value))}
+            className="nodrag nopan nowheel mt-2 h-1.5 w-full cursor-pointer accent-white"
           />
         </section>
 
         <section>
           <div className="mb-2 flex items-center justify-between">
             <label className="text-[13px] font-medium text-gl-text-secondary">混乱度</label>
-            <span className="text-[12px] tabular-nums text-gl-text-primary">{value.chaos}</span>
+            <span className="text-[12px] tabular-nums text-gl-text-primary">{draftSettings.chaos}</span>
           </div>
           <PresetButtons
             options={CHAOS_PRESETS}
-            selected={value.chaos}
-            onSelect={(chaos) => onChange({ ...value, chaos })}
+            selected={draftSettings.chaos}
+            onSelect={(chaos) => commitSettings({ ...draftSettingsRef.current, chaos })}
           />
           <input
             aria-label="混乱度"
@@ -124,9 +188,12 @@ export function MidjourneySettingsPanel({
             min={0}
             max={100}
             step={1}
-            value={value.chaos}
-            onChange={(event) => onChange({ ...value, chaos: Number(event.target.value) })}
-            className="mt-2 h-1.5 w-full cursor-pointer accent-white"
+            value={draftSettings.chaos}
+            onPointerDown={handleSliderPointerDown}
+            onPointerUp={handleSliderPointerUp}
+            onPointerCancel={handleSliderPointerUp}
+            onChange={(event) => handleSliderChange('chaos', Number(event.target.value))}
+            className="nodrag nopan nowheel mt-2 h-1.5 w-full cursor-pointer accent-white"
           />
         </section>
 
@@ -137,10 +204,10 @@ export function MidjourneySettingsPanel({
               <button
                 key={quality}
                 type="button"
-                onClick={() => onChange({ ...value, quality })}
+                onClick={() => commitSettings({ ...draftSettingsRef.current, quality })}
                 className={[
                   'h-9 rounded-[6px] text-[13px] font-medium transition-colors',
-                  quality === value.quality
+                  quality === draftSettings.quality
                     ? 'bg-white/[0.12] text-gl-text-primary'
                     : 'text-gl-text-muted hover:bg-white/[0.06] hover:text-gl-text-primary',
                 ].join(' ')}
