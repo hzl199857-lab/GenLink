@@ -580,7 +580,7 @@ function isMultipartParseError(error: unknown): boolean {
   );
 }
 
-async function readReferenceImage(
+export async function readReferenceImage(
   image: {
     url: string;
     fileName?: string;

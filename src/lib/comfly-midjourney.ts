@@ -2,6 +2,18 @@ export type MidjourneyQuadrant = 1 | 2 | 3 | 4;
 
 export type MidjourneyUpscaleActions = Record<MidjourneyQuadrant, string>;
 
+export type MidjourneyReferenceImage = { url: string; fileName?: string };
+
+export type MidjourneyTaskState =
+  | { status: "pending" }
+  | { status: "completed"; taskId: string; imageUrl: string; actions?: MidjourneyUpscaleActions };
+
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type ReadImage = (
+  image: MidjourneyReferenceImage,
+  index: number,
+) => Promise<{ bytes: Buffer; mediaType: string }>;
+
 type MidjourneySubmissionResponse = {
   code?: number;
   description?: string;
@@ -12,6 +24,63 @@ type MidjourneyButton = {
   customId?: unknown;
   label?: unknown;
 };
+
+type MidjourneyTaskResponse = {
+  id?: string;
+  status?: string;
+  imageUrl?: string;
+  failReason?: string;
+  description?: string;
+  buttons?: unknown;
+};
+
+export class MidjourneyApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status = 502,
+    public readonly retryable = false,
+    public readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "MidjourneyApiError";
+  }
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+export function getConfiguredComflyMidjourneyBaseUrl(): string {
+  const configured =
+    process.env.COMFLY_MIDJOURNEY_BASE_URL ??
+    process.env.COMFLY_IMAGE_BASE_URL ??
+    process.env.COMFLY_BASE_URL ??
+    "https://ai.comfly.org";
+  return normalizeBaseUrl(configured).replace(/\/v1$/i, "");
+}
+
+function createHeaders(apiKey: string): HeadersInit {
+  return { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+}
+
+async function readJsonResponse(response: Response, fallbackMessage: string): Promise<unknown> {
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch {
+    throw new MidjourneyApiError(fallbackMessage, response.status || 502);
+  }
+  if (!response.ok) {
+    const record = json && typeof json === "object" ? json as Record<string, unknown> : {};
+    const message = typeof record.description === "string"
+      ? record.description
+      : typeof record.message === "string"
+        ? record.message
+        : fallbackMessage;
+    throw new MidjourneyApiError(message, response.status, response.status >= 500, json);
+  }
+  return json;
+}
 
 export function buildMidjourneyPrompt(
   prompt: string,
@@ -36,24 +105,117 @@ export function parseMidjourneySubmission(
   const response = (value ?? {}) as MidjourneySubmissionResponse;
 
   if (response.code === 23) {
-    throw new Error("Midjourney 队列已满，请稍后重试");
+    throw new MidjourneyApiError("Midjourney 队列已满，请稍后重试", 429, true, value);
   }
 
   if (response.code === 24) {
-    throw new Error("提示词包含 Midjourney 不支持的敏感内容");
+    throw new MidjourneyApiError("提示词包含 Midjourney 不支持的敏感内容", 400, false, value);
   }
 
   if (response.code !== 1 && response.code !== 22) {
-    throw new Error(response.description?.trim() || "Midjourney 任务提交失败");
+    throw new MidjourneyApiError(response.description?.trim() || "Midjourney 任务提交失败", 502, false, value);
   }
 
   const taskId = String(response.result ?? "").trim();
 
   if (!taskId) {
-    throw new Error("Midjourney 未返回任务 ID");
+    throw new MidjourneyApiError("Midjourney 未返回任务 ID", 502, false, value);
   }
 
   return { taskId };
+}
+
+export async function submitMidjourneyImagine(params: {
+  prompt: string;
+  aspectRatio?: string;
+  apiKey: string;
+  baseUrl?: string;
+  images?: MidjourneyReferenceImage[];
+  readImage: ReadImage;
+  fetchImpl?: FetchLike;
+}): Promise<{ taskId: string }> {
+  const baseUrl = normalizeBaseUrl(params.baseUrl ?? getConfiguredComflyMidjourneyBaseUrl());
+  const base64Array = await Promise.all((params.images ?? []).map(async (image, index) => {
+    const input = await params.readImage(image, index);
+    return `data:${input.mediaType};base64,${input.bytes.toString("base64")}`;
+  }));
+  const response = await (params.fetchImpl ?? fetch)(`${baseUrl}/mj/submit/imagine`, {
+    method: "POST",
+    headers: createHeaders(params.apiKey),
+    body: JSON.stringify({
+      prompt: buildMidjourneyPrompt(params.prompt, params.aspectRatio),
+      base64Array,
+    }),
+  });
+  return parseMidjourneySubmission(
+    await readJsonResponse(response, "Midjourney Imagine 请求失败"),
+  );
+}
+
+export async function fetchMidjourneyTask(params: {
+  taskId: string;
+  apiKey: string;
+  baseUrl?: string;
+  fetchImpl?: FetchLike;
+}): Promise<MidjourneyTaskState> {
+  const taskId = params.taskId.trim();
+  if (!taskId) throw new MidjourneyApiError("Midjourney 任务 ID 不能为空", 400);
+  const baseUrl = normalizeBaseUrl(params.baseUrl ?? getConfiguredComflyMidjourneyBaseUrl());
+  const response = await (params.fetchImpl ?? fetch)(
+    `${baseUrl}/mj/task/${encodeURIComponent(taskId)}/fetch`,
+    { headers: createHeaders(params.apiKey), cache: "no-store" },
+  );
+  const json = await readJsonResponse(response, "Midjourney 任务查询失败") as MidjourneyTaskResponse;
+  const status = json.status?.trim().toUpperCase();
+  if (status === "NOT_START" || status === "SUBMITTED" || status === "IN_PROGRESS") {
+    return { status: "pending" };
+  }
+  if (status === "MODAL") {
+    throw new MidjourneyApiError("该操作需要 Midjourney 高级交互，当前版本暂不支持", 409, false, json);
+  }
+  if (status === "CANCEL") {
+    throw new MidjourneyApiError("Midjourney 任务已取消", 409, false, json);
+  }
+  if (status === "FAILURE") {
+    throw new MidjourneyApiError(
+      json.failReason?.trim() || json.description?.trim() || "Midjourney 生成失败",
+      502,
+      false,
+      json,
+    );
+  }
+  if (status !== "SUCCESS") {
+    throw new MidjourneyApiError(`Midjourney 返回未知任务状态：${status || "EMPTY"}`, 502, false, json);
+  }
+  const imageUrl = json.imageUrl?.trim();
+  if (!imageUrl) {
+    throw new MidjourneyApiError("Midjourney 任务成功但未返回图片", 502, false, json);
+  }
+  return {
+    status: "completed",
+    taskId: json.id?.trim() || taskId,
+    imageUrl,
+    actions: extractMidjourneyUpscaleActions(json.buttons),
+  };
+}
+
+export async function submitMidjourneyUpscale(params: {
+  taskId: string;
+  quadrant: MidjourneyQuadrant;
+  actions: MidjourneyUpscaleActions;
+  apiKey: string;
+  baseUrl?: string;
+  fetchImpl?: FetchLike;
+}): Promise<{ taskId: string }> {
+  const baseUrl = normalizeBaseUrl(params.baseUrl ?? getConfiguredComflyMidjourneyBaseUrl());
+  const response = await (params.fetchImpl ?? fetch)(`${baseUrl}/mj/submit/action`, {
+    method: "POST",
+    headers: createHeaders(params.apiKey),
+    body: JSON.stringify({ taskId: params.taskId, customId: params.actions[params.quadrant] }),
+  });
+  return parseMidjourneySubmission(
+    await readJsonResponse(response, "Midjourney 高清任务提交失败"),
+  );
 }
 
 export function extractMidjourneyUpscaleActions(
