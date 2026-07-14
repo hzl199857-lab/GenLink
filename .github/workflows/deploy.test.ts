@@ -16,3 +16,12 @@ test("uses the China npm mirror for remote deployment installs", () => {
   assert.match(source, /export npm_config_registry="\$NPM_REGISTRY"/);
   assert.match(source, /export NPM_CONFIG_REGISTRY="\$NPM_REGISTRY"/);
 });
+
+test("forces server image uploads before the production build", () => {
+  const setting = 'upsert_env_var "NEXT_PUBLIC_IMAGE_UPLOAD_MODE" "server"';
+  const settingIndex = source.indexOf(setting);
+  const buildIndex = source.indexOf("npm run build");
+
+  assert.ok(settingIndex >= 0, "missing server image upload policy");
+  assert.ok(buildIndex > settingIndex, "image upload policy must be written before build");
+});
