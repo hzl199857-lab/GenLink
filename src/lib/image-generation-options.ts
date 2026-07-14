@@ -14,6 +14,7 @@ export const COMFLY_IMAGE_MODELS = [
   IMAGE_MODELS[0],
   { id: "gpt-image-2-all", label: "gpt-image-2-all" },
   IMAGE_MODELS[1],
+  { id: "midjourney", label: "Midjourney" },
 ] as const satisfies readonly ImageModelOption[];
 
 export const RUNNING_HUB_IMAGE_MODELS = [
@@ -149,6 +150,13 @@ export function isNanoBananaImageModel(
   }
 
   return model.startsWith("nano-banana");
+}
+
+export function isComflyMidjourneyModel(
+  provider: ApiProvider | undefined,
+  model: string | undefined,
+): boolean {
+  return provider === "comfly" && model?.trim().toLowerCase() === "midjourney";
 }
 
 export function getAspectRatioLayoutForImageModel(

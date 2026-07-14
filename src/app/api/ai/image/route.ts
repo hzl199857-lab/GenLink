@@ -8,17 +8,27 @@ import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
 import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
 import { prisma } from "@/lib/prisma";
 import {
+  fetchMidjourneyTask,
+  MidjourneyApiError,
+  submitMidjourneyImagine,
+  type MidjourneyTaskState,
+} from "@/lib/comfly-midjourney";
+import {
   getComflyImageTaskResult,
   getGrsaiImageTaskResult,
   getRunningHubImageTaskResult,
   submitComflyImageTask,
   submitGrsaiImageTask,
   submitRunningHubImageTask,
+  readReferenceImage,
   VibeApiError,
   generateImage,
   type ImageApiProvider,
 } from "@/lib/vibe";
-import type { ImageGenerationNodeData } from "@/types/canvas";
+import type {
+  ImageGenerationNodeData,
+  MidjourneyImageMetadata,
+} from "@/types/canvas";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -91,6 +101,7 @@ type ImageJobResult = {
     format?: string;
     sizeBytes?: number;
   }>;
+  midjourney?: MidjourneyImageMetadata;
 };
 
 type GenerateImageOutput = Awaited<ReturnType<typeof generateImage>>;
@@ -605,6 +616,7 @@ async function persistImageHistoryItems(
         generatedImageSizeBytes: image.sizeBytes,
         generatedModel: image.model,
         generatedAt: generatedAt.toISOString(),
+        midjourney: result.midjourney,
         generationResults: [{
           status: "completed",
           imageUrl: image.imageUrl,
@@ -904,6 +916,7 @@ function buildImageJobResult(
 ): ImageJobResult {
   return {
     model: result.model,
+    midjourney: result.midjourney,
     images: result.images.map((image) => {
       const imageDataUrl = image.hostedImageUrl?.startsWith("data:")
         ? image.hostedImageUrl
@@ -1178,6 +1191,114 @@ async function submitGrsaiJob(jobId: string, params: ImageJobParams) {
   return { taskId: submission.taskId, model: submission.model };
 }
 
+function requireMidjourneyApiKey(apiKey?: string): string {
+  const resolved = apiKey?.trim();
+
+  if (!resolved) {
+    throw new MidjourneyApiError("请先配置 Comfly API Key", 400);
+  }
+
+  return resolved;
+}
+
+async function submitMidjourneyJob(
+  jobId: string,
+  params: ImageJobParams,
+  aspectRatio?: string,
+) {
+  const submission = await submitMidjourneyImagine({
+    prompt: params.prompt,
+    aspectRatio,
+    apiKey: requireMidjourneyApiKey(params.apiKey),
+    images: params.images,
+    readImage: readReferenceImage,
+  });
+
+  await prisma.imageJob.update({
+    where: { id: jobId },
+    data: {
+      provider: "comfly-midjourney",
+      upstreamTaskId: submission.taskId,
+    },
+  });
+
+  return submission;
+}
+
+function buildMidjourneyGenerateResult(
+  jobId: string,
+  task: Extract<MidjourneyTaskState, { status: "completed" }>,
+  historyNodeData?: ImageGenerationNodeData,
+): GenerateImageOutput {
+  const previous = historyNodeData?.midjourney;
+  const kind = previous?.kind === "upscale" ? "upscale" : "grid";
+  const midjourney: MidjourneyImageMetadata = {
+    kind,
+    jobId,
+    taskId: task.taskId,
+    sourceTaskId: previous?.sourceTaskId,
+    selectedQuadrant: previous?.selectedQuadrant,
+    actions: kind === "grid" ? task.actions : undefined,
+    gridImageUrl: previous?.gridImageUrl ?? (kind === "grid" ? task.imageUrl : undefined),
+    gridHostedImageUrl: previous?.gridHostedImageUrl,
+  };
+
+  return {
+    model: "midjourney",
+    midjourney,
+    images: [
+      {
+        imageUrl: task.imageUrl,
+        model: "midjourney",
+        width: 1024,
+        height: 1024,
+      },
+    ],
+  };
+}
+
+async function pollMidjourneyImageJob(
+  jobId: string,
+  params: ImageJobParams,
+  taskId: string,
+  historyNodeData?: ImageGenerationNodeData,
+) {
+  try {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < COMFLY_IMAGE_JOB_TIMEOUT_MS) {
+      const task = await fetchMidjourneyTask({
+        taskId,
+        apiKey: requireMidjourneyApiKey(params.apiKey),
+      });
+
+      if (task.status === "completed") {
+        await completeImageJob(
+          jobId,
+          buildMidjourneyGenerateResult(jobId, task, historyNodeData),
+          { cacheRemoteBeforeComplete: true },
+        );
+        return;
+      }
+
+      await sleep(COMFLY_IMAGE_JOB_POLL_INTERVAL_MS);
+    }
+
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: { status: "error", error: "Midjourney 图片生成超时" },
+    });
+  } catch (error) {
+    await prisma.imageJob.updateMany({
+      where: { id: jobId, result: null },
+      data: {
+        status: "error",
+        error: error instanceof Error ? error.message : "Midjourney 图片生成失败",
+      },
+    });
+  }
+}
+
 async function pollComflyImageJob(
   jobId: string,
   params: ImageJobParams,
@@ -1372,7 +1493,8 @@ async function tryResumePendingComflyJob(job: {
     job.provider !== "comfly" &&
     job.provider !== "zhenzhen" &&
     job.provider !== "runninghub" &&
-    job.provider !== "grsai"
+    job.provider !== "grsai" &&
+    job.provider !== "comfly-midjourney"
   ) {
     return { status: "pending" };
   }
@@ -1384,6 +1506,26 @@ async function tryResumePendingComflyJob(job: {
   try {
     const historyNodeData = parseImageJobHistoryNodeData(job.historyNodeData);
     const size = resolveImageJobSizeFromHistory(historyNodeData);
+
+    if (job.provider === "comfly-midjourney") {
+      const task = await fetchMidjourneyTask({
+        taskId: job.upstreamTaskId,
+        apiKey,
+      });
+
+      if (task.status === "pending") {
+        return { status: "pending" };
+      }
+
+      const result = await completeImageJob(
+        job.id,
+        buildMidjourneyGenerateResult(job.id, task, historyNodeData),
+        { cacheRemoteBeforeComplete: true },
+      );
+
+      return { status: "completed", result };
+    }
+
     const task =
       job.provider === "runninghub"
         ? await getRunningHubImageTaskResult({
@@ -1534,8 +1676,23 @@ export async function POST(request: Request) {
     }
 
     const isGeminiModel = jobParams.model && /^gemini-/i.test(jobParams.model);
+    const isMidjourney = provider === "comfly" && jobParams.model?.trim().toLowerCase() === "midjourney";
 
-    if (provider === "runninghub") {
+    if (isMidjourney) {
+      const submission = await submitMidjourneyJob(
+        jobId,
+        jobParams,
+        historyNodeData?.aspectRatio,
+      );
+      after(async () => {
+        await pollMidjourneyImageJob(
+          jobId,
+          jobParams,
+          submission.taskId,
+          historyNodeData,
+        );
+      });
+    } else if (provider === "runninghub") {
       const submission = await submitRunningHubJob(jobId, jobParams);
       after(async () => {
         await pollRunningHubImageJob(
@@ -1603,6 +1760,13 @@ export async function POST(request: Request) {
       status: "pending" satisfies ImageJobStatus,
     });
   } catch (error) {
+    if (error instanceof MidjourneyApiError) {
+      return NextResponse.json(
+        { ok: false, error: error.message, retryable: error.retryable },
+        { status: error.status },
+      );
+    }
+
     if (error instanceof VibeApiError) {
       return NextResponse.json(
         { ok: false, error: error.message },
@@ -1692,7 +1856,8 @@ export async function GET(request: Request) {
       job.provider !== "comfly" &&
       job.provider !== "zhenzhen" &&
       job.provider !== "runninghub" &&
-      job.provider !== "grsai"
+      job.provider !== "grsai" &&
+      job.provider !== "comfly-midjourney"
     ) {
       const errorMsg = "Image generation timed out (server may have restarted)";
       await prisma.imageJob.updateMany({
@@ -1745,7 +1910,8 @@ export async function GET(request: Request) {
       (job.provider === "comfly" ||
         job.provider === "zhenzhen" ||
         job.provider === "runninghub" ||
-        job.provider === "grsai") &&
+        job.provider === "grsai" ||
+        job.provider === "comfly-midjourney") &&
       job.upstreamTaskId
     ) {
       const resumed = await tryResumePendingComflyJob(job, apiKey);

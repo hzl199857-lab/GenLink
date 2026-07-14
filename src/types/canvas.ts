@@ -159,6 +159,23 @@ export interface ImageGenerationResultItem {
   errorMessage?: string;
 }
 
+export type MidjourneyQuadrant = 1 | 2 | 3 | 4;
+
+export type MidjourneyUpscaleActions = Record<MidjourneyQuadrant, string>;
+
+export interface MidjourneyImageMetadata {
+  kind: "grid" | "upscale";
+  jobId: string;
+  taskId: string;
+  sourceTaskId?: string;
+  selectedQuadrant?: MidjourneyQuadrant;
+  actions?: MidjourneyUpscaleActions;
+  gridImageUrl?: string;
+  gridHostedImageUrl?: string;
+  pendingQuadrant?: MidjourneyQuadrant;
+  pendingJobId?: string;
+}
+
 export interface ImageAnnotation {
   id: string;
   kind?: "text" | "rect" | "path" | "number";
@@ -231,6 +248,7 @@ export interface ImageGenerationNodeData {
   generatedImageSizeBytes?: number;
   generatedAt?: string;
   generationResults?: ImageGenerationResultItem[];
+  midjourney?: MidjourneyImageMetadata;
   annotations?: ImageAnnotation[];
   status?: "idle" | "generating" | "error";
   errorMessage?: string;

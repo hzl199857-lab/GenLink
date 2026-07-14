@@ -43,6 +43,8 @@ import type {
   ImageNodeData,
   MaterialLibraryFolder,
   MaterialLibraryItem,
+  MidjourneyImageMetadata,
+  MidjourneyQuadrant,
   NodeGroup,
   NodeType,
   Panorama360NodeData,
@@ -76,6 +78,11 @@ import {
   uploadImageAsset,
   uploadReferenceImageBlobToOss,
 } from "@/lib/browser-oss-upload";
+import {
+  applyMidjourneyUpscaleResult,
+  failMidjourneyUpscale,
+  startMidjourneyUpscale,
+} from "@/lib/midjourney-image-state";
 
 type ApiErrorResponse = {
   ok: false;
@@ -110,6 +117,7 @@ type ImageJobPollResponse =
           format?: string;
           sizeBytes?: number;
         }>;
+        midjourney?: MidjourneyImageMetadata;
       };
     };
 
@@ -292,6 +300,7 @@ type ImageGenerationRunResult = {
     format?: string;
     sizeBytes?: number;
   }>;
+  midjourney?: MidjourneyImageMetadata;
 };
 
 type SplitGridDimension = 2 | 3 | 5;
@@ -3396,6 +3405,35 @@ async function submitImageGenerationJob(params: {
   return pollImageGenerationJob(json.jobId, params.apiKey);
 }
 
+async function submitMidjourneyUpscaleJob(params: {
+  jobId: string;
+  quadrant: MidjourneyQuadrant;
+  apiKey: string;
+  onSubmitted?: (jobId: string) => void;
+}): Promise<ImageGenerationRunResult> {
+  const response = await fetch("/api/ai/image/midjourney-upscale", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const json = await readJsonResponse<
+    | { ok: true; jobId: string; status: "pending" }
+    | { ok: true; jobId: string; status: "completed"; result: ImageGenerationRunResult }
+    | ApiErrorResponse
+  >(response, "Midjourney 高清任务提交失败");
+
+  if (!response.ok || !json.ok) {
+    throw new Error("error" in json ? json.error : "Midjourney 高清任务提交失败");
+  }
+
+  if (json.status === "completed") {
+    return json.result;
+  }
+
+  params.onSubmitted?.(json.jobId);
+  return pollImageGenerationJob(json.jobId, params.apiKey);
+}
+
 function resolveImageApiQuality(detail?: string): "low" | "medium" | "high" {
   if (detail === "low" || detail === "high") {
     return detail;
@@ -4535,6 +4573,10 @@ export interface CanvasState {
     imageGenerationNodeId: string,
     promptOverride?: string,
     options?: ImageGenerationRunOptions,
+  ) => Promise<void>;
+  upscaleMidjourneyGridImage: (
+    imageGenerationNodeId: string,
+    quadrant: MidjourneyQuadrant,
   ) => Promise<void>;
   generateVideoFromVideoGenerationNode: (
     videoGenerationNodeId: string,
@@ -6213,6 +6255,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                   generatedModel: undefined,
                   generatedAt: undefined,
                   generationResults: undefined,
+                  midjourney: undefined,
                   generationStatus: "running",
                   generationErrorCode: undefined,
                   generationErrorMessage: undefined,
@@ -6360,6 +6403,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         generatedModel: undefined,
         generatedAt: undefined,
         generationResults: undefined,
+        midjourney: undefined,
         status: "idle",
         errorMessage: undefined,
       };
@@ -6392,7 +6436,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
           }));
 
-          return generationResults;
+          return { results: generationResults, midjourney: result.midjourney };
         } catch (error) {
           if (isStaleCanvasUserScopeError(error)) {
             throw error;
@@ -6412,13 +6456,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ),
           }));
 
-          return [failureResult];
+          return { results: [failureResult], midjourney: undefined };
         }
       });
 
-      const generationResults: ImageGenerationResultItem[] = (
-        await scope.wait(Promise.all(jobRuns))
-      ).flat();
+      const jobRunResults = await scope.wait(Promise.all(jobRuns));
+      const generationResults: ImageGenerationResultItem[] = jobRunResults.flatMap(
+        (result) => result.results,
+      );
+      const midjourneyMetadata = jobRunResults.find(
+        (result) => result.midjourney,
+      )?.midjourney;
       const primaryResult = generationResults.find(
         (result) => result.status === "completed" && result.imageUrl,
       );
@@ -6573,6 +6621,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
                         : "Image generation failed",
                   generationRetryable: primaryResult ? undefined : true,
                   generationUpdatedAt: nowIso(),
+                  midjourney: midjourneyMetadata
+                    ? {
+                        ...midjourneyMetadata,
+                        gridImageUrl:
+                          midjourneyMetadata.gridImageUrl ?? primaryResult?.imageUrl,
+                        gridHostedImageUrl:
+                          midjourneyMetadata.gridHostedImageUrl ?? primaryResult?.hostedImageUrl,
+                      }
+                    : node.data.midjourney,
                   status: primaryResult ? "idle" : "error",
                   errorMessage:
                     failureMessages.length > 0
@@ -6629,6 +6686,116 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }));
     } finally {
       inFlightImageGenerationNodeIds.delete(imageGenerationNodeId);
+    }
+  },
+
+  upscaleMidjourneyGridImage: async (imageGenerationNodeId, quadrant) => {
+    const scope = captureCanvasUserScope(get, set);
+    const node = get().nodes.find(
+      (candidate): candidate is Extract<CanvasNode, { type: "image_generation" }> =>
+        candidate.id === imageGenerationNodeId && candidate.type === "image_generation",
+    );
+
+    if (!node) {
+      throw new Error("图片生成节点不存在");
+    }
+
+    if (node.data.status === "generating") {
+      return;
+    }
+
+    const gridJobId = node.data.midjourney?.jobId;
+
+    if (!gridJobId) {
+      throw new Error("Midjourney 四宫格任务信息缺失");
+    }
+
+    const apiKey = assertStoredApiKey("image", "comfly");
+
+    scope.set((currentState) => ({
+      dirty: true,
+      nodes: currentState.nodes.map((candidate) =>
+        candidate.id === imageGenerationNodeId && candidate.type === "image_generation"
+          ? { ...candidate, data: startMidjourneyUpscale(candidate.data, quadrant) }
+          : candidate,
+      ),
+    }));
+
+    try {
+      const result = await scope.wait(submitMidjourneyUpscaleJob({
+        jobId: gridJobId,
+        quadrant,
+        apiKey,
+        onSubmitted: (pendingJobId) => {
+          scope.set((currentState) => ({
+            dirty: true,
+            nodes: currentState.nodes.map((candidate) =>
+              candidate.id === imageGenerationNodeId && candidate.type === "image_generation"
+                ? {
+                    ...candidate,
+                    data: startMidjourneyUpscale(candidate.data, quadrant, pendingJobId),
+                  }
+                : candidate,
+            ),
+          }));
+        },
+      }));
+      const generatedAt = nowIso();
+
+      scope.set((currentState) => ({
+        dirty: true,
+        nodes: currentState.nodes.map((candidate) =>
+          candidate.id === imageGenerationNodeId && candidate.type === "image_generation"
+            ? {
+                ...candidate,
+                data: applyMidjourneyUpscaleResult(candidate.data, result, generatedAt),
+              }
+            : candidate,
+        ),
+      }));
+
+      const image = result.images[0];
+
+      if (image) {
+        await scope.wait(get().persistProjectOutput({
+          sourceKey: `${imageGenerationNodeId}:${generatedAt}:${image.imageUrl}`,
+          imageUrl: image.hostedImageUrl || image.imageUrl,
+          fileName: node.data.title,
+          generatedAt,
+          nodeData: {
+            ...node.data,
+            generatedImageUrl: image.imageUrl,
+            generatedHostedImageUrl: image.hostedImageUrl,
+            generatedImageWidth: image.width,
+            generatedImageHeight: image.height,
+            generatedImageFormat: image.format,
+            generatedImageSizeBytes: image.sizeBytes,
+            generatedModel: image.model,
+            generatedAt,
+            midjourney: result.midjourney,
+          },
+          title: node.data.title,
+          model: image.model,
+          width: image.width,
+          height: image.height,
+          format: image.format,
+          sizeBytes: image.sizeBytes,
+        }));
+      }
+    } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
+      const message = toErrorMessage(error);
+      scope.set((currentState) => ({
+        error: message,
+        dirty: true,
+        nodes: currentState.nodes.map((candidate) =>
+          candidate.id === imageGenerationNodeId && candidate.type === "image_generation"
+            ? { ...candidate, data: failMidjourneyUpscale(candidate.data, message) }
+            : candidate,
+        ),
+      }));
     }
   },
 
