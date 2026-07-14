@@ -218,6 +218,46 @@ export async function submitMidjourneyUpscale(params: {
   );
 }
 
+export function parseMidjourneyUpscaleRequest(value: unknown): {
+  jobId: string;
+  quadrant: MidjourneyQuadrant;
+  apiKey?: string;
+} {
+  if (!value || typeof value !== "object") {
+    throw new MidjourneyApiError("Midjourney 高清请求格式不正确", 400);
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (Object.prototype.hasOwnProperty.call(record, "customId")) {
+    throw new MidjourneyApiError("不支持由客户端提交 Midjourney customId", 400);
+  }
+
+  const jobId = typeof record.jobId === "string" ? record.jobId.trim() : "";
+  const quadrant = record.quadrant;
+
+  if (!jobId) {
+    throw new MidjourneyApiError("Midjourney 原始任务 ID 不能为空", 400);
+  }
+
+  if (
+    typeof quadrant !== "number" ||
+    !Number.isInteger(quadrant) ||
+    quadrant < 1 ||
+    quadrant > 4
+  ) {
+    throw new MidjourneyApiError("Midjourney 图片分区必须是 1 到 4", 400);
+  }
+
+  const apiKey = typeof record.apiKey === "string" ? record.apiKey.trim() : "";
+
+  return {
+    jobId,
+    quadrant: quadrant as MidjourneyQuadrant,
+    ...(apiKey ? { apiKey } : {}),
+  };
+}
+
 export function extractMidjourneyUpscaleActions(
   value: unknown,
 ): MidjourneyUpscaleActions | undefined {

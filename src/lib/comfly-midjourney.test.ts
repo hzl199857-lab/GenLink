@@ -28,6 +28,7 @@ const {
   extractMidjourneyUpscaleActions,
   fetchMidjourneyTask,
   parseMidjourneySubmission,
+  parseMidjourneyUpscaleRequest,
   submitMidjourneyImagine,
   submitMidjourneyUpscale,
 } = require("./comfly-midjourney.ts") as typeof import("./comfly-midjourney");
@@ -211,4 +212,23 @@ test("submits the stored action for the selected quadrant", async () => {
     url: "https://example.com/mj/submit/action",
     body: { taskId: "source-task", customId: "two" },
   });
+});
+
+test("accepts only a job ID and quadrant 1-4 for upscale requests", () => {
+  assert.deepEqual(
+    parseMidjourneyUpscaleRequest({ jobId: "job-1", quadrant: 3 }),
+    { jobId: "job-1", quadrant: 3 },
+  );
+  assert.throws(
+    () => parseMidjourneyUpscaleRequest({ jobId: "job-1", quadrant: 5 }),
+    /1 到 4/,
+  );
+  assert.throws(
+    () => parseMidjourneyUpscaleRequest({
+      jobId: "job-1",
+      quadrant: 2,
+      customId: "free-form",
+    }),
+    /customId/,
+  );
 });
