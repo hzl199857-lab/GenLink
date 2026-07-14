@@ -7,6 +7,7 @@ import {
   getLocalImageDirectory,
   getLocalImageFileNameFromUrl,
 } from "@/lib/local-image-storage";
+import type { MidjourneyImageMetadata } from "@/types/canvas";
 
 // GenLink Vibe API client for server-side route handlers and actions only.
 
@@ -243,6 +244,7 @@ export interface GenerateImageResultItem {
 export interface GenerateImageResult {
   images: GenerateImageResultItem[];
   model: string;
+  midjourney?: MidjourneyImageMetadata;
 }
 
 export interface GenerateImageTaskResult {
