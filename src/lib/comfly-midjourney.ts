@@ -51,11 +51,12 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 export function getConfiguredComflyMidjourneyBaseUrl(): string {
-  const configured =
-    process.env.COMFLY_MIDJOURNEY_BASE_URL ??
-    process.env.COMFLY_IMAGE_BASE_URL ??
-    process.env.COMFLY_BASE_URL ??
-    "https://ai.comfly.org";
+  const configured = [
+    process.env.COMFLY_MIDJOURNEY_BASE_URL,
+    process.env.COMFLY_IMAGE_BASE_URL,
+    process.env.COMFLY_BASE_URL,
+    "https://ai.comfly.org",
+  ].find((value) => value?.trim())!;
   return normalizeBaseUrl(configured).replace(/\/v1$/i, "");
 }
 

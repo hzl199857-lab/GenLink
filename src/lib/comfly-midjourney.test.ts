@@ -27,6 +27,7 @@ const {
   buildMidjourneyPrompt,
   extractMidjourneyUpscaleActions,
   fetchMidjourneyTask,
+  getConfiguredComflyMidjourneyBaseUrl,
   parseMidjourneySubmission,
   parseMidjourneyUpscaleRequest,
   submitMidjourneyImagine,
@@ -231,4 +232,28 @@ test("accepts only a job ID and quadrant 1-4 for upscale requests", () => {
     }),
     /customId/,
   );
+});
+
+test("ignores empty configured base URLs", () => {
+  const previous = {
+    midjourney: process.env.COMFLY_MIDJOURNEY_BASE_URL,
+    image: process.env.COMFLY_IMAGE_BASE_URL,
+    base: process.env.COMFLY_BASE_URL,
+  };
+  process.env.COMFLY_MIDJOURNEY_BASE_URL = "";
+  process.env.COMFLY_IMAGE_BASE_URL = "";
+  process.env.COMFLY_BASE_URL = "https://ai.comfly.org/v1";
+
+  try {
+    assert.equal(getConfiguredComflyMidjourneyBaseUrl(), "https://ai.comfly.org");
+  } finally {
+    for (const [key, value] of Object.entries({
+      COMFLY_MIDJOURNEY_BASE_URL: previous.midjourney,
+      COMFLY_IMAGE_BASE_URL: previous.image,
+      COMFLY_BASE_URL: previous.base,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

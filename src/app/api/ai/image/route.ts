@@ -616,6 +616,7 @@ async function persistImageHistoryItems(
         generatedImageSizeBytes: image.sizeBytes,
         generatedModel: image.model,
         generatedAt: generatedAt.toISOString(),
+        midjourney: result.midjourney,
         generationResults: [{
           status: "completed",
           imageUrl: image.imageUrl,

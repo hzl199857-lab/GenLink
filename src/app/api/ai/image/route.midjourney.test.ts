@@ -23,3 +23,11 @@ test("persists and resumes the dedicated Midjourney upstream protocol", () => {
 test("preserves optional Midjourney metadata in image job results", () => {
   assert.match(source, /midjourney:\s*result\.midjourney/);
 });
+
+test("preserves Midjourney metadata in image history node data", () => {
+  const historyBlock = source.slice(
+    source.indexOf("async function persistImageHistoryItems("),
+    source.indexOf("function persistImageHistoryItemsAfterResponse("),
+  );
+  assert.match(historyBlock, /midjourney:\s*result\.midjourney/);
+});
