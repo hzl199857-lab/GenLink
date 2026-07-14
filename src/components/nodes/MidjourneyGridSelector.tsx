@@ -50,20 +50,11 @@ export function MidjourneyGridSelector({
               onSelect(quadrant);
             }}
           >
-            <span
-              className={[
-                'absolute left-2 top-2 z-10 flex h-7 min-w-7 items-center justify-center rounded bg-black/65 px-2 text-xs font-semibold text-white shadow-sm transition-opacity',
-                pending
-                  ? 'opacity-100'
-                  : 'opacity-0 group-hover/quadrant:opacity-100 group-focus-visible/quadrant:opacity-100',
-              ].join(' ')}
-            >
-              {pending ? (
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/35 border-t-white" />
-              ) : (
-                quadrant
-              )}
-            </span>
+            {!pending ? (
+              <span className="absolute left-2 top-2 z-10 flex h-7 min-w-7 items-center justify-center rounded bg-black/65 px-2 text-xs font-semibold text-white opacity-0 shadow-sm transition-opacity group-hover/quadrant:opacity-100 group-focus-visible/quadrant:opacity-100">
+                {quadrant}
+              </span>
+            ) : null}
             {pending ? (
               <span
                 className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/15 text-white"

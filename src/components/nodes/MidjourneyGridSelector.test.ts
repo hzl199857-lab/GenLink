@@ -22,10 +22,21 @@ test("prevents grid selection from opening or dragging the image card", () => {
 
 test("keeps pending upscale feedback visible without hover", () => {
   assert.match(source, /const hasPending = pendingQuadrant !== undefined/);
-  assert.match(source, /pending\s*\?\s*'opacity-100'/);
   assert.match(source, /正在高清放大/);
   assert.match(source, /aria-busy=\{pending\}/);
   assert.match(source, /hasPending[\s\S]*?opacity-60/);
+});
+
+test("keeps the top-left quadrant badge idle-only without a loading spinner", () => {
+  const badgeStart = source.indexOf("{!pending ? (");
+  const overlayStart = source.indexOf("pointer-events-none absolute inset-0", badgeStart);
+  const badgeSource = source.slice(badgeStart, overlayStart);
+
+  assert.ok(badgeStart >= 0);
+  assert.ok(overlayStart > badgeStart);
+  assert.match(badgeSource, /^\{!pending \? \(/);
+  assert.match(badgeSource, /\{quadrant\}/);
+  assert.doesNotMatch(badgeSource, /animate-spin/);
 });
 
 test("keeps selector UI in the node and only wires the store action in the canvas adapter", () => {
