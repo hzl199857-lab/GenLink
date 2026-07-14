@@ -2913,6 +2913,7 @@ const StoryboardScriptNodeAdapter = memo(function StoryboardScriptNodeAdapter({ 
 const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id, data, selected, dragging }: NodeProps) {
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const generateImage = useCanvasStore((s) => s.generateImageFromImageGenerationNode);
+  const upscaleMidjourneyGridImage = useCanvasStore((s) => s.upscaleMidjourneyGridImage);
   const generateThreeViewImage = useCanvasStore((s) => s.generateThreeViewImageFromNode);
   const removeReferenceImage = useCanvasStore(
     (s) => s.removeReferenceImageFromImageGenerationNode,
@@ -2964,6 +2965,7 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         onTitleChange={(nextTitle) => updateNodeData<'image_generation'>(id, { title: nextTitle })}
         titleEditRequestId={(data as CanvasNodeRenderData).canvasTitleEditRequestId}
         onRun={(promptOverride, options) => generateImage(id, promptOverride, options)}
+        onMidjourneyUpscale={(quadrant) => upscaleMidjourneyGridImage(id, quadrant)}
         onUpload={() => notifyImageGenerationReferenceUpload?.(id)}
         onQuickReferenceConnect={() => notifyQuickReferenceConnectRequest?.({
           targetKind: 'node',

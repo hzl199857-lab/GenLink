@@ -7,6 +7,7 @@ import type {
   ImageGenerationNodeData,
   ImageGenerationRunOptions,
   ImageGenerationResultItem,
+  MidjourneyQuadrant,
 } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
@@ -16,6 +17,7 @@ import {
 } from './ImageGenerationNodeToolbar';
 import { ImageGenerationPromptBar } from './ImageGenerationPromptBar';
 import { SilkRunningPreview } from './SilkRunningPreview';
+import { MidjourneyGridSelector } from './MidjourneyGridSelector';
 import {
   readStoredSelectedApiProvider,
   type ApiProvider,
@@ -63,6 +65,7 @@ export interface ImageGenerationNodeProps {
   onToolbarAction?: (action: ImageGenerationToolbarAction) => void;
   onOpenLightbox?: (data: ImageGenerationNodeData) => void;
   onImageCardClick?: () => void;
+  onMidjourneyUpscale?: (quadrant: MidjourneyQuadrant) => void;
   onSelectNode?: () => void;
   onPromptPointerDown?: () => void;
   onPromptFocusWithinChange?: (focused: boolean) => void;
@@ -272,6 +275,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   onToolbarAction,
   onOpenLightbox,
   onImageCardClick,
+  onMidjourneyUpscale,
   onSelectNode,
   onPromptPointerDown,
   onPromptFocusWithinChange,
@@ -437,6 +441,16 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     data.generatedHostedImageUrl?.trim() || data.generatedImageUrl?.trim(),
   );
   const canUsePromptPresets = connectedImages.length > 0 || hasGeneratedImage;
+  const midjourneyActions = data.midjourney?.kind === 'grid'
+    ? data.midjourney.actions
+    : undefined;
+  const canSelectMidjourneyGrid = Boolean(
+    onMidjourneyUpscale &&
+    midjourneyActions?.[1] &&
+    midjourneyActions?.[2] &&
+    midjourneyActions?.[3] &&
+    midjourneyActions?.[4],
+  );
 
   useEffect(() => {
     if (!id) {
@@ -581,6 +595,14 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                 null
               )
             )}
+
+            {previewImageUrl && canSelectMidjourneyGrid ? (
+              <MidjourneyGridSelector
+                disabled={isGenerating}
+                pendingQuadrant={data.midjourney?.pendingQuadrant}
+                onSelect={(quadrant) => onMidjourneyUpscale?.(quadrant)}
+              />
+            ) : null}
 
             {canOpenGallery ? (
               <div className="absolute right-3 top-3 z-20">
