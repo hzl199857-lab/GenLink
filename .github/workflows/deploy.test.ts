@@ -25,3 +25,17 @@ test("forces server image uploads before the production build", () => {
   assert.ok(settingIndex >= 0, "missing server image upload policy");
   assert.ok(buildIndex > settingIndex, "image upload policy must be written before build");
 });
+
+test("embeds the release version in the production browser build", () => {
+  const buildSteps = source.slice(source.lastIndexOf("install_dependencies"));
+  const versionExportIndex = buildSteps.indexOf("export NEXT_PUBLIC_APP_VERSION");
+  const versionAssignmentIndex = buildSteps.indexOf(
+    'NEXT_PUBLIC_APP_VERSION="$(git rev-parse --short=12 HEAD)"',
+  );
+  const buildIndex = buildSteps.indexOf("npm run build");
+
+  assert.ok(versionExportIndex >= 0, "missing browser build version export");
+  assert.ok(versionAssignmentIndex >= 0, "missing browser build version assignment");
+  assert.ok(buildIndex > versionExportIndex, "version must be exported before build");
+  assert.ok(buildIndex > versionAssignmentIndex, "version must be assigned before build");
+});
