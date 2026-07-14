@@ -16,8 +16,16 @@ test("renders four accessible quadrants in visual order", () => {
 test("prevents grid selection from opening or dragging the image card", () => {
   assert.match(source, /nodrag nopan/);
   assert.match(source, /event\.stopPropagation\(\)/);
-  assert.match(source, /disabled=\{disabled\}/);
+  assert.match(source, /disabled=\{disabled \|\| hasPending\}/);
   assert.match(source, /pendingQuadrant === quadrant/);
+});
+
+test("keeps pending upscale feedback visible without hover", () => {
+  assert.match(source, /const hasPending = pendingQuadrant !== undefined/);
+  assert.match(source, /pending\s*\?\s*'opacity-100'/);
+  assert.match(source, /正在高清放大/);
+  assert.match(source, /aria-busy=\{pending\}/);
+  assert.match(source, /hasPending[\s\S]*?opacity-60/);
 });
 
 test("keeps selector UI in the node and only wires the store action in the canvas adapter", () => {
