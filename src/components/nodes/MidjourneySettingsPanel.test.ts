@@ -6,6 +6,7 @@ const panelUrl = new URL("./MidjourneySettingsPanel.tsx", import.meta.url);
 const panelSource = existsSync(panelUrl) ? readFileSync(panelUrl, "utf8") : "";
 const promptBarSource = readFileSync(new URL("./ImageGenerationPromptBar.tsx", import.meta.url), "utf8");
 const nodeSource = readFileSync(new URL("./ImageGenerationNode.tsx", import.meta.url), "utf8");
+const runControlsSource = readFileSync(new URL("./PromptBarRunControls.tsx", import.meta.url), "utf8");
 
 test("offers beginner-friendly Midjourney presets and fixed V8.1 context", () => {
   assert.match(panelSource, /Midjourney V8\.1/);
@@ -52,4 +53,24 @@ test("persists normalized Midjourney settings through image node data", () => {
   assert.match(nodeSource, /midjourneySettings=\{normalizedMidjourneySettings\}/);
   assert.match(nodeSource, /onMidjourneySettingsChange=\{handleMidjourneySettingsChange\}/);
   assert.match(nodeSource, /midjourneySettings: next/);
+});
+
+test("uses the compact Midjourney adaptive and ratio layout", () => {
+  assert.match(
+    promptBarSource,
+    /MIDJOURNEY_ASPECT_RATIOS = \[\s*'1:1',\s*'9:16',\s*'16:9',\s*'3:4',\s*'4:3',\s*'3:2',\s*'2:3',?\s*\]/,
+  );
+  assert.match(promptBarSource, />分辨率</);
+  assert.match(promptBarSource, /onClick=\{\(\) => onChange\?\.\('auto'\)\}/);
+  assert.match(promptBarSource, /<MidjourneyRatioMenu[\s\S]*?onChange=\{onAspectRatioChange\}/);
+  assert.match(promptBarSource, />自适应</);
+  assert.match(promptBarSource, />比例</);
+  assert.match(promptBarSource, /MIDJOURNEY_ASPECT_RATIOS\.map/);
+});
+
+test("hides parallel count only for Midjourney", () => {
+  assert.match(promptBarSource, /showLabel=\{!isMidjourneyModel\}/);
+  assert.match(promptBarSource, /parallelMenuOpen && !isMidjourneyModel/);
+  assert.match(runControlsSource, /showLabel\?: boolean/);
+  assert.match(runControlsSource, /\{showLabel \? \(/);
 });

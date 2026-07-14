@@ -48,6 +48,15 @@ type ImagePromptPreset = {
   runOptions?: ImageGenerationRunOptions;
 };
 const PARALLEL_COUNT_OPTIONS = [1, 2, 4] as const;
+const MIDJOURNEY_ASPECT_RATIOS = [
+  '1:1',
+  '9:16',
+  '16:9',
+  '3:4',
+  '4:3',
+  '3:2',
+  '2:3',
+] as const;
 const IMAGE_PROMPT_PRESETS = [
   {
     id: 'multi-camera-grid',
@@ -425,6 +434,62 @@ function RatioIcon({
         ].join(' ')}
       />
     </span>
+  );
+}
+
+function MidjourneyRatioMenu({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange?: (next: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">分辨率</div>
+        <button
+          type="button"
+          translate="no"
+          onClick={() => onChange?.('auto')}
+          className={[
+            'flex h-10 w-full items-center justify-center rounded-[8px] border text-[14px] font-medium transition-colors',
+            value === 'auto'
+              ? 'border-white/70 bg-white/[0.12] text-gl-text-primary'
+              : 'border-white/20 text-gl-text-secondary hover:bg-white/[0.06] hover:text-gl-text-primary',
+          ].join(' ')}
+        >
+          <span>自适应</span>
+        </button>
+      </div>
+
+      <div>
+        <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">比例</div>
+        <div className="grid grid-cols-5 gap-1.5">
+          {MIDJOURNEY_ASPECT_RATIOS.map((ratio) => {
+            const selected = ratio === value;
+
+            return (
+              <button
+                key={ratio}
+                type="button"
+                translate="no"
+                onClick={() => onChange?.(ratio)}
+                className={[
+                  'flex h-[62px] min-w-0 flex-col items-center justify-center gap-2 rounded-[8px] border text-[12px] font-medium transition-colors',
+                  selected
+                    ? 'border-white/70 bg-white/[0.12] text-gl-text-primary'
+                    : 'border-white/20 text-gl-text-muted hover:bg-white/[0.06] hover:text-gl-text-primary',
+                ].join(' ')}
+              >
+                <RatioIcon ratio={ratio} active={selected} />
+                <span>{ratio}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1053,6 +1118,12 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       </div>
                       )}
 
+                      {isMidjourneyModel ? (
+                        <MidjourneyRatioMenu
+                          value={modelAspectRatio}
+                          onChange={onAspectRatioChange}
+                        />
+                      ) : (
                       <div>
                         <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
                           比例
@@ -1093,6 +1164,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                           </div>
                         </div>
                       </div>
+                      )}
 
                       {isNanoBananaModel || isMidjourneyModel ? null : (
                         <div>
@@ -1242,6 +1314,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
             <div className="relative" ref={parallelMenuRef}>
               <PromptBarRunControls
                 label={`x${parallelCount}`}
+                showLabel={!isMidjourneyModel}
                 labelTitle="并行任务数"
                 labelActive={parallelMenuOpen}
                 onLabelClick={() => {
@@ -1260,7 +1333,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 onRun={onRun}
               />
 
-              {parallelMenuOpen ? (
+              {parallelMenuOpen && !isMidjourneyModel ? (
                 <div className="absolute bottom-full right-8 mb-2 w-[92px] overflow-hidden rounded-[14px] border border-white/10 bg-[#121417] p-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
                   <div className="flex flex-col gap-0.5">
                     {PARALLEL_COUNT_OPTIONS.map((option) => {

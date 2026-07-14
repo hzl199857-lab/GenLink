@@ -6,6 +6,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 
 export interface PromptBarRunControlsProps {
   label: string;
+  showLabel?: boolean;
   labelTitle?: string;
   labelActive?: boolean;
   onLabelClick?: () => void;
@@ -16,6 +17,7 @@ export interface PromptBarRunControlsProps {
 
 export function PromptBarRunControls({
   label,
+  showLabel = true,
   labelTitle = 'Status',
   labelActive = false,
   onLabelClick,
@@ -33,7 +35,8 @@ export function PromptBarRunControls({
 
   return (
     <div className="flex items-center gap-1.5">
-      {onLabelClick ? (
+      {showLabel ? (
+        onLabelClick ? (
         <div className="group/tooltip relative">
           <button
             type="button"
@@ -46,14 +49,15 @@ export function PromptBarRunControls({
           </button>
           <Tooltip label={labelTitle} side="top" />
         </div>
-      ) : (
+        ) : (
         <div className="group/tooltip relative">
           <div className={labelClassName} aria-label={labelTitle}>
             {label}
           </div>
           <Tooltip label={labelTitle} side="top" />
         </div>
-      )}
+        )
+      ) : null}
       <div className="group/tooltip relative">
         <button
           type="button"
