@@ -78,6 +78,20 @@ test("renders without card or placeholder button borders", () => {
   assert.doesNotMatch(html, /shadow-\[0_0_0_1px/);
 });
 
+test("uses the image generation panel background in every selection state", () => {
+  for (const selected of [false, true]) {
+    const html = renderToStaticMarkup(
+      React.createElement(DirectorNode, {
+        data: { title: "\u5bfc\u6f14\u53f0" },
+        selected,
+      }),
+    );
+
+    assert.match(html, /\bbg-gl-panel\b/);
+    assert.doesNotMatch(html, /bg-\[#(?:1f1f20|242425)\]/);
+  }
+});
+
 test("calls onOpen from the director desk button", () => {
   let openCount = 0;
   let prevented = false;

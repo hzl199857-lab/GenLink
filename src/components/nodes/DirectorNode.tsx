@@ -35,10 +35,10 @@ export function DirectorNode({
       </div>
       <div
         className={[
-          'node-connectable-card relative flex w-full flex-col items-center justify-center overflow-hidden rounded-[12px] bg-[#1f1f20] text-center shadow-[0_12px_30px_rgba(0,0,0,0.32)]',
+          'node-connectable-card relative flex w-full flex-col items-center justify-center overflow-hidden rounded-[12px] bg-gl-panel text-center shadow-[0_12px_30px_rgba(0,0,0,0.32)]',
           selected
-            ? 'bg-[#242425] shadow-[0_14px_34px_rgba(0,0,0,0.38)]'
-            : 'bg-[#1f1f20]',
+            ? 'shadow-[0_14px_34px_rgba(0,0,0,0.38)]'
+            : '',
         ].join(' ')}
         style={{ height: `${DIRECTOR_NODE_CARD_HEIGHT}px` }}
       >
