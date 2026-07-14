@@ -72,7 +72,10 @@ import {
   isStoryboardRecord,
   normalizeStoryboardRow,
 } from "@/lib/storyboard/normalize";
-import { uploadReferenceImageBlobToOss } from "@/lib/browser-oss-upload";
+import {
+  uploadImageAsset,
+  uploadReferenceImageBlobToOss,
+} from "@/lib/browser-oss-upload";
 
 type ApiErrorResponse = {
   ok: false;
@@ -1802,68 +1805,29 @@ async function uploadImageBlobToOss(
 ): Promise<string> {
   const contentType = blob.type || "image/png";
   console.info("[GenLink] reference image upload step", {
-    step: "create-upload-url",
+    step: "shared-upload-start",
     folder,
     fileName,
     contentType,
     sizeBytes: blob.size,
   });
-  const targetResponse = await fetch("/api/image-hosting/upload-url", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fileName,
-      folder,
-      contentType,
-    }),
+  const result = await uploadImageAsset({
+    data: blob,
+    contentType,
+    fileName,
+    folder,
   });
-  const targetJson = await readJsonResponse<
-    | {
-        ok: true;
-        result: {
-          uploadUrl: string;
-          imageUrl: string;
-          headers: Record<string, string>;
-        };
-      }
-    | ApiErrorResponse
-  >(targetResponse, "Failed to create OSS upload URL");
-
-  if (!targetResponse.ok || !targetJson.ok) {
-    throw new Error(
-      "error" in targetJson ? targetJson.error : "Failed to create OSS upload URL",
-    );
-  }
 
   console.info("[GenLink] reference image upload step", {
-    step: "put-oss",
+    step: "shared-upload-complete",
     folder,
     fileName,
     contentType,
     sizeBytes: blob.size,
-    imageUrl: targetJson.result.imageUrl,
+    imageUrl: result.hostedUrl,
+    mode: result.mode,
   });
-  const uploadResponse = await fetch(targetJson.result.uploadUrl, {
-    method: "PUT",
-    headers: targetJson.result.headers,
-    body: blob,
-  });
-
-  if (!uploadResponse.ok) {
-    throw new Error(`Failed to upload image to OSS (${uploadResponse.status})`);
-  }
-
-  console.info("[GenLink] reference image upload step", {
-    step: "put-oss-complete",
-    folder,
-    fileName,
-    contentType,
-    sizeBytes: blob.size,
-    imageUrl: targetJson.result.imageUrl,
-  });
-  return targetJson.result.imageUrl;
+  return result.hostedUrl;
 }
 
 async function uploadVideoBlobToOss(

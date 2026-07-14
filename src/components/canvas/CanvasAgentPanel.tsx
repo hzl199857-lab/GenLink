@@ -56,6 +56,7 @@ import {
   restoreReferenceMentionLabelsInActions,
 } from '@/lib/agent-actions';
 import { fetchAgentApi } from '@/lib/agent-api-fetch';
+import { uploadImageAsset } from '@/lib/browser-oss-upload';
 import {
   type AgentImageAttachmentUploadKind,
   type AgentImageDerivativeOptions,
@@ -622,66 +623,14 @@ async function uploadAgentImageDataUrl(
   };
   const folder = folderByKind[kind];
   const blob = await dataUrlToImageBlob(dataUrl);
-  const contentType = blob.type || 'image/png';
-  const targetResponse = await fetch('/api/image-hosting/upload-url', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      fileName,
-      folder,
-      contentType,
-    }),
+  const result = await uploadImageAsset({
+    data: blob,
+    contentType: blob.type || 'image/png',
+    fileName,
+    folder,
   });
-  const targetJson = await readJsonResponse<
-    | {
-        ok: true;
-        result: {
-          uploadUrl: string;
-          imageUrl: string;
-          headers: Record<string, string>;
-        };
-      }
-    | { ok: false; error: string }
-  >(targetResponse, '创建图片上传地址失败');
 
-  if (targetResponse.ok && targetJson.ok) {
-    const uploadResponse = await fetch(targetJson.result.uploadUrl, {
-      method: 'PUT',
-      headers: targetJson.result.headers,
-      body: blob,
-    });
-
-    if (!uploadResponse.ok) {
-      throw new Error(`图片上传到 OSS 失败（${uploadResponse.status}）`);
-    }
-
-    return targetJson.result.imageUrl;
-  }
-
-  const response = await fetch('/api/image-hosting/upload', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      dataUrl,
-      fileName,
-      folder,
-      forceOss: true,
-    }),
-  });
-  const json = await readJsonResponse<
-    | { ok: true; result: { imageUrl: string } }
-    | { ok: false; error: string }
-  >(response, '上传参考图失败');
-
-  if (!response.ok || !json.ok) {
-    throw new Error('error' in json ? json.error : 'Failed to upload reference image');
-  }
-
-  return json.result.imageUrl;
+  return result.hostedUrl;
 }
 
 function getAttachmentLabel(attachment: AgentTaskAttachment, index: number): string {
