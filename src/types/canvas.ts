@@ -173,6 +173,7 @@ export interface MidjourneyImageMetadata {
   gridImageUrl?: string;
   gridHostedImageUrl?: string;
   pendingQuadrant?: MidjourneyQuadrant;
+  pendingJobId?: string;
 }
 
 export interface ImageAnnotation {
