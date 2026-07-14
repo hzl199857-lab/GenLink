@@ -132,6 +132,30 @@ test("submits text generation with an empty base64Array", async () => {
   });
 });
 
+test("submits selected Midjourney V8.1 settings to Imagine", async () => {
+  const bodies: unknown[] = [];
+  await submitMidjourneyImagine({
+    prompt: "portrait",
+    aspectRatio: "16:9",
+    settings: { stylize: 250, weird: 100, chaos: 15, quality: 2 },
+    apiKey: "secret",
+    baseUrl: "https://example.com",
+    images: [],
+    readImage: async () => {
+      throw new Error("readImage should not be called");
+    },
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ code: 1, result: "task-settings", description: "ok" });
+    },
+  });
+
+  assert.deepEqual(bodies[0], {
+    prompt: "portrait --v 8.1 --ar 16:9 --s 250 --weird 100 --chaos 15 --q 2",
+    base64Array: [],
+  });
+});
+
 test("submits every reference image as a data URL in source order", async () => {
   const bodies: unknown[] = [];
   await submitMidjourneyImagine({

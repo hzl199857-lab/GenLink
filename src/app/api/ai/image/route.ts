@@ -1205,10 +1205,12 @@ async function submitMidjourneyJob(
   jobId: string,
   params: ImageJobParams,
   aspectRatio?: string,
+  settings?: ImageGenerationNodeData["midjourneySettings"],
 ) {
   const submission = await submitMidjourneyImagine({
     prompt: params.prompt,
     aspectRatio,
+    settings,
     apiKey: requireMidjourneyApiKey(params.apiKey),
     images: params.images,
     readImage: readReferenceImage,
@@ -1683,6 +1685,7 @@ export async function POST(request: Request) {
         jobId,
         jobParams,
         historyNodeData?.aspectRatio,
+        historyNodeData?.midjourneySettings,
       );
       after(async () => {
         await pollMidjourneyImageJob(

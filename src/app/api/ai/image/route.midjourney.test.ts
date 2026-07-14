@@ -31,3 +31,18 @@ test("preserves Midjourney metadata in image history node data", () => {
   );
   assert.match(historyBlock, /midjourney:\s*result\.midjourney/);
 });
+
+test("passes persisted Midjourney settings into Imagine submission", () => {
+  const dispatchBlock = source.slice(
+    source.indexOf("if (isMidjourney)"),
+    source.indexOf("} else if (provider === \"runninghub\")"),
+  );
+  const submitBlock = source.slice(
+    source.indexOf("async function submitMidjourneyJob("),
+    source.indexOf("function buildMidjourneyGenerateResult("),
+  );
+
+  assert.match(dispatchBlock, /historyNodeData\?\.midjourneySettings/);
+  assert.match(submitBlock, /settings[,:]/);
+  assert.match(submitBlock, /submitMidjourneyImagine\(\{[\s\S]*settings,/);
+});

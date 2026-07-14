@@ -141,6 +141,7 @@ export function parseMidjourneySubmission(
 export async function submitMidjourneyImagine(params: {
   prompt: string;
   aspectRatio?: string;
+  settings?: MidjourneyGenerationSettings;
   apiKey: string;
   baseUrl?: string;
   images?: MidjourneyReferenceImage[];
@@ -156,7 +157,7 @@ export async function submitMidjourneyImagine(params: {
     method: "POST",
     headers: createHeaders(params.apiKey),
     body: JSON.stringify({
-      prompt: buildMidjourneyPrompt(params.prompt, params.aspectRatio),
+      prompt: buildMidjourneyPrompt(params.prompt, params.aspectRatio, params.settings),
       base64Array,
     }),
   });
