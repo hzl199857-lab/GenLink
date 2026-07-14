@@ -128,7 +128,20 @@ function getOssEndpoint(): string {
 }
 
 function getServerOssEndpoint(): string {
-  return ALIYUN_OSS_INTERNAL_ENDPOINT || getOssEndpoint();
+  if (!ALIYUN_OSS_INTERNAL_ENDPOINT) {
+    return getOssEndpoint();
+  }
+
+  const endpoint = new URL(ALIYUN_OSS_INTERNAL_ENDPOINT);
+
+  if (
+    endpoint.pathname === '/' &&
+    /^oss-[a-z0-9-]+(?:-internal)?\.aliyuncs\.com$/i.test(endpoint.hostname)
+  ) {
+    endpoint.hostname = `${ALIYUN_OSS_BUCKET}.${endpoint.hostname}`;
+  }
+
+  return endpoint.toString().replace(/\/+$/, '');
 }
 
 function getOssPublicBaseUrl(): string {
