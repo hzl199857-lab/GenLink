@@ -28,6 +28,7 @@ const {
 
 test("falls back to server image upload when direct OSS upload returns a network error", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const blob = new Blob(["image"], { type: "image/png" });
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = input.toString();
     calls.push({ url, init });
@@ -47,7 +48,7 @@ test("falls back to server image upload when direct OSS upload returns a network
       throw new TypeError("Failed to fetch");
     }
 
-    if (url === "/api/image-hosting/upload") {
+    if (url.startsWith("/api/image-hosting/upload-stream?")) {
       return Response.json({
         ok: true,
         result: { imageUrl: "https://cdn.example.com/images/file-server.png" },
@@ -58,7 +59,7 @@ test("falls back to server image upload when direct OSS upload returns a network
   };
 
   const result = await uploadImageAsset({
-    data: new Blob(["image"], { type: "image/png" }),
+    data: blob,
     contentType: "image/png",
     fileName: "file.png",
     folder: "images",
@@ -72,17 +73,20 @@ test("falls back to server image upload when direct OSS upload returns a network
   assert.deepEqual(calls.map((call) => call.url), [
     "/api/image-hosting/upload-url",
     "https://bucket.oss-cn-hangzhou.aliyuncs.com/images/file.png?signature=1",
-    "/api/image-hosting/upload",
+    "/api/image-hosting/upload-stream?fileName=file.png&folder=images",
   ]);
+  assert.equal(calls[2]?.init?.body, blob);
+  assert.equal(new Headers(calls[2]?.init?.headers).get("Content-Type"), "image/png");
 });
 
 test("uses server image upload immediately when policy is server", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const blob = new Blob(["image"], { type: "image/png" });
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = input.toString();
     calls.push({ url, init });
 
-    if (url === "/api/image-hosting/upload") {
+    if (url.startsWith("/api/image-hosting/upload-stream?")) {
       return Response.json({
         ok: true,
         result: { imageUrl: "https://cdn.example.com/images/file-server.png" },
@@ -93,7 +97,7 @@ test("uses server image upload immediately when policy is server", async () => {
   };
 
   const result = await uploadImageAsset({
-    data: new Blob(["image"], { type: "image/png" }),
+    data: blob,
     contentType: "image/png",
     fileName: "file.png",
     folder: "images",
@@ -105,11 +109,17 @@ test("uses server image upload immediately when policy is server", async () => {
     hostedUrl: "https://cdn.example.com/images/file-server.png",
     mode: "server",
   });
-  assert.deepEqual(calls.map((call) => call.url), ["/api/image-hosting/upload"]);
+  assert.deepEqual(calls.map((call) => call.url), [
+    "/api/image-hosting/upload-stream?fileName=file.png&folder=images",
+  ]);
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.equal(calls[0]?.init?.body, blob);
+  assert.equal(new Headers(calls[0]?.init?.headers).get("Content-Type"), "image/png");
 });
 
 test("uploads reference image blobs with direct OSS fallback", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const blob = new Blob(["image"], { type: "image/png" });
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = input.toString();
     calls.push({ url, init });
@@ -129,13 +139,7 @@ test("uploads reference image blobs with direct OSS fallback", async () => {
       throw new TypeError("Failed to fetch");
     }
 
-    if (url === "/api/image-hosting/upload") {
-      const formData = init?.body as FormData;
-
-      assert.equal(formData.get("folder"), "references");
-      assert.equal(formData.get("fileName"), "reference.png");
-      assert.equal(formData.get("forceOss"), "true");
-
+    if (url.startsWith("/api/image-hosting/upload-stream?")) {
       return Response.json({
         ok: true,
         result: { imageUrl: "https://cdn.example.com/references/file-server.png" },
@@ -146,7 +150,7 @@ test("uploads reference image blobs with direct OSS fallback", async () => {
   };
 
   const result = await uploadReferenceImageBlobToOss({
-    blob: new Blob(["image"], { type: "image/png" }),
+    blob,
     fileName: "reference.png",
     fetchImpl,
   });
@@ -155,8 +159,10 @@ test("uploads reference image blobs with direct OSS fallback", async () => {
   assert.deepEqual(calls.map((call) => call.url), [
     "/api/image-hosting/upload-url",
     "https://bucket.oss-cn-hangzhou.aliyuncs.com/references/file.png?signature=1",
-    "/api/image-hosting/upload",
+    "/api/image-hosting/upload-stream?fileName=reference.png&folder=references",
   ]);
+  assert.equal(calls[2]?.init?.body, blob);
+  assert.equal(new Headers(calls[2]?.init?.headers).get("Content-Type"), "image/png");
 });
 
 test("defaults to direct-with-fallback unless image upload mode is server", () => {

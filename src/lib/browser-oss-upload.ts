@@ -129,22 +129,24 @@ async function uploadImageAssetViaServer(
   input: UploadImageAssetInput,
   fetchImpl: BrowserOssUploadFetch,
 ): Promise<string> {
-  const formData = new FormData();
-  formData.set("file", input.data);
-  formData.set("contentType", input.contentType);
-  formData.set("forceOss", "true");
+  const query = new URLSearchParams();
 
   if (input.fileName) {
-    formData.set("fileName", input.fileName);
+    query.set("fileName", input.fileName);
   }
 
   if (input.folder) {
-    formData.set("folder", input.folder);
+    query.set("folder", input.folder);
   }
 
-  const response = await fetchImpl("/api/image-hosting/upload", {
+  const queryString = query.toString();
+  const endpoint = `/api/image-hosting/upload-stream${queryString ? `?${queryString}` : ""}`;
+  const response = await fetchImpl(endpoint, {
     method: "POST",
-    body: formData,
+    headers: {
+      "Content-Type": input.contentType,
+    },
+    body: input.data,
   });
   const json = (await response.json()) as
     | { ok: true; result: { imageUrl: string } }
