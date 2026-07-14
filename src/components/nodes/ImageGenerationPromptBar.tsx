@@ -3,15 +3,16 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { NodeToolbar, Position } from 'reactflow';
-import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, X } from 'lucide-react';
+import { Sparkles, Maximize2, Minimize2, ChevronDown, Check, Layers, Settings2, X } from 'lucide-react';
 import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
+import { MidjourneySettingsPanel } from './MidjourneySettingsPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {
   ReferenceImageHoverPreviewPortal,
   useReferenceImageHoverPreview,
 } from './ReferenceImageHoverPreview';
-import type { ImageGenerationRunOptions } from '@/types/canvas';
+import type { ImageGenerationRunOptions, MidjourneyGenerationSettings } from '@/types/canvas';
 import {
   getApiProviderLabel,
   persistSelectedModel,
@@ -20,6 +21,7 @@ import {
 } from '@/store/canvas-store';
 import {
   API_PROVIDERS,
+  DEFAULT_MIDJOURNEY_SETTINGS,
   FIXED_IMAGE_FORMAT_MODEL_IDS,
   getAspectRatioLayoutForImageModel,
   getImageModelLabel,
@@ -30,6 +32,7 @@ import {
   IMAGE_MODERATION_OPTIONS,
   IMAGE_OUTPUT_FORMAT_OPTIONS,
   IMAGE_SIZE_OPTIONS,
+  isComflyMidjourneyModel,
   isNanoBananaImageModel,
   RUNNING_HUB_CHANNEL_MODEL_IDS,
   RUNNING_HUB_CHANNEL_OPTIONS,
@@ -217,6 +220,7 @@ export interface ImageGenerationPromptBarProps {
   detail?: string;
   outputFormat?: string;
   moderation?: string;
+  midjourneySettings?: Required<MidjourneyGenerationSettings>;
   parallelCount?: 1 | 2 | 4;
   generating?: boolean;
   canUsePromptPresets?: boolean;
@@ -240,6 +244,7 @@ export interface ImageGenerationPromptBarProps {
   onDetailChange?: (next: string) => void;
   onOutputFormatChange?: (next: string) => void;
   onModerationChange?: (next: string) => void;
+  onMidjourneySettingsChange?: (next: Required<MidjourneyGenerationSettings>) => void;
   onParallelCountChange?: (next: 1 | 2 | 4) => void;
   onRun?: (promptOverride?: string, options?: ImageGenerationRunOptions) => void;
   onAddReference?: () => void;
@@ -435,6 +440,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   detail = 'medium',
   outputFormat = IMAGE_OUTPUT_FORMAT_OPTIONS[0].value,
   moderation = IMAGE_MODERATION_OPTIONS[0].value,
+  midjourneySettings = DEFAULT_MIDJOURNEY_SETTINGS,
   parallelCount = 1,
   generating = false,
   canUsePromptPresets = false,
@@ -449,6 +455,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   onDetailChange,
   onOutputFormatChange,
   onModerationChange,
+  onMidjourneySettingsChange,
   onParallelCountChange,
   onRun,
   onAddReference,
@@ -468,17 +475,20 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   const [hoveredRunningHubChannel, setHoveredRunningHubChannel] = useState<RunningHubChannel | null>(null);
   const [providerWarning, setProviderWarning] = useState<string | null>(null);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [midjourneySettingsMenuOpen, setMidjourneySettingsMenuOpen] = useState(false);
   const [formatMenuOpen, setFormatMenuOpen] = useState(false);
   const [parallelMenuOpen, setParallelMenuOpen] = useState(false);
   const referenceImagePreview = useReferenceImageHoverPreview();
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const midjourneySettingsMenuRef = useRef<HTMLDivElement | null>(null);
   const formatMenuRef = useRef<HTMLDivElement | null>(null);
   const parallelMenuRef = useRef<HTMLDivElement | null>(null);
 
   const closePromptBarMenus = useCallback(() => {
     setModelMenuOpen(false);
     setSettingsMenuOpen(false);
+    setMidjourneySettingsMenuOpen(false);
     setFormatMenuOpen(false);
     setParallelMenuOpen(false);
     setActiveModelForChannel(null);
@@ -487,7 +497,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   }, []);
 
   useEffect(() => {
-    if (!modelMenuOpen && !settingsMenuOpen && !formatMenuOpen && !parallelMenuOpen) {
+    if (!modelMenuOpen && !settingsMenuOpen && !midjourneySettingsMenuOpen && !formatMenuOpen && !parallelMenuOpen) {
       return;
     }
 
@@ -497,6 +507,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
       if (
         modelMenuRef.current?.contains(target) ||
         settingsMenuRef.current?.contains(target) ||
+        midjourneySettingsMenuRef.current?.contains(target) ||
         formatMenuRef.current?.contains(target) ||
         parallelMenuRef.current?.contains(target)
       ) {
@@ -508,11 +519,12 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
 
     window.addEventListener('pointerdown', handlePointerDown, true);
     return () => window.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [closePromptBarMenus, modelMenuOpen, settingsMenuOpen, formatMenuOpen, parallelMenuOpen]);
+  }, [closePromptBarMenus, modelMenuOpen, settingsMenuOpen, midjourneySettingsMenuOpen, formatMenuOpen, parallelMenuOpen]);
 
   if (!visible) return null;
 
   const resolvedValue = isPromptFocused || isComposing ? draftPrompt : prompt;
+  const isMidjourneyModel = isComflyMidjourneyModel(provider, model);
   const isNanoBananaModel = isNanoBananaImageModel(provider, model);
   const activeRunningHubChannel = runningHubChannel === 'low-cost' ? 'low-cost' : 'official';
   const modelLabel =
@@ -526,9 +538,10 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
     RUNNING_HUB_CHANNEL_MODEL_IDS.has(activeModelForChannel);
   const modelAspectRatio = isNanoBananaModel && aspectRatio === 'auto' ? '1:1' : aspectRatio;
   const aspectRatioLayout = getAspectRatioLayoutForImageModel(provider, model);
-  const settingsLabel = `${modelAspectRatio} / ${quality}`;
+  const settingsLabel = isMidjourneyModel ? modelAspectRatio : `${modelAspectRatio} / ${quality}`;
   const formatLabel = `${outputFormat.toUpperCase()} / ${moderation}`;
-  const showFormatMenu = !isNanoBananaModel && !FIXED_IMAGE_FORMAT_MODEL_IDS.has(model);
+  const showFormatMenu =
+    !isMidjourneyModel && !isNanoBananaModel && !FIXED_IMAGE_FORMAT_MODEL_IDS.has(model);
   const promptHeight = expanded ? EXPANDED_PROMPT_HEIGHT : COLLAPSED_PROMPT_HEIGHT;
   const promptPresetMenuOpen = isPromptFocused && !isComposing && resolvedValue.trimEnd().endsWith('/');
 
@@ -842,6 +855,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       return !open;
                     });
                     setSettingsMenuOpen(false);
+                    setMidjourneySettingsMenuOpen(false);
                     setFormatMenuOpen(false);
                     setParallelMenuOpen(false);
                   }}
@@ -1000,6 +1014,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                   onClick={() => {
                     setSettingsMenuOpen((open) => !open);
                     setModelMenuOpen(false);
+                    setMidjourneySettingsMenuOpen(false);
                     setFormatMenuOpen(false);
                     setParallelMenuOpen(false);
                   }}
@@ -1008,6 +1023,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 {settingsMenuOpen ? (
                   <div className="absolute bottom-full left-0 mb-2 w-[340px] overflow-hidden rounded-[18px] border border-white/10 bg-[#121417] p-2 shadow-[0_12px_28px_rgba(0,0,0,0.42)] notranslate" translate="no">
                     <div className="flex flex-col gap-3">
+                      {isMidjourneyModel ? null : (
                       <div className="notranslate" translate="no">
                         <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
                           画质
@@ -1035,6 +1051,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                           })}
                         </div>
                       </div>
+                      )}
 
                       <div>
                         <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
@@ -1077,7 +1094,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                         </div>
                       </div>
 
-                      {isNanoBananaModel ? null : (
+                      {isNanoBananaModel || isMidjourneyModel ? null : (
                         <div>
                           <div className="mb-2 px-1 text-[13px] font-medium text-gl-text-muted">
                             细节
@@ -1111,6 +1128,37 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                 ) : null}
               </div>
 
+              {isMidjourneyModel ? (
+                <div className="relative" ref={midjourneySettingsMenuRef}>
+                  <button
+                    type="button"
+                    aria-label="Midjourney 高级设置"
+                    aria-expanded={midjourneySettingsMenuOpen}
+                    onClick={() => {
+                      setMidjourneySettingsMenuOpen((open) => !open);
+                      setModelMenuOpen(false);
+                      setSettingsMenuOpen(false);
+                      setFormatMenuOpen(false);
+                      setParallelMenuOpen(false);
+                    }}
+                    className={[
+                      'flex h-9 w-9 items-center justify-center rounded-[8px] border transition-colors',
+                      midjourneySettingsMenuOpen
+                        ? 'border-white/16 bg-white/[0.08] text-gl-text-primary'
+                        : 'border-transparent text-gl-text-secondary hover:border-white/14 hover:bg-white/[0.05] hover:text-gl-text-primary',
+                    ].join(' ')}
+                  >
+                    <Settings2 size={15} />
+                  </button>
+                  {midjourneySettingsMenuOpen ? (
+                    <MidjourneySettingsPanel
+                      value={midjourneySettings}
+                      onChange={(next) => onMidjourneySettingsChange?.(next)}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+
               {showFormatMenu ? (
                 <div className="relative" ref={formatMenuRef}>
                   <BottomMenuButton
@@ -1121,6 +1169,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       setFormatMenuOpen((open) => !open);
                       setModelMenuOpen(false);
                       setSettingsMenuOpen(false);
+                      setMidjourneySettingsMenuOpen(false);
                       setParallelMenuOpen(false);
                     }}
                   />
@@ -1203,6 +1252,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                   setParallelMenuOpen((open) => !open);
                   setModelMenuOpen(false);
                   setSettingsMenuOpen(false);
+                  setMidjourneySettingsMenuOpen(false);
                   setFormatMenuOpen(false);
                 }}
                 runTitle={generating ? '生成中' : '开始生成'}

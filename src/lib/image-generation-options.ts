@@ -146,6 +146,7 @@ export function getImageModelLabel(model: string): string {
   return (
     GRSAI_IMAGE_MODELS.find((option) => option.id === model)?.label ??
     RUNNING_HUB_IMAGE_MODELS.find((option) => option.id === model)?.label ??
+    COMFLY_IMAGE_MODELS.find((option) => option.id === model)?.label ??
     IMAGE_MODELS.find((option) => option.id === model)?.label ??
     model
   );

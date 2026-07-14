@@ -25,6 +25,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   DEFAULT_MIDJOURNEY_SETTINGS,
+  getImageModelLabel,
   IMAGE_MODEL_OPTIONS_BY_PROVIDER,
   normalizeMidjourneySettings,
 } = require("./image-generation-options.ts") as typeof import("./image-generation-options");
@@ -53,6 +54,10 @@ test("exposes Midjourney only for Comfly", () => {
       false,
     );
   }
+});
+
+test("shows the Midjourney V8.1 label for the selected model", () => {
+  assert.equal(getImageModelLabel("midjourney"), "Midjourney V8.1");
 });
 
 test("uses beginner-friendly Midjourney defaults", () => {

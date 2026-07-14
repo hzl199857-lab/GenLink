@@ -7,6 +7,7 @@ import type {
   ImageGenerationNodeData,
   ImageGenerationRunOptions,
   ImageGenerationResultItem,
+  MidjourneyGenerationSettings,
   MidjourneyQuadrant,
 } from '../../types/canvas';
 import { CardSideHandle } from './CardSideHandle';
@@ -22,6 +23,7 @@ import {
   readStoredSelectedApiProvider,
   type ApiProvider,
 } from '@/store/canvas-store';
+import { normalizeMidjourneySettings } from '@/lib/image-generation-options';
 
 const MAX_CARD_EDGE = 540;
 const MIN_CARD_EDGE = 220;
@@ -287,6 +289,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   const updateNodeInternals = useUpdateNodeInternals();
   const [suppressTransientUi, setSuppressTransientUi] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const normalizedMidjourneySettings = normalizeMidjourneySettings(data.midjourneySettings);
 
   const handlePromptChange = (next: string) => {
     onChange?.({
@@ -384,6 +387,17 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
     onChange?.({
       ...data,
       moderation: next,
+      status: data.status === 'error' ? 'idle' : data.status,
+      errorMessage: undefined,
+    });
+  };
+
+  const handleMidjourneySettingsChange = (
+    next: Required<MidjourneyGenerationSettings>,
+  ) => {
+    onChange?.({
+      ...data,
+      midjourneySettings: next,
       status: data.status === 'error' ? 'idle' : data.status,
       errorMessage: undefined,
     });
@@ -739,6 +753,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         detail={data.detail}
         outputFormat={data.outputFormat}
         moderation={data.moderation}
+        midjourneySettings={normalizedMidjourneySettings}
         parallelCount={data.parallelCount}
         generating={isGenerating}
         canUsePromptPresets={canUsePromptPresets}
@@ -754,6 +769,7 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         onDetailChange={handleDetailChange}
         onOutputFormatChange={handleOutputFormatChange}
         onModerationChange={handleModerationChange}
+        onMidjourneySettingsChange={handleMidjourneySettingsChange}
         onParallelCountChange={handleParallelCountChange}
         onRun={onRun}
         onAddReference={onUpload}
