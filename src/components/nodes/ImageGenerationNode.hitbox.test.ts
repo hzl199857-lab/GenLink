@@ -88,3 +88,20 @@ test("material save requests use a window event instead of depending on a global
   assert.match(canvasSource, /window\.addEventListener\(MATERIAL_LIBRARY_REQUEST_EVENT, handleMaterialLibraryRequest\);/);
   assert.match(canvasSource, /if \(notifyMaterialLibraryRequest === openMaterialLibraryDialog\) \{/);
 });
+
+test("defaults Comfly Midjourney model switches to auto ratio", () => {
+  const resolverBlock = source.slice(
+    source.indexOf("function resolveModelAspectRatio("),
+    source.indexOf("function resolveCardDimensions("),
+  );
+
+  assert.match(
+    resolverBlock,
+    /provider === 'comfly'[\s\S]*?model\.trim\(\)\.toLowerCase\(\) === 'midjourney'[\s\S]*?return 'auto'/,
+  );
+  assert.match(
+    source,
+    /aspectRatio: resolveModelAspectRatio\(next\.provider, next\.model, data\.aspectRatio\)/,
+  );
+  assert.match(source, /const handleAspectRatioChange[\s\S]*?aspectRatio: next/);
+});

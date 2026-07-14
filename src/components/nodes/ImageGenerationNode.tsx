@@ -103,6 +103,13 @@ function resolveModelAspectRatio(
   model: string,
   aspectRatio?: string,
 ): string | undefined {
+  if (
+    provider === 'comfly' &&
+    model.trim().toLowerCase() === 'midjourney'
+  ) {
+    return 'auto';
+  }
+
   const isNanoSizeModel =
     provider === 'runninghub'
       ? RUNNING_HUB_NANO_MODELS.has(model)
