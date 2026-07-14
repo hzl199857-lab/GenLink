@@ -36,3 +36,16 @@ test("exposes gpt-image-2-all only for Comfly", () => {
     );
   }
 });
+
+test("exposes Midjourney only for Comfly", () => {
+  assert.ok(
+    IMAGE_MODEL_OPTIONS_BY_PROVIDER.comfly.some((option) => option.id === "midjourney"),
+  );
+
+  for (const provider of ["vibe", "fucheers", "zhenzhen", "runninghub", "grsai"] as const) {
+    assert.equal(
+      IMAGE_MODEL_OPTIONS_BY_PROVIDER[provider].some((option) => option.id === "midjourney"),
+      false,
+    );
+  }
+});
