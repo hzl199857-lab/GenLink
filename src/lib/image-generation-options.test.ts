@@ -23,7 +23,11 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
   );
 };
 
-const { IMAGE_MODEL_OPTIONS_BY_PROVIDER } = require("./image-generation-options.ts") as typeof import("./image-generation-options");
+const {
+  DEFAULT_MIDJOURNEY_SETTINGS,
+  IMAGE_MODEL_OPTIONS_BY_PROVIDER,
+  normalizeMidjourneySettings,
+} = require("./image-generation-options.ts") as typeof import("./image-generation-options");
 
 test("exposes gpt-image-2-all only for Comfly", () => {
   assert.ok(
@@ -38,8 +42,9 @@ test("exposes gpt-image-2-all only for Comfly", () => {
 });
 
 test("exposes Midjourney only for Comfly", () => {
-  assert.ok(
-    IMAGE_MODEL_OPTIONS_BY_PROVIDER.comfly.some((option) => option.id === "midjourney"),
+  assert.deepEqual(
+    IMAGE_MODEL_OPTIONS_BY_PROVIDER.comfly.find((option) => option.id === "midjourney"),
+    { id: "midjourney", label: "Midjourney V8.1" },
   );
 
   for (const provider of ["vibe", "fucheers", "zhenzhen", "runninghub", "grsai"] as const) {
@@ -48,4 +53,36 @@ test("exposes Midjourney only for Comfly", () => {
       false,
     );
   }
+});
+
+test("uses beginner-friendly Midjourney defaults", () => {
+  assert.deepEqual(DEFAULT_MIDJOURNEY_SETTINGS, {
+    stylize: 100,
+    weird: 0,
+    chaos: 0,
+    quality: 1,
+  });
+  assert.deepEqual(normalizeMidjourneySettings(), DEFAULT_MIDJOURNEY_SETTINGS);
+});
+
+test("normalizes Midjourney settings to supported ranges", () => {
+  assert.deepEqual(
+    normalizeMidjourneySettings({
+      stylize: -12,
+      weird: 9000,
+      chaos: 101,
+      quality: 2,
+    }),
+    { stylize: 0, weird: 3000, chaos: 100, quality: 2 },
+  );
+
+  assert.deepEqual(
+    normalizeMidjourneySettings({
+      stylize: 105.8,
+      weird: Number.NaN,
+      chaos: 10.7,
+      quality: 7,
+    } as unknown as Parameters<typeof normalizeMidjourneySettings>[0]),
+    { stylize: 106, weird: 0, chaos: 11, quality: 1 },
+  );
 });

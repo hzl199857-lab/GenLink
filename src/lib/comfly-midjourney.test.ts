@@ -34,11 +34,34 @@ const {
   submitMidjourneyUpscale,
 } = require("./comfly-midjourney.ts") as typeof import("./comfly-midjourney");
 
-test("appends aspect ratio only when the prompt does not already specify one", () => {
-  assert.equal(buildMidjourneyPrompt("cat", "16:9"), "cat --ar 16:9");
-  assert.equal(buildMidjourneyPrompt("cat --ar 4:3", "16:9"), "cat --ar 4:3");
-  assert.equal(buildMidjourneyPrompt("cat --aspect 3:2", "16:9"), "cat --aspect 3:2");
-  assert.equal(buildMidjourneyPrompt("cat", "auto"), "cat");
+test("always appends fixed V8.1 and normalized UI settings", () => {
+  assert.equal(
+    buildMidjourneyPrompt("cat", "16:9", {
+      stylize: 250,
+      weird: 100,
+      chaos: 15,
+      quality: 2,
+    }),
+    "cat --v 8.1 --ar 16:9 --s 250 --weird 100 --chaos 15 --q 2",
+  );
+});
+
+test("replaces every managed Midjourney flag without duplicates", () => {
+  assert.equal(
+    buildMidjourneyPrompt(
+      "cat --version 7 --aspect=3:2 --stylize 999 --weird=44 --c 80 --quality=2",
+      "4:3",
+      { stylize: 50, weird: 0, chaos: 35, quality: 1 },
+    ),
+    "cat --v 8.1 --ar 4:3 --s 50 --weird 0 --chaos 35 --q 1",
+  );
+});
+
+test("auto aspect ratio omits the managed aspect flag", () => {
+  assert.equal(
+    buildMidjourneyPrompt("cat --ar 16:9", "auto"),
+    "cat --v 8.1 --s 100 --weird 0 --chaos 0 --q 1",
+  );
 });
 
 test("accepts submitted and queued Imagine responses", () => {
@@ -104,7 +127,7 @@ test("submits text generation with an empty base64Array", async () => {
   assert.equal(calls[0].url, "https://example.com/v1/mj/submit/imagine");
   assert.equal(new Headers(calls[0].init?.headers).get("Authorization"), "Bearer secret");
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
-    prompt: "cat --ar 1:1",
+    prompt: "cat --v 8.1 --ar 1:1 --s 100 --weird 0 --chaos 0 --q 1",
     base64Array: [],
   });
 });
@@ -127,7 +150,7 @@ test("submits every reference image as a data URL in source order", async () => 
   });
 
   assert.deepEqual(bodies[0], {
-    prompt: "cat",
+    prompt: "cat --v 8.1 --s 100 --weird 0 --chaos 0 --q 1",
     base64Array: [
       `data:image/png;base64,${Buffer.from("one").toString("base64")}`,
       `data:image/jpeg;base64,${Buffer.from("two").toString("base64")}`,

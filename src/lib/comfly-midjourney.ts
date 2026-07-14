@@ -1,3 +1,6 @@
+import type { MidjourneyGenerationSettings } from "@/types/canvas";
+import { normalizeMidjourneySettings } from "./image-generation-options";
+
 export type MidjourneyQuadrant = 1 | 2 | 3 | 4;
 
 export type MidjourneyUpscaleActions = Record<MidjourneyQuadrant, string>;
@@ -86,18 +89,27 @@ async function readJsonResponse(response: Response, fallbackMessage: string): Pr
 export function buildMidjourneyPrompt(
   prompt: string,
   aspectRatio?: string,
+  settings?: MidjourneyGenerationSettings,
 ): string {
-  const normalizedPrompt = prompt.trim();
+  const normalizedPrompt = prompt
+    .trim()
+    .replace(
+      /(?:^|\s)--(?:version|stylize|quality|aspect|chaos|weird|v|ar|s|c|q)(?=$|[=\s])(?:=(?:"[^"]*"|'[^']*'|\S+)|\s+(?:"[^"]*"|'[^']*'|\S+))?/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalizedSettings = normalizeMidjourneySettings(settings);
+  const parameters = [
+    "--v 8.1",
+    ...(aspectRatio && aspectRatio !== "auto" ? [`--ar ${aspectRatio}`] : []),
+    `--s ${normalizedSettings.stylize}`,
+    `--weird ${normalizedSettings.weird}`,
+    `--chaos ${normalizedSettings.chaos}`,
+    `--q ${normalizedSettings.quality}`,
+  ];
 
-  if (
-    !aspectRatio ||
-    aspectRatio === "auto" ||
-    /(?:^|\s)--(?:ar|aspect)(?:\s|=)/i.test(normalizedPrompt)
-  ) {
-    return normalizedPrompt;
-  }
-
-  return `${normalizedPrompt} --ar ${aspectRatio}`;
+  return [normalizedPrompt, ...parameters].filter(Boolean).join(" ");
 }
 
 export function parseMidjourneySubmission(

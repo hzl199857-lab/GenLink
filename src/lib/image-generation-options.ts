@@ -1,4 +1,5 @@
 import type { ApiProvider } from "@/store/canvas-store";
+import type { MidjourneyGenerationSettings } from "@/types/canvas";
 
 export type ImageModelOption = {
   id: string;
@@ -14,8 +15,31 @@ export const COMFLY_IMAGE_MODELS = [
   IMAGE_MODELS[0],
   { id: "gpt-image-2-all", label: "gpt-image-2-all" },
   IMAGE_MODELS[1],
-  { id: "midjourney", label: "Midjourney" },
+  { id: "midjourney", label: "Midjourney V8.1" },
 ] as const satisfies readonly ImageModelOption[];
+
+export const DEFAULT_MIDJOURNEY_SETTINGS = {
+  stylize: 100,
+  weird: 0,
+  chaos: 0,
+  quality: 1,
+} as const satisfies Required<MidjourneyGenerationSettings>;
+
+function normalizeInteger(value: number | undefined, fallback: number, min: number, max: number) {
+  const resolved = Number.isFinite(value) ? Math.round(value!) : fallback;
+  return Math.min(max, Math.max(min, resolved));
+}
+
+export function normalizeMidjourneySettings(
+  value?: MidjourneyGenerationSettings,
+): Required<MidjourneyGenerationSettings> {
+  return {
+    stylize: normalizeInteger(value?.stylize, DEFAULT_MIDJOURNEY_SETTINGS.stylize, 0, 1000),
+    weird: normalizeInteger(value?.weird, DEFAULT_MIDJOURNEY_SETTINGS.weird, 0, 3000),
+    chaos: normalizeInteger(value?.chaos, DEFAULT_MIDJOURNEY_SETTINGS.chaos, 0, 100),
+    quality: value?.quality === 2 ? 2 : 1,
+  };
+}
 
 export const RUNNING_HUB_IMAGE_MODELS = [
   { id: "gpt-image-2", label: "gpt-image-2" },

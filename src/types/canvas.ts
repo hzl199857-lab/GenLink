@@ -196,6 +196,13 @@ export interface ImageAnnotation {
   createdAt: string;
 }
 
+export interface MidjourneyGenerationSettings {
+  stylize?: number;
+  weird?: number;
+  chaos?: number;
+  quality?: 1 | 2;
+}
+
 export interface ImageGenerationNodeData {
   title?: string;
   prompt?: string;
@@ -224,6 +231,7 @@ export interface ImageGenerationNodeData {
   detail?: string;
   outputFormat?: string;
   moderation?: string;
+  midjourneySettings?: MidjourneyGenerationSettings;
   parallelCount?: 1 | 2 | 4;
   referenceImageUrl?: string;
   referenceImages?: Array<{
