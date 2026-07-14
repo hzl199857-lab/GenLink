@@ -452,6 +452,61 @@ function readImageDimensions(imageUrl: string): Promise<ResolvedImageMetadata> {
   });
 }
 
+async function readRemoteImageSizeBytes(imageUrl: string): Promise<number | undefined> {
+  if (!/^https?:\/\//i.test(imageUrl) && !imageUrl.startsWith('/')) {
+    return undefined;
+  }
+
+  const response = await fetch(
+    `/api/image-hosting/read?url=${encodeURIComponent(imageUrl)}`,
+    {
+      cache: 'no-store',
+      headers: {
+        Range: 'bytes=0-0',
+      },
+    },
+  );
+
+  try {
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const contentRange = response.headers.get('content-range');
+    const rangeTotal = contentRange?.match(/\/(\d+)$/)?.[1];
+    const rawSize = rangeTotal || (response.status === 200
+      ? response.headers.get('content-length')
+      : null);
+    const sizeBytes = rawSize ? Number(rawSize) : 0;
+
+    return Number.isSafeInteger(sizeBytes) && sizeBytes > 0
+      ? sizeBytes
+      : undefined;
+  } finally {
+    await response.body?.cancel();
+  }
+}
+
+async function resolveImageInfoPopoverMetadata(
+  base: ImageGenerationInfoPopoverData,
+  imageUrl: string,
+): Promise<ImageGenerationInfoPopoverData> {
+  const [dimensionsResult, sizeResult] = await Promise.allSettled([
+    readImageDimensions(imageUrl),
+    base.size === '-' ? readRemoteImageSizeBytes(imageUrl) : Promise.resolve(undefined),
+  ]);
+
+  return {
+    ...base,
+    resolution: dimensionsResult.status === 'fulfilled'
+      ? formatImageResolution(dimensionsResult.value.width, dimensionsResult.value.height)
+      : base.resolution,
+    size: sizeResult.status === 'fulfilled' && sizeResult.value
+      ? formatImageSize(sizeResult.value)
+      : base.size,
+  };
+}
+
 function toImageGenerationLightboxData(
   data: ImageGenerationNodeData,
 ): ImageLightboxData | null {
@@ -660,15 +715,7 @@ async function toResolvedImageGenerationInfoPopoverData(
     return base;
   }
 
-  try {
-    const { width, height } = await readImageDimensions(imageUrl);
-    return {
-      ...base,
-      resolution: formatImageResolution(width, height),
-    };
-  } catch {
-    return base;
-  }
+  return resolveImageInfoPopoverMetadata(base, imageUrl);
 }
 
 async function toResolvedImageNodeInfoPopoverData(
@@ -681,15 +728,7 @@ async function toResolvedImageNodeInfoPopoverData(
     return base;
   }
 
-  try {
-    const { width, height } = await readImageDimensions(imageUrl);
-    return {
-      ...base,
-      resolution: formatImageResolution(width, height),
-    };
-  } catch {
-    return base;
-  }
+  return resolveImageInfoPopoverMetadata(base, imageUrl);
 }
 
 async function toResolvedUploadedImageInfoPopoverData(
@@ -702,15 +741,7 @@ async function toResolvedUploadedImageInfoPopoverData(
     return base;
   }
 
-  try {
-    const { width, height } = await readImageDimensions(imageUrl);
-    return {
-      ...base,
-      resolution: formatImageResolution(width, height),
-    };
-  } catch {
-    return base;
-  }
+  return resolveImageInfoPopoverMetadata(base, imageUrl);
 }
 
 async function toResolvedCanvasNodeInfoPopoverData(
