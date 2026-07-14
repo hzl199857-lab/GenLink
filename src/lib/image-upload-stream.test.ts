@@ -61,7 +61,7 @@ function createImageRequest(
   return new Request(url, {
     method: "POST",
     headers,
-    body: new Blob([bytes], { type: contentType }),
+    body: new Blob([bytes as unknown as BlobPart], { type: contentType }),
     signal: options.signal,
   });
 }
