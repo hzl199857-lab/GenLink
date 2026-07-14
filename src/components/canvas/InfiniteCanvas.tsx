@@ -2090,6 +2090,22 @@ async function uploadMediaFileToOss(file: File): Promise<{
   mimeType: string;
   sizeBytes: number;
 }> {
+  if (file.type.startsWith('image/')) {
+    const uploaded = await uploadImageAsset({
+      data: file,
+      contentType: file.type || 'image/png',
+      fileName: file.name,
+      folder: 'references/images',
+    });
+
+    return {
+      url: uploaded.hostedUrl,
+      fileName: file.name,
+      mimeType: file.type || 'image/png',
+      sizeBytes: file.size,
+    };
+  }
+
   const folder = file.type.startsWith('video/')
     ? 'references/videos'
     : file.type.startsWith('audio/')
