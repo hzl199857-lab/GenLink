@@ -38,14 +38,30 @@ test("normalizes a pending home Agent request", () => {
   const request = createHomeAgentPendingRequest({
     id: "launch-1",
     prompt: "  创建一张海报  ",
+    provider: "vibe",
     model: "gpt-5.4-mini",
+    imagePreference: {
+      mode: "manual",
+      provider: "comfly",
+      model: "midjourney",
+      aspectRatio: "4:3",
+      quality: "2K",
+    },
     files: [],
   });
 
   assert.deepEqual(request, {
     id: "launch-1",
     prompt: "创建一张海报",
+    provider: "vibe",
     model: "gpt-5.4-mini",
+    imagePreference: {
+      mode: "manual",
+      provider: "comfly",
+      model: "midjourney",
+      aspectRatio: "4:3",
+      quality: "2K",
+    },
     files: [],
   });
 });

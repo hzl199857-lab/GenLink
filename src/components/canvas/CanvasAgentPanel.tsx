@@ -20,6 +20,7 @@ import { buildAgentTaskContext, getReferencedAgentAttachmentIds } from '@/lib/ag
 import { buildCanvasRuntimeSnapshot } from '@/lib/canvas/runtime-snapshot';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import UniqueLoading from '@/components/ui/grid-loading';
+import { AgentPanelSelect } from '@/components/agent/AgentPanelSelect';
 import {
   canSaveAgentDraftForScope,
   createAgentDraftScopeKey,
@@ -1553,99 +1554,6 @@ function resolveAutoImageProvider(): ApiProvider {
   return providerWithKey ?? readStoredSelectedApiProvider('image');
 }
 
-type AgentPanelSelectOption<TValue extends string> = {
-  value: TValue;
-  label: string;
-};
-
-function AgentPanelSelect<TValue extends string>({
-  label,
-  value,
-  options,
-  disabled = false,
-  onChange,
-}: {
-  label: string;
-  value: TValue;
-  options: AgentPanelSelectOption<TValue>[];
-  disabled?: boolean;
-  onChange: (value: TValue) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const selectedOption = options.find((option) => option.value === value) ?? options[0];
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [open]);
-
-  return (
-    <div ref={rootRef} className="relative">
-      <span className="mb-1 block text-[11px] uppercase tracking-[0.08em] text-white/36">{label}</span>
-      <button
-        type="button"
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className={[
-          'flex h-9 w-full items-center justify-between gap-2 rounded-lg bg-white/[0.055] px-3 text-left text-xs font-medium text-white/82 outline-none transition',
-          disabled
-            ? 'cursor-not-allowed opacity-55'
-            : 'hover:bg-white/[0.085] focus:bg-white/[0.085] focus:ring-1 focus:ring-white/12',
-        ].join(' ')}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className="min-w-0 truncate">{selectedOption?.label ?? value}</span>
-        <ChevronRight size={14} className="shrink-0 text-white/34" />
-      </button>
-      {open && !disabled ? (
-        <div
-          role="listbox"
-          className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-full min-w-[152px] overflow-hidden rounded-xl border border-white/10 bg-[#101217] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)]"
-        >
-          {options.map((option) => {
-            const selected = option.value === value;
-
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className={[
-                  'flex h-9 w-full items-center justify-between gap-2 rounded-lg px-2.5 text-left text-xs transition',
-                  selected
-                    ? 'bg-white/[0.12] font-semibold text-white'
-                    : 'text-white/62 hover:bg-white/[0.075] hover:text-white/86',
-                ].join(' ')}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="min-w-0 truncate">{option.label}</span>
-                <ChevronRight size={13} className={selected ? 'text-white/52' : 'text-white/24'} />
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function resolveActivePlanfPresetId(
   draftValue: string,
@@ -2146,7 +2054,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
   const runAgent = useCallback(async (params: {
     prompt: string;
+    provider: AgentProvider;
     model: string;
+    imagePreference: Required<AgentImageGenerationPreference>;
     taskAttachments: AgentTaskAttachment[];
     selectedAttachments: AgentTaskAttachment[];
     userMessageCreatedAt: string;
@@ -2234,7 +2144,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             attachments: params.selectedAttachments,
             optionId,
             sharedPlannerContext,
-            provider,
+            provider: params.provider,
             model: params.model,
           });
           sharedPlannerContext = planner.sharedPlannerContext ?? sharedPlannerContext;
@@ -2339,7 +2249,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             message: params.prompt,
             preset: routeDecision.preset,
             referenceImageCount: params.selectedAttachments.length,
-            provider,
+            provider: params.provider,
             model: params.model,
           });
         } catch (error) {
@@ -2374,7 +2284,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           setBusyMode('mcp');
 
           try {
-            const planMessage = await requestOpenClawPlanfEcomConfirm(session, provider, params.model, projectId);
+            const planMessage = await requestOpenClawPlanfEcomConfirm(
+              session,
+              params.provider,
+              params.model,
+              projectId,
+            );
 
             setMessages((current) => [
               ...current,
@@ -2431,7 +2346,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       result = await requestAgentRun({
         message: params.prompt,
         context: requestContext,
-        provider,
+        provider: params.provider,
         model: params.model,
       });
     } catch (error) {
@@ -2487,16 +2402,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             ...action,
             options: {
               ...action.options,
-              provider: resolvedImagePreference.provider,
-              model: resolvedImagePreference.model,
-              runningHubChannel: resolvedImagePreference.provider === 'runninghub'
-                ? resolvedImagePreference.runningHubChannel
+              provider: params.imagePreference.provider,
+              model: params.imagePreference.model,
+              runningHubChannel: params.imagePreference.provider === 'runninghub'
+                ? params.imagePreference.runningHubChannel
                 : undefined,
               aspectRatio: resolveAgentActionAspectRatio({
                 actionAspectRatio: action.options?.aspectRatio,
-                preference: resolvedImagePreference,
+                preference: params.imagePreference,
               }),
-              quality: resolvedImagePreference.quality,
+              quality: params.imagePreference.quality,
             },
           }
         : action
@@ -2542,13 +2457,13 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     onConfirmPlan,
     projectId,
     projectName,
-    provider,
-    resolvedImagePreference,
   ]);
 
   const submitAgentRequest = useCallback((submission: {
     prompt: string;
+    provider: AgentProvider;
     model: string;
+    imagePreference: Required<AgentImageGenerationPreference>;
     attachments: AgentTaskAttachment[];
     selectedPlanfPresetId: PlanfEcomPresetId | null;
     planfRouteMode: PlanfAgentRouteMode;
@@ -2560,6 +2475,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }
 
     const submittedModel = submission.model;
+    const submittedProvider = submission.provider;
+    const submittedImagePreference = submission.imagePreference;
     const submittedAttachments = submission.attachments;
     const submittedPlanfPresetId = submission.selectedPlanfPresetId;
     const submittedPlanfRouteMode = submission.planfRouteMode;
@@ -2622,7 +2539,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           attachmentIds: taskAttachments.map((attachment) => attachment.id),
           attachments: taskAttachments.map((attachment) => ({ ...attachment })),
           prompt: trimmedDraft,
-          provider,
+          provider: submittedProvider,
           model: submittedModel,
           reason: '你上传了多张图片，请选择这次任务要使用的图片。',
           status: 'waiting',
@@ -2653,7 +2570,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setAttachments([]);
     void runAgent({
       prompt: trimmedDraft,
+      provider: submittedProvider,
       model: submittedModel,
+      imagePreference: submittedImagePreference,
       taskAttachments,
       selectedAttachments,
       userMessageCreatedAt: now,
@@ -2666,19 +2585,29 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     busy,
     hasUserDecisionPending,
     onCreateSourceNodes,
-    provider,
     runAgent,
   ]);
 
   const handleSubmit = useCallback(() => {
     submitAgentRequest({
       prompt: draft,
+      provider,
       model,
+      imagePreference: resolvedImagePreference,
       attachments,
       selectedPlanfPresetId,
       planfRouteMode,
     });
-  }, [attachments, draft, model, planfRouteMode, selectedPlanfPresetId, submitAgentRequest]);
+  }, [
+    attachments,
+    draft,
+    model,
+    planfRouteMode,
+    provider,
+    resolvedImagePreference,
+    selectedPlanfPresetId,
+    submitAgentRequest,
+  ]);
 
   useEffect(() => {
     if (
@@ -2693,9 +2622,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     consumedInitialRequestIdRef.current = initialRequest.id;
     const timer = window.setTimeout(() => {
       setModel(initialRequest.model);
+      setProvider(initialRequest.provider);
+      setImagePreference({ ...initialRequest.imagePreference });
+      const initialImagePreference = resolveAgentImageGenerationPreference({
+        preference: initialRequest.imagePreference,
+        autoProvider: resolveAutoImageProvider(),
+      });
       submitAgentRequest({
         prompt: initialRequest.prompt,
+        provider: initialRequest.provider,
         model: initialRequest.model,
+        imagePreference: initialImagePreference,
         attachments: initialRequest.attachments,
         selectedPlanfPresetId: null,
         planfRouteMode: 'auto',
@@ -2731,7 +2668,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setBusyMode('thinking');
     void runAgent({
       prompt: retryMessage.retryPrompt,
+      provider,
       model,
+      imagePreference: resolvedImagePreference,
       taskAttachments,
       selectedAttachments,
       userMessageCreatedAt,
@@ -2740,7 +2679,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }).finally(() => {
       setBusyMode(null);
     });
-  }, [busy, messages, model, runAgent]);
+  }, [busy, messages, model, provider, resolvedImagePreference, runAgent]);
 
   const updatePlanfEcomSessionField = useCallback((
     messageId: string,
@@ -3423,7 +3362,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setBusyMode('thinking');
     void runAgent({
       prompt: selectionMessage.prompt,
+      provider: selectionMessage.provider ?? provider,
       model: selectionMessage.model ?? model,
+      imagePreference: resolvedImagePreference,
       taskAttachments: selectionMessage.attachments,
       selectedAttachments: [selectedAttachment],
       userMessageCreatedAt: new Date().toISOString(),
@@ -3432,7 +3373,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }).finally(() => {
       setBusyMode(null);
     });
-  }, [busy, messages, model, runAgent]);
+  }, [busy, messages, model, provider, resolvedImagePreference, runAgent]);
 
   const handleConfirmPlan = useCallback((messageId: string) => {
     const planMessage = messages.find((message) => (

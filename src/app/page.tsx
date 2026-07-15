@@ -25,6 +25,11 @@ import {
   type AgentModelId,
 } from '@/lib/agent-model-options';
 import {
+  DEFAULT_AGENT_IMAGE_ASPECT_RATIO,
+  DEFAULT_AGENT_IMAGE_QUALITY,
+  DEFAULT_AGENT_RUNNING_HUB_CHANNEL,
+} from '@/lib/agent-image-preference';
+import {
   createProjectAtParentDirectory,
   pickProjectParentDirectory,
   revokeObjectUrls,
@@ -45,6 +50,10 @@ import {
   deactivatePromptLibraryStore,
   hydratePromptLibraryForUser,
 } from '@/store/prompt-library-store';
+import type {
+  AgentImageGenerationPreference,
+  AgentProvider,
+} from '@/types/agent';
 
 type Mode = 'hero' | 'library' | 'canvas';
 
@@ -78,7 +87,15 @@ function HomePageContent() {
       null,
     );
   const [heroPrompt, setHeroPrompt] = useState('');
+  const [heroProvider, setHeroProvider] = useState<AgentProvider>('vibe');
   const [heroModel, setHeroModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
+  const [heroImagePreference, setHeroImagePreference] =
+    useState<AgentImageGenerationPreference>({
+      mode: 'auto',
+      aspectRatio: DEFAULT_AGENT_IMAGE_ASPECT_RATIO,
+      quality: DEFAULT_AGENT_IMAGE_QUALITY,
+      runningHubChannel: DEFAULT_AGENT_RUNNING_HUB_CHANNEL,
+    });
   const [heroFiles, setHeroFiles] = useState<File[]>([]);
   const [heroRunBusy, setHeroRunBusy] = useState(false);
   const [heroRunError, setHeroRunError] = useState<string | null>(null);
@@ -254,7 +271,9 @@ function HomePageContent() {
       setPreparedAgentRequest({
         id: request.id,
         prompt: request.prompt,
+        provider: request.provider,
         model: request.model,
+        imagePreference: request.imagePreference,
         attachments,
       });
       setPendingAgentRequest(null);
@@ -281,7 +300,9 @@ function HomePageContent() {
     const request = createHomeAgentPendingRequest({
       id: crypto.randomUUID(),
       prompt: heroPrompt,
+      provider: heroProvider,
       model: heroModel,
+      imagePreference: heroImagePreference,
       files: heroFiles,
     });
 
@@ -294,7 +315,16 @@ function HomePageContent() {
     }
 
     void prepareAgentRequest(request);
-  }, [heroFiles, heroModel, heroPrompt, heroRunBusy, prepareAgentRequest, userId]);
+  }, [
+    heroFiles,
+    heroImagePreference,
+    heroModel,
+    heroPrompt,
+    heroProvider,
+    heroRunBusy,
+    prepareAgentRequest,
+    userId,
+  ]);
 
   useEffect(() => {
     if (
@@ -560,12 +590,16 @@ function HomePageContent() {
           isLeaving={heroLeaving}
           composer={{
             prompt: heroPrompt,
+            provider: heroProvider,
             model: heroModel,
+            imagePreference: heroImagePreference,
             files: heroFiles,
             busy: heroRunBusy,
             error: heroRunError,
             onPromptChange: setHeroPrompt,
+            onProviderChange: setHeroProvider,
             onModelChange: setHeroModel,
+            onImagePreferenceChange: setHeroImagePreference,
             onFilesChange: setHeroFiles,
             onRun: handleHeroRun,
           }}

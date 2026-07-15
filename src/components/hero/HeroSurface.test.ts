@@ -69,3 +69,19 @@ test("the composer follows the compact reference proportions", () => {
   assert.match(composerSource, /min-h-\[64px\]/);
   assert.match(composerSource, /h-8 w-8/);
 });
+
+test("the composer reuses the Agent and model settings controls", () => {
+  const source = readHeroFile("HeroAgentComposer.tsx");
+  const selectSource = readFileSync(
+    new URL("../agent/AgentPanelSelect.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /AgentPanelSelect/);
+  assert.match(source, /aria-label="Agent 模型设置"/);
+  assert.match(source, /aria-label="模型设置"/);
+  assert.match(source, />\s*Agent\s*</);
+  assert.match(source, />\s*模型\s*</);
+  assert.doesNotMatch(source, /<select/);
+  assert.doesNotMatch(selectSource, /focus:ring|outline-white/);
+});

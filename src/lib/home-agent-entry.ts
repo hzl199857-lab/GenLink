@@ -1,17 +1,25 @@
-import type { AgentTaskAttachment } from "@/types/agent";
+import type {
+  AgentImageGenerationPreference,
+  AgentProvider,
+  AgentTaskAttachment,
+} from "@/types/agent";
 import type { AgentModelId } from "@/lib/agent-model-options";
 
 export interface HomeAgentPendingRequest {
   id: string;
   prompt: string;
+  provider: AgentProvider;
   model: AgentModelId;
+  imagePreference: AgentImageGenerationPreference;
   files: File[];
 }
 
 export interface CanvasAgentLaunchRequest {
   id: string;
   prompt: string;
+  provider: AgentProvider;
   model: AgentModelId;
+  imagePreference: AgentImageGenerationPreference;
   attachments: AgentTaskAttachment[];
 }
 
@@ -21,6 +29,7 @@ export function createHomeAgentPendingRequest(
   return {
     ...input,
     prompt: input.prompt.trim(),
+    imagePreference: { ...input.imagePreference },
     files: [...input.files],
   };
 }

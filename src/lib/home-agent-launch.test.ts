@@ -12,6 +12,9 @@ test("the canvas Agent consumes a structured initial request once", () => {
   assert.match(panel, /initialRequest\?: CanvasAgentLaunchRequest/);
   assert.match(panel, /consumedInitialRequestIdRef/);
   assert.match(panel, /submitAgentRequest/);
+  assert.match(panel, /provider: initialRequest\.provider/);
+  assert.match(panel, /preference: initialRequest\.imagePreference/);
+  assert.match(panel, /imagePreference: initialImagePreference/);
   assert.match(panel, /onInitialRequestConsumed\?\.\(initialRequest\.id\)/);
   assert.match(canvas, /initialAgentRequest\?: CanvasAgentLaunchRequest/);
   assert.match(canvas, /effectiveOpen = open \|\| Boolean\(initialAgentRequest\)/);
@@ -22,6 +25,8 @@ test("the home page preserves login-gated input and prepares the canvas request"
 
   assert.match(page, /createHomeAgentPendingRequest/);
   assert.match(page, /createBrowserAgentImageAttachment/);
+  assert.match(page, /provider: request\.provider/);
+  assert.match(page, /imagePreference: request\.imagePreference/);
   assert.match(page, /newProject\('未命名项目'\)/);
   assert.match(page, /setAuthDialogOpen\(true\)/);
   assert.match(page, /readyUserId !== userId/);
