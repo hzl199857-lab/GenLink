@@ -25,6 +25,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   DEFAULT_MIDJOURNEY_SETTINGS,
+  FIXED_IMAGE_FORMAT_MODEL_IDS,
   getImageModelLabel,
   IMAGE_MODEL_OPTIONS_BY_PROVIDER,
   normalizeMidjourneySettings,
@@ -40,6 +41,10 @@ test("exposes gpt-image-2-all only for Comfly", () => {
       !IMAGE_MODEL_OPTIONS_BY_PROVIDER[provider].some((option) => option.id === "gpt-image-2-all"),
     );
   }
+});
+
+test("uses a fixed output format for gpt-image-2-all", () => {
+  assert.ok(FIXED_IMAGE_FORMAT_MODEL_IDS.has("gpt-image-2-all"));
 });
 
 test("exposes Midjourney only for Comfly", () => {

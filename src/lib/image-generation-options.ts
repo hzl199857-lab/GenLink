@@ -63,6 +63,7 @@ export const RUNNING_HUB_NANO_MODEL_IDS: ReadonlySet<string> = new Set([
 
 export const FIXED_IMAGE_FORMAT_MODEL_IDS: ReadonlySet<string> = new Set([
   "gpt-image-2",
+  "gpt-image-2-all",
 ]);
 
 export const RUNNING_HUB_CHANNEL_OPTIONS = [
