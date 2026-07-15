@@ -26,6 +26,19 @@ test("forces server image uploads before the production build", () => {
   assert.ok(buildIndex > settingIndex, "image upload policy must be written before build");
 });
 
+test("writes the public image CDN configuration before the production build", () => {
+  const cdnBaseSetting =
+    'upsert_env_var "NEXT_PUBLIC_IMAGE_CDN_BASE_URL" "https://img.zerinnai.online"';
+  const cdnSourceSetting =
+    'upsert_env_var "NEXT_PUBLIC_IMAGE_CDN_SOURCE_HOST" "genlink-img.oss-cn-guangzhou.aliyuncs.com"';
+  const buildIndex = source.indexOf("npm run build");
+
+  assert.ok(source.indexOf(cdnBaseSetting) >= 0, "missing image CDN base URL");
+  assert.ok(source.indexOf(cdnSourceSetting) >= 0, "missing image CDN source host");
+  assert.ok(buildIndex > source.indexOf(cdnBaseSetting), "CDN base URL must be written before build");
+  assert.ok(buildIndex > source.indexOf(cdnSourceSetting), "CDN source host must be written before build");
+});
+
 test("embeds the release version in the production browser build", () => {
   const buildSteps = source.slice(source.lastIndexOf("install_dependencies"));
   const versionExportIndex = buildSteps.indexOf("export NEXT_PUBLIC_APP_VERSION");

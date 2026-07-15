@@ -27,6 +27,52 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const { getBrowserImageDisplayUrl } = require("./image-display-url.ts") as typeof import("./image-display-url");
 
+const imageCdnConfig = {
+  cdnBaseUrl: "https://img.zerinnai.online",
+  cdnSourceHost: "genlink-img.oss-cn-guangzhou.aliyuncs.com",
+};
+
+test("routes the configured OSS source through the image CDN", () => {
+  const sourceUrl =
+    "https://genlink-img.oss-cn-guangzhou.aliyuncs.com/generated/2026-07-15/example.png?x-oss-process=image%2Fresize%2Cw_1200";
+
+  assert.equal(
+    getBrowserImageDisplayUrl(sourceUrl, imageCdnConfig),
+    "https://img.zerinnai.online/generated/2026-07-15/example.png?x-oss-process=image%2Fresize%2Cw_1200",
+  );
+});
+
+test("preserves URLs that already use the image CDN", () => {
+  const cdnUrl = "https://img.zerinnai.online/generated/example.png?version=2";
+
+  assert.equal(getBrowserImageDisplayUrl(cdnUrl, imageCdnConfig), cdnUrl);
+});
+
+test("keeps other Aliyun OSS buckets on the same-origin reader", () => {
+  const sourceUrl = "https://another-bucket.oss-cn-hangzhou.aliyuncs.com/example.png";
+
+  assert.equal(
+    getBrowserImageDisplayUrl(sourceUrl, imageCdnConfig),
+    `/api/image-hosting/read?url=${encodeURIComponent(sourceUrl)}`,
+  );
+});
+
+test("falls back to the same-origin reader when CDN configuration is invalid", () => {
+  const sourceUrl =
+    "https://genlink-img.oss-cn-guangzhou.aliyuncs.com/generated/example.png";
+
+  for (const config of [
+    { cdnBaseUrl: "", cdnSourceHost: imageCdnConfig.cdnSourceHost },
+    { cdnBaseUrl: "not-a-url", cdnSourceHost: imageCdnConfig.cdnSourceHost },
+    { cdnBaseUrl: imageCdnConfig.cdnBaseUrl, cdnSourceHost: "" },
+  ]) {
+    assert.equal(
+      getBrowserImageDisplayUrl(sourceUrl, config),
+      `/api/image-hosting/read?url=${encodeURIComponent(sourceUrl)}`,
+    );
+  }
+});
+
 test("routes Aliyun OSS default-domain images through the same-origin reader", () => {
   const sourceUrl =
     "https://genlink-img.oss-cn-guangzhou.aliyuncs.com/generated/2026-07-15/example.png?x-oss-process=image%2Fresize%2Cw_1200";
