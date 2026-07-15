@@ -1,9 +1,33 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
 const require = createRequire(import.meta.url);
+const Module = require("node:module") as typeof import("node:module") & {
+  _resolveFilename: (
+    request: string,
+    parent: NodeModule | undefined,
+    isMain: boolean,
+    options?: unknown,
+  ) => string;
+};
 const ts = require("typescript");
+const originalResolveFilename = Module._resolveFilename;
+
+Module._resolveFilename = function resolveAlias(request, parent, isMain, options) {
+  if (request.startsWith("@/")) {
+    return originalResolveFilename.call(
+      this,
+      path.join(process.cwd(), "src", request.slice(2)),
+      parent,
+      isMain,
+      options,
+    );
+  }
+
+  return originalResolveFilename.call(this, request, parent, isMain, options);
+};
 
 require.extensions[".ts"] = (module: NodeModule, filename: string) => {
   const source = require("node:fs").readFileSync(filename, "utf8");
@@ -24,6 +48,8 @@ const {
   createHostedAgentImageAttachment,
   dataUrlToImageBlob,
 } = require("./agent-attachment-upload.ts") as typeof import("./agent-attachment-upload");
+const { createBrowserAgentImageAttachment } =
+  require("./agent-image-upload-client.ts") as typeof import("./agent-image-upload-client");
 
 test("converts base64 image data URLs into uploadable blobs", async () => {
   const blob = await dataUrlToImageBlob("data:image/png;base64,aW1hZ2UtYnl0ZXM=");
@@ -121,4 +147,24 @@ test("falls back to browser preview when derivative generation is omitted", asyn
   assert.equal(attachment.thumbnailUrl, undefined);
   assert.equal(attachment.semanticImageUrl, "https://oss.example.com/original/small.png");
   assert.equal(attachment.plannerImageDataUrl, "data:image/png;base64,c21hbGw=");
+});
+
+test("shares the hosted browser attachment pipeline across Agent entry points", async () => {
+  const file = new File(["image-bytes"], "reference.png", { type: "image/png" });
+  const attachment = await createBrowserAgentImageAttachment(file, {
+    createAttachmentId: () => "agent-attachment-home",
+    createPreviewUrl: () => "blob:home-preview",
+    releasePreviewUrl: () => undefined,
+    readImageDataUrl: async () => "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+    readImageDimensions: async () => ({ width: 1600, height: 900 }),
+    createDerivativeDataUrl: async (_dataUrl, options) =>
+      `data:${options.mimeType};max=${options.maxEdge}`,
+    uploadImageDataUrl: async (_dataUrl, _fileName, kind) =>
+      `https://cdn.test/${kind}.${kind === "original" ? "png" : "jpg"}`,
+  });
+
+  assert.equal(attachment.hostedImageUrl, "https://cdn.test/original.png");
+  assert.equal(attachment.previewUrl, "https://cdn.test/preview.jpg");
+  assert.equal(attachment.semanticImageUrl, "https://cdn.test/semantic.jpg");
+  assert.equal(attachment.name, "reference.png");
 });
