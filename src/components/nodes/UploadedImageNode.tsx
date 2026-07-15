@@ -5,6 +5,7 @@ import NextImage from 'next/image';
 import { Position } from 'reactflow';
 import { Image as ImageIcon, Upload } from 'lucide-react';
 import type { ImageNodeData, UploadedImageNodeData } from '../../types/canvas';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 
@@ -106,6 +107,7 @@ export function UploadedImageNode({
   const displayImageUrl = 'previewUrl' in data && data.previewUrl
     ? data.previewUrl
     : data.imageUrl;
+  const browserImageUrl = getBrowserImageDisplayUrl(displayImageUrl);
   const isLocalPreviewUrl = displayImageUrl.startsWith('blob:') || displayImageUrl.startsWith('data:');
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,13 +153,13 @@ export function UploadedImageNode({
         {displayImageUrl && isLocalPreviewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- blob/data previews cannot be optimized by next/image.
           <img
-            src={displayImageUrl}
+            src={browserImageUrl}
             alt={displayAlt}
             className="absolute inset-0 h-full w-full object-cover scale-[1.01]"
           />
         ) : displayImageUrl ? (
           <NextImage
-            src={displayImageUrl}
+            src={browserImageUrl}
             alt={displayAlt}
             fill
             unoptimized

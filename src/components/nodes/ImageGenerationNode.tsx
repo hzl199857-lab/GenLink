@@ -24,6 +24,7 @@ import {
   type ApiProvider,
 } from '@/store/canvas-store';
 import { normalizeMidjourneySettings } from '@/lib/image-generation-options';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 const MAX_CARD_EDGE = 540;
 const MIN_CARD_EDGE = 220;
@@ -196,6 +197,7 @@ function GeneratedPreviewImageContent({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const displaySrc = getBrowserImageDisplayUrl(src);
 
   return (
     <div className="relative h-full w-full bg-gl-panel">
@@ -213,7 +215,7 @@ function GeneratedPreviewImageContent({
       {/* Generated URLs can be remote provider URLs, so use a plain img here. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={src}
+        src={displaySrc}
         alt={alt}
         className={[
           'h-full w-full object-cover transition-opacity duration-200',
