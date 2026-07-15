@@ -61,11 +61,11 @@ export function GenLinkHero({
               <img
                 src="/genlink-hero-logo.png"
                 alt="GenLink"
-                className="h-auto w-[250px] select-none sm:w-[390px] lg:w-[470px]"
+                className="h-auto w-[280px] select-none sm:w-[440px] lg:w-[600px]"
                 draggable={false}
               />
             </h1>
-            <p className="mx-auto mt-3 max-w-[34rem] text-[13px] font-light leading-5 text-white/48 sm:text-[14px]">
+            <p className="mx-auto mt-6 max-w-[34rem] text-[1rem] font-light leading-relaxed text-white/55 sm:mt-8 sm:text-[1.05rem]">
               <span className="block">无需任何设计技能，</span>
               <span className="block">几秒钟内即可将你的想法转化为高质量的视觉内容</span>
             </p>

@@ -30,7 +30,7 @@ function formatUpdatedAt(value: string): string {
 }
 
 const cardClassName =
-  "w-[190px] shrink-0 snap-start overflow-hidden rounded-[8px] border border-white/12 bg-[#151619] text-left shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 hover:border-white/24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 sm:w-[210px] lg:w-auto";
+  "w-[190px] shrink-0 snap-start overflow-hidden rounded-[8px] bg-[#151619] text-left shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 sm:w-[210px] lg:w-auto";
 
 export function HeroRecentProjects({
   projects,
@@ -52,7 +52,7 @@ export function HeroRecentProjects({
           className={cardClassName}
           onClick={onCreate}
         >
-          <div className="flex aspect-[4/3] items-center justify-center border-b border-white/8 bg-[#1c1d20]">
+          <div className="flex aspect-[4/3] items-center justify-center bg-[#1c1d20]">
             <div className="flex flex-col items-center text-white/72">
               <Plus size={22} strokeWidth={1.6} />
               <span className="mt-2 text-[13px] font-medium">新建项目</span>
@@ -77,7 +77,7 @@ export function HeroRecentProjects({
             className={cardClassName}
             onClick={() => onOpen(project)}
           >
-            <div className="relative aspect-[4/3] overflow-hidden border-b border-white/8 bg-[#1c1d20]">
+            <div className="relative aspect-[4/3] overflow-hidden bg-[#1c1d20]">
               {project.thumbnailUrl ? (
                 <Image
                   src={project.thumbnailUrl}

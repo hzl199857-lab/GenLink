@@ -73,13 +73,13 @@ export function HeroAgentComposer({
   }, [previews]);
 
   return (
-    <div className="w-full rounded-[8px] border border-white/14 bg-[#17181b]/96 p-3 shadow-[0_20px_54px_rgba(0,0,0,0.38)] backdrop-blur-md sm:p-4">
+    <div className="w-full rounded-[8px] bg-[#17181b]/96 p-3 shadow-[0_20px_54px_rgba(0,0,0,0.38)] backdrop-blur-md sm:p-4">
       {previews.length ? (
         <div className="mb-3 flex min-h-16 gap-2 overflow-x-auto pb-1">
           {previews.map(({ file, url }) => (
             <div
               key={`${file.name}:${file.size}:${file.lastModified}`}
-              className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-[6px] border border-white/12 bg-black/30"
+              className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-[6px] bg-black/30"
             >
               <Image
                 src={url}
@@ -118,7 +118,7 @@ export function HeroAgentComposer({
         }}
       />
 
-      <div className="mt-3 flex min-h-10 items-center justify-between gap-3 border-t border-white/8 pt-3">
+      <div className="mt-3 flex min-h-10 items-center justify-between gap-3 pt-3">
         <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
@@ -138,7 +138,7 @@ export function HeroAgentComposer({
             <select
               value={model}
               aria-label="选择 Agent 模型"
-              className="h-9 max-w-[190px] appearance-none rounded-full border border-white/9 bg-white/[0.05] py-0 pl-8 pr-8 text-[12px] font-medium text-white/76 outline-none transition hover:bg-white/[0.09] focus:border-white/22"
+              className="h-9 max-w-[190px] appearance-none rounded-full bg-white/[0.05] py-0 pl-8 pr-8 text-[12px] font-medium text-white/76 outline-none transition hover:bg-white/[0.09] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
               onChange={(event) => {
                 if (isAgentModelId(event.target.value)) {
                   onModelChange(event.target.value);

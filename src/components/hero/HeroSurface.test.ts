@@ -36,3 +36,23 @@ test("the hero replaces the old start button with the composer", () => {
   assert.match(source, /HeroRecentProjects/);
   assert.doesNotMatch(source, /ShinyButton/);
 });
+
+test("the hero preserves the original title scale and spacing", () => {
+  const source = readHeroFile("GenLinkHero.tsx");
+
+  assert.match(source, /w-\[280px\].*sm:w-\[440px\].*lg:w-\[600px\]/);
+  assert.match(
+    source,
+    /mt-6.*text-\[1rem\].*leading-relaxed.*sm:mt-8.*sm:text-\[1\.05rem\]/,
+  );
+});
+
+test("the home surfaces do not use decorative white borders", () => {
+  const composerSource = readHeroFile("HeroAgentComposer.tsx");
+  const recentProjectsSource = readHeroFile("HeroRecentProjects.tsx");
+
+  assert.doesNotMatch(composerSource, /border-white\//);
+  assert.doesNotMatch(recentProjectsSource, /border-white\//);
+  assert.match(composerSource, /focus-visible:outline/);
+  assert.match(recentProjectsSource, /focus-visible:outline/);
+});
