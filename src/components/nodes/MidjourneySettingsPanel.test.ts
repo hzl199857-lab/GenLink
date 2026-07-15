@@ -33,6 +33,13 @@ test("keeps slider dragging local until pointer release and blocks ReactFlow ges
   assert.match(panelSource, /className="[^"]*nodrag[^"]*nopan[^"]*nowheel/);
   assert.match(panelSource, /onPointerDown=\{handleSliderPointerDown\}/);
   assert.match(panelSource, /onPointerUp=\{handleSliderPointerUp\}/);
+  assert.match(panelSource, /const handleSliderPointerCancel/);
+  assert.match(panelSource, /onPointerCancel=\{handleSliderPointerCancel\}/);
+  assert.doesNotMatch(panelSource, /setPointerCapture|releasePointerCapture|hasPointerCapture/);
+  assert.match(
+    panelSource,
+    /handleSliderPointerCancel[\s\S]*?isSliderDraggingRef\.current = false[\s\S]*?updateDraftSettings\(value\)/,
+  );
   assert.match(panelSource, /value=\{draftSettings\.stylize\}/);
   assert.match(panelSource, /value=\{draftSettings\.weird\}/);
   assert.match(panelSource, /value=\{draftSettings\.chaos\}/);

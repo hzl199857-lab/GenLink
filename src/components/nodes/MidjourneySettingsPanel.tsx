@@ -88,7 +88,6 @@ export function MidjourneySettingsPanel({
   const handleSliderPointerDown = (event: PointerEvent<HTMLInputElement>) => {
     event.stopPropagation();
     isSliderDraggingRef.current = true;
-    event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const handleSliderPointerUp = (event: PointerEvent<HTMLInputElement>) => {
@@ -98,10 +97,17 @@ export function MidjourneySettingsPanel({
     }
 
     isSliderDraggingRef.current = false;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
     onChange(draftSettingsRef.current);
+  };
+
+  const handleSliderPointerCancel = (event: PointerEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+    if (!isSliderDraggingRef.current) {
+      return;
+    }
+
+    isSliderDraggingRef.current = false;
+    updateDraftSettings(value);
   };
 
   return (
@@ -141,7 +147,7 @@ export function MidjourneySettingsPanel({
             value={draftSettings.stylize}
             onPointerDown={handleSliderPointerDown}
             onPointerUp={handleSliderPointerUp}
-            onPointerCancel={handleSliderPointerUp}
+            onPointerCancel={handleSliderPointerCancel}
             onChange={(event) => handleSliderChange('stylize', Number(event.target.value))}
             className="nodrag nopan nowheel mt-2 h-1.5 w-full cursor-pointer accent-white"
           />
@@ -166,7 +172,7 @@ export function MidjourneySettingsPanel({
             value={draftSettings.weird}
             onPointerDown={handleSliderPointerDown}
             onPointerUp={handleSliderPointerUp}
-            onPointerCancel={handleSliderPointerUp}
+            onPointerCancel={handleSliderPointerCancel}
             onChange={(event) => handleSliderChange('weird', Number(event.target.value))}
             className="nodrag nopan nowheel mt-2 h-1.5 w-full cursor-pointer accent-white"
           />
@@ -191,7 +197,7 @@ export function MidjourneySettingsPanel({
             value={draftSettings.chaos}
             onPointerDown={handleSliderPointerDown}
             onPointerUp={handleSliderPointerUp}
-            onPointerCancel={handleSliderPointerUp}
+            onPointerCancel={handleSliderPointerCancel}
             onChange={(event) => handleSliderChange('chaos', Number(event.target.value))}
             className="nodrag nopan nowheel mt-2 h-1.5 w-full cursor-pointer accent-white"
           />
