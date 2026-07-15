@@ -73,13 +73,13 @@ export function HeroAgentComposer({
   }, [previews]);
 
   return (
-    <div className="w-full rounded-[8px] bg-[#17181b]/96 p-3 shadow-[0_20px_54px_rgba(0,0,0,0.38)] backdrop-blur-md sm:p-4">
+    <div className="w-full rounded-[16px] border border-[#363636] bg-[#212121] px-3 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.22)] sm:px-4 sm:py-4">
       {previews.length ? (
-        <div className="mb-3 flex min-h-16 gap-2 overflow-x-auto pb-1">
+        <div className="mb-2 flex min-h-14 gap-2 overflow-x-auto pb-1">
           {previews.map(({ file, url }) => (
             <div
               key={`${file.name}:${file.size}:${file.lastModified}`}
-              className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-[6px] bg-black/30"
+              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-[6px] bg-black/30"
             >
               <Image
                 src={url}
@@ -104,9 +104,9 @@ export function HeroAgentComposer({
 
       <textarea
         value={prompt}
-        rows={3}
+        rows={2}
         placeholder="描述你想在画布上完成什么"
-        className="block min-h-[92px] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-6 text-white outline-none placeholder:text-white/36"
+        className="block min-h-[64px] w-full resize-none bg-transparent px-1 py-1 text-[14px] leading-6 text-white outline-none placeholder:text-[#777982]"
         onChange={(event) => onPromptChange(event.target.value)}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -118,27 +118,27 @@ export function HeroAgentComposer({
         }}
       />
 
-      <div className="mt-3 flex min-h-10 items-center justify-between gap-3 pt-3">
+      <div className="mt-2 flex min-h-8 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
             title="上传图片"
             aria-label="上传图片"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white/54 transition hover:bg-white/8 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/50 transition hover:bg-white/[0.06] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
             onClick={() => inputRef.current?.click()}
           >
-            <ImagePlus size={17} strokeWidth={1.8} />
+            <ImagePlus size={16} strokeWidth={1.7} />
           </button>
 
           <div className="relative min-w-0">
             <Sparkles
-              size={13}
-              className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-white/50"
+              size={12}
+              className="pointer-events-none absolute left-2.5 top-1/2 z-10 -translate-y-1/2 text-white/42"
             />
             <select
               value={model}
               aria-label="选择 Agent 模型"
-              className="h-9 max-w-[190px] appearance-none rounded-full bg-white/[0.05] py-0 pl-8 pr-8 text-[12px] font-medium text-white/76 outline-none transition hover:bg-white/[0.09] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
+              className="h-8 max-w-[170px] appearance-none rounded-[8px] bg-transparent py-0 pl-7 pr-7 text-[12px] font-medium text-white/62 outline-none transition hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
               onChange={(event) => {
                 if (isAgentModelId(event.target.value)) {
                   onModelChange(event.target.value);
@@ -152,8 +152,8 @@ export function HeroAgentComposer({
               ))}
             </select>
             <ChevronDown
-              size={13}
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/42"
+              size={12}
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-white/36"
             />
           </div>
         </div>
@@ -162,10 +162,10 @@ export function HeroAgentComposer({
           type="button"
           aria-label="运行 Agent"
           disabled={!prompt.trim() || busy}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-[#111214] transition hover:bg-white/88 disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/34"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#a5a5a5] text-[#202124] transition hover:bg-[#b8b8b8] disabled:cursor-not-allowed disabled:bg-white/18 disabled:text-white/30"
           onClick={onRun}
         >
-          {busy ? <Loader2 size={17} className="animate-spin" /> : <ArrowUp size={18} />}
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <ArrowUp size={16} />}
         </button>
       </div>
 

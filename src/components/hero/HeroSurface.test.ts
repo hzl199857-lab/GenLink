@@ -56,3 +56,16 @@ test("the home surfaces do not use decorative white borders", () => {
   assert.match(composerSource, /focus-visible:outline/);
   assert.match(recentProjectsSource, /focus-visible:outline/);
 });
+
+test("the composer follows the compact reference proportions", () => {
+  const heroSource = readHeroFile("GenLinkHero.tsx");
+  const composerSource = readHeroFile("HeroAgentComposer.tsx");
+
+  assert.match(heroSource, /max-w-\[820px\]/);
+  assert.match(composerSource, /rounded-\[16px\]/);
+  assert.match(composerSource, /border-\[#363636\]/);
+  assert.match(composerSource, /bg-\[#212121\]/);
+  assert.match(composerSource, /rows=\{2\}/);
+  assert.match(composerSource, /min-h-\[64px\]/);
+  assert.match(composerSource, /h-8 w-8/);
+});
