@@ -1064,10 +1064,34 @@ export async function pickProjectParentDirectory(): Promise<FileSystemDirectoryH
   return handle;
 }
 
+export function buildCreatedProjectSnapshot(params: {
+  projectName: string;
+  sourceSnapshot?: ProjectSnapshot;
+  id?: string;
+  timestamp?: string;
+}): ProjectSnapshot {
+  const timestamp = params.timestamp ?? new Date().toISOString();
+  const source = params.sourceSnapshot;
+
+  return buildProjectSnapshot({
+    id: params.id ?? crypto.randomUUID(),
+    name: params.projectName,
+    nodes: source?.nodes ?? [],
+    edges: source?.edges ?? [],
+    groups: source?.groups,
+    materialFolders: source?.materialFolders,
+    materials: source?.materials,
+    thumbnailFileName: source?.thumbnailFileName,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+}
+
 export async function createProjectAtParentDirectory(params: {
   parentHandle: FileSystemDirectoryHandle;
   projectName: string;
   userId: string;
+  sourceSnapshot?: ProjectSnapshot;
 }): Promise<CreateProjectResult> {
   const sanitizedName = sanitizeDirectoryName(params.projectName);
 
@@ -1081,14 +1105,9 @@ export async function createProjectAtParentDirectory(params: {
     throw new Error("\u8be5\u76ee\u5f55\u4e0b\u5df2\u5b58\u5728\u540c\u540d\u9879\u76ee");
   }
 
-  const timestamp = new Date().toISOString();
-  const snapshot = buildProjectSnapshot({
-    id: crypto.randomUUID(),
-    name: sanitizedName,
-    nodes: [],
-    edges: [],
-    createdAt: timestamp,
-    updatedAt: timestamp,
+  const snapshot = buildCreatedProjectSnapshot({
+    projectName: sanitizedName,
+    sourceSnapshot: params.sourceSnapshot,
   });
   const projectHandle = await params.parentHandle.getDirectoryHandle(sanitizedName, {
     create: true,

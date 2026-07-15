@@ -4727,6 +4727,7 @@ export interface CanvasState {
   redo: () => void;
   markCleanFromSnapshot: (snapshot: ProjectSnapshot) => void;
   newProject: (name?: string) => void;
+  createProjectSnapshot: () => ProjectSnapshot;
   saveProject: () => Promise<ProjectSnapshot>;
   loadProject: (project: ProjectHandleRecord) => Promise<void>;
   listProjects: () => Promise<ProjectHandleRecord[]>;
@@ -4739,6 +4740,7 @@ export interface CanvasState {
     project: ProjectHandleRecord,
   ) => Promise<ProjectHandleRecord>;
   attachProject: (project: ProjectHandleRecord, snapshot: ProjectSnapshot) => void;
+  bindDraftProject: (project: ProjectHandleRecord, snapshot: ProjectSnapshot) => void;
   persistProjectOutput: (params: {
     sourceKey: string;
     imageUrl: string;
@@ -10138,6 +10140,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
+  createProjectSnapshot: () => createSnapshot(get()),
+
   saveProject: async () => {
     const scope = captureCanvasUserScope(get, set);
     scope.set({ loading: true, error: null });
@@ -10364,6 +10368,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       saveMessage: null,
       undoStack: [],
       redoStack: [],
+    });
+  },
+
+  bindDraftProject: (project, snapshot) => {
+    set({
+      projectId: snapshot.id,
+      projectName: snapshot.name,
+      projectCreatedAt: snapshot.createdAt,
+      currentProject: project,
+      currentProjectThumbnailFileName: snapshot.thumbnailFileName,
+      loading: false,
+      error: null,
+      dirty: false,
+      lastSavedAt: snapshot.updatedAt,
+      lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
+      saveMessage: null,
     });
   },
 
