@@ -1,18 +1,30 @@
-'use client';
+"use client";
 
-import dynamic from 'next/dynamic';
-import React from 'react';
-import { ShinyButton } from '@/components/ui/ShinyButton';
+import dynamic from "next/dynamic";
+
+import {
+  HeroAgentComposer,
+  type HeroAgentComposerProps,
+} from "@/components/hero/HeroAgentComposer";
+import {
+  HeroRecentProjects,
+  type HeroRecentProjectsProps,
+} from "@/components/hero/HeroRecentProjects";
+import { AGENT_MODEL_OPTIONS } from "@/lib/agent-model-options";
 
 const CanvasRevealEffect = dynamic(
   () =>
-    import('@/components/ui/CanvasRevealEffect').then((m) => m.CanvasRevealEffect),
+    import("@/components/ui/CanvasRevealEffect").then(
+      (module) => module.CanvasRevealEffect,
+    ),
   { ssr: false },
 );
 
 interface GenLinkHeroProps {
-  onEnter: () => void;
+  composer?: HeroAgentComposerProps;
+  recentProjects?: HeroRecentProjectsProps;
   isLeaving?: boolean;
+  onEnter?: () => void;
 }
 
 const HERO_PARTICLE_COLORS = [
@@ -20,51 +32,64 @@ const HERO_PARTICLE_COLORS = [
   [255, 255, 255],
 ];
 
-export function GenLinkHero({ onEnter, isLeaving = false }: GenLinkHeroProps) {
+const noop = () => undefined;
+
+export function GenLinkHero({
+  composer,
+  recentProjects,
+  isLeaving = false,
+}: GenLinkHeroProps) {
+  const composerProps: HeroAgentComposerProps = composer ?? {
+    prompt: "",
+    model: AGENT_MODEL_OPTIONS[0].id,
+    files: [],
+    busy: false,
+    error: null,
+    onPromptChange: noop,
+    onModelChange: noop,
+    onFilesChange: noop,
+    onRun: noop,
+  };
+
   return (
     <div
-      className="relative flex min-h-screen w-full flex-col bg-black transition-opacity duration-500 ease-out"
+      className="relative h-full w-full overflow-y-auto bg-black text-white transition-opacity duration-500 ease-out"
       style={{ opacity: isLeaving ? 0 : 1 }}
     >
-      <div className="absolute inset-0 z-0">
-        <div className="absolute inset-0">
-          <CanvasRevealEffect
-            animationSpeed={3}
-            startTimeOffsetMs={1300}
-            containerClassName="bg-black"
-            colors={HERO_PARTICLE_COLORS}
-            dotSize={6}
-            reverse={false}
-          />
-        </div>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(0,0,0,1)_0%,_transparent_100%)]" />
-        <div className="absolute left-0 right-0 top-0 h-1/3 bg-gradient-to-b from-black to-transparent" />
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <CanvasRevealEffect
+          animationSpeed={3}
+          startTimeOffsetMs={1300}
+          containerClassName="bg-black"
+          colors={HERO_PARTICLE_COLORS}
+          dotSize={6}
+          reverse={false}
+        />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(0,0,0,0.98)_0%,_rgba(0,0,0,0.56)_48%,_rgba(0,0,0,0.16)_100%)]" />
+        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black to-transparent" />
       </div>
 
-      <div className="relative z-10 flex flex-1 flex-col">
-        <div className="flex flex-1 flex-col items-center justify-center px-6">
-          <div className="mt-[120px] w-full max-w-3xl sm:mt-[140px]">
-            <div className="text-center">
-              <h1 className="flex justify-center" aria-label="GenLink">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/genlink-hero-logo.png"
-                  alt="GenLink"
-                  className="h-auto w-[280px] select-none sm:w-[440px] lg:w-[600px]"
-                  draggable={false}
-                  suppressHydrationWarning
-                />
-              </h1>
-              <p className="mx-auto mt-6 max-w-[34rem] text-[1rem] font-light leading-relaxed text-white/55 sm:mt-8 sm:text-[1.05rem]">
-                <span className="block">无需任何设计技能，</span>
-                <span className="block">几秒钟内即可将你的想法转化为高质量的视觉内容</span>
-              </p>
-              <div className="mt-9 flex justify-center">
-                <ShinyButton onClick={onEnter}>
-                  开始创作
-                </ShinyButton>
-              </div>
-            </div>
+      <div className="relative z-10 mx-auto flex min-h-full w-full max-w-[960px] flex-col items-center px-4 pb-10 pt-14 sm:px-7 sm:pt-16 lg:justify-center lg:py-12">
+        <div className="w-full">
+          <header className="text-center">
+            <h1 className="flex justify-center" aria-label="GenLink">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/genlink-hero-logo.png"
+                alt="GenLink"
+                className="h-auto w-[250px] select-none sm:w-[390px] lg:w-[470px]"
+                draggable={false}
+              />
+            </h1>
+            <p className="mx-auto mt-3 max-w-[34rem] text-[13px] font-light leading-5 text-white/48 sm:text-[14px]">
+              <span className="block">无需任何设计技能，</span>
+              <span className="block">几秒钟内即可将你的想法转化为高质量的视觉内容</span>
+            </p>
+          </header>
+
+          <div className="mx-auto mt-7 w-full max-w-[900px] sm:mt-8">
+            <HeroAgentComposer {...composerProps} />
+            {recentProjects ? <HeroRecentProjects {...recentProjects} /> : null}
           </div>
         </div>
       </div>
