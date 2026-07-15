@@ -704,6 +704,41 @@ function toUploadedImageInfoPopoverData(
   };
 }
 
+function toCanvasNodeInfoPopoverData(
+  node: CanvasNode | ReactFlowNode,
+): ImageGenerationInfoPopoverData | null {
+  if (node.type === 'image_generation') {
+    return toImageInfoPopoverData(node.data as ImageGenerationNodeData);
+  }
+
+  if (node.type === 'image') {
+    return toImageNodeInfoPopoverData(node.data as ImageNodeData);
+  }
+
+  if (node.type === 'uploaded_image') {
+    return toUploadedImageInfoPopoverData(node.data as UploadedImageNodeData);
+  }
+
+  if (node.type === 'video') {
+    return toVideoInfoPopoverData(node.data as VideoNodeData);
+  }
+
+  if (node.type === 'video_generation') {
+    return toVideoGenerationInfoPopoverData(node.data as VideoGenerationNodeData);
+  }
+
+  if (node.type === 'video_upscale') {
+    const data = node.data as VideoUpscaleNodeData;
+    const sourceVideo = useCanvasStore
+      .getState()
+      .getConnectedVideoForVideoUpscaleNode(node.id);
+
+    return toVideoUpscaleInfoPopoverData(data, sourceVideo);
+  }
+
+  return null;
+}
+
 async function toResolvedImageGenerationInfoPopoverData(
   data: ImageGenerationNodeData,
 ): Promise<ImageGenerationInfoPopoverData> {
@@ -10132,6 +10167,7 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
   const closeAddMenuTimeoutRef = useRef<number | null>(null);
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
+  const imageInfoRequestIdRef = useRef(0);
   const [agentPanelLayout, setAgentPanelLayout] = useState({
     open: false,
     width: 0,
@@ -11655,8 +11691,14 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
       }, 0);
 
       selectSingleNode(nodeId);
+      const requestId = imageInfoRequestIdRef.current + 1;
+      imageInfoRequestIdRef.current = requestId;
+      setImageInfoPopover(toCanvasNodeInfoPopoverData(node));
+
       void toResolvedCanvasNodeInfoPopoverData(node).then((next) => {
-        setImageInfoPopover(next);
+        if (imageInfoRequestIdRef.current === requestId) {
+          setImageInfoPopover(next);
+        }
       });
     };
 
@@ -15394,7 +15436,10 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
       <ImageGenerationInfoPopover
         open={imageInfoPopover !== null}
         data={imageInfoPopover}
-        onClose={() => setImageInfoPopover(null)}
+        onClose={() => {
+          imageInfoRequestIdRef.current += 1;
+          setImageInfoPopover(null);
+        }}
         rightOffset={imageInfoPopoverRightOffset}
       />
       <ImageLightbox

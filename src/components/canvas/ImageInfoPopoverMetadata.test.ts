@@ -13,3 +13,10 @@ test("resolves remote image file sizes through a one-byte metadata request", () 
   const resolverCalls = source.match(/resolveImageInfoPopoverMetadata\(base, imageUrl\)/g) ?? [];
   assert.equal(resolverCalls.length, 3);
 });
+
+test("shows selected image metadata immediately and ignores stale metadata requests", () => {
+  assert.match(source, /function toCanvasNodeInfoPopoverData/);
+  assert.match(source, /setImageInfoPopover\(toCanvasNodeInfoPopoverData\(node\)\)/);
+  assert.match(source, /const requestId = imageInfoRequestIdRef\.current \+ 1/);
+  assert.match(source, /if \(imageInfoRequestIdRef\.current === requestId\)/);
+});
