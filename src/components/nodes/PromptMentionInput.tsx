@@ -17,6 +17,7 @@ import {
   parseReferenceMentions,
   REFERENCE_MENTION_TOKEN_PREFIX,
 } from '@/lib/prompt-mentions';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 export type PromptMentionImage = {
   id: string;
@@ -539,7 +540,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
                   <>
                     {option.previewUrl ? (
                       <NextImage
-                        src={option.previewUrl}
+                        src={getBrowserImageDisplayUrl(option.previewUrl)}
                         alt={option.alt || option.label}
                         fill
                         unoptimized
@@ -557,7 +558,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
                   </>
                 ) : (
                   <NextImage
-                    src={option.previewUrl || option.imageUrl || ''}
+                    src={getBrowserImageDisplayUrl(option.previewUrl || option.imageUrl || '')}
                     alt={option.alt || option.label}
                     fill
                     unoptimized
@@ -691,7 +692,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
                       <>
                         {option.previewUrl ? (
                           <NextImage
-                            src={option.previewUrl}
+                            src={getBrowserImageDisplayUrl(option.previewUrl)}
                             alt={option.alt || option.label}
                             fill
                             unoptimized
@@ -709,7 +710,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
                       </>
                     ) : (
                       <NextImage
-                        src={option.previewUrl || option.imageUrl || ''}
+                        src={getBrowserImageDisplayUrl(option.previewUrl || option.imageUrl || '')}
                         alt={option.alt || option.label}
                         fill
                         unoptimized

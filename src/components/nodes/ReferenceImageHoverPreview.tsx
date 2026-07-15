@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import NextImage from 'next/image';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { VideoPlayer } from './VideoPlayer';
 
 const REFERENCE_PREVIEW_MAX_EDGE = 176;
@@ -160,7 +161,7 @@ export function ReferenceImageHoverPreviewPortal({
     >
       <div className="relative h-full w-full overflow-hidden rounded-[14px]">
         <NextImage
-          src={preview.imageUrl}
+          src={getBrowserImageDisplayUrl(preview.imageUrl)}
           alt={preview.alt}
           fill
           unoptimized

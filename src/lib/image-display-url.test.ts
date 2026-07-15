@@ -69,3 +69,19 @@ test("canvas uploaded and generated image nodes use the display URL helper", () 
     assert.match(source, /getBrowserImageDisplayUrl\(/);
   }
 });
+
+test("image reference thumbnails and previews use the display URL helper", () => {
+  const referenceRenderers = [
+    "src/components/nodes/ImageGenerationPromptBar.tsx",
+    "src/components/nodes/PromptMentionInput.tsx",
+    "src/components/nodes/ReferenceImageHoverPreview.tsx",
+  ].map((fileName) => readFileSync(resolve(process.cwd(), fileName), "utf8"));
+
+  for (const source of referenceRenderers) {
+    assert.match(
+      source,
+      /import \{ getBrowserImageDisplayUrl \} from ['"]@\/lib\/image-display-url['"]/,
+    );
+    assert.match(source, /getBrowserImageDisplayUrl\(/);
+  }
+});

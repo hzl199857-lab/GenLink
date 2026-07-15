@@ -8,6 +8,7 @@ import { PromptBarRunControls } from './PromptBarRunControls';
 import { PromptMentionInput } from './PromptMentionInput';
 import { MidjourneySettingsPanel } from './MidjourneySettingsPanel';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import {
   ReferenceImageHoverPreviewPortal,
   useReferenceImageHoverPreview,
@@ -753,7 +754,7 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
                       onPointerLeave={referenceImagePreview.hidePreview}
                     >
                       <NextImage
-                        src={image.previewUrl || image.imageUrl}
+                        src={getBrowserImageDisplayUrl(image.previewUrl || image.imageUrl)}
                         alt={image.alt || `Connected image ${index + 1}`}
                         fill
                         unoptimized
