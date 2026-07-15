@@ -149,7 +149,7 @@ export function HeroAgentComposer({
       ) : null}
 
       {agentSettingsOpen ? (
-        <div className="absolute left-3 right-3 top-[calc(100%+8px)] z-30 rounded-xl bg-[#11141b] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.48)] sm:bottom-12 sm:top-auto">
+        <div className="absolute left-3 top-[calc(100%+8px)] z-30 w-[calc(100%-1.5rem)] rounded-xl border border-[#363636] bg-[#212121] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.48)] sm:bottom-12 sm:top-auto sm:w-[500px]">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-xs font-medium text-white/70">Agent 模型</div>
             <button
@@ -185,7 +185,7 @@ export function HeroAgentComposer({
       ) : null}
 
       {modelSettingsOpen ? (
-        <div className="absolute left-3 right-3 top-[calc(100%+8px)] z-30 max-h-[min(420px,calc(100vh-2rem))] overflow-y-auto rounded-xl bg-[#11141b] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.48)] sm:bottom-12 sm:top-auto">
+        <div className="absolute left-3 top-[calc(100%+8px)] z-30 max-h-[min(420px,calc(100vh-2rem))] w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl border border-[#363636] bg-[#212121] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.48)] sm:bottom-12 sm:top-auto sm:w-[560px]">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-xs font-medium text-white/78">生成偏好</div>
             <button

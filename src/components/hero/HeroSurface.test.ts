@@ -85,3 +85,11 @@ test("the composer reuses the Agent and model settings controls", () => {
   assert.doesNotMatch(source, /<select/);
   assert.doesNotMatch(selectSource, /focus:ring|outline-white/);
 });
+
+test("the home settings menus stay compact and match the composer surface", () => {
+  const source = readHeroFile("HeroAgentComposer.tsx");
+
+  assert.match(source, /sm:w-\[500px\]/);
+  assert.match(source, /sm:w-\[560px\]/);
+  assert.doesNotMatch(source, /bg-\[#11141b\]/);
+});
