@@ -3,7 +3,6 @@
 import { ArrowRight, Check } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { FormEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
@@ -25,8 +24,11 @@ function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-export function RegisterFlow() {
-  const router = useRouter();
+interface RegisterFlowProps {
+  onSuccess?: () => void;
+}
+
+export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailTouched, setEmailTouched] = useState(false);
@@ -38,14 +40,35 @@ export function RegisterFlow() {
   const [error, setError] = useState<string | null>(null);
   const codeInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (successTimerRef.current) {
         clearTimeout(successTimerRef.current);
       }
+      if (completionTimerRef.current) {
+        clearTimeout(completionTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (step !== "success") {
+      return;
+    }
+
+    completionTimerRef.current = setTimeout(() => {
+      onSuccess?.();
+    }, 700);
+
+    return () => {
+      if (completionTimerRef.current) {
+        clearTimeout(completionTimerRef.current);
+        completionTimerRef.current = null;
+      }
+    };
+  }, [onSuccess, step]);
 
   useEffect(() => {
     if (step === "code") {
@@ -189,7 +212,7 @@ export function RegisterFlow() {
   };
 
   return (
-    <div className="mt-[150px] w-full max-w-sm">
+    <div className="w-full max-w-sm">
       <AnimatePresence mode="wait">
         {step === "email" ? (
           <motion.div
@@ -440,12 +463,9 @@ export function RegisterFlow() {
               animate={{ opacity: 1 }}
               transition={{ delay: 1 }}
               className="w-full rounded-full bg-white py-3 font-medium text-black transition-colors hover:bg-white/90"
-              onClick={() => {
-                router.push("/?app=library");
-                router.refresh();
-              }}
+              onClick={() => onSuccess?.()}
             >
-              {"\u8fdb\u5165\u9879\u76ee\u5e93"}
+              {"\u7ee7\u7eed\u521b\u4f5c"}
             </motion.button>
           </motion.div>
         )}
