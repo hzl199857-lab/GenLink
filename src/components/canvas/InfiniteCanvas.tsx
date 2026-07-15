@@ -92,6 +92,7 @@ import {
   createProjectAtParentDirectory,
   pickProjectParentDirectory,
 } from '@/lib/project-storage';
+import { getProjectSaveIntent } from '@/lib/project-save-intent';
 import {
   UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT,
   clearUpdateRefreshRestoreState,
@@ -10070,6 +10071,7 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
   const undoStackLength = useCanvasStore((s) => s.undoStack.length);
   const redoStackLength = useCanvasStore((s) => s.redoStack.length);
   const attachProject = useCanvasStore((s) => s.attachProject);
+  const bindDraftProject = useCanvasStore((s) => s.bindDraftProject);
   const renameProject = useCanvasStore((s) => s.renameProject);
   const deleteProject = useCanvasStore((s) => s.deleteProject);
   const generateTextFromTextNode = useCanvasStore((s) => s.generateTextFromTextNode);
@@ -10190,6 +10192,7 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
   const [pendingMaterialSource, setPendingMaterialSource] = useState<PendingMaterialSource | null>(null);
   const [movingMaterial, setMovingMaterial] = useState<MaterialLibraryItem | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [projectDialogVariant, setProjectDialogVariant] = useState<'create' | 'save'>('create');
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
   const [openDirectorNodeId, setOpenDirectorNodeId] = useState<string | null>(null);
@@ -14993,12 +14996,29 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
   }, [showProjectMessage]);
 
   const handleSaveProject = useCallback(async () => {
-    await saveProject();
-    setSaveMessage('项目已保存');
-    window.setTimeout(() => {
-      setSaveMessage(null);
-    }, 2200);
-  }, [saveProject, setSaveMessage]);
+    const project = useCanvasStore.getState().currentProject;
+
+    if (getProjectSaveIntent(project) === 'open-save-dialog') {
+      setProjectDialogVariant('save');
+      setCreateDraft({
+        projectName: projectName === '未命名项目' || projectName === 'Untitled' ? '' : projectName,
+        parentHandle: null,
+        parentDirectoryLabel: '',
+      });
+      setProjectDialogOpen(true);
+      return;
+    }
+
+    try {
+      await saveProject();
+      setSaveMessage('项目已保存');
+      window.setTimeout(() => {
+        setSaveMessage(null);
+      }, 2200);
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : '保存项目失败');
+    }
+  }, [projectName, saveProject, setSaveMessage, showProjectMessage]);
 
   useEffect(() => {
     const handleSaveShortcut = (event: KeyboardEvent) => {
@@ -15036,6 +15056,7 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
   }, [renameProject, showProjectMessage]);
 
   const handleOpenCreateProjectDialog = useCallback(() => {
+    setProjectDialogVariant('create');
     setCreateDraft({
       projectName: '',
       parentHandle: null,
@@ -15065,14 +15086,26 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
     setProjectDialogBusy(true);
 
     try {
+      const isDraftSave = projectDialogVariant === 'save' && !useCanvasStore.getState().currentProject;
+      const sourceSnapshot = isDraftSave
+        ? useCanvasStore.getState().createProjectSnapshot()
+        : undefined;
       const created = await runCanvasUserScopedOperation({
         getState: useCanvasStore.getState,
         run: (activeUserId) => createProjectAtParentDirectory({
           parentHandle: createDraft.parentHandle!,
           projectName: createDraft.projectName.trim(),
           userId: activeUserId,
+          sourceSnapshot,
         }),
-        commit: (result) => attachProject(result.project, result.snapshot),
+        commit: (result) => {
+          if (isDraftSave) {
+            bindDraftProject(result.project, result.snapshot);
+            return;
+          }
+
+          attachProject(result.project, result.snapshot);
+        },
       });
 
       if (!created) {
@@ -15085,13 +15118,13 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
         parentHandle: null,
         parentDirectoryLabel: '',
       });
-      showProjectMessage('已清除项目文件夹');
+      showProjectMessage(isDraftSave ? '项目已保存' : '项目已创建');
     } catch (error) {
       showProjectMessage(error instanceof Error ? error.message : '更新项目文件夹失败');
     } finally {
       setProjectDialogBusy(false);
     }
-  }, [attachProject, createDraft.parentHandle, createDraft.projectName, showProjectMessage]);
+  }, [attachProject, bindDraftProject, createDraft.parentHandle, createDraft.projectName, projectDialogVariant, showProjectMessage]);
 
   const handleRequestDeleteCurrentProject = useCallback(() => {
     const project = useCanvasStore.getState().currentProject;
@@ -15124,14 +15157,14 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
   }, [deleteProject, onBackToLibrary, showProjectMessage]);
 
   useEffect(() => {
-    if (!dirty) {
+    if (!dirty || !currentProject) {
       return;
     }
 
     const timer = window.setInterval(() => {
       const latestState = useCanvasStore.getState();
 
-      if (!latestState.dirty || latestState.loading) {
+      if (!latestState.currentProject || !latestState.dirty || latestState.loading) {
         return;
       }
 
@@ -15139,7 +15172,7 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
     }, 5 * 60 * 1000);
 
     return () => window.clearInterval(timer);
-  }, [dirty]);
+  }, [currentProject, dirty]);
 
   return (
     <>
@@ -15495,6 +15528,7 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
       />
       <CreateProjectDialog
         open={projectDialogOpen}
+        variant={projectDialogVariant}
         draft={createDraft}
         loading={projectDialogBusy}
         onChangeProjectName={(value) =>

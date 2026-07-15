@@ -52,3 +52,11 @@ test("canvas bottom project messages use Simplified Chinese copy", () => {
     assert.doesNotMatch(source, new RegExp(message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
+
+test("temporary canvases route first save through the project dialog", () => {
+  assert.match(source, /getProjectSaveIntent\(project\) === 'open-save-dialog'/);
+  assert.match(source, /sourceSnapshot = isDraftSave/);
+  assert.match(source, /bindDraftProject\(result\.project, result\.snapshot\)/);
+  assert.match(source, /if \(!dirty \|\| !currentProject\)/);
+  assert.match(source, /!latestState\.currentProject \|\| !latestState\.dirty/);
+});

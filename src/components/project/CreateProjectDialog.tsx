@@ -16,6 +16,7 @@ export function getProjectDirectoryLabel(
 
 export function CreateProjectDialog({
   open,
+  variant = 'create',
   draft,
   loading,
   onChangeProjectName,
@@ -24,6 +25,7 @@ export function CreateProjectDialog({
   onClose,
 }: {
   open: boolean;
+  variant?: 'create' | 'save';
   draft: CreateProjectDraft;
   loading: boolean;
   onChangeProjectName: (value: string) => void;
@@ -36,11 +38,13 @@ export function CreateProjectDialog({
   }
 
   const canSubmit = Boolean(draft.projectName.trim() && draft.parentHandle);
+  const title = variant === 'save' ? '保存项目' : '新建项目';
+  const confirmLabel = variant === 'save' ? '保存' : '创建并进入';
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/48 px-4">
       <div className="w-full max-w-[560px] overflow-hidden rounded border border-[#1a1a1a] bg-[#050505] shadow-[0_10px_40px_rgba(0,0,0,0.8)]">
-        <div className="px-6 py-4 text-[16px] font-semibold tracking-[1px] text-white">新建项目</div>
+        <div className="px-6 py-4 text-[16px] font-semibold tracking-[1px] text-white">{title}</div>
 
         <div className="border-t border-[#222222] px-6 py-6">
           <div className="text-[13px] text-[#aaaaaa]">项目</div>
@@ -100,7 +104,7 @@ export function CreateProjectDialog({
               className="rounded-sm border border-transparent bg-[#ccff00] px-6 py-2.5 text-[14px] font-semibold text-[#101500] shadow-[0_0_0_1px_rgba(204,255,0,0.18),0_0_18px_rgba(204,255,0,0.18)] transition-colors hover:bg-[#d8ff33] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ccff00] disabled:cursor-not-allowed disabled:bg-[#3a3a3a] disabled:text-[#777777] disabled:shadow-none"
               onClick={onConfirm}
             >
-              创建并进入
+              {confirmLabel}
             </button>
           </div>
         </div>
