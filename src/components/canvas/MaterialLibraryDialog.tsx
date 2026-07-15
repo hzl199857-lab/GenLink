@@ -8,6 +8,7 @@ import type {
   MaterialLibraryFolder,
   MaterialLibraryItem,
 } from '@/types/canvas';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 export const MATERIAL_LIBRARY_CATEGORIES: MaterialLibraryCategory[] = [
   '人物',
@@ -209,7 +210,7 @@ export function MaterialLibraryDialog({
     >
       <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
         <NextImage
-          src={item.hostedImageUrl?.trim() || item.imageUrl.trim()}
+          src={getBrowserImageDisplayUrl(item.hostedImageUrl?.trim() || item.imageUrl.trim())}
           alt={item.name}
           fill
           unoptimized
@@ -316,7 +317,7 @@ export function MaterialLibraryDialog({
               <div className="relative h-[72px] overflow-hidden rounded-[8px] bg-black/30 ring-1 ring-[#333438]">
                 {imageUrl ? (
                   <NextImage
-                    src={imageUrl}
+                    src={getBrowserImageDisplayUrl(imageUrl)}
                     alt={currentDraft.name || '素材预览'}
                     fill
                     unoptimized

@@ -213,6 +213,7 @@ import { PromptLibraryEntryButton } from './PromptLibraryEntryButton';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { AGENT_PANEL_FLOATING_INSET } from '@/lib/agent-panel-layout';
 import { downloadImageGenerationResult } from '@/lib/image-download';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { createVideoClipJob, pollVideoClipJob } from '@/lib/video/clip-client';
 import type { CreateVideoClipJobRequest } from '@/lib/video/clip-types';
 import { ensureVideoProcessingSourceUrl } from '@/lib/video/source-upload';
@@ -448,7 +449,7 @@ function readImageDimensions(imageUrl: string): Promise<ResolvedImageMetadata> {
       resolve({ width, height });
     };
     image.onerror = () => reject(new Error('Failed to read image dimensions'));
-    image.src = imageUrl;
+    image.src = getBrowserImageDisplayUrl(imageUrl);
   });
 }
 
@@ -1802,7 +1803,7 @@ function readImageDimensionsFromUrl(url: string): Promise<{ width: number; heigh
       });
     };
     image.onerror = () => reject(new Error('Invalid image file'));
-    image.src = url;
+    image.src = getBrowserImageDisplayUrl(url);
   });
 }
 
@@ -1841,7 +1842,7 @@ function createCanvasImageDerivativeDataUrl(
       resolve(canvas.toDataURL(options.mimeType, options.quality));
     };
     image.onerror = () => reject(new Error('Failed to preprocess image'));
-    image.src = dataUrl;
+    image.src = getBrowserImageDisplayUrl(dataUrl);
   });
 }
 
@@ -7601,7 +7602,7 @@ function loadAnnotationImageElement(imageUrl: string): Promise<HTMLImageElement>
     image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error('标注原图加载失败，请稍后重试'));
-    image.src = imageUrl;
+    image.src = getBrowserImageDisplayUrl(imageUrl);
   });
 }
 
@@ -7612,7 +7613,7 @@ function loadImageForCanvas(imageUrl: string): Promise<HTMLImageElement> {
     image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error('Failed to load image'));
-    image.src = imageUrl;
+    image.src = getBrowserImageDisplayUrl(imageUrl);
   });
 }
 
@@ -8202,7 +8203,7 @@ function CropOverlay({
         setAspectMenuOpen(false);
       }
     };
-    img.src = data.imageUrl;
+    img.src = getBrowserImageDisplayUrl(data.imageUrl);
     return () => { cancelled = true; };
   }, [data]);
 
@@ -9193,7 +9194,7 @@ function AnnotationOverlay({
         style={{ left: screenX, top: screenY, width: screenW, height: screenH }}
       >
         <NextImage
-          src={data.imageUrl}
+          src={getBrowserImageDisplayUrl(data.imageUrl)}
           alt=""
           fill
           unoptimized
@@ -9746,7 +9747,7 @@ function ImageLightbox({
         onPointerCancel={handlePointerEnd}
       >
         <NextImage
-          src={data.imageUrl}
+          src={getBrowserImageDisplayUrl(data.imageUrl)}
           alt={data.alt}
           fill
           unoptimized

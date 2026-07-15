@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Maximize2, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 export interface VideoPlayerProps {
   src: string;
@@ -137,7 +138,7 @@ export function VideoPlayer({
         ref={resolvedVideoRef}
         crossOrigin="anonymous"
         src={src}
-        poster={poster}
+        poster={poster ? getBrowserImageDisplayUrl(poster) : undefined}
         className={videoClassName}
         controls={false}
         autoPlay={autoPlay}

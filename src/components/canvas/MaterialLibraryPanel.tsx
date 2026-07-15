@@ -23,6 +23,7 @@ import type {
   MaterialLibraryFolder,
   MaterialLibraryItem,
 } from '@/types/canvas';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { MATERIAL_LIBRARY_CATEGORIES } from './MaterialLibraryDialog';
 
 type MaterialMenuState = {
@@ -289,7 +290,7 @@ export function MaterialLibraryPanel({
     >
       <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
         <NextImage
-          src={getImageUrl(item)}
+          src={getBrowserImageDisplayUrl(getImageUrl(item))}
           alt={item.name}
           fill
           unoptimized
@@ -471,7 +472,7 @@ export function MaterialLibraryPanel({
         >
           <div className="relative h-[190px] bg-black/30">
             <NextImage
-              src={getImageUrl(hoverPreview.item)}
+              src={getBrowserImageDisplayUrl(getImageUrl(hoverPreview.item))}
               alt={hoverPreview.item.name}
               fill
               unoptimized

@@ -40,6 +40,7 @@ import {
   NODE_RESIZE_HANDLE_INNER_CORNER_CLASS,
   NODE_RESIZE_HANDLE_OUTER_CORNER_CLASS,
 } from '@/lib/node-resize-handle/classes';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 const HEADER_HEIGHT = 48;
 const ROW_MIN_HEIGHT = 74;
@@ -255,7 +256,7 @@ function ReferenceChips({
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element -- storyboard references can be blob/data/provider URLs.
                 <img
-                  src={reference.previewUrl || reference.url}
+                  src={getBrowserImageDisplayUrl(reference.previewUrl || reference.url)}
                   alt={reference.alt || label}
                   loading="lazy"
                   className="h-full w-full object-contain"

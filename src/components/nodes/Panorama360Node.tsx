@@ -20,6 +20,7 @@ import type {
   Panorama360ViewState,
 } from '../../types/canvas';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 
@@ -560,7 +561,7 @@ export function Panorama360Node({
     const loader = new runtime.THREE.TextureLoader();
     loader.setCrossOrigin('anonymous');
     loader.load(
-      sourceUrl,
+      getBrowserImageDisplayUrl(sourceUrl),
       (texture) => {
         if (cancelled || runtime.disposed) {
           texture.dispose();

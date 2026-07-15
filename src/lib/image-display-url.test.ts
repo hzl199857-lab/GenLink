@@ -85,3 +85,54 @@ test("image reference thumbnails and previews use the display URL helper", () =>
     assert.match(source, /getBrowserImageDisplayUrl\(/);
   }
 });
+
+test("all hosted image browser consumers use the display URL helper", () => {
+  const browserImageConsumers = [
+    "src/components/canvas/CanvasAgentPanel.tsx",
+    "src/components/canvas/GenerationHistoryPopover.tsx",
+    "src/components/canvas/InfiniteCanvas.tsx",
+    "src/components/canvas/MaterialLibraryDialog.tsx",
+    "src/components/canvas/MaterialLibraryPanel.tsx",
+    "src/components/canvas/PromptLibraryDialog.tsx",
+    "src/components/nodes/Panorama360Node.tsx",
+    "src/components/nodes/ReferenceMediaStrip.tsx",
+    "src/components/nodes/StoryboardGridNode.tsx",
+    "src/components/nodes/StoryboardScriptNode.tsx",
+    "src/components/nodes/ThreeViewController.tsx",
+    "src/components/nodes/VideoPlayer.tsx",
+    "src/components/director-desk/editor/canvas/ViewportBackground.tsx",
+    "src/components/director-desk/editor/panels/ScenePanel.tsx",
+    "src/store/canvas-store.ts",
+  ];
+
+  for (const fileName of browserImageConsumers) {
+    const source = readFileSync(resolve(process.cwd(), fileName), "utf8");
+
+    assert.match(
+      source,
+      /import \{ getBrowserImageDisplayUrl \} from ['"]@\/lib\/image-display-url['"]/,
+      `${fileName} must import getBrowserImageDisplayUrl`,
+    );
+    assert.match(
+      source,
+      /getBrowserImageDisplayUrl\(/,
+      `${fileName} must route hosted image reads through getBrowserImageDisplayUrl`,
+    );
+  }
+});
+
+test("generation history proxies image thumbnails without rewriting video sources", () => {
+  const source = readFileSync(
+    resolve(process.cwd(), "src/components/canvas/GenerationHistoryPopover.tsx"),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /<VideoPlayer\s+src=\{item\.previewUrl\}/,
+  );
+  assert.match(
+    source,
+    /<NextImage\s+src=\{getBrowserImageDisplayUrl\(item\.previewUrl\)\}/,
+  );
+});

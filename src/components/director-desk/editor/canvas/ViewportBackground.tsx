@@ -13,6 +13,7 @@ import {
 } from "three";
 import type { DirectorAssetRef, PanoramaProjectionMode } from "../schema/directorProject";
 import { getPanoramaRotationRadians } from "./panoramaMath";
+import { getBrowserImageDisplayUrl } from "@/lib/image-display-url";
 
 type PanoramaTextureState =
   | { status: "idle" }
@@ -59,7 +60,7 @@ function usePanoramaTexture(url: string | null, projectionMode: PanoramaProjecti
 
     try {
       texture = new TextureLoader().load(
-        url,
+        getBrowserImageDisplayUrl(url),
         (loadedTexture) => {
           if (cancelled) {
             loadedTexture.dispose();

@@ -3,6 +3,7 @@
 import React from 'react';
 import { Music2, Play, X } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import {
   ReferenceVideoThumbnail,
   useReferenceImageHoverPreview,
@@ -176,7 +177,7 @@ export function ReferenceMediaStrip({
                   <>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={reference.item.previewUrl || reference.item.imageUrl}
+                      src={getBrowserImageDisplayUrl(reference.item.previewUrl || reference.item.imageUrl)}
                       alt={reference.item.alt || `Connected image ${index + 1}`}
                       className="h-full w-full object-cover"
                       draggable={false}

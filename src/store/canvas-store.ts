@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { migrateLegacyStorageValue, userStorageKey } from "@/lib/browser-user-storage";
+import { getBrowserImageDisplayUrl } from "@/lib/image-display-url";
 
 import {
   buildThreeViewPrompt,
@@ -1659,7 +1660,7 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
     image.onerror = () => reject(new Error("Failed to load source image"));
     image.decoding = "async";
     image.crossOrigin = "anonymous";
-    image.src = src;
+    image.src = getBrowserImageDisplayUrl(src);
   });
 }
 

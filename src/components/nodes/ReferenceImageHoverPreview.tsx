@@ -338,7 +338,7 @@ export function ReferenceVideoThumbnail({
       <>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={thumbnailUrl}
+          src={getBrowserImageDisplayUrl(thumbnailUrl)}
           alt={alt}
           className={imageClassName}
           draggable={false}

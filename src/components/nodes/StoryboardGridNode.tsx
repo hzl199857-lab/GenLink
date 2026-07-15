@@ -22,6 +22,7 @@ import type {
   StoryboardGridNodeData,
   StoryboardGridSize,
 } from '@/types/canvas';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 export const STORYBOARD_GRID_EXPANDED_WIDTH = 760;
 export const STORYBOARD_GRID_COLLAPSED_WIDTH = 420;
@@ -119,6 +120,7 @@ function getCellImageUrl(image: StoryboardGridCellImage): string {
 
 function StoryboardGridImage({ image }: { image: StoryboardGridCellImage }) {
   const imageUrl = getCellImageUrl(image);
+  const browserImageUrl = getBrowserImageDisplayUrl(imageUrl);
   const alt = image.title?.trim() || image.fileName?.trim() || 'Storyboard image';
   const isLocal = imageUrl.startsWith('blob:') || imageUrl.startsWith('data:');
 
@@ -128,12 +130,12 @@ function StoryboardGridImage({ image }: { image: StoryboardGridCellImage }) {
 
   if (isLocal) {
     // eslint-disable-next-line @next/next/no-img-element -- blob/data previews cannot be optimized by next/image.
-    return <img src={imageUrl} alt={alt} className="h-full w-full object-cover" draggable={false} />;
+    return <img src={browserImageUrl} alt={alt} className="h-full w-full object-cover" draggable={false} />;
   }
 
   return (
     <NextImage
-      src={imageUrl}
+      src={browserImageUrl}
       alt={alt}
       fill
       unoptimized

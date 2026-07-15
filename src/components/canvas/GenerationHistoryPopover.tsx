@@ -5,6 +5,7 @@ import NextImage from 'next/image';
 import { Maximize2, Play } from 'lucide-react';
 import type { ImageHistoryItem, ProjectOutputHistoryItem } from '@/types/canvas';
 import { useCanvasStore } from '@/store/canvas-store';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { VideoPlayer } from '../nodes/VideoPlayer';
 
 type HistoryTab = 'images' | 'videos';
@@ -299,7 +300,7 @@ export function GenerationHistoryPopover({
                         onClick={() => handleSelectItem(item)}
                       >
                         <NextImage
-                          src={item.previewUrl}
+                          src={getBrowserImageDisplayUrl(item.previewUrl)}
                           alt="Project image history"
                           fill
                           unoptimized

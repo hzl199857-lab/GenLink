@@ -24,6 +24,7 @@ import type {
 } from "@/features/prompt-library/types";
 import { OPENNANA_MODELS } from "@/features/prompt-library/types";
 import { mergePromptLibraryEntries, sortPromptLibraryEntries } from "@/lib/prompt-library/parse";
+import { getBrowserImageDisplayUrl } from "@/lib/image-display-url";
 import { usePromptLibraryStore } from "@/store/prompt-library-store";
 
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
@@ -120,7 +121,7 @@ function PromptCover({
       {showVideo && videoUrl ? (
         <video
           src={videoUrl}
-          poster={entry.coverUrl}
+          poster={entry.coverUrl ? getBrowserImageDisplayUrl(entry.coverUrl) : undefined}
           controls={playable}
           muted={!playable}
           loop={!playable}
@@ -132,7 +133,7 @@ function PromptCover({
         />
       ) : showImage && entry.coverUrl ? (
         <img
-          src={entry.coverUrl}
+          src={getBrowserImageDisplayUrl(entry.coverUrl)}
           alt={entry.title}
           loading="lazy"
           className={`${mediaClassName} transition-opacity duration-300 ${imageLoaded ? "opacity-100" : "opacity-0"}`}

@@ -18,6 +18,7 @@ import {
 
 import { buildAgentTaskContext, getReferencedAgentAttachmentIds } from '@/lib/agent-task-context';
 import { buildCanvasRuntimeSnapshot } from '@/lib/canvas/runtime-snapshot';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import UniqueLoading from '@/components/ui/grid-loading';
 import {
   canSaveAgentDraftForScope,
@@ -551,7 +552,7 @@ function readImageDimensions(url: string): Promise<{ width: number; height: numb
 
     image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
     image.onerror = () => resolve({ width: 0, height: 0 });
-    image.src = url;
+    image.src = getBrowserImageDisplayUrl(url);
   });
 }
 
@@ -3915,7 +3916,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                           <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-black/5">
                             {attachment.previewUrl || attachment.imageUrl ? (
                               <NextImage
-                                src={attachment.previewUrl || attachment.imageUrl}
+                                src={getBrowserImageDisplayUrl(attachment.previewUrl || attachment.imageUrl)}
                                 alt={attachment.name || `图片${index + 1}`}
                                 fill
                                 sizes="48px"
@@ -3982,7 +3983,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                             <div className="relative aspect-square">
                               {attachment.previewUrl ? (
                                 <NextImage
-                                  src={attachment.previewUrl}
+                                  src={getBrowserImageDisplayUrl(attachment.previewUrl)}
                                   alt={attachment.name || `图片${index + 1}`}
                                   fill
                                   sizes="140px"
@@ -4548,7 +4549,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                         {message.attachments[0]?.previewUrl ? (
                           <div className="relative ml-auto h-8 w-8 overflow-hidden rounded-full border border-white/10 bg-[#35363a]">
                             <NextImage
-                              src={message.attachments[0].previewUrl}
+                              src={getBrowserImageDisplayUrl(message.attachments[0].previewUrl)}
                               alt={message.attachments[0].name || '参考图'}
                               fill
                               sizes="32px"
@@ -5102,7 +5103,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       onPointerLeave={referenceImagePreview.hidePreview}
                     >
                       <NextImage
-                        src={attachment.previewUrl}
+                        src={getBrowserImageDisplayUrl(attachment.previewUrl)}
                         alt={getAttachmentLabel(attachment, index)}
                         fill
                         sizes="40px"

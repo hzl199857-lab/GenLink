@@ -3,6 +3,7 @@
 import React from 'react';
 import { ArrowUp, RotateCcw, X } from 'lucide-react';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
+import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 export interface ThreeViewControllerValue {
   rotation: number;
@@ -106,9 +107,10 @@ function CubePreview({
     startY: number;
     startValue: ThreeViewControllerValue;
   } | null>(null);
-  const faceStyle = imageUrl
+  const browserImageUrl = imageUrl ? getBrowserImageDisplayUrl(imageUrl) : undefined;
+  const faceStyle = browserImageUrl
     ? {
-        backgroundImage: `linear-gradient(rgba(255,255,255,0.03), rgba(0,0,0,0.2)), url("${imageUrl}")`,
+        backgroundImage: `linear-gradient(rgba(255,255,255,0.03), rgba(0,0,0,0.2)), url("${browserImageUrl}")`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
       }
