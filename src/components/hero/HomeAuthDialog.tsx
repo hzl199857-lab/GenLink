@@ -57,7 +57,7 @@ export function HomeAuthDialog({
             role="dialog"
             aria-modal="true"
             aria-label={mode === "login" ? "登录" : "注册"}
-            className="relative max-h-[calc(100vh-3rem)] w-full max-w-[520px] overflow-y-auto rounded-[8px] border border-white/12 bg-[#08090b]/98 px-7 py-10 text-white shadow-[0_28px_90px_rgba(0,0,0,0.72)] sm:px-12 sm:py-12"
+            className="relative max-h-[calc(100vh-3rem)] w-full max-w-[520px] overflow-y-auto rounded-[8px] border border-white/12 bg-[#08090b] px-7 py-10 text-white shadow-[0_28px_90px_rgba(0,0,0,0.72)] sm:px-12 sm:py-12"
             initial={{ opacity: 0, y: 14, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.99 }}
