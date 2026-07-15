@@ -93,6 +93,7 @@ import {
   pickProjectParentDirectory,
 } from '@/lib/project-storage';
 import { getProjectSaveIntent } from '@/lib/project-save-intent';
+import type { CanvasAgentLaunchRequest } from '@/lib/home-agent-entry';
 import {
   UPDATE_REFRESH_VIEWPORT_REQUEST_EVENT,
   clearUpdateRefreshRestoreState,
@@ -9931,6 +9932,8 @@ function mergeStableReactFlowNodes(
 
 interface InnerCanvasProps {
   userId: string;
+  initialAgentRequest?: CanvasAgentLaunchRequest | null;
+  onInitialAgentRequestConsumed?: (id: string) => void;
   onBackToLibrary?: () => void;
   onCanvasReady?: () => void;
 }
@@ -9944,6 +9947,8 @@ type CanvasAgentDockProps = {
   groupCount: number;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  initialAgentRequest?: CanvasAgentLaunchRequest | null;
+  onInitialAgentRequestConsumed?: (id: string) => void;
   onCreateSourceNodes: (attachments: AgentTaskAttachment[]) => Record<string, string>;
   pendingReferenceAttachment?: AgentTaskAttachment | null;
   onPendingReferenceAttachmentConsumed?: (result: 'added' | 'duplicate') => void;
@@ -9979,6 +9984,8 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   groupCount,
   nodes,
   edges,
+  initialAgentRequest,
+  onInitialAgentRequestConsumed,
   onCreateSourceNodes,
   pendingReferenceAttachment,
   onPendingReferenceAttachmentConsumed,
@@ -9989,6 +9996,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   onLayoutChange,
 }: CanvasAgentDockProps) {
   const [open, setOpen] = useState(false);
+  const effectiveOpen = open || Boolean(initialAgentRequest);
 
   useEffect(() => {
     notifyAgentPanelOpenRequest = () => setOpen(true);
@@ -10013,9 +10021,14 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
     onQuickReferenceSelect(onSelect);
   }, [onQuickReferenceSelect]);
 
+  const handleInitialRequestConsumed = useCallback((id: string) => {
+    setOpen(true);
+    onInitialAgentRequestConsumed?.(id);
+  }, [onInitialAgentRequestConsumed]);
+
   return (
     <>
-      {!open ? (
+      {!effectiveOpen ? (
         <button
           type="button"
           aria-label="关闭裁剪"
@@ -10033,7 +10046,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
       ) : null}
       <CanvasAgentPanel
         userId={userId}
-        open={open}
+        open={effectiveOpen}
         projectId={projectId}
         projectName={projectName}
         nodeCount={nodeCount}
@@ -10041,6 +10054,8 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         groupCount={groupCount}
         nodes={nodes}
         edges={edges}
+        initialRequest={initialAgentRequest}
+        onInitialRequestConsumed={handleInitialRequestConsumed}
         onClose={() => setOpen(false)}
         onCreateSourceNodes={onCreateSourceNodes}
         pendingReferenceAttachment={pendingReferenceAttachment}
@@ -10056,7 +10071,13 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
 });
 
 // --- Inner Canvas ---
-function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
+function InnerCanvas({
+  userId,
+  initialAgentRequest,
+  onInitialAgentRequestConsumed,
+  onBackToLibrary,
+  onCanvasReady,
+}: InnerCanvasProps) {
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
   const projectName = useCanvasStore((s) => s.projectName);
@@ -15417,6 +15438,8 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
         groupCount={storeGroups.length}
         nodes={storeNodes}
         edges={storeEdges}
+        initialAgentRequest={initialAgentRequest}
+        onInitialAgentRequestConsumed={onInitialAgentRequestConsumed}
         onCreateSourceNodes={handleCreateAgentSourceNodes}
         pendingReferenceAttachment={pendingAgentReferenceAttachment}
         onPendingReferenceAttachmentConsumed={(result) => {
@@ -15565,11 +15588,19 @@ function InnerCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProp
 }
 
 // --- Wrapper ---
-export function InfiniteCanvas({ userId, onBackToLibrary, onCanvasReady }: InnerCanvasProps) {
+export function InfiniteCanvas({
+  userId,
+  initialAgentRequest,
+  onInitialAgentRequestConsumed,
+  onBackToLibrary,
+  onCanvasReady,
+}: InnerCanvasProps) {
   return (
     <ReactFlowProvider>
       <InnerCanvas
         userId={userId}
+        initialAgentRequest={initialAgentRequest}
+        onInitialAgentRequestConsumed={onInitialAgentRequestConsumed}
         onBackToLibrary={onBackToLibrary}
         onCanvasReady={onCanvasReady}
       />

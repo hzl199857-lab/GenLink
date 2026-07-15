@@ -275,14 +275,19 @@ test("scoped component work cannot commit after logout and same-user relogin", a
   assert.deepEqual(committed, []);
 });
 
-test("both canvas project create entry points use scoped component work", () => {
+test("all project create entry points use scoped component work", () => {
   for (const fileName of [
     "src/components/project/ProjectLibrary.tsx",
     "src/components/canvas/InfiniteCanvas.tsx",
+    "src/app/page.tsx",
   ]) {
     const sourceText = readFileSync(path.join(process.cwd(), fileName), "utf8");
     assert.match(sourceText, /await runCanvasUserScopedOperation\(/, `${fileName} must guard project creation`);
-    assert.match(sourceText, /commit: \(result\) => attachProject\(/, `${fileName} must attach only inside the guard`);
+    assert.match(
+      sourceText,
+      /commit: \(result\) => (?:attachProject\(|\{[\s\S]*?attachProject\(result\.project, result\.snapshot\);[\s\S]*?\})/,
+      `${fileName} must attach only inside the guard`,
+    );
   }
 });
 

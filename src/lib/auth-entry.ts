@@ -1,6 +1,5 @@
 export type HomeEntryDecision =
   | { action: "show-hero" }
-  | { action: "redirect-login" }
   | { action: "open-library" };
 
 interface HomeEntryDecisionInput {
@@ -17,7 +16,7 @@ export function getHomeEntryDecision({
   }
 
   if (!isAuthenticated) {
-    return { action: "redirect-login" };
+    return { action: "show-hero" };
   }
 
   return { action: "open-library" };

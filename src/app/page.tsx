@@ -3,11 +3,33 @@
 import React, { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { GenLinkHero } from '@/components/hero/GenLinkHero';
+import { HomeAuthDialog } from '@/components/hero/HomeAuthDialog';
 import { InfiniteCanvas } from '@/components/canvas/InfiniteCanvas';
 import { ProjectLibrary } from '@/components/project/ProjectLibrary';
+import {
+  CreateProjectDialog,
+  getProjectDirectoryLabel,
+  type CreateProjectDraft,
+} from '@/components/project/CreateProjectDialog';
 import UniqueLoading from '@/components/ui/grid-loading';
 import { authClient } from '@/lib/auth-client';
 import { getHomeEntryDecision } from '@/lib/auth-entry';
+import { createBrowserAgentImageAttachment } from '@/lib/agent-image-upload-client';
+import {
+  createHomeAgentPendingRequest,
+  type CanvasAgentLaunchRequest,
+  type HomeAgentPendingRequest,
+} from '@/lib/home-agent-entry';
+import {
+  AGENT_MODEL_OPTIONS,
+  type AgentModelId,
+} from '@/lib/agent-model-options';
+import {
+  createProjectAtParentDirectory,
+  pickProjectParentDirectory,
+  revokeObjectUrls,
+  type ProjectHandleRecord,
+} from '@/lib/project-storage';
 import {
   shouldKeepEntryLoaderVisible,
   shouldShowProjectLibraryEntryLoader,
@@ -18,7 +40,7 @@ import {
   writeUpdateRefreshAppMode,
   type UpdateRefreshRestoreState,
 } from '@/lib/update-refresh-restore';
-import { useCanvasStore } from '@/store/canvas-store';
+import { runCanvasUserScopedOperation, useCanvasStore } from '@/store/canvas-store';
 import {
   deactivatePromptLibraryStore,
   hydratePromptLibraryForUser,
@@ -36,6 +58,9 @@ function HomePageContent() {
   const searchParams = useSearchParams();
   const session = authClient.useSession();
   const userId = session.data?.user.id ?? null;
+  const listProjects = useCanvasStore((state) => state.listProjects);
+  const loadProject = useCanvasStore((state) => state.loadProject);
+  const attachProject = useCanvasStore((state) => state.attachProject);
   const [readyUserId, setReadyUserId] = useState<string | null>(null);
   const [initialRefreshRestore, setInitialRefreshRestore] =
     useState<UpdateRefreshRestoreState | null>(null);
@@ -52,10 +77,30 @@ function HomePageContent() {
     useState<UpdateRefreshRestoreState | null>(
       null,
     );
+  const [heroPrompt, setHeroPrompt] = useState('');
+  const [heroModel, setHeroModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
+  const [heroFiles, setHeroFiles] = useState<File[]>([]);
+  const [heroRunBusy, setHeroRunBusy] = useState(false);
+  const [heroRunError, setHeroRunError] = useState<string | null>(null);
+  const [pendingAgentRequest, setPendingAgentRequest] = useState<HomeAgentPendingRequest | null>(null);
+  const [preparedAgentRequest, setPreparedAgentRequest] = useState<CanvasAgentLaunchRequest | null>(null);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [heroProjects, setHeroProjects] = useState<ProjectHandleRecord[]>([]);
+  const [heroProjectsLoading, setHeroProjectsLoading] = useState(false);
+  const [heroProjectsBusy, setHeroProjectsBusy] = useState(false);
+  const [heroProjectsError, setHeroProjectsError] = useState<string | null>(null);
+  const [heroCreateDialogOpen, setHeroCreateDialogOpen] = useState(false);
+  const [heroCreateDraft, setHeroCreateDraft] = useState<CreateProjectDraft>({
+    projectName: '',
+    parentHandle: null,
+    parentDirectoryLabel: '',
+  });
   const entryLoaderStartedAtRef = useRef<number | null>(null);
   const entryLoaderTimerRef = useRef<number | null>(null);
   const handledAppEntryRef = useRef(false);
   const refreshRestoreStartedRef = useRef(false);
+  const activeAgentRequestIdRef = useRef<string | null>(null);
+  const heroThumbnailUrlsRef = useRef<string[]>([]);
 
   const clearEntryLoaderTimer = useCallback(() => {
     if (entryLoaderTimerRef.current !== null) {
@@ -114,6 +159,9 @@ function HomePageContent() {
         setInitialRefreshRestore(null);
         setPendingRefreshRestore(null);
         setReadyUserId(null);
+        revokeObjectUrls(heroThumbnailUrlsRef.current);
+        heroThumbnailUrlsRef.current = [];
+        setHeroProjects([]);
       }, 0);
       return () => window.clearTimeout(timer);
     }
@@ -184,6 +232,141 @@ function HomePageContent() {
     setMode(nextMode);
   }, []);
 
+  const prepareAgentRequest = useCallback(async (request: HomeAgentPendingRequest) => {
+    if (activeAgentRequestIdRef.current === request.id) {
+      return;
+    }
+
+    activeAgentRequestIdRef.current = request.id;
+    setHeroRunBusy(true);
+    setHeroRunError(null);
+
+    try {
+      const attachments = await Promise.all(
+        request.files.map((file) => createBrowserAgentImageAttachment(file)),
+      );
+
+      if (!useCanvasStore.getState().activeUserId) {
+        throw new Error('登录状态已失效，请重新登录');
+      }
+
+      useCanvasStore.getState().newProject('未命名项目');
+      setPreparedAgentRequest({
+        id: request.id,
+        prompt: request.prompt,
+        model: request.model,
+        attachments,
+      });
+      setPendingAgentRequest(null);
+      setHeroPrompt('');
+      setHeroFiles([]);
+      showEntryLoader('canvas');
+      showAppMode('canvas');
+    } catch (error) {
+      activeAgentRequestIdRef.current = null;
+      setPendingAgentRequest(null);
+      setHeroRunError(
+        error instanceof Error ? error.message : '准备 Agent 任务失败，请稍后重试',
+      );
+    } finally {
+      setHeroRunBusy(false);
+    }
+  }, [showAppMode, showEntryLoader]);
+
+  const handleHeroRun = useCallback(() => {
+    if (!heroPrompt.trim() || heroRunBusy) {
+      return;
+    }
+
+    const request = createHomeAgentPendingRequest({
+      id: crypto.randomUUID(),
+      prompt: heroPrompt,
+      model: heroModel,
+      files: heroFiles,
+    });
+
+    setPendingAgentRequest(request);
+    setHeroRunError(null);
+
+    if (!userId) {
+      setAuthDialogOpen(true);
+      return;
+    }
+
+    void prepareAgentRequest(request);
+  }, [heroFiles, heroModel, heroPrompt, heroRunBusy, prepareAgentRequest, userId]);
+
+  useEffect(() => {
+    if (
+      !userId ||
+      readyUserId !== userId ||
+      !pendingAgentRequest ||
+      heroRunBusy
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void prepareAgentRequest(pendingAgentRequest);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [heroRunBusy, pendingAgentRequest, prepareAgentRequest, readyUserId, userId]);
+
+  useEffect(() => {
+    if (!userId || readyUserId !== userId || mode !== 'hero') {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setHeroProjectsLoading(true);
+      setHeroProjectsError(null);
+
+      void listProjects()
+        .then((projects) => {
+          if (cancelled) {
+            revokeObjectUrls(
+              projects.flatMap((project) =>
+                project.thumbnailUrl ? [project.thumbnailUrl] : [],
+              ),
+            );
+            return;
+          }
+
+          revokeObjectUrls(heroThumbnailUrlsRef.current);
+          heroThumbnailUrlsRef.current = projects.flatMap((project) =>
+            project.thumbnailUrl ? [project.thumbnailUrl] : [],
+          );
+          setHeroProjects(projects);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setHeroProjectsError(
+              error instanceof Error ? error.message : '项目加载失败',
+            );
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setHeroProjectsLoading(false);
+          }
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [listProjects, mode, readyUserId, userId]);
+
+  useEffect(() => {
+    return () => {
+      revokeObjectUrls(heroThumbnailUrlsRef.current);
+      heroThumbnailUrlsRef.current = [];
+    };
+  }, []);
+
   useEffect(() => {
     if (session.isPending || !userId || readyUserId !== userId || refreshRestoreStartedRef.current) return;
 
@@ -229,13 +412,11 @@ function HomePageContent() {
       isAuthenticated: Boolean(session.data?.user),
     });
 
-    if (decision.action === 'redirect-login') {
-      handledAppEntryRef.current = true;
-      router.replace('/login');
-      return;
-    }
-
     if (decision.action !== 'open-library') {
+      if (searchParams.get('app') === 'library') {
+        handledAppEntryRef.current = true;
+        router.replace('/');
+      }
       return;
     }
 
@@ -272,13 +453,83 @@ function HomePageContent() {
     showAppMode('canvas');
   };
 
-  const enterApp = () => {
-    if (session.data?.user) {
-      router.push('/?app=library');
+  const openHeroCreateDialog = () => {
+    setHeroProjectsError(null);
+    setHeroCreateDraft({
+      projectName: '',
+      parentHandle: null,
+      parentDirectoryLabel: '',
+    });
+    setHeroCreateDialogOpen(true);
+  };
+
+  const pickHeroProjectDirectory = async () => {
+    try {
+      const parentHandle = await pickProjectParentDirectory();
+      setHeroCreateDraft((current) => ({
+        ...current,
+        parentHandle,
+        parentDirectoryLabel: getProjectDirectoryLabel(parentHandle),
+      }));
+    } catch (error) {
+      setHeroProjectsError(
+        error instanceof Error ? error.message : '选择项目目录失败',
+      );
+    }
+  };
+
+  const confirmHeroProjectCreate = async () => {
+    if (!heroCreateDraft.parentHandle || !heroCreateDraft.projectName.trim()) {
       return;
     }
 
-    router.push('/login');
+    setHeroProjectsBusy(true);
+    setHeroProjectsError(null);
+
+    try {
+      const created = await runCanvasUserScopedOperation({
+        getState: useCanvasStore.getState,
+        run: (activeUserId) => createProjectAtParentDirectory({
+          parentHandle: heroCreateDraft.parentHandle!,
+          projectName: heroCreateDraft.projectName.trim(),
+          userId: activeUserId,
+        }),
+        commit: (result) => attachProject(result.project, result.snapshot),
+      });
+
+      if (!created) {
+        return;
+      }
+
+      setHeroCreateDialogOpen(false);
+      showCanvasAfterProjectOpen();
+    } catch (error) {
+      setHeroProjectsError(
+        error instanceof Error ? error.message : '创建项目失败',
+      );
+    } finally {
+      setHeroProjectsBusy(false);
+    }
+  };
+
+  const openHeroProject = async (project: ProjectHandleRecord) => {
+    if (heroProjectsBusy) {
+      return;
+    }
+
+    setHeroProjectsBusy(true);
+    setHeroProjectsError(null);
+
+    try {
+      await loadProject(project);
+      showCanvasAfterProjectOpen();
+    } catch (error) {
+      setHeroProjectsError(
+        error instanceof Error ? error.message : '打开项目失败',
+      );
+    } finally {
+      setHeroProjectsBusy(false);
+    }
   };
 
   const backToHero = () => {
@@ -288,6 +539,8 @@ function HomePageContent() {
     setEntryLoader(null);
     setEntryLoaderLeaving(false);
     entryLoaderStartedAtRef.current = null;
+    setPreparedAgentRequest(null);
+    activeAgentRequestIdRef.current = null;
     setMode('hero');
     router.replace('/');
   };
@@ -303,7 +556,29 @@ function HomePageContent() {
   return (
     <main className="fixed inset-0 h-full w-full overflow-hidden bg-gl-app text-gl-text-primary">
       {mode === 'hero' && (
-        <GenLinkHero onEnter={enterApp} isLeaving={heroLeaving} />
+        <GenLinkHero
+          isLeaving={heroLeaving}
+          composer={{
+            prompt: heroPrompt,
+            model: heroModel,
+            files: heroFiles,
+            busy: heroRunBusy,
+            error: heroRunError,
+            onPromptChange: setHeroPrompt,
+            onModelChange: setHeroModel,
+            onFilesChange: setHeroFiles,
+            onRun: handleHeroRun,
+          }}
+          recentProjects={userId ? {
+            projects: heroProjects,
+            loading: heroProjectsLoading,
+            busy: heroProjectsBusy,
+            error: heroProjectsError,
+            onCreate: openHeroCreateDialog,
+            onOpen: (project) => void openHeroProject(project),
+            onAllProjects: () => router.push('/?app=library'),
+          } : undefined}
+        />
       )}
 
       {mode !== 'hero' && (
@@ -357,6 +632,15 @@ function HomePageContent() {
           ) : (
             <InfiniteCanvas
               userId={userId!}
+              initialAgentRequest={preparedAgentRequest}
+              onInitialAgentRequestConsumed={(id) => {
+                if (preparedAgentRequest?.id !== id) {
+                  return;
+                }
+
+                setPreparedAgentRequest(null);
+                activeAgentRequestIdRef.current = null;
+              }}
               onBackToLibrary={() => {
                 if (shouldShowProjectLibraryEntryLoader(knownProjectCount)) {
                   showEntryLoader('library');
@@ -382,6 +666,32 @@ function HomePageContent() {
           )}
         </div>
       )}
+
+      <HomeAuthDialog
+        open={authDialogOpen}
+        onClose={() => setAuthDialogOpen(false)}
+        onAuthenticated={() => {
+          setAuthDialogOpen(false);
+          void session.refetch();
+        }}
+      />
+
+      <CreateProjectDialog
+        open={heroCreateDialogOpen}
+        variant="create"
+        draft={heroCreateDraft}
+        loading={heroProjectsBusy}
+        onChangeProjectName={(projectName) =>
+          setHeroCreateDraft((current) => ({ ...current, projectName }))
+        }
+        onPickDirectory={() => void pickHeroProjectDirectory()}
+        onConfirm={() => void confirmHeroProjectCreate()}
+        onClose={() => {
+          if (!heroProjectsBusy) {
+            setHeroCreateDialogOpen(false);
+          }
+        }}
+      />
 
       {entryLoader || refreshRestoreLoading ? (
         <div

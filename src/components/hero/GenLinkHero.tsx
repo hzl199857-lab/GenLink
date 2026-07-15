@@ -10,7 +10,6 @@ import {
   HeroRecentProjects,
   type HeroRecentProjectsProps,
 } from "@/components/hero/HeroRecentProjects";
-import { AGENT_MODEL_OPTIONS } from "@/lib/agent-model-options";
 
 const CanvasRevealEffect = dynamic(
   () =>
@@ -21,10 +20,9 @@ const CanvasRevealEffect = dynamic(
 );
 
 interface GenLinkHeroProps {
-  composer?: HeroAgentComposerProps;
+  composer: HeroAgentComposerProps;
   recentProjects?: HeroRecentProjectsProps;
   isLeaving?: boolean;
-  onEnter?: () => void;
 }
 
 const HERO_PARTICLE_COLORS = [
@@ -32,25 +30,11 @@ const HERO_PARTICLE_COLORS = [
   [255, 255, 255],
 ];
 
-const noop = () => undefined;
-
 export function GenLinkHero({
   composer,
   recentProjects,
   isLeaving = false,
 }: GenLinkHeroProps) {
-  const composerProps: HeroAgentComposerProps = composer ?? {
-    prompt: "",
-    model: AGENT_MODEL_OPTIONS[0].id,
-    files: [],
-    busy: false,
-    error: null,
-    onPromptChange: noop,
-    onModelChange: noop,
-    onFilesChange: noop,
-    onRun: noop,
-  };
-
   return (
     <div
       className="relative h-full w-full overflow-y-auto bg-black text-white transition-opacity duration-500 ease-out"
@@ -88,7 +72,7 @@ export function GenLinkHero({
           </header>
 
           <div className="mx-auto mt-7 w-full max-w-[900px] sm:mt-8">
-            <HeroAgentComposer {...composerProps} />
+            <HeroAgentComposer {...composer} />
             {recentProjects ? <HeroRecentProjects {...recentProjects} /> : null}
           </div>
         </div>

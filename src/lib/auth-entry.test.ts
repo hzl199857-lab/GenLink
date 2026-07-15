@@ -31,10 +31,10 @@ test("keeps the home page on the hero when no app entry is requested", () => {
   );
 });
 
-test("redirects unauthenticated app entry requests to login", () => {
+test("keeps unauthenticated app entry requests on the hero", () => {
   assert.deepEqual(
     getHomeEntryDecision({ appParam: "library", isAuthenticated: false }),
-    { action: "redirect-login" },
+    { action: "show-hero" },
   );
 });
 

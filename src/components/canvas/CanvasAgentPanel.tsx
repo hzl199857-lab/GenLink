@@ -58,6 +58,7 @@ import {
 } from '@/lib/agent-actions';
 import { fetchAgentApi } from '@/lib/agent-api-fetch';
 import { createBrowserAgentImageAttachment } from '@/lib/agent-image-upload-client';
+import type { CanvasAgentLaunchRequest } from '@/lib/home-agent-entry';
 import {
   buildAgentEcomPlannerPromptDisplayBlocks,
   ECOM_PLANNER_PRESET_ID,
@@ -339,6 +340,8 @@ type CanvasAgentPanelProps = {
   groupCount: number;
   nodes?: CanvasNode[];
   edges?: CanvasEdge[];
+  initialRequest?: CanvasAgentLaunchRequest | null;
+  onInitialRequestConsumed?: (id: string) => void;
   onClose: () => void;
   onLayoutChange?: (layout: { open: boolean; width: number }) => void;
   onCreateSourceNodes?: (attachments: AgentTaskAttachment[]) => Record<string, string>;
@@ -1677,6 +1680,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   groupCount,
   nodes = [],
   edges = [],
+  initialRequest,
+  onInitialRequestConsumed,
   onClose,
   onLayoutChange,
   onCreateSourceNodes,
@@ -1693,6 +1698,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const historyPopoverRef = useRef<HTMLDivElement | null>(null);
   const historyButtonRef = useRef<HTMLButtonElement | null>(null);
   const attachmentsRef = useRef<AgentTaskAttachment[]>([]);
+  const consumedInitialRequestIdRef = useRef<string | null>(null);
   const planfPresetOpenBeforeOverlayRef = useRef(false);
   const resizeDragRef = useRef<{
     startClientX: number;
@@ -2140,6 +2146,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
   const runAgent = useCallback(async (params: {
     prompt: string;
+    model: string;
     taskAttachments: AgentTaskAttachment[];
     selectedAttachments: AgentTaskAttachment[];
     userMessageCreatedAt: string;
@@ -2228,7 +2235,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             optionId,
             sharedPlannerContext,
             provider,
-            model,
+            model: params.model,
           });
           sharedPlannerContext = planner.sharedPlannerContext ?? sharedPlannerContext;
 
@@ -2333,7 +2340,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             preset: routeDecision.preset,
             referenceImageCount: params.selectedAttachments.length,
             provider,
-            model,
+            model: params.model,
           });
         } catch (error) {
           const errorText = formatAgentChatErrorText(
@@ -2367,7 +2374,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           setBusyMode('mcp');
 
           try {
-            const planMessage = await requestOpenClawPlanfEcomConfirm(session, provider, model, projectId);
+            const planMessage = await requestOpenClawPlanfEcomConfirm(session, provider, params.model, projectId);
 
             setMessages((current) => [
               ...current,
@@ -2425,7 +2432,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         message: params.prompt,
         context: requestContext,
         provider,
-        model,
+        model: params.model,
       });
     } catch (error) {
       const errorText = formatAgentChatErrorText(
@@ -2530,7 +2537,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     edges,
     groupCount,
     messages,
-    model,
     nodeCount,
     nodes,
     onConfirmPlan,
@@ -2540,20 +2546,28 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     resolvedImagePreference,
   ]);
 
-  const handleSubmit = useCallback(() => {
-    const trimmedDraft = draft.trim();
+  const submitAgentRequest = useCallback((submission: {
+    prompt: string;
+    model: string;
+    attachments: AgentTaskAttachment[];
+    selectedPlanfPresetId: PlanfEcomPresetId | null;
+    planfRouteMode: PlanfAgentRouteMode;
+  }) => {
+    const trimmedDraft = submission.prompt.trim();
 
     if (!trimmedDraft || busy || hasUserDecisionPending) {
       return;
     }
 
-    const submittedPlanfPresetId = selectedPlanfPresetId;
-    const submittedPlanfRouteMode = planfRouteMode;
+    const submittedModel = submission.model;
+    const submittedAttachments = submission.attachments;
+    const submittedPlanfPresetId = submission.selectedPlanfPresetId;
+    const submittedPlanfRouteMode = submission.planfRouteMode;
     const submittedEcomPlannerActive = submittedPlanfPresetId === ECOM_PLANNER_PRESET_ID;
 
     const plannerSubmitBlockReason = getAgentEcomPlannerSubmitBlockReason({
       active: submittedEcomPlannerActive,
-      attachments,
+      attachments: submittedAttachments,
     });
 
     if (plannerSubmitBlockReason) {
@@ -2572,10 +2586,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
     setBusyMode('thinking');
     const now = new Date().toISOString();
-    const sourceNodeIdsByAttachmentId = attachments.length
-      ? onCreateSourceNodes?.(attachments) ?? {}
+    const sourceNodeIdsByAttachmentId = submittedAttachments.length
+      ? onCreateSourceNodes?.(submittedAttachments) ?? {}
       : {};
-    const taskAttachments = attachments.map((attachment) => ({
+    const taskAttachments = submittedAttachments.map((attachment) => ({
       ...attachment,
       sourceNodeId: sourceNodeIdsByAttachmentId[attachment.id] ?? attachment.sourceNodeId,
     }));
@@ -2609,7 +2623,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           attachments: taskAttachments.map((attachment) => ({ ...attachment })),
           prompt: trimmedDraft,
           provider,
-          model,
+          model: submittedModel,
           reason: '你上传了多张图片，请选择这次任务要使用的图片。',
           status: 'waiting',
           createdAt: new Date().toISOString(),
@@ -2639,6 +2653,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setAttachments([]);
     void runAgent({
       prompt: trimmedDraft,
+      model: submittedModel,
       taskAttachments,
       selectedAttachments,
       userMessageCreatedAt: now,
@@ -2648,17 +2663,48 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       setBusyMode(null);
     });
   }, [
-    attachments,
     busy,
-    draft,
     hasUserDecisionPending,
-    model,
     onCreateSourceNodes,
     provider,
     runAgent,
-    selectedPlanfPresetId,
-    planfRouteMode,
   ]);
+
+  const handleSubmit = useCallback(() => {
+    submitAgentRequest({
+      prompt: draft,
+      model,
+      attachments,
+      selectedPlanfPresetId,
+      planfRouteMode,
+    });
+  }, [attachments, draft, model, planfRouteMode, selectedPlanfPresetId, submitAgentRequest]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      !initialRequest ||
+      busy ||
+      consumedInitialRequestIdRef.current === initialRequest.id
+    ) {
+      return;
+    }
+
+    consumedInitialRequestIdRef.current = initialRequest.id;
+    const timer = window.setTimeout(() => {
+      setModel(initialRequest.model);
+      submitAgentRequest({
+        prompt: initialRequest.prompt,
+        model: initialRequest.model,
+        attachments: initialRequest.attachments,
+        selectedPlanfPresetId: null,
+        planfRouteMode: 'auto',
+      });
+      onInitialRequestConsumed?.(initialRequest.id);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [busy, initialRequest, onInitialRequestConsumed, open, submitAgentRequest]);
 
   const handleRetryAgentMessage = useCallback((messageId: string) => {
     if (busy) {
@@ -2685,6 +2731,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setBusyMode('thinking');
     void runAgent({
       prompt: retryMessage.retryPrompt,
+      model,
       taskAttachments,
       selectedAttachments,
       userMessageCreatedAt,
@@ -2693,7 +2740,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }).finally(() => {
       setBusyMode(null);
     });
-  }, [busy, messages, runAgent]);
+  }, [busy, messages, model, runAgent]);
 
   const updatePlanfEcomSessionField = useCallback((
     messageId: string,
@@ -3376,6 +3423,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     setBusyMode('thinking');
     void runAgent({
       prompt: selectionMessage.prompt,
+      model: selectionMessage.model ?? model,
       taskAttachments: selectionMessage.attachments,
       selectedAttachments: [selectedAttachment],
       userMessageCreatedAt: new Date().toISOString(),
@@ -3384,7 +3432,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }).finally(() => {
       setBusyMode(null);
     });
-  }, [busy, messages, runAgent]);
+  }, [busy, messages, model, runAgent]);
 
   const handleConfirmPlan = useCallback((messageId: string) => {
     const planMessage = messages.find((message) => (
