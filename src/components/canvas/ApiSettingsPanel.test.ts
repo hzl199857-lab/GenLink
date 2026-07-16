@@ -25,10 +25,10 @@ test("canvas blocks a homepage Agent request until a supported key exists", () =
   assert.match(canvasSource, /hasAgentApiCredential/);
   assert.match(
     canvasSource,
-    /const initialAgentRequestBlocked = Boolean\([\s\S]*?initialAgentRequest[\s\S]*?!hasAgentApiCredential\(apiSettings, initialAgentRequest\.provider\)/,
+    /const initialAgentRequestBlocked = Boolean\([\s\S]*?initialAgentRequest[\s\S]*?!hasAgentApiCredential\(apiSettings, initialAgentRequest\.provider, initialAgentRequest\.model\)/,
   );
   assert.match(canvasSource, /initialRequestBlocked=\{initialAgentRequestBlocked\}/);
-  assert.match(canvasSource, /请先填写 Comfly 或贞贞AI工坊 API Key，保存后将自动继续当前任务。/);
+  assert.match(canvasSource, /请先填写当前 Agent 模型可用的 API Key，保存后将自动继续当前任务。/);
   assert.match(canvasSource, /setApiSettingsOpen\(true\)/);
   assert.match(gateEffect, /const timer = window\.setTimeout/);
   assert.match(
@@ -44,7 +44,7 @@ test("canvas blocks a homepage Agent request until a supported key exists", () =
 test("saving a supported key resumes the retained homepage request", () => {
   assert.match(
     canvasSource,
-    /handleSaveApiSettings[\s\S]*?persistApiSettings\(values\)[\s\S]*?hasAgentApiCredential\(values, initialAgentRequest\.provider\)/,
+    /handleSaveApiSettings[\s\S]*?persistApiSettings\(values\)[\s\S]*?hasAgentApiCredential\(values, initialAgentRequest\.provider, initialAgentRequest\.model\)/,
   );
   assert.match(canvasSource, /notice=\{apiSettingsNotice\}/);
   assert.match(canvasSource, /setApiSettingsNotice\(null\)[\s\S]*?setApiSettingsOpen\(false\)/);

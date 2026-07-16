@@ -271,7 +271,7 @@ let notifyMaterialLibraryRequest:
   | ((source: PendingMaterialSource) => void)
   | null = null;
 const MATERIAL_LIBRARY_REQUEST_EVENT = 'genlink:material-library-request';
-const INITIAL_AGENT_API_KEY_NOTICE = '请先填写 Comfly 或贞贞AI工坊 API Key，保存后将自动继续当前任务。';
+const INITIAL_AGENT_API_KEY_NOTICE = '请先填写当前 Agent 模型可用的 API Key，保存后将自动继续当前任务。';
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
@@ -10655,7 +10655,7 @@ function InnerCanvas({
   const promptedInitialAgentRequestIdRef = useRef<string | null>(null);
   const initialAgentRequestBlocked = Boolean(
     initialAgentRequest &&
-    !hasAgentApiCredential(apiSettings, initialAgentRequest.provider),
+    !hasAgentApiCredential(apiSettings, initialAgentRequest.provider, initialAgentRequest.model),
   );
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const materialUploadInputRef = React.useRef<HTMLInputElement>(null);
@@ -15142,7 +15142,7 @@ function InnerCanvas({
     persistApiSettings(values);
     if (
       initialAgentRequest &&
-      !hasAgentApiCredential(values, initialAgentRequest.provider)
+      !hasAgentApiCredential(values, initialAgentRequest.provider, initialAgentRequest.model)
     ) {
       setApiSettingsNotice(INITIAL_AGENT_API_KEY_NOTICE);
       setApiSettingsOpen(true);

@@ -78,6 +78,7 @@ import {
   AGENT_MODEL_OPTIONS,
   getAgentModelOptions,
   resolveAgentModelForProvider,
+  type AgentModelId,
 } from '@/lib/agent-model-options';
 import { resolveAgentApiCredential } from '@/lib/agent-api-key';
 import {
@@ -602,13 +603,17 @@ function AgentAvatarMark() {
   );
 }
 
-function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
+function resolveAgentTextRunConfig(
+  preferredProvider: AgentProvider,
+  model: AgentModelId,
+): {
   provider: AgentProvider;
   apiKey: string;
 } {
   const credential = resolveAgentApiCredential(
     readStoredApiSettings(),
     preferredProvider,
+    model,
   );
 
   return credential ?? {
@@ -821,9 +826,9 @@ async function requestOpenClawPlanfEcomStart(params: {
   preset: PlanfEcomPresetId;
   referenceImageCount: number;
   provider: AgentProvider;
-  model: string;
+  model: AgentModelId;
 }): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session']> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
   const response = await fetch('/api/openclaw/planf/ecom/start', {
     method: 'POST',
     headers: {
@@ -856,9 +861,9 @@ async function requestAgentEcomPlannerOptions(params: {
   optionId?: 'A' | 'B' | 'C';
   sharedPlannerContext?: AgentEcomPlannerSharedContext;
   provider: AgentProvider;
-  model: string;
+  model: AgentModelId;
 }): Promise<AgentEcomPlannerApiPlanner> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
   const clientRequestId = createPanelId(`ecom-planner-${params.optionId ?? 'all'}`);
   const response = await fetchAgentApi(
     '/api/openclaw/planf/ecom/planner',
@@ -904,10 +909,10 @@ async function requestAgentEcomPlannerPromptMarkdown(params: {
   plannerMessage: Extract<AgentPanelMessage, { type: 'ecom_planner_options' }>;
   option: AgentEcomPlannerOption;
   provider: AgentProvider;
-  model: string;
+  model: AgentModelId;
   onProgress?: (event: AgentEcomPlannerPromptStreamEvent) => void;
 }): Promise<AgentEcomPlannerPromptMarkdownApiPrompt> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
   const optionSummary = params.option.uiSummary
     ? [
         params.option.uiSummary.coreDifference,
@@ -1275,10 +1280,10 @@ function resolveAgentActionAspectRatio(params: {
 async function requestOpenClawPlanfEcomConfirm(
   session: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session'],
   provider: AgentProvider,
-  model: string,
+  model: AgentModelId,
   projectId?: string,
 ): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>> {
-  const textRunConfig = resolveAgentTextRunConfig(provider);
+  const textRunConfig = resolveAgentTextRunConfig(provider, model);
   const response = await fetch('/api/openclaw/planf/ecom/confirm', {
     method: 'POST',
     headers: {
@@ -1320,11 +1325,11 @@ async function requestOpenClawPlanfEcomConfirm(
 async function requestOpenClawPlanfEcomCreateWorkflow(
   planMessage: Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>,
   provider: AgentProvider,
-  model: string,
+  model: AgentModelId,
   projectId?: string,
   anchor?: PlanfEcomAnchor,
 ): Promise<AgentRunPanelResult> {
-  const textRunConfig = resolveAgentTextRunConfig(provider);
+  const textRunConfig = resolveAgentTextRunConfig(provider, model);
   const response = await fetch('/api/openclaw/planf/ecom/create-workflow', {
     method: 'POST',
     headers: {
@@ -1367,10 +1372,10 @@ async function requestOpenClawPlanfEcomFanoutWorkflow(
   planfEcom: NonNullable<Extract<AgentPanelMessage, { type: 'execution_plan' }>['planfEcom']>,
   anchor: PlanfEcomAnchor,
   provider: AgentProvider,
-  model: string,
+  model: AgentModelId,
   projectId?: string,
 ): Promise<AgentRunPanelResult> {
-  const textRunConfig = resolveAgentTextRunConfig(provider);
+  const textRunConfig = resolveAgentTextRunConfig(provider, model);
   const response = await fetch('/api/openclaw/planf/ecom/create-workflow', {
     method: 'POST',
     headers: {
@@ -1408,10 +1413,10 @@ async function requestOpenClawPlanfEcomReplan(
     instruction: string;
   },
   provider: AgentProvider,
-  model: string,
+  model: AgentModelId,
   projectId?: string,
 ): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>> {
-  const textRunConfig = resolveAgentTextRunConfig(provider);
+  const textRunConfig = resolveAgentTextRunConfig(provider, model);
   const response = await fetch('/api/openclaw/planf/ecom/confirm', {
     method: 'POST',
     headers: {
@@ -1457,9 +1462,9 @@ async function requestAgentRun(params: {
   message: string;
   context: AgentTaskContext;
   provider: AgentProvider;
-  model: string;
+  model: AgentModelId;
 }): Promise<AgentRunPanelResult> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
   const response = await fetchAgentApi(
     '/api/agent/run',
     {
@@ -1626,7 +1631,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   );
   const hydratedDraftScopeRef = useRef<string | null>(null);
   const [provider, setProvider] = useState<AgentProvider>('comfly');
-  const [model, setModel] = useState<string>(AGENT_MODEL_OPTIONS[0].id);
+  const [model, setModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
   const activeAgentModelOptions = getAgentModelOptions(provider);
   const handleAgentProviderChange = (nextProvider: AgentProvider) => {
     setProvider(nextProvider);
@@ -2056,7 +2061,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const runAgent = useCallback(async (params: {
     prompt: string;
     provider: AgentProvider;
-    model: string;
+    model: AgentModelId;
     imagePreference: Required<AgentImageGenerationPreference>;
     taskAttachments: AgentTaskAttachment[];
     selectedAttachments: AgentTaskAttachment[];
@@ -2460,7 +2465,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const submitAgentRequest = useCallback((submission: {
     prompt: string;
     provider: AgentProvider;
-    model: string;
+    model: AgentModelId;
     imagePreference: Required<AgentImageGenerationPreference>;
     attachments: AgentTaskAttachment[];
     selectedPlanfPresetId: PlanfEcomPresetId | null;
@@ -3368,10 +3373,11 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         : message
     )));
     setBusyMode('thinking');
+    const selectedProvider = selectionMessage.provider ?? provider;
     void runAgent({
       prompt: selectionMessage.prompt,
-      provider: selectionMessage.provider ?? provider,
-      model: selectionMessage.model ?? model,
+      provider: selectedProvider,
+      model: resolveAgentModelForProvider(selectedProvider, selectionMessage.model ?? model),
       imagePreference: resolvedImagePreference,
       taskAttachments: selectionMessage.attachments,
       selectedAttachments: [selectedAttachment],
