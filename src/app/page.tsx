@@ -13,6 +13,11 @@ import {
 } from '@/components/project/CreateProjectDialog';
 import UniqueLoading from '@/components/ui/grid-loading';
 import { authClient } from '@/lib/auth-client';
+import {
+  AUTH_DIALOG_QUERY_PARAM,
+  getAuthDialogMode,
+  type AuthDialogMode,
+} from '@/lib/auth-dialog-return';
 import { getHomeEntryDecision } from '@/lib/auth-entry';
 import { createBrowserAgentImageAttachment } from '@/lib/agent-image-upload-client';
 import {
@@ -65,6 +70,9 @@ const ENTRY_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 function HomePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const returnedAuthMode = getAuthDialogMode(
+    searchParams.get(AUTH_DIALOG_QUERY_PARAM),
+  );
   const session = authClient.useSession();
   const userId = session.data?.user.id ?? null;
   const listProjects = useCanvasStore((state) => state.listProjects);
@@ -101,7 +109,12 @@ function HomePageContent() {
   const [heroRunError, setHeroRunError] = useState<string | null>(null);
   const [pendingAgentRequest, setPendingAgentRequest] = useState<HomeAgentPendingRequest | null>(null);
   const [preparedAgentRequest, setPreparedAgentRequest] = useState<CanvasAgentLaunchRequest | null>(null);
-  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authDialogOpen, setAuthDialogOpen] = useState(
+    Boolean(returnedAuthMode),
+  );
+  const [authDialogMode, setAuthDialogMode] = useState<AuthDialogMode>(
+    returnedAuthMode ?? 'login',
+  );
   const [heroProjects, setHeroProjects] = useState<ProjectHandleRecord[]>([]);
   const [heroProjectsLoading, setHeroProjectsLoading] = useState(false);
   const [heroProjectsBusy, setHeroProjectsBusy] = useState(false);
@@ -118,6 +131,11 @@ function HomePageContent() {
   const refreshRestoreStartedRef = useRef(false);
   const activeAgentRequestIdRef = useRef<string | null>(null);
   const heroThumbnailUrlsRef = useRef<string[]>([]);
+
+  const openAuthDialog = useCallback((nextMode: AuthDialogMode = 'login') => {
+    setAuthDialogMode(nextMode);
+    setAuthDialogOpen(true);
+  }, []);
 
   const clearEntryLoaderTimer = useCallback(() => {
     if (entryLoaderTimerRef.current !== null) {
@@ -244,6 +262,20 @@ function HomePageContent() {
     }
   }, [searchParams]);
 
+  useEffect(() => {
+    if (!returnedAuthMode || session.isPending || readyUserId !== userId) {
+      return;
+    }
+
+    router.replace('/');
+  }, [
+    readyUserId,
+    returnedAuthMode,
+    router,
+    session.isPending,
+    userId,
+  ]);
+
   const showAppMode = useCallback((nextMode: Exclude<Mode, 'hero'>) => {
     setAppVisible(false);
     setMode(nextMode);
@@ -310,7 +342,7 @@ function HomePageContent() {
     setHeroRunError(null);
 
     if (!userId) {
-      setAuthDialogOpen(true);
+      openAuthDialog('login');
       return;
     }
 
@@ -322,6 +354,7 @@ function HomePageContent() {
     heroPrompt,
     heroProvider,
     heroRunBusy,
+    openAuthDialog,
     prepareAgentRequest,
     userId,
   ]);
@@ -588,7 +621,7 @@ function HomePageContent() {
       {mode === 'hero' && (
         <GenLinkHero
           isLeaving={heroLeaving}
-          onOpenAuth={!userId ? () => setAuthDialogOpen(true) : undefined}
+          onOpenAuth={!userId ? () => openAuthDialog('login') : undefined}
           composer={{
             prompt: heroPrompt,
             provider: heroProvider,
@@ -703,7 +736,9 @@ function HomePageContent() {
       )}
 
       <HomeAuthDialog
-        open={authDialogOpen}
+        key={authDialogMode}
+        initialMode={authDialogMode}
+        open={authDialogOpen && !userId}
         onClose={() => setAuthDialogOpen(false)}
         onAuthenticated={() => {
           setAuthDialogOpen(false);

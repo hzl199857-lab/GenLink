@@ -9,13 +9,43 @@ const legalDocumentSource = readFileSync(
   new URL("../../lib/legal-documents.ts", import.meta.url),
   "utf8",
 );
+const returnHelperSource = readFileSync(
+  new URL("../../lib/auth-dialog-return.ts", import.meta.url),
+  "utf8",
+);
+const legalPageSource = readFileSync(
+  new URL("../legal/LegalDocumentPage.tsx", import.meta.url),
+  "utf8",
+);
+const homePageSource = readFileSync(
+  new URL("../../app/page.tsx", import.meta.url),
+  "utf8",
+);
+const authDialogSource = readFileSync(
+  new URL("../hero/HomeAuthDialog.tsx", import.meta.url),
+  "utf8",
+);
 
 test("authentication consent links to complete legal documents", () => {
   assert.match(consentSource, /type="checkbox"/);
-  assert.match(consentSource, /href="\/legal\/terms"/);
-  assert.match(consentSource, /href="\/legal\/community-guidelines"/);
-  assert.match(consentSource, /href="\/legal\/privacy"/);
+  assert.match(consentSource, /buildLegalDocumentHref\("\/legal\/terms", mode\)/);
+  assert.match(
+    consentSource,
+    /buildLegalDocumentHref\("\/legal\/community-guidelines", mode\)/,
+  );
+  assert.match(consentSource, /buildLegalDocumentHref\("\/legal\/privacy", mode\)/);
   assert.match(consentSource, /target="_blank"/);
+});
+
+test("returning from a legal document restores the originating auth dialog", () => {
+  assert.match(returnHelperSource, /value === "login" \|\| value === "register"/);
+  assert.match(legalPageSource, /buildAuthReturnHref\(returnAuthMode\)/);
+  assert.match(homePageSource, /searchParams\.get\(AUTH_DIALOG_QUERY_PARAM\)/);
+  assert.match(homePageSource, /Boolean\(returnedAuthMode\)/);
+  assert.match(homePageSource, /returnedAuthMode \?\? 'login'/);
+  assert.match(homePageSource, /router\.replace\('\/'\)/);
+  assert.match(homePageSource, /initialMode=\{authDialogMode\}/);
+  assert.match(authDialogSource, /useState<AuthDialogMode>\(initialMode\)/);
 });
 
 test("login and registration require explicit legal consent", () => {

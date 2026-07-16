@@ -112,6 +112,7 @@ export function LoginForm({ onSuccess, onRegister }: LoginFormProps) {
 
           <AuthConsent
             id="login-legal-consent"
+            mode="login"
             checked={consentAccepted}
             error={consentError}
             onCheckedChange={(checked) => {

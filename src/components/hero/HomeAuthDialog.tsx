@@ -6,19 +6,22 @@ import { useCallback, useEffect, useState } from "react";
 
 import { LoginForm } from "@/components/auth/LoginForm";
 import { RegisterFlow } from "@/components/auth/RegisterFlow";
+import type { AuthDialogMode } from "@/lib/auth-dialog-return";
 
 interface HomeAuthDialogProps {
+  initialMode?: AuthDialogMode;
   open: boolean;
   onClose: () => void;
   onAuthenticated: () => void;
 }
 
 export function HomeAuthDialog({
+  initialMode = "login",
   open,
   onClose,
   onAuthenticated,
 }: HomeAuthDialogProps) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<AuthDialogMode>(initialMode);
   const closeDialog = useCallback(() => {
     setMode("login");
     onClose();

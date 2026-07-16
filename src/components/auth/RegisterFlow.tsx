@@ -294,6 +294,7 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
 
             <AuthConsent
               id="register-legal-consent"
+              mode="register"
               checked={consentAccepted}
               error={consentError}
               onCheckedChange={(checked) => {

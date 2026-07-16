@@ -26,6 +26,8 @@ test("the home authentication dialog supports explicit and Escape dismissal", ()
   assert.match(dialogSource, /event\.key === ['"]Escape['"]/);
   assert.match(dialogSource, /aria-label="关闭登录窗口"/);
   assert.match(dialogSource, /aria-modal="true"/);
+  assert.match(dialogSource, /initialMode\?: AuthDialogMode/);
+  assert.match(dialogSource, /useState<AuthDialogMode>\(initialMode\)/);
   assert.match(dialogSource, /border-\[#363636\]/);
   assert.doesNotMatch(dialogSource, /border-white\//);
   assert.doesNotMatch(dialogSource, /onClick=\{onClose\}[^\n]*bg-black/);

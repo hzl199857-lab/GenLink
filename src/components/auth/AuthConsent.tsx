@@ -3,10 +3,16 @@
 import { Check } from "lucide-react";
 import Link from "next/link";
 
+import {
+  buildLegalDocumentHref,
+  type AuthDialogMode,
+} from "@/lib/auth-dialog-return";
+
 interface AuthConsentProps {
   checked: boolean;
   error?: string | null;
   id: string;
+  mode: AuthDialogMode;
   onCheckedChange: (checked: boolean) => void;
 }
 
@@ -17,6 +23,7 @@ export function AuthConsent({
   checked,
   error,
   id,
+  mode,
   onCheckedChange,
 }: AuthConsentProps) {
   const errorId = `${id}-error`;
@@ -49,7 +56,7 @@ export function AuthConsent({
             我已阅读并同意
           </label>
           <Link
-            href="/legal/terms"
+            href={buildLegalDocumentHref("/legal/terms", mode)}
             target="_blank"
             rel="noreferrer"
             className={legalLinkClass}
@@ -58,7 +65,7 @@ export function AuthConsent({
           </Link>
           、
           <Link
-            href="/legal/community-guidelines"
+            href={buildLegalDocumentHref("/legal/community-guidelines", mode)}
             target="_blank"
             rel="noreferrer"
             className={legalLinkClass}
@@ -67,7 +74,7 @@ export function AuthConsent({
           </Link>
           和
           <Link
-            href="/legal/privacy"
+            href={buildLegalDocumentHref("/legal/privacy", mode)}
             target="_blank"
             rel="noreferrer"
             className={legalLinkClass}

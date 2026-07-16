@@ -1,19 +1,27 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
+import {
+  buildAuthReturnHref,
+  type AuthDialogMode,
+} from "@/lib/auth-dialog-return";
 import type { LegalDocument } from "@/lib/legal-documents";
 
 interface LegalDocumentPageProps {
   document: LegalDocument;
+  returnAuthMode?: AuthDialogMode | null;
 }
 
-export function LegalDocumentPage({ document }: LegalDocumentPageProps) {
+export function LegalDocumentPage({
+  document,
+  returnAuthMode = null,
+}: LegalDocumentPageProps) {
   return (
     <div className="h-dvh overflow-y-auto bg-[#0b0c0e] text-white">
       <header className="sticky top-0 z-10 border-b border-[#262729] bg-[#0b0c0e]/92 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-[900px] items-center px-5 sm:px-8">
           <Link
-            href="/"
+            href={buildAuthReturnHref(returnAuthMode)}
             className="inline-flex items-center gap-2 text-sm text-white/62 transition hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" />
