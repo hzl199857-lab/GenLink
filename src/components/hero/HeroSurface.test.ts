@@ -70,6 +70,23 @@ test("the home authentication action uses the motion shiny button", () => {
   assert.match(shinyButtonSource, /\[--primary:0_0%_100%\]/);
 });
 
+test("the signed-in hero exposes a focused account menu", () => {
+  const heroSource = readHeroFile("GenLinkHero.tsx");
+  const accountSource = readHeroFile("HomeAccountMenu.tsx");
+
+  assert.match(heroSource, /account[\s\S]*HomeAccountMenu/);
+  assert.match(accountSource, /项目库/);
+  assert.match(accountSource, /服务条款/);
+  assert.match(accountSource, /隐私政策/);
+  assert.match(accountSource, /退出登录/);
+  assert.match(accountSource, /onMouseEnter/);
+  assert.match(accountSource, /event\.key === "Escape"/);
+  assert.match(accountSource, /document\.addEventListener\("pointerdown"/);
+  assert.match(accountSource, /bg-\[#212121\]/);
+  assert.match(accountSource, /border-\[#363636\]/);
+  assert.doesNotMatch(accountSource, /个人主页|账户管理|创建团队|积分/);
+});
+
 test("the hero preserves the original title scale and spacing", () => {
   const source = readHeroFile("GenLinkHero.tsx");
 

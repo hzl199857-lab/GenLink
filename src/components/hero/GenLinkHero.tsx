@@ -10,6 +10,10 @@ import {
   HeroRecentProjects,
   type HeroRecentProjectsProps,
 } from "@/components/hero/HeroRecentProjects";
+import {
+  HomeAccountMenu,
+  type HomeAccountUser,
+} from "@/components/hero/HomeAccountMenu";
 import { ShinyButton } from "@/components/ui/shiny-button";
 
 const CanvasRevealEffect = dynamic(
@@ -23,6 +27,11 @@ const CanvasRevealEffect = dynamic(
 interface GenLinkHeroProps {
   composer: HeroAgentComposerProps;
   recentProjects?: HeroRecentProjectsProps;
+  account?: {
+    user: HomeAccountUser;
+    onOpenProjects: () => void;
+    onSignOut: () => Promise<void>;
+  };
   onOpenAuth?: () => void;
   isLeaving?: boolean;
 }
@@ -35,6 +44,7 @@ const HERO_PARTICLE_COLORS = [
 export function GenLinkHero({
   composer,
   recentProjects,
+  account,
   onOpenAuth,
   isLeaving = false,
 }: GenLinkHeroProps) {
@@ -56,7 +66,9 @@ export function GenLinkHero({
         <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black to-transparent" />
       </div>
 
-      {onOpenAuth ? (
+      {account ? (
+        <HomeAccountMenu {...account} />
+      ) : onOpenAuth ? (
         <div className="fixed right-4 top-4 z-20 sm:right-7 sm:top-7">
           <ShinyButton
             type="button"

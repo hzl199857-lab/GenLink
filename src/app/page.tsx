@@ -608,6 +608,12 @@ function HomePageContent() {
     router.replace('/');
   };
 
+  const handleHomeSignOut = async () => {
+    await authClient.signOut();
+    router.replace('/');
+    router.refresh();
+  };
+
   if (session.isPending || readyUserId !== userId) {
     return (
       <main className="fixed inset-0 flex h-full w-full items-center justify-center bg-[#08090b] text-white">
@@ -622,6 +628,11 @@ function HomePageContent() {
         <GenLinkHero
           isLeaving={heroLeaving}
           onOpenAuth={!userId ? () => openAuthDialog('login') : undefined}
+          account={session.data?.user ? {
+            user: session.data.user,
+            onOpenProjects: () => router.push('/?app=library'),
+            onSignOut: handleHomeSignOut,
+          } : undefined}
           composer={{
             prompt: heroPrompt,
             provider: heroProvider,
