@@ -27,6 +27,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   createMaterialItemsForTarget,
+  createCanvasNodeFromMaterial,
   getMaterialKind,
   getMaterialMediaUrl,
   sanitizeMaterialForPersistence,
@@ -93,6 +94,29 @@ test("sanitizes output-backed media without persisting hosted preview URLs", () 
   assert.equal(video.mediaUrl, "output:ad.mp4");
   assert.equal(video.hostedMediaUrl, undefined);
   assert.equal(video.previewUrl, undefined);
+});
+
+test("creates the matching canvas node type for each material kind", () => {
+  const position = { x: 120, y: 240 };
+  const imageNode = createCanvasNodeFromMaterial(existing[0], position);
+  const videoNode = createCanvasNodeFromMaterial(existing[1], position);
+  const audioNode = createCanvasNodeFromMaterial(
+    {
+      ...existing[1],
+      id: "existing-audio",
+      kind: "audio",
+      mediaUrl: "https://cdn.example/voice.mp3",
+      imageUrl: "https://cdn.example/voice.mp3",
+      mimeType: "audio/mpeg",
+    },
+    position,
+  );
+
+  assert.equal(imageNode.type, "image");
+  assert.equal(videoNode.type, "video");
+  assert.equal(videoNode.data.videoUrl, "https://cdn.example/ad.mp4");
+  assert.equal(audioNode.type, "audio");
+  assert.equal(audioNode.data.audioUrl, "https://cdn.example/voice.mp3");
 });
 
 test("canvas store exposes one atomic batch material action", () => {

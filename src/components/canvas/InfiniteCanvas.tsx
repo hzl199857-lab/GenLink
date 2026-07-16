@@ -5,7 +5,6 @@ import NextImage from 'next/image';
 import {
   ChevronDown,
   Columns3,
-  Copy,
   Expand,
   Group,
   Image as ImageIcon,
@@ -13,7 +12,6 @@ import {
   Grid3x3,
   Map as MapIcon,
   MousePointer2,
-  Plus,
   Video,
   Volume2,
   Type,
@@ -241,7 +239,11 @@ import {
   createAgentAttachmentFromCanvasNode,
   createMaterialSourceFromCanvasNode,
 } from '@/lib/canvas/media-sources';
-import { createMaterialItemsForTarget } from '@/lib/material-library';
+import {
+  createCanvasNodeFromMaterial,
+  createMaterialItemsForTarget,
+  getMaterialKind,
+} from '@/lib/material-library';
 import { writeClipboardContent } from '@/lib/clipboard-content';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
@@ -13988,8 +13990,12 @@ function InnerCanvas({
       storeNodes,
     );
     void (async () => {
-      const sourceDisplayDimensions = resolveMaterialSourceDisplayDimensions(item, storeNodes);
-      const node = await createImageNodeFromMaterial(item, position, sourceDisplayDimensions);
+      const sourceDisplayDimensions = getMaterialKind(item) === 'image'
+        ? resolveMaterialSourceDisplayDimensions(item, storeNodes)
+        : undefined;
+      const node = getMaterialKind(item) === 'image'
+        ? await createImageNodeFromMaterial(item, position, sourceDisplayDimensions)
+        : createCanvasNodeFromMaterial(item, position);
 
       addNodes([node]);
       setSelectedNodeIds(new Set([node.id]));
@@ -14871,18 +14877,22 @@ function InnerCanvas({
       return;
     }
 
-    if (!file.type.startsWith('image/')) {
-      showProjectMessage('素材库上传暂只支持图片');
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    const isAudio = file.type.startsWith('audio/');
+
+    if (!isImage && !isVideo && !isAudio) {
+      showProjectMessage('请选择图片、视频或音频文件');
       return;
     }
 
-    void readImageFile(file, { folder: 'references' })
-      .then((data) => {
-        setMaterialDialogMode('save');
-        setMaterialDialogOpenKey((value) => value + 1);
-        setMovingMaterial(null);
-        setPendingMaterialSource({
+    const sourcePromise: Promise<PendingMaterialSource> = isImage
+      ? readImageFile(file, { folder: 'references' }).then((data) => ({
           defaultName: data.title?.trim() || data.fileName?.trim() || file.name.replace(/\.[^.]+$/, ''),
+          kind: 'image',
+          mediaUrl: data.hostedImageUrl || data.imageUrl,
+          hostedMediaUrl: data.hostedImageUrl || data.imageUrl,
+          previewUrl: data.previewUrl,
           imageUrl: data.generatedOutputFileName ? `output:${data.generatedOutputFileName}` : data.imageUrl,
           hostedImageUrl: data.hostedImageUrl || data.imageUrl,
           fileName: data.fileName,
@@ -14891,7 +14901,45 @@ function InnerCanvas({
           width: data.width,
           height: data.height,
           sizeBytes: data.sizeBytes,
-        });
+          mimeType: file.type || 'image/*',
+        }))
+      : isVideo
+        ? readVideoFile(file).then((data) => ({
+            defaultName: data.title?.trim() || data.fileName?.trim() || file.name.replace(/\.[^.]+$/, ''),
+            kind: 'video',
+            mediaUrl: data.hostedVideoUrl || data.videoUrl,
+            hostedMediaUrl: data.hostedVideoUrl || data.videoUrl,
+            previewUrl: data.previewUrl,
+            imageUrl: data.hostedVideoUrl || data.videoUrl,
+            fileName: data.fileName,
+            sourceNodeType: 'video',
+            width: data.width,
+            height: data.height,
+            durationSeconds: data.durationSeconds,
+            sizeBytes: data.sizeBytes,
+            mimeType: data.mimeType,
+          }))
+        : readAudioFile(file).then((data) => ({
+            defaultName: data.title?.trim() || data.fileName?.trim() || file.name.replace(/\.[^.]+$/, ''),
+            kind: 'audio',
+            mediaUrl: data.hostedAudioUrl || data.audioUrl,
+            hostedMediaUrl: data.hostedAudioUrl || data.audioUrl,
+            previewUrl: data.previewUrl,
+            imageUrl: data.hostedAudioUrl || data.audioUrl,
+            fileName: data.fileName,
+            sourceNodeType: 'audio',
+            durationSeconds: data.durationSeconds,
+            sizeBytes: data.sizeBytes,
+            mimeType: data.mimeType,
+          }));
+
+    void sourcePromise
+      .then((source) => {
+        setMaterialDialogMode('save');
+        setMaterialDialogOpenKey((value) => value + 1);
+        setMovingMaterial(null);
+        setPendingMaterialSources([]);
+        setPendingMaterialSource(source);
       })
       .catch((error) => {
         console.error('material upload failed', error);
@@ -15715,7 +15763,7 @@ function InnerCanvas({
       <input
         ref={materialUploadInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,video/*,audio/*"
         className="sr-only"
         onChange={handleMaterialUploadInputChange}
       />

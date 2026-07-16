@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import {
+  AudioLines,
   ChevronDown,
   ChevronLeft,
   Copy,
@@ -12,11 +13,13 @@ import {
   MoreHorizontal,
   MoveRight,
   Pencil,
+  Play,
   Plus,
   Search,
   Star,
   Trash2,
   Upload,
+  Video,
 } from 'lucide-react';
 import type {
   MaterialLibraryCategory,
@@ -24,6 +27,7 @@ import type {
   MaterialLibraryItem,
 } from '@/types/canvas';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
+import { getMaterialKind, getMaterialMediaUrl } from '@/lib/material-library';
 import { MATERIAL_LIBRARY_CATEGORIES } from './MaterialLibraryDialog';
 
 type MaterialMenuState = {
@@ -63,10 +67,6 @@ export interface MaterialLibraryPanelProps {
   onDuplicateMaterial: (id: string) => void;
   onDeleteMaterial: (id: string) => void;
   onAiRoleClick: () => void;
-}
-
-function getImageUrl(item: MaterialLibraryItem): string {
-  return item.hostedImageUrl?.trim() || item.imageUrl.trim();
 }
 
 function getFolderNamePrompt(defaultName = ''): string | null {
@@ -127,6 +127,8 @@ export function MaterialLibraryPanel({
 }: MaterialLibraryPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const audioPreviewRef = useRef<HTMLAudioElement>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const [query, setQuery] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<MaterialLibraryCategory>('人物');
@@ -137,6 +139,7 @@ export function MaterialLibraryPanel({
   const [materialMenu, setMaterialMenu] = useState<MaterialMenuState>(null);
   const [folderMenu, setFolderMenu] = useState<FolderMenuState>(null);
   const [bottomOffset, setBottomOffset] = useState(DEFAULT_PANEL_BOTTOM);
+  const [audioBlocked, setAudioBlocked] = useState(false);
   const hidePreviewTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -186,6 +189,38 @@ export function MaterialLibraryPanel({
     };
   }, [open]);
 
+  useEffect(() => {
+    const audio = audioPreviewRef.current;
+    const video = videoPreviewRef.current;
+
+    if (audio) {
+      void audio.play().then(
+        () => setAudioBlocked(false),
+        () => setAudioBlocked(true),
+      );
+    }
+
+    return () => {
+      if (audio) {
+        audio.pause();
+        try {
+          audio.currentTime = 0;
+        } catch {
+          // Some streaming sources do not expose a seekable range yet.
+        }
+      }
+
+      if (video) {
+        video.pause();
+        try {
+          video.currentTime = 0;
+        } catch {
+          // Some streaming sources do not expose a seekable range yet.
+        }
+      }
+    };
+  }, [hoverPreview]);
+
   const normalizedQuery = query.trim().toLowerCase();
   const materialsByCategory = useMemo(() => {
     const map = new Map<MaterialLibraryCategory, MaterialLibraryItem[]>();
@@ -231,6 +266,7 @@ export function MaterialLibraryPanel({
     cancelHidePreview();
     hidePreviewTimerRef.current = window.setTimeout(() => {
       hidePreviewTimerRef.current = null;
+      setAudioBlocked(false);
       setHoverPreview(null);
     }, MATERIAL_LIBRARY_PREVIEW_HIDE_DELAY_MS);
   };
@@ -266,55 +302,73 @@ export function MaterialLibraryPanel({
     cancelHidePreview();
     const rect = element.getBoundingClientRect();
     const top = Math.min(Math.max(90, rect.top - 48), window.innerHeight - 330);
+    setAudioBlocked(false);
     setHoverPreview({ item, top });
   };
 
   const hidePreview = () => {
     cancelHidePreview();
+    setAudioBlocked(false);
     setHoverPreview(null);
   };
 
-  const renderMaterialRow = (item: MaterialLibraryItem) => (
-    <div
-      key={item.id}
-      className="group/material relative flex h-9 items-center gap-2 rounded-[8px] px-2 text-white/68 transition hover:bg-white/10 hover:text-white"
-      draggable
-      onDragStart={(event) => {
-        event.dataTransfer.effectAllowed = 'copy';
-        event.dataTransfer.setData('application/x-genlink-material-id', item.id);
-        event.dataTransfer.setData('text/plain', item.name);
-      }}
-      onMouseEnter={(event) => showPreview(item, event.currentTarget)}
-      onMouseLeave={scheduleHidePreview}
-      onClick={() => setHoverPreview((current) => current ?? { item, top: 160 })}
-    >
-      <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
-        <NextImage
-          src={getBrowserImageDisplayUrl(getImageUrl(item))}
-          alt={item.name}
-          fill
-          unoptimized
-          loading="lazy"
-          sizes="24px"
-          className="object-cover"
-        />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[13px]">{item.name}</span>
-      <button
-        type="button"
-        aria-label="素材操作"
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-white/42 opacity-0 transition hover:bg-white/12 hover:text-white group-hover/material:opacity-100"
-        onClick={(event) => {
-          event.stopPropagation();
-          const rect = event.currentTarget.getBoundingClientRect();
-          setMaterialMenu({ item, x: rect.right + 6, y: rect.top });
-          setFolderMenu(null);
+  const renderMaterialRow = (item: MaterialLibraryItem) => {
+    const materialKind = getMaterialKind(item);
+
+    return (
+      <div
+        key={item.id}
+        className="group/material relative flex h-9 items-center gap-2 rounded-[8px] px-2 text-white/68 transition hover:bg-white/10 hover:text-white"
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = 'copy';
+          event.dataTransfer.setData('application/x-genlink-material-id', item.id);
+          event.dataTransfer.setData('text/plain', item.name);
+        }}
+        onMouseEnter={(event) => showPreview(item, event.currentTarget)}
+        onMouseLeave={scheduleHidePreview}
+        onClick={() => {
+          setAudioBlocked(false);
+          setHoverPreview((current) => current ?? { item, top: 160 });
         }}
       >
-        <MoreHorizontal size={15} />
-      </button>
-    </div>
-  );
+        <span className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
+          {materialKind === 'image' ? (
+            <NextImage
+              src={getBrowserImageDisplayUrl(getMaterialMediaUrl(item))}
+              alt={item.name}
+              fill
+              unoptimized
+              loading="lazy"
+              sizes="24px"
+              className="object-cover"
+            />
+          ) : materialKind === 'video' ? (
+            <Video size={14} className="text-white/66" />
+          ) : (
+            <AudioLines size={14} className="text-white/66" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13px]">{item.name}</span>
+        <button
+          type="button"
+          aria-label="素材操作"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] text-white/42 opacity-0 transition hover:bg-white/12 hover:text-white group-hover/material:opacity-100"
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMaterialMenu({ item, x: rect.right + 6, y: rect.top });
+            setFolderMenu(null);
+          }}
+        >
+          <MoreHorizontal size={15} />
+        </button>
+      </div>
+    );
+  };
+
+  const previewKind = hoverPreview ? getMaterialKind(hoverPreview.item) : 'image';
+  const previewUrl = hoverPreview ? getMaterialMediaUrl(hoverPreview.item) : '';
 
   return (
     <>
@@ -471,14 +525,51 @@ export function MaterialLibraryPanel({
           onMouseLeave={scheduleHidePreview}
         >
           <div className="relative h-[190px] bg-black/30">
-            <NextImage
-              src={getBrowserImageDisplayUrl(getImageUrl(hoverPreview.item))}
-              alt={hoverPreview.item.name}
-              fill
-              unoptimized
-              sizes="280px"
-              className="object-contain"
-            />
+            {previewKind === 'image' ? (
+              <NextImage
+                src={getBrowserImageDisplayUrl(previewUrl)}
+                alt={hoverPreview.item.name}
+                fill
+                unoptimized
+                sizes="280px"
+                className="object-contain"
+              />
+            ) : previewKind === 'video' ? (
+              <video
+                ref={videoPreviewRef}
+                src={previewUrl}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                className="h-full w-full object-contain"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center">
+                <AudioLines size={52} className="text-white/38" />
+                <audio ref={audioPreviewRef} src={previewUrl} preload="auto" />
+                {audioBlocked ? (
+                  <button
+                    type="button"
+                    aria-label="播放音频预览"
+                    className="absolute flex h-11 w-11 items-center justify-center rounded-full bg-white/16 text-white transition hover:bg-white/24"
+                    onClick={() => {
+                      const audio = audioPreviewRef.current;
+                      if (!audio) {
+                        return;
+                      }
+                      void audio.play().then(
+                        () => setAudioBlocked(false),
+                        () => setAudioBlocked(true),
+                      );
+                    }}
+                  >
+                    <Play size={19} fill="currentColor" />
+                  </button>
+                ) : null}
+              </div>
+            )}
           </div>
           <div className="border-t border-[#2f3033] p-3">
             <div className="flex items-start gap-2">
@@ -488,7 +579,13 @@ export function MaterialLibraryPanel({
                   创建于 {new Date(hoverPreview.item.createdAt).toLocaleString('zh-CN')}
                 </div>
               </div>
-              <ImageIcon size={16} className="mt-0.5 text-white/42" />
+              {previewKind === 'image' ? (
+                <ImageIcon size={16} className="mt-0.5 text-white/42" />
+              ) : previewKind === 'video' ? (
+                <Video size={16} className="mt-0.5 text-white/42" />
+              ) : (
+                <AudioLines size={16} className="mt-0.5 text-white/42" />
+              )}
             </div>
             <button
               type="button"

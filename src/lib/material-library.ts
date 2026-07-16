@@ -1,4 +1,5 @@
 import type {
+  CanvasNode,
   MaterialLibraryCategory,
   MaterialLibraryItem,
   PendingMaterialSource,
@@ -40,15 +41,15 @@ export function getMaterialMediaUrl(
 
   return kind === "image"
     ? firstUsableUrl([
-        item.hostedMediaUrl,
         item.mediaUrl,
+        item.hostedMediaUrl,
         item.hostedImageUrl,
         item.imageUrl,
         item.previewUrl,
       ])
     : firstUsableUrl([
-        item.hostedMediaUrl,
         item.mediaUrl,
+        item.hostedMediaUrl,
         item.previewUrl,
         item.hostedImageUrl,
         item.imageUrl,
@@ -158,5 +159,78 @@ export function sanitizeMaterialForPersistence(
       item.previewUrl && !isObjectUrl(item.previewUrl)
         ? item.previewUrl
         : undefined,
+  };
+}
+
+export function createCanvasNodeFromMaterial(
+  item: MaterialLibraryItem,
+  position: { x: number; y: number },
+): CanvasNode {
+  const kind = getMaterialKind(item);
+  const mediaUrl = getMaterialMediaUrl(item);
+  const base = {
+    id: crypto.randomUUID(),
+    position,
+  };
+
+  if (kind === "video") {
+    return {
+      ...base,
+      type: "video",
+      data: {
+        title: item.name,
+        videoUrl: mediaUrl,
+        hostedVideoUrl: mediaUrl,
+        previewUrl: item.previewUrl,
+        fileName: item.fileName,
+        outputFileName: item.outputFileName,
+        width: item.width || 320,
+        height: item.height || 180,
+        displayWidth: item.displayWidth,
+        displayHeight: item.displayHeight,
+        sizeBytes: item.sizeBytes,
+        durationSeconds: item.durationSeconds,
+        mimeType: item.mimeType,
+      },
+    };
+  }
+
+  if (kind === "audio") {
+    return {
+      ...base,
+      type: "audio",
+      data: {
+        title: item.name,
+        audioUrl: mediaUrl,
+        hostedAudioUrl: mediaUrl,
+        previewUrl: item.previewUrl,
+        fileName: item.fileName,
+        outputFileName: item.outputFileName,
+        sizeBytes: item.sizeBytes,
+        durationSeconds: item.durationSeconds,
+        mimeType: item.mimeType,
+        status: "idle",
+      },
+    };
+  }
+
+  return {
+    ...base,
+    type: "image",
+    data: {
+      title: item.name,
+      imageUrl: mediaUrl,
+      hostedImageUrl: mediaUrl,
+      previewUrl: item.previewUrl,
+      fileName: item.fileName,
+      prompt: item.name || item.fileName || item.outputFileName || "Image",
+      generatedAt: item.createdAt || new Date().toISOString(),
+      generatedOutputFileName: item.outputFileName,
+      width: item.width || 320,
+      height: item.height || 320,
+      displayWidth: item.displayWidth,
+      displayHeight: item.displayHeight,
+      sizeBytes: item.sizeBytes,
+    },
   };
 }

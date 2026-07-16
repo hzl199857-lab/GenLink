@@ -32,7 +32,23 @@ test("applying legacy materials resolves missing natural image dimensions before
   assert.match(canvasSource, /async function createImageNodeFromMaterial/);
   assert.match(canvasSource, /const resolvedDimensions = !hasMaterialImageDimensions\(item\)[\s\S]*?await readImageDimensionsFromUrl\(imageUrl\)\.catch\(\(\) => null\)/);
   assert.match(canvasSource, /const width = resolvedDimensions\?\.width \|\| item\.width \|\| 320;/);
-  assert.match(canvasSource, /const node = await createImageNodeFromMaterial\(item, position, sourceDisplayDimensions\);/);
+  assert.match(canvasSource, /await createImageNodeFromMaterial\(item, position, sourceDisplayDimensions\)/);
+});
+
+test("applying materials branches to the matching canvas node kind", () => {
+  assert.match(canvasSource, /getMaterialKind\(item\) === 'image'/);
+  assert.match(canvasSource, /createCanvasNodeFromMaterial\(item, position\)/);
+  assert.doesNotMatch(
+    canvasSource,
+    /const sourceDisplayDimensions = resolveMaterialSourceDisplayDimensions\(item, storeNodes\);\s*const node = await createImageNodeFromMaterial/,
+  );
+});
+
+test("material upload accepts and reads images, videos, and audio", () => {
+  assert.match(canvasSource, /ref=\{materialUploadInputRef\}[\s\S]*?accept="image\/\*,video\/\*,audio\/\*"/);
+  assert.match(canvasSource, /handleMaterialUploadInputChange[\s\S]*?readImageFile\(file/);
+  assert.match(canvasSource, /handleMaterialUploadInputChange[\s\S]*?readVideoFile\(file\)/);
+  assert.match(canvasSource, /handleMaterialUploadInputChange[\s\S]*?readAudioFile\(file\)/);
 });
 
 test("saving image generation nodes to materials carries the current card display size", () => {
@@ -46,7 +62,7 @@ test("applying legacy image-generation materials reuses the matching source node
   assert.match(canvasSource, /function resolveMaterialSourceDisplayDimensions\(\s*item: MaterialLibraryItem,\s*nodes: CanvasNode\[],\s*\): \{ width: number; height: number \} \| undefined/);
   assert.match(canvasSource, /candidate\.type !== 'image_generation'/);
   assert.match(canvasSource, /resolveImageGenerationCardDimensions\(data, referenceImages\)/);
-  assert.match(canvasSource, /const sourceDisplayDimensions = resolveMaterialSourceDisplayDimensions\(item, storeNodes\);/);
+  assert.match(canvasSource, /const sourceDisplayDimensions = getMaterialKind\(item\) === 'image'[\s\S]*?resolveMaterialSourceDisplayDimensions\(item, storeNodes\)/);
   assert.match(canvasSource, /createImageNodeFromMaterial\(item, position, sourceDisplayDimensions\)/);
 });
 

@@ -10,6 +10,7 @@ import type {
   PendingMaterialSource,
 } from '@/types/canvas';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
+import { getMaterialKind, getMaterialMediaUrl } from '@/lib/material-library';
 
 export const MATERIAL_LIBRARY_CATEGORIES: MaterialLibraryCategory[] = [
   '人物',
@@ -79,14 +80,6 @@ function sourceKey(
   }
 
   return null;
-}
-
-function getImageUrl(source: PendingMaterialSource | null, movingMaterial: MaterialLibraryItem | null): string {
-  if (source) {
-    return source.hostedImageUrl?.trim() || source.imageUrl.trim();
-  }
-
-  return movingMaterial?.hostedImageUrl?.trim() || movingMaterial?.imageUrl.trim() || '';
 }
 
 export function MaterialLibraryDialog({
@@ -166,7 +159,8 @@ export function MaterialLibraryDialog({
     return null;
   }
 
-  const imageUrl = getImageUrl(source, movingMaterial);
+  const sourceKind = source ? getMaterialKind(source) : 'image';
+  const sourceUrl = source ? getMaterialMediaUrl(source) : '';
   const selectedFolder = currentDraft.folderId
     ? folders.find((folder) => folder.id === currentDraft.folderId)
     : undefined;
@@ -221,27 +215,37 @@ export function MaterialLibraryDialog({
       (item.folderId ?? null) === (selectedFolderId ?? null),
   );
 
-  const renderExistingMaterialRow = (item: MaterialLibraryItem) => (
-    <div
-      key={item.id}
-      className="flex h-9 items-center gap-2 rounded-[8px] px-2 text-white/68"
-    >
-      <span className="relative h-6 w-6 shrink-0 overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
-        <NextImage
-          src={getBrowserImageDisplayUrl(item.hostedImageUrl?.trim() || item.imageUrl.trim())}
-          alt={item.name}
-          fill
-          unoptimized
-          loading="lazy"
-          sizes="24px"
-          className="object-cover"
-        />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/82">
-        {item.name}
-      </span>
-    </div>
-  );
+  const renderExistingMaterialRow = (item: MaterialLibraryItem) => {
+    const itemKind = getMaterialKind(item);
+
+    return (
+      <div
+        key={item.id}
+        className="flex h-9 items-center gap-2 rounded-[8px] px-2 text-white/68"
+      >
+        <span className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-[5px] bg-black/30 ring-1 ring-[#333438]">
+          {itemKind === 'image' ? (
+            <NextImage
+              src={getBrowserImageDisplayUrl(getMaterialMediaUrl(item))}
+              alt={item.name}
+              fill
+              unoptimized
+              loading="lazy"
+              sizes="24px"
+              className="object-cover"
+            />
+          ) : itemKind === 'video' ? (
+            <Video size={14} className="text-white/66" />
+          ) : (
+            <AudioLines size={14} className="text-white/66" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white/82">
+          {item.name}
+        </span>
+      </div>
+    );
+  };
 
   const handleCreateFolder = (showError = false) => {
     if (folderCommitLockRef.current) {
@@ -341,15 +345,27 @@ export function MaterialLibraryDialog({
           {mode === 'save' ? (
             <div className="mb-3 grid grid-cols-[72px_1fr] gap-3">
               <div className="relative h-[72px] overflow-hidden rounded-[8px] bg-black/30 ring-1 ring-[#333438]">
-                {imageUrl ? (
+                {sourceKind === 'image' && sourceUrl ? (
                   <NextImage
-                    src={getBrowserImageDisplayUrl(imageUrl)}
+                    src={getBrowserImageDisplayUrl(sourceUrl)}
                     alt={currentDraft.name || '素材预览'}
                     fill
                     unoptimized
                     sizes="72px"
                     className="object-cover"
                   />
+                ) : sourceKind === 'video' && sourceUrl ? (
+                  <video
+                    src={sourceUrl}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full object-cover"
+                  />
+                ) : sourceKind === 'audio' ? (
+                  <AudioLines className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/46" />
                 ) : (
                   <ImageIcon className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white/36" />
                 )}

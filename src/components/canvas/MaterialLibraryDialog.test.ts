@@ -42,3 +42,10 @@ test("canvas opens one batch dialog and commits materials atomically", () => {
   assert.match(canvasSource, /mode=\{materialDialogMode\}[\s\S]*?sources=\{pendingMaterialSources\}/);
   assert.match(canvasSource, /onConfirmBatchSave=\{handleConfirmBatchSave\}/);
 });
+
+test("single-save preview supports image, video, and audio sources", () => {
+  assert.match(dialogSource, /getMaterialKind\(source\)/);
+  assert.match(dialogSource, /sourceKind === 'image'[\s\S]*?<NextImage/);
+  assert.match(dialogSource, /sourceKind === 'video'[\s\S]*?<video/);
+  assert.match(dialogSource, /<AudioLines/);
+});
