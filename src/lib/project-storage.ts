@@ -15,6 +15,7 @@ import type {
   VideoUpscaleNodeData,
 } from "@/types/canvas";
 import { buildProjectSnapshot } from "@/lib/project-snapshot";
+import { getMaterialKind } from "@/lib/material-library";
 
 const PROJECT_DB_NAME = "genlink-project-library";
 export const PROJECT_DB_VERSION = 2;
@@ -368,9 +369,14 @@ function normalizeMaterialLibraryItems(
     const record = item as Record<string, unknown>;
     const category = normalizeMaterialCategory(record.category);
     const name = typeof record.name === "string" ? record.name.trim() : "";
+    const kind = record.kind === "video" || record.kind === "audio" ? record.kind : "image";
     const imageUrl = typeof record.imageUrl === "string" ? record.imageUrl.trim() : "";
+    const mediaUrl =
+      typeof record.mediaUrl === "string" && record.mediaUrl.trim()
+        ? record.mediaUrl.trim()
+        : imageUrl;
 
-    if (!category || !name || !imageUrl) {
+    if (!category || !name || !mediaUrl) {
       return [];
     }
 
@@ -388,7 +394,17 @@ function normalizeMaterialLibraryItems(
       name,
       category,
       folderId: folder && folder.category === category ? folder.id : undefined,
-      imageUrl,
+      kind,
+      mediaUrl,
+      imageUrl: imageUrl || mediaUrl,
+      hostedMediaUrl:
+        typeof record.hostedMediaUrl === "string" && record.hostedMediaUrl.trim()
+          ? record.hostedMediaUrl
+          : undefined,
+      previewUrl:
+        typeof record.previewUrl === "string" && record.previewUrl.trim()
+          ? record.previewUrl
+          : undefined,
       hostedImageUrl:
         typeof record.hostedImageUrl === "string" && record.hostedImageUrl.trim()
           ? record.hostedImageUrl
@@ -404,13 +420,24 @@ function normalizeMaterialLibraryItems(
       sourceNodeType:
         record.sourceNodeType === "image_generation" ||
         record.sourceNodeType === "image" ||
-        record.sourceNodeType === "uploaded_image"
+        record.sourceNodeType === "uploaded_image" ||
+        record.sourceNodeType === "video_generation" ||
+        record.sourceNodeType === "video_upscale" ||
+        record.sourceNodeType === "video" ||
+        record.sourceNodeType === "audio_generation" ||
+        record.sourceNodeType === "audio"
           ? record.sourceNodeType
           : undefined,
       width: typeof record.width === "number" ? record.width : undefined,
       height: typeof record.height === "number" ? record.height : undefined,
       displayWidth: typeof record.displayWidth === "number" ? record.displayWidth : undefined,
       displayHeight: typeof record.displayHeight === "number" ? record.displayHeight : undefined,
+      durationSeconds:
+        typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+      mimeType:
+        typeof record.mimeType === "string" && record.mimeType.trim()
+          ? record.mimeType
+          : undefined,
       sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
       format:
         typeof record.format === "string" && record.format.trim()
@@ -1639,7 +1666,7 @@ function resolveOutputFileNameFromMaterial(item: MaterialLibraryItem): string | 
   }
 
   const fileName = item.fileName?.trim();
-  const sourceUrl = item.imageUrl.trim();
+  const sourceUrl = item.mediaUrl?.trim() || item.imageUrl.trim();
 
   if (fileName && sourceUrl === `output:${fileName}`) {
     return fileName;
@@ -1924,11 +1951,16 @@ export async function hydrateProjectSnapshotPreviewUrls(
 
       const previewUrl = URL.createObjectURL(file);
       previewUrls.push(previewUrl);
+      const kind = getMaterialKind(item);
 
       return {
         ...item,
+        kind,
+        mediaUrl: previewUrl,
+        hostedMediaUrl: kind === "image" ? undefined : previewUrl,
+        previewUrl,
         imageUrl: previewUrl,
-        hostedImageUrl: previewUrl,
+        hostedImageUrl: kind === "image" ? previewUrl : undefined,
         outputFileName: fileName,
         fileName: item.fileName ?? fileName,
       };

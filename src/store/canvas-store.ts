@@ -17,6 +17,10 @@ import {
 } from "@/lib/prompt-mentions";
 import { buildProjectSnapshot, getProjectSnapshotSignature } from "@/lib/project-snapshot";
 import {
+  getMaterialMediaUrl,
+  sanitizeMaterialForPersistence,
+} from "@/lib/material-library";
+import {
   deleteProjectDirectory,
   duplicateProjectDirectory,
   hydrateProjectSnapshotPreviewUrls,
@@ -3018,17 +3022,7 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
 }
 
 function sanitizeMaterialsForPersistence(materials: MaterialLibraryItem[]): MaterialLibraryItem[] {
-  return materials.map((item) => {
-    if (!item.outputFileName?.trim()) {
-      return item;
-    }
-
-    return {
-      ...item,
-      imageUrl: `output:${item.outputFileName}`,
-      hostedImageUrl: undefined,
-    };
-  });
+  return materials.map(sanitizeMaterialForPersistence);
 }
 
 function getPersistentProjectSnapshotSignature(
@@ -4560,6 +4554,9 @@ export interface CanvasState {
   renameMaterialFolder: (folderId: string, name: string) => void;
   deleteMaterialFolder: (folderId: string) => void;
   addMaterial: (item: Omit<MaterialLibraryItem, "id" | "createdAt">) => MaterialLibraryItem;
+  addMaterials: (
+    items: Array<Omit<MaterialLibraryItem, "id" | "createdAt">>,
+  ) => { added: MaterialLibraryItem[]; reused: MaterialLibraryItem[] };
   renameMaterial: (id: string, name: string) => void;
   moveMaterial: (
     id: string,
@@ -5533,6 +5530,64 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
 
     return nextItem;
+  },
+
+  addMaterials: (items) => {
+    const result: { added: MaterialLibraryItem[]; reused: MaterialLibraryItem[] } = {
+      added: [],
+      reused: [],
+    };
+
+    set((state) => {
+      const nextMaterials = [...state.materials];
+      const existingByMedia = new Map<string, MaterialLibraryItem>();
+
+      for (const material of nextMaterials) {
+        const mediaUrl = getMaterialMediaUrl(material);
+
+        if (mediaUrl) {
+          const key = `${material.category}\u0000${material.folderId ?? ""}\u0000${mediaUrl}`;
+          existingByMedia.set(key, material);
+        }
+      }
+
+      for (const item of items) {
+        const mediaUrl = getMaterialMediaUrl(item);
+        const key = `${item.category}\u0000${item.folderId ?? ""}\u0000${mediaUrl}`;
+        const existing = mediaUrl ? existingByMedia.get(key) : undefined;
+
+        if (existing) {
+          result.reused.push(existing);
+          continue;
+        }
+
+        const nextItem: MaterialLibraryItem = {
+          ...item,
+          name: item.name.trim(),
+          id: crypto.randomUUID(),
+          createdAt: nowIso(),
+        };
+        nextMaterials.push(nextItem);
+        result.added.push(nextItem);
+
+        if (mediaUrl) {
+          existingByMedia.set(key, nextItem);
+        }
+      }
+
+      if (result.added.length === 0) {
+        return state;
+      }
+
+      return {
+        ...createUndoHistoryUpdate(state),
+        materials: nextMaterials,
+        dirty: true,
+        error: null,
+      };
+    });
+
+    return result;
   },
 
   renameMaterial: (id, name) => {
