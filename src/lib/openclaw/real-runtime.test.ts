@@ -1,15 +1,29 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
 import { test } from "node:test";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const Module = require("node:module") as typeof import("node:module");
 const originalLoad = Module._load;
+const childProcess = originalLoad.call(Module, "node:child_process", null, false) as typeof import("node:child_process");
+let spawnImplementation: typeof childProcess.spawn = childProcess.spawn;
 
 Module._load = function patchedLoad(request: string, parent: NodeModule | null, isMain: boolean) {
   if (request === "server-only") {
     return {};
+  }
+
+  if (request === "node:child_process") {
+    return {
+      ...childProcess,
+      spawn: (...args: Parameters<typeof childProcess.spawn>) => spawnImplementation(...args),
+    };
   }
 
   return originalLoad.call(this, request, parent, isMain);
@@ -30,12 +44,17 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
   (module as NodeModule & { _compile(source: string, filename: string): void })._compile(output.outputText, filename);
 };
 
-const { resolveTextBaseUrl } = require("./real-runtime.ts") as typeof import("./real-runtime");
+const {
+  classifyOpenClawFailure,
+  resolveTextBaseUrl,
+  runRealOpenClaw,
+} = require("./real-runtime.ts") as typeof import("./real-runtime");
 
 const originalEnv = { ...process.env };
 
 test.afterEach(() => {
   process.env = { ...originalEnv };
+  spawnImplementation = childProcess.spawn;
 });
 
 test("explicit OpenClaw base URL does not override an Agent-selected provider", () => {
@@ -49,4 +68,65 @@ test("explicit OpenClaw base URL remains the default when no provider is selecte
   process.env.GENLINK_OPENCLAW_TEXT_BASE_URL = "https://ai.comfly.org/v1";
 
   assert.equal(resolveTextBaseUrl(), "https://ai.comfly.org/v1");
+});
+
+test("uses the generated OpenClaw config without persisting the request API key", async () => {
+  const runtimeRoot = mkdtempSync(path.join(tmpdir(), "genlink-real-runtime-"));
+  const entryPath = path.join(runtimeRoot, "openclaw.mjs");
+  const baseConfigPath = path.join(runtimeRoot, "openclaw-genlink.json");
+  const stateDir = path.join(runtimeRoot, "state");
+  let childEnv: NodeJS.ProcessEnv | undefined;
+
+  writeFileSync(entryPath, "");
+  writeFileSync(baseConfigPath, `{
+    agents: { defaults: { model: { primary: "genlink_text/gpt-5.5" } } },
+    models: { providers: { genlink_text: { api: "openai-completions", models: [] } } },
+  }`);
+  process.env.OPENCLAW_CLI_ENTRY = entryPath;
+  process.env.OPENCLAW_CONFIG_PATH = baseConfigPath;
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  process.env.OPENCLAW_WORKSPACE_DIR = path.join(runtimeRoot, "workspace");
+  process.env.PLANF_RULES_ROOT = path.join(runtimeRoot, "rules");
+
+  spawnImplementation = ((_command, _args, options) => {
+    childEnv = options?.env;
+    const child = new EventEmitter() as ReturnType<typeof childProcess.spawn>;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    Object.assign(child, { stdout, stderr, kill: () => true });
+    process.nextTick(() => {
+      stdout.write(JSON.stringify({ payloads: [{ text: "ok" }] }));
+      stdout.end();
+      child.emit("close", 0);
+    });
+    return child;
+  }) as typeof childProcess.spawn;
+
+  const result = await runRealOpenClaw({
+    message: "test",
+    sessionKey: "test-session",
+    timeoutMs: 1_000,
+    provider: "comfly",
+    model: "genlink_text/gemini-3.5-flash",
+    apiKey: "request-secret-key",
+  });
+
+  assert.equal(result.text, "ok");
+  assert.notEqual(childEnv?.OPENCLAW_CONFIG_PATH, baseConfigPath);
+  assert.match(childEnv?.OPENCLAW_CONFIG_PATH ?? "", /openclaw-agent\.generated\.json$/);
+  assert.doesNotMatch(
+    readFileSync(childEnv?.OPENCLAW_CONFIG_PATH ?? "", "utf8"),
+    /request-secret-key/,
+  );
+});
+
+test("classifies model catalog and invalid config failures accurately", () => {
+  assert.equal(
+    classifyOpenClawFailure("Unknown model genlink_text/gemini-3.5-flash"),
+    "unsupported_model",
+  );
+  assert.equal(
+    classifyOpenClawFailure("Invalid config: models.providers is malformed"),
+    "invalid_config",
+  );
 });

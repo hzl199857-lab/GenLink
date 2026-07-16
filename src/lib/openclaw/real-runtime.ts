@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { ImageApiProvider } from "@/lib/vibe";
+import { prepareOpenClawRuntimeConfig } from "./runtime-config";
 
 export type RealOpenClawRunInput = {
   message: string;
@@ -31,6 +32,8 @@ export type RealOpenClawRuntimeDiagnostic = {
     | "provider_timeout"
     | "provider_network"
     | "provider_http_error"
+    | "unsupported_model"
+    | "invalid_config"
     | "invalid_json"
     | "empty_output"
     | "process_failed";
@@ -232,7 +235,15 @@ function previewOpenClawOutput(text: string): string | undefined {
     .slice(0, 800);
 }
 
-function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
+export function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
+  if (/unknown model|model[^\n]*(not found|not registered|unregistered)|unsupported model/i.test(output)) {
+    return "unsupported_model";
+  }
+
+  if (/invalid config|configuration error|failed to (load|parse) config|models\.providers[^\n]*(invalid|malformed)/i.test(output)) {
+    return "invalid_config";
+  }
+
   if (/timed?\s*out|timeout|AbortError|LLM request timed out/i.test(output)) {
     return "provider_timeout";
   }
@@ -271,6 +282,14 @@ function buildRuntimePublicMessage(diagnostic: RealOpenClawRuntimeDiagnostic): s
 
   if (diagnostic.kind === "missing_runtime") {
     return "服务器上的 GenLink 规则运行时未安装或路径配置不正确。";
+  }
+
+  if (diagnostic.kind === "unsupported_model") {
+    return `当前模型未在 GenLink 规则运行配置中注册${modelText}。请检查模型选择或重新生成 OpenClaw 配置。`;
+  }
+
+  if (diagnostic.kind === "invalid_config") {
+    return "GenLink 规则运行配置无效，无法启动 Agent。请检查 OpenClaw 配置文件。";
   }
 
   if (diagnostic.kind === "workspace_sync_failed") {
@@ -392,6 +411,30 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     );
   }
 
+  let runtimeConfigPath: string;
+  try {
+    runtimeConfigPath = prepareOpenClawRuntimeConfig({
+      baseConfigPath: getOpenClawConfigPath(),
+      stateDir: getOpenClawStateDir(),
+    }).configPath;
+  } catch (error) {
+    const diagnostic: RealOpenClawRuntimeDiagnostic = {
+      kind: "invalid_config",
+      provider,
+      model,
+      baseUrlHost,
+      elapsedMs: Date.now() - startedAt,
+    };
+
+    throw new RealOpenClawRuntimeError(
+      `OpenClaw config preparation failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      {
+        publicMessage: buildRuntimePublicMessage(diagnostic),
+        diagnostic,
+      },
+    );
+  }
+
   console.info("[openclaw-runtime] start", {
     provider,
     model,
@@ -421,7 +464,7 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       cwd: path.dirname(getOpenClawEntry()),
       env: {
         ...process.env,
-        OPENCLAW_CONFIG_PATH: getOpenClawConfigPath(),
+        OPENCLAW_CONFIG_PATH: runtimeConfigPath,
         OPENCLAW_STATE_DIR: getOpenClawStateDir(),
         GENLINK_OPENCLAW_TEXT_BASE_URL: baseUrl,
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,
