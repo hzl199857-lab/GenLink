@@ -3,7 +3,10 @@ import { requireAuth } from "@/lib/auth-guard";
 
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
-import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
+import {
+  AgentModelCompatibilityError,
+  mapAgentPanelModelToOpenClaw,
+} from "@/lib/openclaw/model-mapping";
 import {
   startPlanfEcomSession,
   type OpenClawPlanfEcomSession,
@@ -185,6 +188,13 @@ export async function POST(request: Request) {
       session,
     });
   } catch (error) {
+    if (error instanceof AgentModelCompatibilityError) {
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 400 },
+      );
+    }
+
     if (error instanceof Error) {
       console.error("[openclaw-planf-ecom-start] failed", {
         name: error.name,

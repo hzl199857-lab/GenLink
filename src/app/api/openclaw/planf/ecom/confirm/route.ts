@@ -7,13 +7,17 @@ import {
   buildOpenClawEcomConfirmMessage,
   parseOpenClawEcomCreativeDoc,
 } from "@/lib/openclaw/ecom-protocol";
-import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
+import {
+  AgentModelCompatibilityError,
+  mapAgentPanelModelToOpenClaw,
+} from "@/lib/openclaw/model-mapping";
 import {
   confirmPlanfEcomSession,
   type OpenClawPlanfEcomSession,
 } from "@/lib/openclaw/planf-ecom-session";
 import {
   RealOpenClawRuntimeError,
+  getPublicRealOpenClawRuntimeDiagnostic,
   runRealOpenClaw,
 } from "@/lib/openclaw/real-runtime";
 import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
@@ -125,7 +129,10 @@ export async function POST(request: Request) {
 
         return parseOpenClawEcomCreativeDoc(real.text, values);
       } catch (error) {
-        if (error instanceof RealOpenClawRuntimeError) {
+        if (
+          error instanceof AgentModelCompatibilityError ||
+          error instanceof RealOpenClawRuntimeError
+        ) {
           throw error;
         }
 
@@ -146,9 +153,20 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response);
   } catch (error) {
-    if (error instanceof RealOpenClawRuntimeError) {
+    if (error instanceof AgentModelCompatibilityError) {
       return NextResponse.json(
         { ok: false, error: error.message },
+        { status: 400 },
+      );
+    }
+
+    if (error instanceof RealOpenClawRuntimeError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.publicMessage ?? error.message,
+          diagnostic: getPublicRealOpenClawRuntimeDiagnostic(error.diagnostic),
+        },
         { status: 504 },
       );
     }

@@ -74,6 +74,22 @@ test("replaces Gemini response schema errors with a concise fallback", () => {
   );
 });
 
+test("keeps actionable Provider and model compatibility errors visible", () => {
+  const text = "Agent Provider 与模型不兼容";
+
+  assert.equal(formatAgentChatErrorText(text, "Agent 请求失败"), text);
+});
+
+test("the canvas does not label every rules runtime failure as a timeout", () => {
+  const panelSource = readFileSync(
+    new URL("../components/canvas/CanvasAgentPanel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(panelSource, /GenLink 规则运行超时，请稍后重试，或切换文本模型后再试。/);
+  assert.match(panelSource, /GenLink 规则运行失败，请稍后重试。/);
+});
+
 test("uses the user task instead of internal workflow names for canvas node chips", () => {
   assert.equal(
     formatAgentCanvasNodeChipTitle({

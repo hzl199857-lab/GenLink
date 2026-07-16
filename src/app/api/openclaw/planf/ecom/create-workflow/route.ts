@@ -13,7 +13,10 @@ import {
   buildOpenClawEcomWorkflowMessage,
   parseOpenClawEcomWorkflow,
 } from "@/lib/openclaw/ecom-protocol";
-import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
+import {
+  AgentModelCompatibilityError,
+  mapAgentPanelModelToOpenClaw,
+} from "@/lib/openclaw/model-mapping";
 import {
   createOpenClawMcpClient,
   OpenClawMcpClientError,
@@ -21,6 +24,7 @@ import {
 import { validateGLWorkflowForCanvas } from "@/lib/canvas/canvas-tool-gateway";
 import {
   RealOpenClawRuntimeError,
+  getPublicRealOpenClawRuntimeDiagnostic,
   runRealOpenClaw,
 } from "@/lib/openclaw/real-runtime";
 import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
@@ -48,6 +52,7 @@ function errorJson(
   error: string,
   status: number,
   stage: "parse_request" | "generate_workflow" | "materialize_canvas",
+  diagnostic?: ReturnType<typeof getPublicRealOpenClawRuntimeDiagnostic>,
 ) {
   return NextResponse.json(
     {
@@ -55,6 +60,7 @@ function errorJson(
       error,
       stage,
       retryable: stage !== "parse_request",
+      ...(diagnostic ? { diagnostic } : {}),
     },
     { status },
   );
@@ -231,6 +237,13 @@ async function tryRunOpenClawWorkflow(input: Parameters<typeof runOpenClawWorkfl
   try {
     return await runOpenClawWorkflow(input);
   } catch (error) {
+    if (
+      error instanceof AgentModelCompatibilityError ||
+      error instanceof RealOpenClawRuntimeError
+    ) {
+      throw error;
+    }
+
     console.warn("[openclaw/planf/ecom/create-workflow] using local workflow fallback", error);
 
     return undefined;
@@ -400,8 +413,17 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof AgentModelCompatibilityError) {
+      return errorJson(error.message, 400, "parse_request");
+    }
+
     if (error instanceof RealOpenClawRuntimeError) {
-      return errorJson(error.message, 504, "generate_workflow");
+      return errorJson(
+        error.publicMessage ?? error.message,
+        504,
+        "generate_workflow",
+        getPublicRealOpenClawRuntimeDiagnostic(error.diagnostic),
+      );
     }
 
     if (error instanceof OpenClawMcpClientError) {

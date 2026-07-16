@@ -2261,7 +2261,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         } catch (error) {
           const errorText = formatAgentChatErrorText(
             error instanceof Error ? error.message : undefined,
-            'GenLink 规则运行超时，请稍后重试，或切换文本模型后再试。',
+            'GenLink 规则运行失败，请稍后重试。',
           );
 
           setMessages((current) => [
