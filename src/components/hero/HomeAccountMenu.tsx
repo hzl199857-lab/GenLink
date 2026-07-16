@@ -16,10 +16,11 @@ export interface HomeAccountUser {
   image?: string | null;
 }
 
-interface HomeAccountMenuProps {
+export interface HomeAccountMenuProps {
   user: HomeAccountUser;
   onOpenProjects: () => void;
   onSignOut: () => Promise<void>;
+  placement?: "fixed" | "inline";
 }
 
 function AccountAvatar({
@@ -63,6 +64,7 @@ export function HomeAccountMenu({
   user,
   onOpenProjects,
   onSignOut,
+  placement = "fixed",
 }: HomeAccountMenuProps) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -112,7 +114,11 @@ export function HomeAccountMenu({
   return (
     <div
       ref={rootRef}
-      className="fixed right-4 top-4 z-20 sm:right-7 sm:top-7"
+      className={
+        placement === "fixed"
+          ? "fixed right-4 top-4 z-20 sm:right-7 sm:top-7"
+          : "relative"
+      }
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onBlur={(event) => {

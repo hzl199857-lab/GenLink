@@ -212,6 +212,10 @@ import {
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { PromptLibraryDialog } from './PromptLibraryDialog';
 import { PromptLibraryEntryButton } from './PromptLibraryEntryButton';
+import {
+  HomeAccountMenu,
+  type HomeAccountMenuProps,
+} from '@/components/hero/HomeAccountMenu';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { AGENT_PANEL_FLOATING_INSET } from '@/lib/agent-panel-layout';
 import { downloadImageGenerationResult } from '@/lib/image-download';
@@ -9932,6 +9936,7 @@ function mergeStableReactFlowNodes(
 
 interface InnerCanvasProps {
   userId: string;
+  account: Omit<HomeAccountMenuProps, 'placement'>;
   initialAgentRequest?: CanvasAgentLaunchRequest | null;
   onInitialAgentRequestConsumed?: (id: string) => void;
   onBackToLibrary?: () => void;
@@ -10073,6 +10078,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
 // --- Inner Canvas ---
 function InnerCanvas({
   userId,
+  account,
   initialAgentRequest,
   onInitialAgentRequestConsumed,
   onBackToLibrary,
@@ -10198,7 +10204,7 @@ function InnerCanvas({
   const imageInfoPopoverRightOffset = agentPanelLayout.open
     ? agentPanelLayout.width + AGENT_PANEL_FLOATING_INSET + 16
     : 24;
-  const promptLibraryButtonRightOffset = agentPanelLayout.open
+  const canvasTopActionsRightOffset = agentPanelLayout.open
     ? agentPanelLayout.width + AGENT_PANEL_FLOATING_INSET + 12
     : 20;
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxData | null>(null);
@@ -15210,11 +15216,17 @@ function InnerCanvas({
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
       />
-      <PromptLibraryEntryButton
-        open={promptLibraryOpen}
-        rightOffset={promptLibraryButtonRightOffset}
-        onClick={() => setPromptLibraryOpen((current) => !current)}
-      />
+      <div
+        data-canvas-menu-ignore="true"
+        className="fixed top-5 z-50 flex items-center gap-2"
+        style={{ right: canvasTopActionsRightOffset }}
+      >
+        <PromptLibraryEntryButton
+          open={promptLibraryOpen}
+          onClick={() => setPromptLibraryOpen((current) => !current)}
+        />
+        <HomeAccountMenu {...account} placement="inline" />
+      </div>
       <div ref={canvasReadyRootRef} className="h-full w-full">
       <ReactFlow
         nodes={rfNodes}
@@ -15590,6 +15602,7 @@ function InnerCanvas({
 // --- Wrapper ---
 export function InfiniteCanvas({
   userId,
+  account,
   initialAgentRequest,
   onInitialAgentRequestConsumed,
   onBackToLibrary,
@@ -15599,6 +15612,7 @@ export function InfiniteCanvas({
     <ReactFlowProvider>
       <InnerCanvas
         userId={userId}
+        account={account}
         initialAgentRequest={initialAgentRequest}
         onInitialAgentRequestConsumed={onInitialAgentRequestConsumed}
         onBackToLibrary={onBackToLibrary}

@@ -608,7 +608,15 @@ function HomePageContent() {
     router.replace('/');
   };
 
-  const handleHomeSignOut = async () => {
+  const openProjectLibraryFromCanvas = () => {
+    if (shouldShowProjectLibraryEntryLoader(knownProjectCount)) {
+      showEntryLoader('library');
+    }
+
+    showAppMode('library');
+  };
+
+  const handleSignOut = async () => {
     await authClient.signOut();
     router.replace('/');
     router.refresh();
@@ -631,7 +639,7 @@ function HomePageContent() {
           account={session.data?.user ? {
             user: session.data.user,
             onOpenProjects: () => router.push('/?app=library'),
-            onSignOut: handleHomeSignOut,
+            onSignOut: handleSignOut,
           } : undefined}
           composer={{
             prompt: heroPrompt,
@@ -711,6 +719,11 @@ function HomePageContent() {
           ) : (
             <InfiniteCanvas
               userId={userId!}
+              account={{
+                user: session.data!.user,
+                onOpenProjects: openProjectLibraryFromCanvas,
+                onSignOut: handleSignOut,
+              }}
               initialAgentRequest={preparedAgentRequest}
               onInitialAgentRequestConsumed={(id) => {
                 if (preparedAgentRequest?.id !== id) {
@@ -720,13 +733,7 @@ function HomePageContent() {
                 setPreparedAgentRequest(null);
                 activeAgentRequestIdRef.current = null;
               }}
-              onBackToLibrary={() => {
-                if (shouldShowProjectLibraryEntryLoader(knownProjectCount)) {
-                  showEntryLoader('library');
-                }
-
-                showAppMode('library');
-              }}
+              onBackToLibrary={openProjectLibraryFromCanvas}
               onCanvasReady={() => {
                 if (refreshRestoreLoading) {
                   setEntryLoaderLeaving(true);
