@@ -102,6 +102,8 @@ test("the composer reuses the Agent and model settings controls", () => {
   assert.match(source, />\s*模型\s*</);
   assert.doesNotMatch(source, /<select/);
   assert.doesNotMatch(selectSource, /focus:ring|outline-white/);
+  assert.match(selectSource, /border-\[#363636\].*bg-\[#212121\]/);
+  assert.doesNotMatch(selectSource, /bg-\[#101217\]|border-\[#2f3239\]/);
 });
 
 test("the home settings menus stay compact and match the composer surface", () => {

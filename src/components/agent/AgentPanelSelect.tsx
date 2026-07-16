@@ -65,7 +65,7 @@ export function AgentPanelSelect<TValue extends string>({
       {open && !disabled ? (
         <div
           role="listbox"
-          className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-full min-w-[152px] overflow-hidden rounded-xl border border-[#2f3239] bg-[#101217] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)]"
+          className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-full min-w-[152px] overflow-hidden rounded-xl border border-[#363636] bg-[#212121] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)]"
         >
           {options.map((option) => {
             const selected = option.value === value;
