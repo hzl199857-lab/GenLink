@@ -10,6 +10,7 @@ import {
   HeroRecentProjects,
   type HeroRecentProjectsProps,
 } from "@/components/hero/HeroRecentProjects";
+import { ShinyButton } from "@/components/ui/shiny-button";
 
 const CanvasRevealEffect = dynamic(
   () =>
@@ -56,13 +57,15 @@ export function GenLinkHero({
       </div>
 
       {onOpenAuth ? (
-        <button
-          type="button"
-          className="fixed right-4 top-4 z-20 flex h-10 items-center justify-center rounded-[10px] bg-white px-4 text-[13px] font-medium text-[#17181b] shadow-[0_8px_24px_rgba(0,0,0,0.28)] transition hover:bg-white/88 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8c8c8c] sm:right-7 sm:top-7"
-          onClick={onOpenAuth}
-        >
-          注册/登录
-        </button>
+        <div className="fixed right-4 top-4 z-20 sm:right-7 sm:top-7">
+          <ShinyButton
+            type="button"
+            className="flex h-10 items-center justify-center rounded-[10px] px-4 py-0 shadow-[0_8px_24px_rgba(0,0,0,0.28)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8c8c8c]"
+            onClick={onOpenAuth}
+          >
+            注册/登录
+          </ShinyButton>
+        </div>
       ) : null}
 
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-[960px] flex-col items-center px-4 pb-10 pt-14 sm:px-7 sm:pt-16 lg:justify-center lg:py-12">

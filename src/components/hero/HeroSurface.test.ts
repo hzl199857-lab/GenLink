@@ -51,8 +51,23 @@ test("the hero replaces the old start button with the composer", () => {
   assert.match(source, /HeroAgentComposer/);
   assert.match(source, /HeroRecentProjects/);
   assert.match(source, /onOpenAuth/);
+  assert.match(source, /ShinyButton/);
   assert.match(source, /注册\/登录/);
-  assert.doesNotMatch(source, /ShinyButton/);
+});
+
+test("the home authentication action uses the motion shiny button", () => {
+  const heroSource = readHeroFile("GenLinkHero.tsx");
+  const shinyButtonSource = readFileSync(
+    new URL("../ui/shiny-button.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(heroSource, /<ShinyButton/);
+  assert.match(heroSource, /fixed right-4 top-4 z-20[\s\S]*<ShinyButton/);
+  assert.match(shinyButtonSource, /motion\.button/);
+  assert.match(shinyButtonSource, /"--x": "100%"/);
+  assert.match(shinyButtonSource, /maskComposite: "exclude"/);
+  assert.match(shinyButtonSource, /\[--primary:0_0%_100%\]/);
 });
 
 test("the hero preserves the original title scale and spacing", () => {
