@@ -26,14 +26,15 @@ const {
   isAgentTextProvider,
 } = require("./agent-provider-options.ts") as typeof import("./agent-provider-options");
 
-test("Agent text providers contain only Gemini video-capable providers", () => {
+test("Agent text providers restore the complete legacy GPT Provider list", () => {
   const ids = AGENT_TEXT_PROVIDER_OPTIONS.map((option) => option.id);
 
-  assert.deepEqual(ids, ["comfly", "zhenzhen"]);
+  assert.deepEqual(ids, ["vibe", "fucheers", "comfly", "zhenzhen", "grsai"]);
+  assert.equal(isAgentTextProvider("vibe"), true);
+  assert.equal(isAgentTextProvider("fucheers"), true);
   assert.equal(isAgentTextProvider("comfly"), true);
   assert.equal(isAgentTextProvider("zhenzhen"), true);
-  assert.equal(isAgentTextProvider("fucheers"), false);
-  assert.equal(isAgentTextProvider("grsai"), false);
+  assert.equal(isAgentTextProvider("grsai"), true);
 });
 
 test("RunningHub stays image-generation only and is not used for Agent text calls", () => {

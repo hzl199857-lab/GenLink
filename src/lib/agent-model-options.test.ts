@@ -20,17 +20,59 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
   (module as NodeModule & { _compile(source: string, filename: string): void })._compile(output.outputText, filename);
 };
 
-const { AGENT_MODEL_OPTIONS } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
-const { isAgentModelId } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
+const {
+  AGENT_MODEL_OPTIONS,
+  getAgentModelOptions,
+  isAgentModelId,
+  isAgentModelSupportedByProvider,
+  resolveAgentModelForProvider,
+} = require("./agent-model-options.ts") as typeof import("./agent-model-options");
 
 const agentModelOptionIds = AGENT_MODEL_OPTIONS.map((option) => option.id as string);
 
-test("Agent model options contain only the approved Gemini models", () => {
+test("Agent model options preserve GPT and Gemini models", () => {
   assert.deepEqual(AGENT_MODEL_OPTIONS, [
-    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", family: "gemini" },
+    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro", family: "gemini" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", family: "gpt" },
+    { id: "gpt-5.5", label: "GPT-5.5", family: "gpt" },
   ]);
-  assert.deepEqual(agentModelOptionIds, ["gemini-3.5-flash", "gemini-3.1-pro"]);
+  assert.deepEqual(agentModelOptionIds, [
+    "gemini-3.5-flash",
+    "gemini-3.1-pro",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+  ]);
   assert.equal(isAgentModelId("gemini-3.5-flash"), true);
-  assert.equal(isAgentModelId("gpt-5.5"), false);
+  assert.equal(isAgentModelId("gpt-5.5"), true);
+});
+
+test("filters Agent models by Provider compatibility", () => {
+  assert.deepEqual(
+    getAgentModelOptions("comfly").map((option) => option.id),
+    ["gemini-3.5-flash", "gemini-3.1-pro", "gpt-5.4-mini", "gpt-5.5"],
+  );
+  assert.deepEqual(
+    getAgentModelOptions("zhenzhen").map((option) => option.id),
+    ["gemini-3.5-flash", "gemini-3.1-pro", "gpt-5.4-mini", "gpt-5.5"],
+  );
+  assert.deepEqual(
+    getAgentModelOptions("vibe").map((option) => option.id),
+    ["gpt-5.4-mini", "gpt-5.5"],
+  );
+  assert.deepEqual(
+    getAgentModelOptions("fucheers").map((option) => option.id),
+    ["gpt-5.4-mini", "gpt-5.5"],
+  );
+  assert.deepEqual(
+    getAgentModelOptions("grsai").map((option) => option.id),
+    ["gpt-5.4-mini", "gpt-5.5"],
+  );
+});
+
+test("repairs an incompatible model when Provider changes", () => {
+  assert.equal(isAgentModelSupportedByProvider("vibe", "gemini-3.5-flash"), false);
+  assert.equal(isAgentModelSupportedByProvider("comfly", "gemini-3.5-flash"), true);
+  assert.equal(resolveAgentModelForProvider("vibe", "gemini-3.5-flash"), "gpt-5.4-mini");
+  assert.equal(resolveAgentModelForProvider("comfly", "gemini-3.5-flash"), "gemini-3.5-flash");
 });
