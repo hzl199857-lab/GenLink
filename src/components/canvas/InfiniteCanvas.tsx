@@ -121,6 +121,7 @@ import type {
   DirectorNodeData,
   ImageHistoryItem,
   MaterialLibraryItem,
+  PendingMaterialSource,
   NodeGroup,
   NodeType,
   StoryboardScriptNodeData,
@@ -211,7 +212,6 @@ import { GenerationHistoryPopover } from './GenerationHistoryPopover';
 import {
   MaterialLibraryDialog,
   type MaterialLibraryDialogMode,
-  type PendingMaterialSource,
 } from './MaterialLibraryDialog';
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { PromptLibraryDialog } from './PromptLibraryDialog';
@@ -2581,6 +2581,10 @@ function createAgentSourceImageNodes(params: {
   const nodeIdsByAttachmentId: Record<string, string> = {};
 
   params.attachments.forEach((attachment, index) => {
+    if (attachment.kind !== 'image') {
+      return;
+    }
+
     if (attachment.sourceNodeId && params.existingNodeIds?.has(attachment.sourceNodeId)) {
       nodeIdsByAttachmentId[attachment.id] = attachment.sourceNodeId;
       return;

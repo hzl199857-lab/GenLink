@@ -149,8 +149,19 @@ function createThreadTitle(messages: AgentPanelMessage[]): string {
 }
 
 function compactAttachment(attachment: AgentTaskAttachment): AgentTaskAttachment {
+  if (attachment.kind === "video") {
+    return {
+      ...attachment,
+      mediaUrl: "",
+      videoUrl: "",
+      previewUrl: "",
+      thumbnailUrl: "",
+    };
+  }
+
   return {
     ...attachment,
+    mediaUrl: "",
     imageUrl: "",
     hostedImageUrl: "",
     originalImageUrl: "",

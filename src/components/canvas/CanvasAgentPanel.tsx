@@ -13,6 +13,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  Video,
   X,
 } from 'lucide-react';
 
@@ -1914,10 +1915,11 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         createAttachmentId: () => createPanelId('agent-attachment'),
       }),
     )).then((nextAttachments) => {
-      const taggedAttachments = nextAttachments.map((attachment) => ({
-        ...attachment,
-        ecomPlannerRole: role,
-      }));
+      const taggedAttachments = nextAttachments.flatMap((attachment) => (
+        attachment.kind === 'image'
+          ? [{ ...attachment, ecomPlannerRole: role }]
+          : []
+      ));
 
       setAttachments((current) => [...current, ...taggedAttachments]);
       setReferenceUploadNudgeRequested(false);
@@ -3799,9 +3801,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                           className="flex items-center gap-2 rounded-md bg-[#f1f2f5] p-2 text-[#11141b]"
                         >
                           <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-black/5">
-                            {attachment.previewUrl || attachment.imageUrl ? (
+                            {attachment.kind === 'video' ? (
+                              <video
+                                src={attachment.previewUrl}
+                                muted
+                                playsInline
+                                preload="metadata"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : attachment.previewUrl ? (
                               <NextImage
-                                src={getBrowserImageDisplayUrl(attachment.previewUrl || attachment.imageUrl)}
+                                src={getBrowserImageDisplayUrl(attachment.previewUrl)}
                                 alt={attachment.name || `图片${index + 1}`}
                                 fill
                                 sizes="48px"
@@ -4972,29 +4982,42 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     <div
                       key={attachment.id}
                       className="group/reference-thumb relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-white/14 bg-white/[0.04] shadow-[0_8px_18px_rgba(0,0,0,0.26)]"
-                      onPointerEnter={(event) =>
-                        referenceImagePreview.showPreview(
-                          {
-                            id: attachment.id,
-                            imageUrl: attachment.imageUrl,
-                            previewUrl: attachment.previewUrl,
-                            alt: getAttachmentLabel(attachment, index),
-                            width: attachment.width,
-                            height: attachment.height,
-                          },
-                          event.currentTarget,
-                        )
-                      }
+                      onPointerEnter={attachment.kind === 'image'
+                        ? (event) => referenceImagePreview.showPreview(
+                            {
+                              id: attachment.id,
+                              imageUrl: attachment.imageUrl,
+                              previewUrl: attachment.previewUrl,
+                              alt: getAttachmentLabel(attachment, index),
+                              width: attachment.width,
+                              height: attachment.height,
+                            },
+                            event.currentTarget,
+                          )
+                        : undefined}
                       onPointerLeave={referenceImagePreview.hidePreview}
                     >
-                      <NextImage
-                        src={getBrowserImageDisplayUrl(attachment.previewUrl)}
-                        alt={getAttachmentLabel(attachment, index)}
-                        fill
-                        sizes="40px"
-                        className="object-cover"
-                        unoptimized
-                      />
+                      {attachment.kind === 'video' ? (
+                        <>
+                          <video
+                            src={attachment.previewUrl}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                          <Video size={12} className="absolute left-1 top-1 text-white drop-shadow" />
+                        </>
+                      ) : (
+                        <NextImage
+                          src={getBrowserImageDisplayUrl(attachment.previewUrl)}
+                          alt={getAttachmentLabel(attachment, index)}
+                          fill
+                          sizes="40px"
+                          className="object-cover"
+                          unoptimized
+                        />
+                      )}
                       <span className="absolute bottom-1 right-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-black/70 px-1 text-[10px] font-semibold leading-none text-white">
                         {ecomPlannerActive ? (plannerRole === 'benchmark' ? '对标' : '产品') : index + 1}
                       </span>

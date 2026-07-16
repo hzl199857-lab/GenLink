@@ -7,6 +7,7 @@ import type {
   MaterialLibraryCategory,
   MaterialLibraryFolder,
   MaterialLibraryItem,
+  PendingMaterialSource,
 } from '@/types/canvas';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
@@ -19,13 +20,6 @@ export const MATERIAL_LIBRARY_CATEGORIES: MaterialLibraryCategory[] = [
   '文本',
   '其他',
 ];
-
-export type PendingMaterialSource = Omit<
-  MaterialLibraryItem,
-  'id' | 'name' | 'category' | 'folderId' | 'createdAt'
-> & {
-  defaultName: string;
-};
 
 export type MaterialLibraryDialogMode = 'save' | 'move';
 

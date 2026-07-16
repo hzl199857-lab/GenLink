@@ -21,20 +21,16 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 };
 
 const { AGENT_MODEL_OPTIONS } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
+const { isAgentModelId } = require("./agent-model-options.ts") as typeof import("./agent-model-options");
 
 const agentModelOptionIds = AGENT_MODEL_OPTIONS.map((option) => option.id as string);
 
-test("includes GPT 5.4 mini as a selectable agent model", () => {
-  assert.equal(
-    AGENT_MODEL_OPTIONS.some((option) => option.id === "gpt-5.4-mini" && option.label === "GPT-5.4 Mini"),
-    true,
-  );
-});
-
-test("does not include gemini 3.5 flash in agent model options", () => {
-  assert.equal(agentModelOptionIds.includes("gemini-3.5-flash"), false);
-});
-
-test("does not include automatic agent model selection", () => {
-  assert.equal(agentModelOptionIds.includes("auto"), false);
+test("Agent model options contain only the approved Gemini models", () => {
+  assert.deepEqual(AGENT_MODEL_OPTIONS, [
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+  ]);
+  assert.deepEqual(agentModelOptionIds, ["gemini-3.5-flash", "gemini-3.1-pro"]);
+  assert.equal(isAgentModelId("gemini-3.5-flash"), true);
+  assert.equal(isAgentModelId("gpt-5.5"), false);
 });

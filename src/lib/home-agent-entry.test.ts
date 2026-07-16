@@ -29,8 +29,9 @@ const { createHomeAgentPendingRequest, selectRecentProjects } =
   require("./home-agent-entry.ts") as typeof import("./home-agent-entry");
 
 test("accepts only configured Agent models", () => {
-  assert.equal(isAgentModelId("gpt-5.4-mini"), true);
-  assert.equal(isAgentModelId("gpt-5.5"), true);
+  assert.equal(isAgentModelId("gemini-3.5-flash"), true);
+  assert.equal(isAgentModelId("gemini-3.1-pro"), true);
+  assert.equal(isAgentModelId("gpt-5.5"), false);
   assert.equal(isAgentModelId("unknown"), false);
 });
 
@@ -38,8 +39,8 @@ test("normalizes a pending home Agent request", () => {
   const request = createHomeAgentPendingRequest({
     id: "launch-1",
     prompt: "  创建一张海报  ",
-    provider: "vibe",
-    model: "gpt-5.4-mini",
+    provider: "comfly",
+    model: "gemini-3.5-flash",
     imagePreference: {
       mode: "manual",
       provider: "comfly",
@@ -53,8 +54,8 @@ test("normalizes a pending home Agent request", () => {
   assert.deepEqual(request, {
     id: "launch-1",
     prompt: "创建一张海报",
-    provider: "vibe",
-    model: "gpt-5.4-mini",
+    provider: "comfly",
+    model: "gemini-3.5-flash",
     imagePreference: {
       mode: "manual",
       provider: "comfly",

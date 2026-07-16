@@ -1,5 +1,6 @@
 import type { AgentTaskAttachment } from "../../types/agent";
 import type { CanvasNode } from "../../types/canvas";
+import { createAgentAttachmentFromCanvasNode } from "./media-sources";
 
 export type NodeExport =
   | {
@@ -147,52 +148,7 @@ export function isNodeRenameable(node: CanvasNode): boolean {
 }
 
 export function createAgentAttachmentFromNode(node: CanvasNode): AgentTaskAttachment | null {
-  const imageUrl = imageUrlFromNode(node);
-
-  if (!imageUrl) {
-    return null;
-  }
-
-  const name = getNodeTitle(node) || node.id;
-  const width =
-    node.type === "image_generation"
-      ? node.data.generatedImageWidth
-      : node.type === "image" || node.type === "uploaded_image"
-        ? node.data.width
-        : undefined;
-  const height =
-    node.type === "image_generation"
-      ? node.data.generatedImageHeight
-      : node.type === "image" || node.type === "uploaded_image"
-        ? node.data.height
-        : undefined;
-  const sizeBytes =
-    node.type === "image_generation"
-      ? node.data.generatedImageSizeBytes
-      : node.type === "image" || node.type === "uploaded_image"
-        ? node.data.sizeBytes
-        : undefined;
-
-  return {
-    id: `node-${node.id}`,
-    kind: "image",
-    name,
-    mimeType: "image/*",
-    imageUrl,
-    hostedImageUrl: imageUrl,
-    originalImageUrl: imageUrl,
-    previewUrl: imageUrl,
-    thumbnailUrl: imageUrl,
-    semanticImageUrl:
-      node.type === "image" || node.type === "uploaded_image"
-        ? node.data.semanticImageUrl
-        : undefined,
-    width,
-    height,
-    sizeBytes,
-    status: "attached",
-    sourceNodeId: node.id,
-  };
+  return createAgentAttachmentFromCanvasNode(node);
 }
 
 export function getNodeClipboardContent(node: CanvasNode): NodeClipboardContent | null {

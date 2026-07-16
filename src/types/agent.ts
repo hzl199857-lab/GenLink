@@ -19,25 +19,45 @@ export type AgentPanelState =
   | "completed"
   | "error";
 
-export type AgentTaskAttachment = {
+type AgentAttachmentBase = {
   id: string;
-  kind: "image";
   name: string;
   mimeType: string;
-  imageUrl: string;
-  hostedImageUrl?: string;
-  originalImageUrl?: string;
+  mediaUrl?: string;
   previewUrl: string;
-  thumbnailUrl?: string;
-  semanticImageUrl?: string;
-  plannerImageDataUrl?: string;
   width?: number;
   height?: number;
   sizeBytes?: number;
   status: "attached" | "uploading" | "ready" | "error";
   sourceNodeId?: string;
-  ecomPlannerRole?: "product" | "benchmark";
 };
+
+export type AgentTaskAttachment = AgentAttachmentBase & (
+  | {
+      kind: "image";
+      imageUrl: string;
+      hostedImageUrl?: string;
+      originalImageUrl?: string;
+      thumbnailUrl?: string;
+      semanticImageUrl?: string;
+      plannerImageDataUrl?: string;
+      ecomPlannerRole?: "product" | "benchmark";
+      videoUrl?: undefined;
+      durationSeconds?: undefined;
+    }
+  | {
+      kind: "video";
+      videoUrl: string;
+      durationSeconds?: number;
+      imageUrl?: undefined;
+      hostedImageUrl?: undefined;
+      originalImageUrl?: undefined;
+      thumbnailUrl?: string;
+      semanticImageUrl?: undefined;
+      plannerImageDataUrl?: undefined;
+      ecomPlannerRole?: undefined;
+    }
+);
 
 export type AgentPlanfRouteMode = "auto" | "default" | "detail-page" | "ugc" | "stylist";
 

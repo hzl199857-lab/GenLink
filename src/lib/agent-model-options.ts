@@ -1,6 +1,6 @@
 export const AGENT_MODEL_OPTIONS = [
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { id: "gpt-5.5", label: "GPT-5.5" },
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
 ] as const;
 
 export type AgentModelId = (typeof AGENT_MODEL_OPTIONS)[number]["id"];

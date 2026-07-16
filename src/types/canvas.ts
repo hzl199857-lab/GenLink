@@ -589,19 +589,32 @@ export interface MaterialLibraryItem {
   name: string;
   category: MaterialLibraryCategory;
   folderId?: string;
+  kind?: "image" | "video" | "audio";
+  mediaUrl?: string;
+  hostedMediaUrl?: string;
+  previewUrl?: string;
   imageUrl: string;
   hostedImageUrl?: string;
   fileName?: string;
   outputFileName?: string;
-  sourceNodeType?: "image_generation" | "image" | "uploaded_image";
+  sourceNodeType?: NodeType;
   width?: number;
   height?: number;
   displayWidth?: number;
   displayHeight?: number;
+  durationSeconds?: number;
+  mimeType?: string;
   sizeBytes?: number;
   format?: string;
   createdAt: string;
 }
+
+export type PendingMaterialSource = Omit<
+  MaterialLibraryItem,
+  "id" | "name" | "category" | "folderId" | "createdAt"
+> & {
+  defaultName: string;
+};
 
 export interface ProjectSnapshot {
   id: string;
