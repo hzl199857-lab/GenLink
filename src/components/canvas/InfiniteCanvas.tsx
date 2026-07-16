@@ -7,7 +7,6 @@ import {
   Columns3,
   Copy,
   Expand,
-  FolderPlus,
   Group,
   Image as ImageIcon,
   Grid2x2,
@@ -40,6 +39,8 @@ import {
   CircleDot,
   FlipHorizontal2,
   FlipVertical2,
+  Library,
+  MessageSquarePlus,
 } from 'lucide-react';
 import ReactFlow, {
   ReactFlowProvider,
@@ -236,6 +237,10 @@ import {
   isNodeRenameable,
   type NodeExport,
 } from '@/lib/canvas/node-context-actions';
+import {
+  createAgentAttachmentFromCanvasNode,
+  createMaterialSourceFromCanvasNode,
+} from '@/lib/canvas/media-sources';
 import { writeClipboardContent } from '@/lib/clipboard-content';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
@@ -6153,6 +6158,8 @@ type MultiNodeSelectionOverlayProps = {
   groups: NodeGroup[];
   visible: boolean;
   onLayout: (nodeIds: string[], mode: CanvasLayoutMode) => void;
+  onAddToConversation: (nodeIds: string[]) => void;
+  onSaveToMaterialLibrary: (nodeIds: string[]) => void;
   onGroup: (nodeIds: string[]) => void;
   onStartSelectionConnection: (nodeIds: string[], event: React.MouseEvent<HTMLElement>) => void;
   onSelectionFramePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -6967,11 +6974,13 @@ function MultiNodeSelectionToolbarButton({
   children,
   icon: Icon,
   compact = false,
+  disabled = false,
   onClick,
 }: {
   children?: React.ReactNode;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
   compact?: boolean;
+  disabled?: boolean;
   onClick?: () => void;
 }) {
   const [executeMenuOpen, setExecuteMenuOpen] = useState(false);
@@ -6984,9 +6993,10 @@ function MultiNodeSelectionToolbarButton({
     <button
       type="button"
       className={[
-        'nodrag nopan flex h-10 items-center justify-center gap-2 rounded-gl-pill text-[14px] font-semibold text-gl-text-primary transition-colors hover:bg-gl-panel-hover',
+        'nodrag nopan flex h-10 items-center justify-center gap-2 rounded-gl-pill text-[14px] font-semibold text-gl-text-primary transition-colors hover:bg-gl-panel-hover disabled:cursor-not-allowed disabled:text-gl-text-secondary disabled:hover:bg-transparent',
         compact ? 'w-10 px-0' : 'px-3',
       ].join(' ')}
+      disabled={disabled}
       onPointerDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -7132,6 +7142,8 @@ function MultiNodeSelectionOverlay({
   groups,
   visible,
   onLayout,
+  onAddToConversation,
+  onSaveToMaterialLibrary,
   onGroup,
   onStartSelectionConnection,
   onSelectionFramePointerDown,
@@ -7142,6 +7154,18 @@ function MultiNodeSelectionOverlay({
   const viewport = useViewport();
   const sourceAnchorRef = useRef<HTMLDivElement | null>(null);
   const [bounds, setBounds] = useState<MultiNodeSelectionBounds | null>(null);
+  const selectedCanvasNodes = useMemo(
+    () => nodes.filter((node) => selectedNodeIds.has(node.id)),
+    [nodes, selectedNodeIds],
+  );
+  const agentAttachmentCount = useMemo(
+    () => selectedCanvasNodes.filter((node) => createAgentAttachmentFromCanvasNode(node) !== null).length,
+    [selectedCanvasNodes],
+  );
+  const materialSourceCount = useMemo(
+    () => selectedCanvasNodes.filter((node) => createMaterialSourceFromCanvasNode(node) !== null).length,
+    [selectedCanvasNodes],
+  );
   const selectedNodes = useMemo(
     () => {
       const flowNodesById = new Map(flowNodes.map((node) => [node.id, node]));
@@ -7258,15 +7282,21 @@ function MultiNodeSelectionOverlay({
         >
           <MultiNodeSelectionToolbarButton icon={Group}>布局</MultiNodeSelectionToolbarButton>
           <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={FolderPlus}>
-            加入组
+          <MultiNodeSelectionToolbarButton
+            icon={MessageSquarePlus}
+            disabled={agentAttachmentCount === 0}
+            onClick={() => onAddToConversation(selectedCanvasNodes.map((node) => node.id))}
+          >
+            加入对话 {agentAttachmentCount}
           </MultiNodeSelectionToolbarButton>
           <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Copy}>
-            复制
+          <MultiNodeSelectionToolbarButton
+            icon={Library}
+            disabled={materialSourceCount === 0}
+            onClick={() => onSaveToMaterialLibrary(selectedCanvasNodes.map((node) => node.id))}
+          >
+            保存到素材库 {materialSourceCount}
           </MultiNodeSelectionToolbarButton>
-          <div className="mx-1 h-5 w-px bg-white/10" />
-          <MultiNodeSelectionToolbarButton icon={Plus} compact />
           <div className="mx-1 h-5 w-px bg-white/10" />
           <MultiNodeSelectionToolbarButton
             icon={Group}
@@ -10009,8 +10039,11 @@ type CanvasAgentDockProps = {
   initialAgentRequest?: CanvasAgentLaunchRequest | null;
   onInitialAgentRequestConsumed?: (id: string) => void;
   onCreateSourceNodes: (attachments: AgentTaskAttachment[]) => Record<string, string>;
-  pendingReferenceAttachment?: AgentTaskAttachment | null;
-  onPendingReferenceAttachmentConsumed?: (result: 'added' | 'duplicate') => void;
+  pendingReferenceAttachments?: AgentTaskAttachment[];
+  onPendingReferenceAttachmentsConsumed?: (result: {
+    addedCount: number;
+    duplicateCount: number;
+  }) => void;
   onQuickReferenceSelect: (
     onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
   ) => void;
@@ -10046,8 +10079,8 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   initialAgentRequest,
   onInitialAgentRequestConsumed,
   onCreateSourceNodes,
-  pendingReferenceAttachment,
-  onPendingReferenceAttachmentConsumed,
+  pendingReferenceAttachments,
+  onPendingReferenceAttachmentsConsumed,
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
@@ -10117,8 +10150,8 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         onInitialRequestConsumed={handleInitialRequestConsumed}
         onClose={() => setOpen(false)}
         onCreateSourceNodes={onCreateSourceNodes}
-        pendingReferenceAttachment={pendingReferenceAttachment}
-        onPendingReferenceAttachmentConsumed={onPendingReferenceAttachmentConsumed}
+        pendingReferenceAttachments={pendingReferenceAttachments}
+        onPendingReferenceAttachmentsConsumed={onPendingReferenceAttachmentsConsumed}
         onQuickReferenceSelect={handleQuickReferenceSelect}
         onConfirmPlan={onConfirmPlan}
         onConfirmGeneration={onConfirmGeneration}
@@ -10245,8 +10278,9 @@ function InnerCanvas({
     nodeId: string;
     screen: { x: number; y: number };
   } | null>(null);
-  const [pendingAgentReferenceAttachment, setPendingAgentReferenceAttachment] =
-    useState<AgentTaskAttachment | null>(null);
+  const [pendingAgentReferenceAttachments, setPendingAgentReferenceAttachments] =
+    useState<AgentTaskAttachment[]>([]);
+  const [, setPendingMaterialSources] = useState<PendingMaterialSource[]>([]);
   const closeAddMenuTimeoutRef = useRef<number | null>(null);
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
@@ -12621,7 +12655,7 @@ function InnerCanvas({
       return;
     }
 
-    setPendingAgentReferenceAttachment(nodeContextAttachment);
+    setPendingAgentReferenceAttachments([nodeContextAttachment]);
     notifyAgentPanelOpenRequest?.();
     setNodeContextMenu(null);
   }, [nodeContextAttachment]);
@@ -15067,6 +15101,45 @@ function InnerCanvas({
     }
   }, [showProjectMessage]);
 
+  const handleAddSelectedNodesToConversation = useCallback((nodeIds: string[]) => {
+    const targetNodeIds = new Set(nodeIds);
+    const attachments = useCanvasStore.getState().nodes.flatMap((node) => {
+      if (!targetNodeIds.has(node.id)) {
+        return [];
+      }
+
+      const attachment = createAgentAttachmentFromCanvasNode(node);
+      return attachment ? [attachment] : [];
+    });
+
+    if (attachments.length === 0) {
+      showProjectMessage('当前选择中没有可加入对话的图片或视频');
+      return;
+    }
+
+    setPendingAgentReferenceAttachments(attachments);
+    notifyAgentPanelOpenRequest?.();
+  }, [showProjectMessage]);
+
+  const handleSaveSelectedNodesToMaterialLibrary = useCallback((nodeIds: string[]) => {
+    const targetNodeIds = new Set(nodeIds);
+    const sources = useCanvasStore.getState().nodes.flatMap((node) => {
+      if (!targetNodeIds.has(node.id)) {
+        return [];
+      }
+
+      const source = createMaterialSourceFromCanvasNode(node);
+      return source ? [source] : [];
+    });
+
+    if (sources.length === 0) {
+      showProjectMessage('当前选择中没有可保存的媒体');
+      return;
+    }
+
+    setPendingMaterialSources(sources);
+  }, [showProjectMessage]);
+
   const handleResizeGroup = useCallback((
     groupId: string,
     bounds: { x: number; y: number; width: number; height: number },
@@ -15378,6 +15451,8 @@ function InnerCanvas({
           groups={storeGroups}
           visible={!selectedGroupId && !groupDragActive && !selectionInProgress && !paneSelectionDragging}
           onLayout={handleLayoutSelectedNodes}
+          onAddToConversation={handleAddSelectedNodesToConversation}
+          onSaveToMaterialLibrary={handleSaveSelectedNodesToMaterialLibrary}
           onGroup={handleGroup}
           onStartSelectionConnection={handleStartSelectionConnection}
           onSelectionFramePointerDown={handleSelectionFramePointerDown}
@@ -15514,10 +15589,14 @@ function InnerCanvas({
         initialAgentRequest={initialAgentRequest}
         onInitialAgentRequestConsumed={onInitialAgentRequestConsumed}
         onCreateSourceNodes={handleCreateAgentSourceNodes}
-        pendingReferenceAttachment={pendingAgentReferenceAttachment}
-        onPendingReferenceAttachmentConsumed={(result) => {
-          setPendingAgentReferenceAttachment(null);
-          showProjectMessage(result === 'duplicate' ? '参考图已添加' : '已添加到对话');
+        pendingReferenceAttachments={pendingAgentReferenceAttachments}
+        onPendingReferenceAttachmentsConsumed={(result) => {
+          setPendingAgentReferenceAttachments([]);
+          showProjectMessage(
+            result.addedCount > 0
+              ? `已添加 ${result.addedCount} 个参考媒体到对话`
+              : '所选参考媒体已在对话中',
+          );
         }}
         onQuickReferenceSelect={(onSelect) => {
           startQuickReferenceConnect({

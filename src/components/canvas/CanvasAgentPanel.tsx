@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { buildAgentTaskContext, getReferencedAgentAttachmentIds } from '@/lib/agent-task-context';
+import { mergeAgentAttachments } from '@/lib/agent-attachments';
 import { buildCanvasRuntimeSnapshot } from '@/lib/canvas/runtime-snapshot';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import UniqueLoading from '@/components/ui/grid-loading';
@@ -347,8 +348,11 @@ type CanvasAgentPanelProps = {
   onClose: () => void;
   onLayoutChange?: (layout: { open: boolean; width: number }) => void;
   onCreateSourceNodes?: (attachments: AgentTaskAttachment[]) => Record<string, string>;
-  pendingReferenceAttachment?: AgentTaskAttachment | null;
-  onPendingReferenceAttachmentConsumed?: (result: 'added' | 'duplicate') => void;
+  pendingReferenceAttachments?: AgentTaskAttachment[];
+  onPendingReferenceAttachmentsConsumed?: (result: {
+    addedCount: number;
+    duplicateCount: number;
+  }) => void;
   onQuickReferenceSelect?: (
     onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate',
   ) => void;
@@ -1594,8 +1598,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   onClose,
   onLayoutChange,
   onCreateSourceNodes,
-  pendingReferenceAttachment,
-  onPendingReferenceAttachmentConsumed,
+  pendingReferenceAttachments = [],
+  onPendingReferenceAttachmentsConsumed,
   onQuickReferenceSelect,
   onConfirmPlan,
   onConfirmGeneration,
@@ -1632,7 +1636,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     [projectId, projectName, userId],
   );
   const hydratedDraftScopeRef = useRef<string | null>(null);
-  const [provider, setProvider] = useState<AgentProvider>('vibe');
+  const [provider, setProvider] = useState<AgentProvider>('comfly');
   const [model, setModel] = useState<string>(AGENT_MODEL_OPTIONS[0].id);
   const [messages, setMessages] = useState<AgentPanelMessage[]>([]);
   const [busyMode, setBusyMode] = useState<AgentBusyMode | null>(null);
@@ -2031,28 +2035,29 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   }, [onQuickReferenceSelect]);
 
   useEffect(() => {
-    if (!pendingReferenceAttachment) {
+    if (pendingReferenceAttachments.length === 0) {
       return;
     }
 
     const timeoutId = window.setTimeout(() => {
-      const duplicate = attachmentsRef.current.some((item) => (
-        (pendingReferenceAttachment.sourceNodeId && item.sourceNodeId === pendingReferenceAttachment.sourceNodeId) ||
-        item.imageUrl === pendingReferenceAttachment.imageUrl ||
-        item.previewUrl === pendingReferenceAttachment.previewUrl
-      ));
-      const result: 'added' | 'duplicate' = duplicate ? 'duplicate' : 'added';
+      const result = mergeAgentAttachments(
+        attachmentsRef.current,
+        pendingReferenceAttachments,
+      );
 
-      if (result === 'added') {
-        setAttachments((current) => [...current, pendingReferenceAttachment]);
+      if (result.addedCount > 0) {
+        setAttachments(result.attachments);
         setReferenceUploadNudgeRequested(false);
       }
 
-      onPendingReferenceAttachmentConsumed?.(result);
+      onPendingReferenceAttachmentsConsumed?.({
+        addedCount: result.addedCount,
+        duplicateCount: result.duplicateCount,
+      });
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [onPendingReferenceAttachmentConsumed, pendingReferenceAttachment]);
+  }, [onPendingReferenceAttachmentsConsumed, pendingReferenceAttachments]);
 
   const runAgent = useCallback(async (params: {
     prompt: string;

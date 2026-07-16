@@ -95,7 +95,7 @@ function HomePageContent() {
       null,
     );
   const [heroPrompt, setHeroPrompt] = useState('');
-  const [heroProvider, setHeroProvider] = useState<AgentProvider>('vibe');
+  const [heroProvider, setHeroProvider] = useState<AgentProvider>('comfly');
   const [heroModel, setHeroModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
   const [heroImagePreference, setHeroImagePreference] =
     useState<AgentImageGenerationPreference>({
