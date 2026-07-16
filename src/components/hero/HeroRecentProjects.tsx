@@ -40,7 +40,7 @@ export function HeroRecentProjects({
 }: HeroRecentProjectsProps) {
   const recentProjects = selectRecentProjects(projects);
   const desktopCardWidth =
-    recentProjects.length >= 3 ? "lg:w-[172px]" : "lg:w-[190px]";
+    recentProjects.length >= 3 ? "lg:w-[176px]" : "lg:w-[190px]";
   const cardClassName = [
     "w-[190px] shrink-0 snap-start overflow-hidden rounded-[8px] bg-[#151619] text-left shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 sm:w-[210px]",
     desktopCardWidth,
@@ -109,7 +109,7 @@ export function HeroRecentProjects({
 
         <button
           type="button"
-          className="mb-1 flex h-8 shrink-0 self-end items-center gap-1.5 px-1 text-[12px] text-white/48 transition hover:text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
+          className="mb-1 flex h-8 shrink-0 self-end items-center gap-1.5 px-1 text-[12px] text-white/48 transition hover:text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 lg:w-[76px] lg:justify-end"
           onClick={onAllProjects}
         >
           所有项目

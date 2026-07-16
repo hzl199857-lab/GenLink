@@ -42,7 +42,18 @@ test("the project strip aligns with the composer and keeps all projects inline",
     /recentProjects\.map[\s\S]*onClick=\{onAllProjects\}/,
   );
   assert.match(projectsSource, /self-end/);
+  assert.match(projectsSource, /lg:w-\[176px\]/);
+  assert.match(projectsSource, /lg:w-\[76px\].*lg:justify-end/);
   assert.doesNotMatch(projectsSource, /lg:grid-cols-4/);
+});
+
+test("the project library leaves sign-out in the home account menu", () => {
+  const source = readFileSync(
+    new URL("../project/ProjectLibrary.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /authClient\.signOut|handleSignOut|LogOut/);
 });
 
 test("the hero replaces the old start button with the composer", () => {

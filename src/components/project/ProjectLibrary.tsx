@@ -8,13 +8,10 @@ import {
   Ellipsis,
   FolderOpen,
   FolderPlus,
-  LogOut,
   Pencil,
   Plus,
   Trash2,
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import { authClient } from '@/lib/auth-client';
 import {
   createProjectAtParentDirectory,
   importProjectsFromParentDirectory,
@@ -285,7 +282,6 @@ export function ProjectLibrary({
   onRestoreProjectOpened,
   onRestoreProjectMissing,
 }: ProjectLibraryProps) {
-  const router = useRouter();
   const attachProject = useCanvasStore((state) => state.attachProject);
   const listProjects = useCanvasStore((state) => state.listProjects);
   const loadProject = useCanvasStore((state) => state.loadProject);
@@ -591,12 +587,6 @@ export function ProjectLibrary({
     restoreProjectId,
   ]);
 
-  const handleSignOut = async () => {
-    await authClient.signOut();
-    router.push('/');
-    router.refresh();
-  };
-
   return (
     <div className="min-h-screen bg-[#0f1012] text-white">
       <div className="px-6 pt-5">
@@ -638,15 +628,6 @@ export function ProjectLibrary({
           >
             <FolderPlus size={14} />
             批量导入
-          </button>
-          <div className="h-3.5 w-px bg-white/14" />
-          <button
-            type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] text-white/72 transition hover:bg-white/10 hover:text-white/92 focus-visible:bg-white/10 focus-visible:text-white/92 focus-visible:outline-none"
-            onClick={() => void handleSignOut()}
-          >
-            <LogOut size={14} />
-            退出登录
           </button>
         </div>
 
