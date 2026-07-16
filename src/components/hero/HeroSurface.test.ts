@@ -34,6 +34,8 @@ test("the hero replaces the old start button with the composer", () => {
 
   assert.match(source, /HeroAgentComposer/);
   assert.match(source, /HeroRecentProjects/);
+  assert.match(source, /onOpenAuth/);
+  assert.match(source, /注册\/登录/);
   assert.doesNotMatch(source, /ShinyButton/);
 });
 

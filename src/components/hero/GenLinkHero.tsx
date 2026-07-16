@@ -22,6 +22,7 @@ const CanvasRevealEffect = dynamic(
 interface GenLinkHeroProps {
   composer: HeroAgentComposerProps;
   recentProjects?: HeroRecentProjectsProps;
+  onOpenAuth?: () => void;
   isLeaving?: boolean;
 }
 
@@ -33,6 +34,7 @@ const HERO_PARTICLE_COLORS = [
 export function GenLinkHero({
   composer,
   recentProjects,
+  onOpenAuth,
   isLeaving = false,
 }: GenLinkHeroProps) {
   return (
@@ -52,6 +54,16 @@ export function GenLinkHero({
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(0,0,0,0.98)_0%,_rgba(0,0,0,0.56)_48%,_rgba(0,0,0,0.16)_100%)]" />
         <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black to-transparent" />
       </div>
+
+      {onOpenAuth ? (
+        <button
+          type="button"
+          className="fixed right-4 top-4 z-20 flex h-10 items-center justify-center rounded-[10px] bg-white px-4 text-[13px] font-medium text-[#17181b] shadow-[0_8px_24px_rgba(0,0,0,0.28)] transition hover:bg-white/88 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8c8c8c] sm:right-7 sm:top-7"
+          onClick={onOpenAuth}
+        >
+          注册/登录
+        </button>
+      ) : null}
 
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-[960px] flex-col items-center px-4 pb-10 pt-14 sm:px-7 sm:pt-16 lg:justify-center lg:py-12">
         <div className="w-full">

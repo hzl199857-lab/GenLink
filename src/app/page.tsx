@@ -588,6 +588,7 @@ function HomePageContent() {
       {mode === 'hero' && (
         <GenLinkHero
           isLeaving={heroLeaving}
+          onOpenAuth={!userId ? () => setAuthDialogOpen(true) : undefined}
           composer={{
             prompt: heroPrompt,
             provider: heroProvider,
