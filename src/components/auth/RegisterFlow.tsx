@@ -2,10 +2,10 @@
 
 import { ArrowRight, Check } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import Link from "next/link";
 import type { FormEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
+import { AuthConsent } from "@/components/auth/AuthConsent";
 import { authClient } from "@/lib/auth-client";
 import {
   getRegisterAccountErrorMessage,
@@ -33,6 +33,8 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
   const [password, setPassword] = useState("");
   const [emailTouched, setEmailTouched] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
+  const [consentAccepted, setConsentAccepted] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [step, setStep] = useState<"email" | "code" | "success">("email");
   const [code, setCode] = useState(emptyCode);
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +88,11 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
     setPasswordTouched(true);
 
     if (!isValidEmail(email) || !password.trim()) {
+      return;
+    }
+
+    if (!consentAccepted) {
+      setConsentError("请先阅读并同意服务条款、社区准则和隐私政策");
       return;
     }
 
@@ -285,29 +292,17 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
               </form>
             </div>
 
-            <p className="pt-10 text-xs text-white/40">
-              {"\u6ce8\u518c\u5373\u8868\u793a\u4f60\u540c\u610f"}
-              <Link href="#" className="underline transition-colors hover:text-white/60">
-                {"\u300a\u4e3b\u670d\u52a1\u534f\u8bae\u300b"}
-              </Link>
-              {"\u3001"}
-              <Link href="#" className="underline transition-colors hover:text-white/60">
-                {"\u300a\u4ea7\u54c1\u6761\u6b3e\u300b"}
-              </Link>
-              {"\u3001"}
-              <Link href="#" className="underline transition-colors hover:text-white/60">
-                {"\u300a\u4f7f\u7528\u653f\u7b56\u300b"}
-              </Link>
-              {"\u3001"}
-              <Link href="#" className="underline transition-colors hover:text-white/60">
-                {"\u300a\u9690\u79c1\u58f0\u660e\u300b"}
-              </Link>
-              {"\u548c"}
-              <Link href="#" className="underline transition-colors hover:text-white/60">
-                {"\u300a\u7f13\u5b58\u58f0\u660e\u300b"}
-              </Link>
-              {"\u3002"}
-            </p>
+            <AuthConsent
+              id="register-legal-consent"
+              checked={consentAccepted}
+              error={consentError}
+              onCheckedChange={(checked) => {
+                setConsentAccepted(checked);
+                if (checked) {
+                  setConsentError(null);
+                }
+              }}
+            />
           </motion.div>
         ) : step === "code" ? (
           <motion.div
@@ -404,31 +399,6 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
               </motion.button>
             </div>
 
-            <div className="pt-16">
-              <p className="text-xs text-white/40">
-                {"\u6ce8\u518c\u5373\u8868\u793a\u4f60\u540c\u610f"}
-                <Link href="#" className="underline hover:text-white/60">
-                  {"\u300a\u4e3b\u670d\u52a1\u534f\u8bae\u300b"}
-                </Link>
-                {"\u3001"}
-                <Link href="#" className="underline hover:text-white/60">
-                  {"\u300a\u4ea7\u54c1\u6761\u6b3e\u300b"}
-                </Link>
-                {"\u3001"}
-                <Link href="#" className="underline hover:text-white/60">
-                  {"\u300a\u4f7f\u7528\u653f\u7b56\u300b"}
-                </Link>
-                {"\u3001"}
-                <Link href="#" className="underline hover:text-white/60">
-                  {"\u300a\u9690\u79c1\u58f0\u660e\u300b"}
-                </Link>
-                {"\u548c"}
-                <Link href="#" className="underline hover:text-white/60">
-                  {"\u300a\u7f13\u5b58\u58f0\u660e\u300b"}
-                </Link>
-                {"\u3002"}
-              </p>
-            </div>
           </motion.div>
         ) : (
           <motion.div

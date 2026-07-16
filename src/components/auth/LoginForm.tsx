@@ -1,10 +1,10 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import Link from "next/link";
 import type { FormEvent } from "react";
 import { useState } from "react";
 
+import { AuthConsent } from "@/components/auth/AuthConsent";
 import { authClient } from "@/lib/auth-client";
 import { getLoginErrorMessage } from "@/lib/auth-error-message";
 
@@ -16,11 +16,19 @@ interface LoginFormProps {
 export function LoginForm({ onSuccess, onRegister }: LoginFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [consentAccepted, setConsentAccepted] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!consentAccepted) {
+      setConsentError("请先阅读并同意服务条款、社区准则和隐私政策");
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
 
@@ -102,27 +110,21 @@ export function LoginForm({ onSuccess, onRegister }: LoginFormProps) {
             </motion.button>
           </form>
 
+          <AuthConsent
+            id="login-legal-consent"
+            checked={consentAccepted}
+            error={consentError}
+            onCheckedChange={(checked) => {
+              setConsentAccepted(checked);
+              if (checked) {
+                setConsentError(null);
+              }
+            }}
+          />
+
           {error ? (
             <p className="text-sm text-red-300/90">{error}</p>
           ) : null}
-
-          <p className="pt-6 text-xs text-white/40">
-            {"\u767b\u5f55\u5373\u8868\u793a\u4f60\u540c\u610f"}
-            <Link
-              href="#"
-              className="underline transition-colors hover:text-white/60"
-            >
-              {"\u300a\u4e3b\u670d\u52a1\u534f\u8bae\u300b"}
-            </Link>
-            {"\u548c"}
-            <Link
-              href="#"
-              className="underline transition-colors hover:text-white/60"
-            >
-              {"\u300a\u9690\u79c1\u58f0\u660e\u300b"}
-            </Link>
-            {"\u3002"}
-          </p>
         </motion.div>
       </AnimatePresence>
     </div>
