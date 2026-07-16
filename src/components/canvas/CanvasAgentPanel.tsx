@@ -74,7 +74,11 @@ import {
   type AgentEcomPlannerAttachmentRole,
   type AgentEcomPlannerOption,
 } from '@/lib/agent-ecom-planner';
-import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
+import {
+  AGENT_MODEL_OPTIONS,
+  getAgentModelOptions,
+  resolveAgentModelForProvider,
+} from '@/lib/agent-model-options';
 import { resolveAgentApiCredential } from '@/lib/agent-api-key';
 import {
   AGENT_TEXT_PROVIDER_OPTIONS,
@@ -1623,6 +1627,11 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const hydratedDraftScopeRef = useRef<string | null>(null);
   const [provider, setProvider] = useState<AgentProvider>('comfly');
   const [model, setModel] = useState<string>(AGENT_MODEL_OPTIONS[0].id);
+  const activeAgentModelOptions = getAgentModelOptions(provider);
+  const handleAgentProviderChange = (nextProvider: AgentProvider) => {
+    setProvider(nextProvider);
+    setModel((current) => resolveAgentModelForProvider(nextProvider, current));
+  };
   const [messages, setMessages] = useState<AgentPanelMessage[]>([]);
   const [busyMode, setBusyMode] = useState<AgentBusyMode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -4736,12 +4745,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     value: option.id,
                     label: option.label,
                   }))}
-                  onChange={setProvider}
+                  onChange={handleAgentProviderChange}
                 />
                 <AgentPanelSelect
                   label="Model"
                   value={model}
-                  options={AGENT_MODEL_OPTIONS.map((option) => ({
+                  options={activeAgentModelOptions.map((option) => ({
                     value: option.id,
                     label: option.label,
                   }))}

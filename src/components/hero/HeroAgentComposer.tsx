@@ -18,7 +18,7 @@ import {
   getImageModelDefault,
   resolveAgentImageGenerationPreference,
 } from "@/lib/agent-image-preference";
-import { AGENT_MODEL_OPTIONS, type AgentModelId } from "@/lib/agent-model-options";
+import { getAgentModelOptions, type AgentModelId } from "@/lib/agent-model-options";
 import { AGENT_TEXT_PROVIDER_OPTIONS } from "@/lib/agent-provider-options";
 import {
   getApiProviderLabel,
@@ -174,7 +174,7 @@ export function HeroAgentComposer({
             <AgentPanelSelect
               label="Model"
               value={model}
-              options={AGENT_MODEL_OPTIONS.map((option) => ({
+              options={getAgentModelOptions(provider).map((option) => ({
                 value: option.id,
                 label: option.label,
               }))}

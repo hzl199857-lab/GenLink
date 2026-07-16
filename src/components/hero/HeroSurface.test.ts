@@ -8,13 +8,35 @@ const readHeroFile = (name: string) =>
 test("the home composer exposes the approved controls", () => {
   const source = readHeroFile("HeroAgentComposer.tsx");
 
-  assert.match(source, /AGENT_MODEL_OPTIONS/);
+  assert.match(source, /getAgentModelOptions\(provider\)/);
   assert.match(source, /accept="image\/\*"/);
   assert.match(source, /multiple/);
   assert.match(source, /onFilesChange/);
   assert.match(source, /onRun/);
   assert.match(source, /disabled=\{!prompt\.trim\(\) \|\| busy\}/);
   assert.doesNotMatch(source, /PromptMentionInput/);
+});
+
+test("both Agent entry points keep the selected model compatible with Provider changes", () => {
+  const homePage = readFileSync(
+    new URL("../../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const canvasPanel = readFileSync(
+    new URL("../canvas/CanvasAgentPanel.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(homePage, /handleHeroProviderChange/);
+  assert.match(
+    homePage,
+    /resolveAgentModelForProvider\(nextProvider, current\)/,
+  );
+  assert.match(canvasPanel, /getAgentModelOptions\(provider\)/);
+  assert.match(
+    canvasPanel,
+    /resolveAgentModelForProvider\(nextProvider, current\)/,
+  );
 });
 
 test("the recent project strip uses only existing project metadata", () => {
