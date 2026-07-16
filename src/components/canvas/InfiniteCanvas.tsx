@@ -241,6 +241,7 @@ import {
   createAgentAttachmentFromCanvasNode,
   createMaterialSourceFromCanvasNode,
 } from '@/lib/canvas/media-sources';
+import { createMaterialItemsForTarget } from '@/lib/material-library';
 import { writeClipboardContent } from '@/lib/clipboard-content';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
@@ -10228,6 +10229,7 @@ function InnerCanvas({
   const renameMaterialFolder = useCanvasStore((s) => s.renameMaterialFolder);
   const deleteMaterialFolder = useCanvasStore((s) => s.deleteMaterialFolder);
   const addMaterial = useCanvasStore((s) => s.addMaterial);
+  const addMaterials = useCanvasStore((s) => s.addMaterials);
   const renameMaterial = useCanvasStore((s) => s.renameMaterial);
   const moveMaterial = useCanvasStore((s) => s.moveMaterial);
   const duplicateMaterial = useCanvasStore((s) => s.duplicateMaterial);
@@ -10280,7 +10282,7 @@ function InnerCanvas({
   } | null>(null);
   const [pendingAgentReferenceAttachments, setPendingAgentReferenceAttachments] =
     useState<AgentTaskAttachment[]>([]);
-  const [, setPendingMaterialSources] = useState<PendingMaterialSource[]>([]);
+  const [pendingMaterialSources, setPendingMaterialSources] = useState<PendingMaterialSource[]>([]);
   const closeAddMenuTimeoutRef = useRef<number | null>(null);
   const [connectionMenu, setConnectionMenu] = useState<PendingConnectionMenu | null>(null);
   const [imageInfoPopover, setImageInfoPopover] = useState<ImageGenerationInfoPopoverData | null>(null);
@@ -11099,6 +11101,7 @@ function InnerCanvas({
       setMaterialDialogMode('save');
       setMaterialDialogOpenKey((value) => value + 1);
       setPendingMaterialSource(source);
+      setPendingMaterialSources([]);
       setMovingMaterial(null);
       setImageInfoPopover(null);
       setImageLightbox(null);
@@ -14805,12 +14808,26 @@ function InnerCanvas({
     );
     addMaterial(item);
     setPendingMaterialSource(null);
+    setPendingMaterialSources([]);
     setMovingMaterial(null);
     showProjectMessage(existing ? '素材已存在' : '已添加到素材库');
   }, [addMaterial, materials, showProjectMessage]);
 
+  const handleConfirmBatchSave = useCallback((
+    sources: PendingMaterialSource[],
+    target: { category: MaterialLibraryItem['category']; folderId?: string },
+  ) => {
+    const items = createMaterialItemsForTarget(sources, target, materials);
+    const result = addMaterials(items);
+    setPendingMaterialSources([]);
+    setPendingMaterialSource(null);
+    setMovingMaterial(null);
+    showProjectMessage(`已保存 ${result.added.length} 个素材，复用 ${result.reused.length} 个已有素材`);
+  }, [addMaterials, materials, showProjectMessage]);
+
   const closeMaterialDialog = useCallback(() => {
     setPendingMaterialSource(null);
+    setPendingMaterialSources([]);
     setMovingMaterial(null);
   }, []);
 
@@ -14821,6 +14838,7 @@ function InnerCanvas({
     moveMaterial(itemId, target);
     setMovingMaterial(null);
     setPendingMaterialSource(null);
+    setPendingMaterialSources([]);
     showProjectMessage('素材已移动');
   }, [moveMaterial, showProjectMessage]);
 
@@ -14829,6 +14847,7 @@ function InnerCanvas({
     setMaterialDialogOpenKey((value) => value + 1);
     setMovingMaterial(item);
     setPendingMaterialSource(null);
+    setPendingMaterialSources([]);
   }, []);
 
   const handleMaterialAiRoleClick = useCallback(() => {
@@ -15138,6 +15157,10 @@ function InnerCanvas({
     }
 
     setPendingMaterialSources(sources);
+    setPendingMaterialSource(null);
+    setMovingMaterial(null);
+    setMaterialDialogMode('batch');
+    setMaterialDialogOpenKey((value) => value + 1);
   }, [showProjectMessage]);
 
   const handleResizeGroup = useCallback((
@@ -15659,12 +15682,14 @@ function InnerCanvas({
         key={`material-dialog-${materialDialogOpenKey}`}
         mode={materialDialogMode}
         source={pendingMaterialSource}
+        sources={pendingMaterialSources}
         movingMaterial={movingMaterial}
         existingMaterials={materials}
         folders={materialFolders}
         onClose={closeMaterialDialog}
         onCreateFolder={addMaterialFolder}
         onConfirmSave={handleConfirmAddMaterial}
+        onConfirmBatchSave={handleConfirmBatchSave}
         onConfirmMove={handleConfirmMoveMaterial}
       />
       <CropOverlay

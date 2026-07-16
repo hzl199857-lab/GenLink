@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
-import { ChevronDown, Folder, FolderPlus, ImageIcon, X } from 'lucide-react';
+import { AudioLines, ChevronDown, Folder, FolderPlus, ImageIcon, Video, X } from 'lucide-react';
 import type {
   MaterialLibraryCategory,
   MaterialLibraryFolder,
@@ -21,17 +21,22 @@ export const MATERIAL_LIBRARY_CATEGORIES: MaterialLibraryCategory[] = [
   '其他',
 ];
 
-export type MaterialLibraryDialogMode = 'save' | 'move';
+export type MaterialLibraryDialogMode = 'save' | 'batch' | 'move';
 
 export interface MaterialLibraryDialogProps {
   mode: MaterialLibraryDialogMode;
   source: PendingMaterialSource | null;
+  sources: PendingMaterialSource[];
   movingMaterial: MaterialLibraryItem | null;
   existingMaterials: MaterialLibraryItem[];
   folders: MaterialLibraryFolder[];
   onClose: () => void;
   onCreateFolder: (folder: Omit<MaterialLibraryFolder, 'id' | 'createdAt'>) => MaterialLibraryFolder;
   onConfirmSave: (item: Omit<MaterialLibraryItem, 'id' | 'createdAt'>) => void;
+  onConfirmBatchSave: (
+    sources: PendingMaterialSource[],
+    target: { category: MaterialLibraryCategory; folderId?: string },
+  ) => void;
   onConfirmMove: (
     itemId: string,
     target: { category: MaterialLibraryCategory; folderId?: string },
@@ -49,7 +54,16 @@ type Draft = {
   folderName: string;
 };
 
-function sourceKey(source: PendingMaterialSource | null, movingMaterial: MaterialLibraryItem | null): string | null {
+function sourceKey(
+  mode: MaterialLibraryDialogMode,
+  source: PendingMaterialSource | null,
+  sources: PendingMaterialSource[],
+  movingMaterial: MaterialLibraryItem | null,
+): string | null {
+  if (mode === 'batch' && sources.length > 0) {
+    return ['batch', ...sources.map((item) => item.mediaUrl || item.imageUrl)].join('|');
+  }
+
   if (source) {
     return [
       'save',
@@ -78,16 +92,18 @@ function getImageUrl(source: PendingMaterialSource | null, movingMaterial: Mater
 export function MaterialLibraryDialog({
   mode,
   source,
+  sources,
   movingMaterial,
   existingMaterials,
   folders,
   onClose,
   onCreateFolder,
   onConfirmSave,
+  onConfirmBatchSave,
   onConfirmMove,
 }: MaterialLibraryDialogProps) {
-  const active = mode === 'save' ? source !== null : movingMaterial !== null;
-  const key = sourceKey(source, movingMaterial);
+  const active = mode === 'batch' ? sources.length > 0 : mode === 'save' ? source !== null : movingMaterial !== null;
+  const key = sourceKey(mode, source, sources, movingMaterial);
   const [draft, setDraft] = useState<Draft>({
     sourceId: null,
     name: '',
@@ -156,6 +172,14 @@ export function MaterialLibraryDialog({
     : undefined;
   const selectedFolderId =
     selectedFolder && selectedFolder.category === currentDraft.category ? selectedFolder.id : undefined;
+  const batchCounts = sources.reduce(
+    (counts, item) => {
+      const kind = item.kind === 'video' || item.kind === 'audio' ? item.kind : 'image';
+      counts[kind] += 1;
+      return counts;
+    },
+    { image: 0, video: 0, audio: 0 },
+  );
 
   const updateDraft = (partial: Partial<Draft>) => {
     setDraft((current) => ({
@@ -262,6 +286,14 @@ export function MaterialLibraryDialog({
       return;
     }
 
+    if (mode === 'batch') {
+      onConfirmBatchSave(sources, {
+        category: currentDraft.category,
+        folderId: selectedFolderId,
+      });
+      return;
+    }
+
     if (!source) {
       return;
     }
@@ -331,6 +363,23 @@ export function MaterialLibraryDialog({
                   onChange={(event) => updateDraft({ name: event.target.value, error: null })}
                 />
               </label>
+            </div>
+          ) : mode === 'batch' ? (
+            <div className="mb-3 flex items-center justify-between rounded-[8px] border border-[#2f3033] bg-black/18 px-3 py-2.5">
+              <span className="text-[13px] font-semibold text-white/82">
+                已选择 {sources.length} 个素材
+              </span>
+              <div className="flex items-center gap-3 text-[12px] font-semibold text-white/58">
+                {batchCounts.image > 0 ? (
+                  <span className="flex items-center gap-1"><ImageIcon size={14} />{batchCounts.image}</span>
+                ) : null}
+                {batchCounts.video > 0 ? (
+                  <span className="flex items-center gap-1"><Video size={14} />{batchCounts.video}</span>
+                ) : null}
+                {batchCounts.audio > 0 ? (
+                  <span className="flex items-center gap-1"><AudioLines size={14} />{batchCounts.audio}</span>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
