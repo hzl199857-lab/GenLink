@@ -244,6 +244,7 @@ import {
   createMaterialItemsForTarget,
   getMaterialKind,
 } from '@/lib/material-library';
+import { hasAgentApiCredential } from '@/lib/agent-api-key';
 import { writeClipboardContent } from '@/lib/clipboard-content';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
@@ -270,6 +271,7 @@ let notifyMaterialLibraryRequest:
   | ((source: PendingMaterialSource) => void)
   | null = null;
 const MATERIAL_LIBRARY_REQUEST_EVENT = 'genlink:material-library-request';
+const INITIAL_AGENT_API_KEY_NOTICE = '请先填写 Comfly 或贞贞AI工坊 API Key，保存后将自动继续当前任务。';
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
@@ -10040,6 +10042,7 @@ type CanvasAgentDockProps = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   initialAgentRequest?: CanvasAgentLaunchRequest | null;
+  initialRequestBlocked: boolean;
   onInitialAgentRequestConsumed?: (id: string) => void;
   onCreateSourceNodes: (attachments: AgentTaskAttachment[]) => Record<string, string>;
   pendingReferenceAttachments?: AgentTaskAttachment[];
@@ -10080,6 +10083,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   nodes,
   edges,
   initialAgentRequest,
+  initialRequestBlocked,
   onInitialAgentRequestConsumed,
   onCreateSourceNodes,
   pendingReferenceAttachments,
@@ -10150,6 +10154,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         nodes={nodes}
         edges={edges}
         initialRequest={initialAgentRequest}
+        initialRequestBlocked={initialRequestBlocked}
         onInitialRequestConsumed={handleInitialRequestConsumed}
         onClose={() => setOpen(false)}
         onCreateSourceNodes={onCreateSourceNodes}
@@ -10646,6 +10651,12 @@ function InnerCanvas({
 
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
   const [apiSettings, setApiSettings] = useState<StoredApiSettings>(() => readStoredApiSettings());
+  const [apiSettingsNotice, setApiSettingsNotice] = useState<string | null>(null);
+  const promptedInitialAgentRequestIdRef = useRef<string | null>(null);
+  const initialAgentRequestBlocked = Boolean(
+    initialAgentRequest &&
+    !hasAgentApiCredential(apiSettings, initialAgentRequest.provider),
+  );
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const materialUploadInputRef = React.useRef<HTMLInputElement>(null);
   const uploadPositionRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -15105,10 +15116,52 @@ function InnerCanvas({
     setApiSettings(values);
   }, [userId]);
 
+  useEffect(() => {
+    if (!initialAgentRequest) {
+      promptedInitialAgentRequestIdRef.current = null;
+      return;
+    }
+
+    if (
+      !initialAgentRequestBlocked ||
+      promptedInitialAgentRequestIdRef.current === initialAgentRequest.id
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      promptedInitialAgentRequestIdRef.current = initialAgentRequest.id;
+      setApiSettingsNotice(INITIAL_AGENT_API_KEY_NOTICE);
+      setApiSettingsOpen(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [initialAgentRequest, initialAgentRequestBlocked]);
+
   const handleSaveApiSettings = useCallback((values: StoredApiSettings) => {
     persistApiSettings(values);
+    if (
+      initialAgentRequest &&
+      !hasAgentApiCredential(values, initialAgentRequest.provider)
+    ) {
+      setApiSettingsNotice(INITIAL_AGENT_API_KEY_NOTICE);
+      setApiSettingsOpen(true);
+      return;
+    }
+
+    setApiSettingsNotice(null);
     setApiSettingsOpen(false);
-  }, [persistApiSettings]);
+  }, [initialAgentRequest, persistApiSettings]);
+
+  const handleOpenApiSettings = useCallback(() => {
+    setApiSettingsNotice(null);
+    setApiSettingsOpen(true);
+  }, []);
+
+  const handleCloseApiSettings = useCallback(() => {
+    setApiSettingsNotice(null);
+    setApiSettingsOpen(false);
+  }, []);
 
   const handleCloseCrop = useCallback(() => {
     setCropMode(null);
@@ -15641,7 +15694,7 @@ function InnerCanvas({
       <CanvasToolbar
         onOpenAddMenu={openAddMenuAtScreen}
         onScheduleCloseAddMenu={scheduleCloseAddMenu}
-        onOpenApiSettings={() => setApiSettingsOpen(true)}
+        onOpenApiSettings={handleOpenApiSettings}
         onToggleMaterialLibrary={toggleMaterialLibraryPanel}
         onToggleHistory={toggleHistoryPopover}
         onSaveProject={() => void handleSaveProject()}
@@ -15658,6 +15711,7 @@ function InnerCanvas({
         nodes={storeNodes}
         edges={storeEdges}
         initialAgentRequest={initialAgentRequest}
+        initialRequestBlocked={initialAgentRequestBlocked}
         onInitialAgentRequestConsumed={onInitialAgentRequestConsumed}
         onCreateSourceNodes={handleCreateAgentSourceNodes}
         pendingReferenceAttachments={pendingAgentReferenceAttachments}
@@ -15771,7 +15825,8 @@ function InnerCanvas({
         key={apiSettingsOpen ? 'api-settings-open' : 'api-settings-closed'}
         open={apiSettingsOpen}
         initialSettings={apiSettings}
-        onClose={() => setApiSettingsOpen(false)}
+        notice={apiSettingsNotice}
+        onClose={handleCloseApiSettings}
         onSave={handleSaveApiSettings}
       />
       <CreateProjectDialog

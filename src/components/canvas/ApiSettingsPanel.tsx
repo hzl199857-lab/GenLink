@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Eye, EyeOff, KeyRound, X } from 'lucide-react';
+import { CircleAlert, Eye, EyeOff, KeyRound, X } from 'lucide-react';
 import { Tooltip } from '@/components/ui/Tooltip';
 
 import type {
@@ -12,6 +12,7 @@ import type {
 export interface ApiSettingsPanelProps {
   open: boolean;
   initialSettings: StoredApiSettings;
+  notice?: string | null;
   onClose?: () => void;
   onSave?: (values: StoredApiSettings) => void;
 }
@@ -115,6 +116,7 @@ function createSettingsFromDraft(
 export function ApiSettingsPanel({
   open,
   initialSettings,
+  notice,
   onClose,
   onSave,
 }: ApiSettingsPanelProps) {
@@ -198,6 +200,15 @@ export function ApiSettingsPanel({
           </div>
 
           <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-8 py-6">
+            {notice ? (
+              <div
+                role="alert"
+                className="mb-4 flex items-start gap-2.5 rounded border border-[#5b5424] bg-[#24220f] px-3.5 py-3 text-[13px] leading-5 text-[#f0e7a2]"
+              >
+                <CircleAlert size={16} className="mt-0.5 shrink-0" />
+                <span>{notice}</span>
+              </div>
+            ) : null}
             <div className="mb-4 text-[13px] leading-5 text-[#aaaaaa]">
               为每个服务商填写对应 API Key。具体使用哪个服务商和模型，请在文本节点或图像生成节点中选择。
             </div>

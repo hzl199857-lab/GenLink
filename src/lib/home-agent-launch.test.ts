@@ -30,6 +30,8 @@ test("the canvas Agent consumes a structured initial request once", () => {
   assert.match(panel, /onInitialRequestConsumed\?\.\(initialRequest\.id\)/);
   assert.match(canvas, /initialAgentRequest\?: CanvasAgentLaunchRequest/);
   assert.match(canvas, /effectiveOpen = open \|\| Boolean\(initialAgentRequest\)/);
+  assert.match(canvas, /initialRequestBlocked: boolean/);
+  assert.match(canvas, /initialRequestBlocked=\{initialRequestBlocked\}/);
 });
 
 test("the home page preserves login-gated input and prepares the canvas request", () => {
