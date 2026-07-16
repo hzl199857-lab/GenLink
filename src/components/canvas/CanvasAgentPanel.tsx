@@ -345,6 +345,7 @@ type CanvasAgentPanelProps = {
   nodes?: CanvasNode[];
   edges?: CanvasEdge[];
   initialRequest?: CanvasAgentLaunchRequest | null;
+  initialRequestBlocked?: boolean;
   onInitialRequestConsumed?: (id: string) => void;
   onClose: () => void;
   onLayoutChange?: (layout: { open: boolean; width: number }) => void;
@@ -1577,6 +1578,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   nodes = [],
   edges = [],
   initialRequest,
+  initialRequestBlocked = false,
   onInitialRequestConsumed,
   onClose,
   onLayoutChange,
@@ -2461,7 +2463,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     const trimmedDraft = submission.prompt.trim();
 
     if (!trimmedDraft || busy || hasUserDecisionPending) {
-      return;
+      return false;
     }
 
     const submittedModel = submission.model;
@@ -2488,7 +2490,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           createdAt: new Date().toISOString(),
         },
       ]);
-      return;
+      return true;
     }
 
     setBusyMode('thinking');
@@ -2539,7 +2541,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       setDraft('');
       setAttachments([]);
       setBusyMode(null);
-      return;
+      return true;
     }
 
     setMessages((current) => [
@@ -2571,6 +2573,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }).finally(() => {
       setBusyMode(null);
     });
+    return true;
   }, [
     busy,
     hasUserDecisionPending,
@@ -2603,35 +2606,44 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     if (
       !open ||
       !initialRequest ||
+      initialRequestBlocked ||
       busy ||
       consumedInitialRequestIdRef.current === initialRequest.id
     ) {
       return;
     }
 
-    consumedInitialRequestIdRef.current = initialRequest.id;
-    const timer = window.setTimeout(() => {
-      setModel(initialRequest.model);
-      setProvider(initialRequest.provider);
-      setImagePreference({ ...initialRequest.imagePreference });
-      const initialImagePreference = resolveAgentImageGenerationPreference({
-        preference: initialRequest.imagePreference,
-        autoProvider: resolveAutoImageProvider(),
-      });
-      submitAgentRequest({
-        prompt: initialRequest.prompt,
-        provider: initialRequest.provider,
-        model: initialRequest.model,
-        imagePreference: initialImagePreference,
-        attachments: initialRequest.attachments,
-        selectedPlanfPresetId: null,
-        planfRouteMode: 'auto',
-      });
-      onInitialRequestConsumed?.(initialRequest.id);
-    }, 0);
+    setModel(initialRequest.model);
+    setProvider(initialRequest.provider);
+    setImagePreference({ ...initialRequest.imagePreference });
+    const initialImagePreference = resolveAgentImageGenerationPreference({
+      preference: initialRequest.imagePreference,
+      autoProvider: resolveAutoImageProvider(),
+    });
+    const accepted = submitAgentRequest({
+      prompt: initialRequest.prompt,
+      provider: initialRequest.provider,
+      model: initialRequest.model,
+      imagePreference: initialImagePreference,
+      attachments: initialRequest.attachments,
+      selectedPlanfPresetId: null,
+      planfRouteMode: 'auto',
+    });
 
-    return () => window.clearTimeout(timer);
-  }, [busy, initialRequest, onInitialRequestConsumed, open, submitAgentRequest]);
+    if (!accepted) {
+      return;
+    }
+
+    consumedInitialRequestIdRef.current = initialRequest.id;
+    onInitialRequestConsumed?.(initialRequest.id);
+  }, [
+    busy,
+    initialRequest,
+    initialRequestBlocked,
+    onInitialRequestConsumed,
+    open,
+    submitAgentRequest,
+  ]);
 
   const handleRetryAgentMessage = useCallback((messageId: string) => {
     if (busy) {
