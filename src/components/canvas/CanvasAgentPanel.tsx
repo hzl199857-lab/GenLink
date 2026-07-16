@@ -1788,7 +1788,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     );
 
     setDraft((currentDraft) => (isPlanfPresetPromptDraft(currentDraft) ? '' : currentDraft));
-  }, [selectedPlanfPresetId]);
+  }, [
+    selectedPlanfPresetId,
+    setDraft,
+    setPlanfPresetOpen,
+    setPlanfRouteMode,
+    setReferenceUploadNudgeRequested,
+    setSelectedPlanfPresetId,
+  ]);
 
   const handleOpenHistory = useCallback(() => {
     setHistoryThreads(listAgentThreads(userId, projectId, projectName));
@@ -1939,7 +1946,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         },
       ]);
     });
-  }, [setMessages]);
+  }, [setAttachments, setMessages, setReferenceUploadNudgeRequested]);
 
   const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     addImageFiles(Array.from(event.target.files ?? []), pendingAttachmentRoleRef.current);
@@ -2031,7 +2038,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
       return result;
     });
-  }, [onQuickReferenceSelect]);
+  }, [onQuickReferenceSelect, setAttachments, setReferenceUploadNudgeRequested]);
 
   useEffect(() => {
     if (pendingReferenceAttachments.length === 0) {
@@ -2590,6 +2597,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     hasUserDecisionPending,
     onCreateSourceNodes,
     runAgent,
+    setAttachments,
+    setBusyMode,
+    setDraft,
+    setMessages,
+    setPlanfRouteMode,
+    setSelectedPlanfPresetId,
   ]);
 
   const handleSubmit = useCallback(() => {
