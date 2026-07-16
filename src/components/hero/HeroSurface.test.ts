@@ -42,8 +42,9 @@ test("the project strip aligns with the composer and keeps all projects inline",
     /recentProjects\.map[\s\S]*onClick=\{onAllProjects\}/,
   );
   assert.match(projectsSource, /self-end/);
-  assert.match(projectsSource, /lg:w-\[176px\]/);
+  assert.match(projectsSource, /lg:w-\[197\.5px\]/);
   assert.match(projectsSource, /lg:w-\[76px\].*lg:justify-end/);
+  assert.match(projectsSource, /overflow-x-auto.*lg:overflow-visible/);
   assert.doesNotMatch(projectsSource, /lg:grid-cols-4/);
 });
 

@@ -40,7 +40,7 @@ export function HeroRecentProjects({
 }: HeroRecentProjectsProps) {
   const recentProjects = selectRecentProjects(projects);
   const desktopCardWidth =
-    recentProjects.length >= 3 ? "lg:w-[176px]" : "lg:w-[190px]";
+    recentProjects.length >= 3 ? "lg:w-[197.5px]" : "lg:w-[190px]";
   const cardClassName = [
     "w-[190px] shrink-0 snap-start overflow-hidden rounded-[8px] bg-[#151619] text-left shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 sm:w-[210px]",
     desktopCardWidth,
@@ -48,7 +48,7 @@ export function HeroRecentProjects({
 
   return (
     <section aria-label="最近项目" className="mt-3 w-full">
-      <div className="flex snap-x items-stretch gap-2.5 overflow-x-auto pb-2">
+      <div className="flex snap-x items-stretch gap-2.5 overflow-x-auto pb-2 lg:overflow-visible">
         <button
           type="button"
           disabled={busy}
@@ -86,7 +86,7 @@ export function HeroRecentProjects({
                   src={project.thumbnailUrl}
                   alt=""
                   fill
-                  sizes="(max-width: 1023px) 210px, 220px"
+                  sizes="(max-width: 1023px) 210px, 198px"
                   unoptimized
                   className="object-cover"
                 />
