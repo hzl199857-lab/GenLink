@@ -23,5 +23,9 @@ test("the canvas account menu sits to the right of the prompt library", () => {
   assert.match(canvasSource, /style=\{\{ right: canvasTopActionsRightOffset \}\}/);
   assert.match(canvasSource, /placement="inline"/);
   assert.doesNotMatch(promptButtonSource, /fixed top-5|rightOffset/);
+  assert.match(promptButtonSource, /bg-\[#212121\]/);
+  assert.match(promptButtonSource, /hover:bg-\[#282828\]/);
   assert.match(accountSource, /placement === "fixed"[\s\S]*: "relative"/);
+  assert.match(accountSource, /bg-\[#212121\]/);
+  assert.match(accountSource, /hover:bg-\[#282828\]/);
 });
