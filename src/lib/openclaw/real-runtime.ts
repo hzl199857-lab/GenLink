@@ -32,6 +32,7 @@ export type RealOpenClawRuntimeDiagnostic = {
     | "provider_timeout"
     | "provider_network"
     | "provider_http_error"
+    | "provider_content_filter"
     | "unsupported_model"
     | "invalid_config"
     | "invalid_json"
@@ -236,6 +237,10 @@ function previewOpenClawOutput(text: string): string | undefined {
 }
 
 export function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
+  if (/finish_reason:\s*content_filter|content[_\s-]?filter(?:ed)?/i.test(output)) {
+    return "provider_content_filter";
+  }
+
   if (/unknown model|model[^\n]*(not found|not registered|unregistered)|unsupported model/i.test(output)) {
     return "unsupported_model";
   }
@@ -274,6 +279,10 @@ function buildRuntimePublicMessage(diagnostic: RealOpenClawRuntimeDiagnostic): s
 
   if (diagnostic.kind === "provider_http_error") {
     return `${providerLabel} 返回了上游 HTTP 错误${modelText}${hostText}。请检查该 provider 的 API Key、模型名和后台错误记录。`;
+  }
+
+  if (diagnostic.kind === "provider_content_filter") {
+    return `${providerLabel} 拒绝了当前请求（内容安全过滤）${modelText}。这不是超时；请调整提示词或切换模型后重试。`;
   }
 
   if (diagnostic.kind === "missing_api_key") {

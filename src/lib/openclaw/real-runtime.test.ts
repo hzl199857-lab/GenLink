@@ -46,6 +46,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const {
   classifyOpenClawFailure,
+  RealOpenClawRuntimeError,
   resolveTextBaseUrl,
   runRealOpenClaw,
 } = require("./real-runtime.ts") as typeof import("./real-runtime");
@@ -128,5 +129,53 @@ test("classifies model catalog and invalid config failures accurately", () => {
   assert.equal(
     classifyOpenClawFailure("Invalid config: models.providers is malformed"),
     "invalid_config",
+  );
+});
+
+test("reports Provider content filtering instead of a generic rules failure", async () => {
+  const runtimeRoot = mkdtempSync(path.join(tmpdir(), "genlink-content-filter-"));
+  const entryPath = path.join(runtimeRoot, "openclaw.mjs");
+  const baseConfigPath = path.join(runtimeRoot, "openclaw-genlink.json");
+
+  writeFileSync(entryPath, "");
+  writeFileSync(baseConfigPath, `{
+    agents: { defaults: { model: { primary: "genlink_text/gpt-5.5" } } },
+    models: { providers: { genlink_text: { api: "openai-completions", models: [] } } },
+  }`);
+  process.env.OPENCLAW_CLI_ENTRY = entryPath;
+  process.env.OPENCLAW_CONFIG_PATH = baseConfigPath;
+  process.env.OPENCLAW_STATE_DIR = path.join(runtimeRoot, "state");
+  process.env.OPENCLAW_WORKSPACE_DIR = path.join(runtimeRoot, "workspace");
+  process.env.PLANF_RULES_ROOT = path.join(runtimeRoot, "rules");
+
+  spawnImplementation = (() => {
+    const child = new EventEmitter() as ReturnType<typeof childProcess.spawn>;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    Object.assign(child, { stdout, stderr, kill: () => true });
+    process.nextTick(() => {
+      stderr.write("Provider finish_reason: content_filter");
+      stderr.end();
+      child.emit("close", 1);
+    });
+    return child;
+  }) as typeof childProcess.spawn;
+
+  await assert.rejects(
+    runRealOpenClaw({
+      message: "test",
+      sessionKey: "test-content-filter",
+      timeoutMs: 1_000,
+      provider: "comfly",
+      model: "genlink_text/gemini-3.5-flash",
+      apiKey: "request-secret-key",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RealOpenClawRuntimeError);
+      assert.equal(error.diagnostic?.kind, "provider_content_filter");
+      assert.match(error.publicMessage ?? "", /内容安全过滤/);
+      assert.match(error.publicMessage ?? "", /不是超时/);
+      return true;
+    },
   );
 });

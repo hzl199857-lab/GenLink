@@ -59,7 +59,18 @@ const baseConfig = {
 test("builds the four-model OpenClaw catalog without changing unrelated settings", () => {
   const built = buildOpenClawRuntimeConfig(baseConfig);
   const agents = built.agents as typeof baseConfig.agents;
-  const models = built.models as typeof baseConfig.models;
+  const models = built.models as {
+    providers: {
+      genlink_text: {
+        apiKey: string;
+        models: Array<{
+          id: string;
+          maxTokens: number;
+          compat: { maxTokensField: string };
+        }>;
+      };
+    };
+  };
 
   assert.equal(agents.defaults.model.primary, "genlink_text/gpt-5.5");
   assert.deepEqual(
@@ -75,6 +86,14 @@ test("builds the four-model OpenClaw catalog without changing unrelated settings
     models.providers.genlink_text.models.map((model) => model.id),
     ["gemini-3.5-flash", "gemini-3.1-pro", "gpt-5.4-mini", "gpt-5.5"],
   );
+  for (const model of models.providers.genlink_text.models.slice(0, 2)) {
+    assert.equal(model.maxTokens, 8192);
+    assert.equal(model.compat.maxTokensField, "max_tokens");
+  }
+  for (const model of models.providers.genlink_text.models.slice(2)) {
+    assert.equal(model.maxTokens, 8192);
+    assert.equal(model.compat.maxTokensField, undefined);
+  }
   assert.deepEqual(built.mcp, baseConfig.mcp);
   assert.deepEqual(built.tools, baseConfig.tools);
   assert.deepEqual(agents.defaults.sandbox, baseConfig.agents.defaults.sandbox);
