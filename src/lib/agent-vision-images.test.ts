@@ -23,6 +23,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 const {
   getAgentVisionImageIndexByAttachmentId,
   getAgentVisionImages,
+  getAgentVisionVideos,
 } = require("./agent-vision-images.ts") as typeof import("./agent-vision-images");
 
 test("prefers semantic image URLs for agent vision input", () => {
@@ -114,4 +115,34 @@ test("ignores local preview-only attachments and indexes visible images", () => 
   ]);
   assert.equal(getAgentVisionImageIndexByAttachmentId(attachments).get("att-local"), undefined);
   assert.equal(getAgentVisionImageIndexByAttachmentId(attachments).get("att-vision"), 1);
+});
+
+test("separates remote video inputs from image inputs", () => {
+  const image = {
+    id: "att-image",
+    kind: "image" as const,
+    name: "image.png",
+    mimeType: "image/png",
+    mediaUrl: "https://cdn.example/image.png",
+    imageUrl: "https://cdn.example/image.png",
+    previewUrl: "https://cdn.example/image.png",
+    status: "ready" as const,
+  };
+  const video = {
+    id: "att-video",
+    kind: "video" as const,
+    name: "video.mp4",
+    mimeType: "video/mp4",
+    mediaUrl: "https://cdn.example/video.mp4",
+    videoUrl: "https://cdn.example/video.mp4",
+    previewUrl: "https://cdn.example/video.mp4",
+    status: "ready" as const,
+  };
+
+  assert.deepEqual(getAgentVisionImages([image, video]), [
+    { attachmentId: "att-image", url: "https://cdn.example/image.png" },
+  ]);
+  assert.deepEqual(getAgentVisionVideos([image, video, { ...video, id: "att-video-copy" }]), [
+    { attachmentId: "att-video", url: "https://cdn.example/video.mp4" },
+  ]);
 });

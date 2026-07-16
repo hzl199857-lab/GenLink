@@ -5,6 +5,11 @@ export type AgentVisionImage = {
   url: string;
 };
 
+export type AgentVisionVideo = {
+  attachmentId: string;
+  url: string;
+};
+
 const MAX_AGENT_VISION_IMAGES = 8;
 
 function isRemoteOrDataImageUrl(value: string | undefined): value is string {
@@ -14,6 +19,10 @@ function isRemoteOrDataImageUrl(value: string | undefined): value is string {
 }
 
 function getAttachmentVisionUrl(attachment: AgentTaskAttachment): string | undefined {
+  if (attachment.kind !== "image") {
+    return undefined;
+  }
+
   const candidates = [
     attachment.semanticImageUrl,
     attachment.hostedImageUrl,
@@ -22,6 +31,15 @@ function getAttachmentVisionUrl(attachment: AgentTaskAttachment): string | undef
   ];
 
   return candidates.find(isRemoteOrDataImageUrl)?.trim();
+}
+
+function getAttachmentVideoUrl(attachment: AgentTaskAttachment): string | undefined {
+  if (attachment.kind !== "video") {
+    return undefined;
+  }
+
+  const url = attachment.videoUrl.trim();
+  return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
 export function getAgentVisionImages(
@@ -60,4 +78,24 @@ export function getAgentVisionImageIndexByAttachmentId(
       index + 1,
     ]),
   );
+}
+
+export function getAgentVisionVideos(
+  attachments: AgentTaskAttachment[],
+): AgentVisionVideo[] {
+  const videos: AgentVisionVideo[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const attachment of attachments) {
+    const url = getAttachmentVideoUrl(attachment);
+
+    if (!url || seenUrls.has(url)) {
+      continue;
+    }
+
+    seenUrls.add(url);
+    videos.push({ attachmentId: attachment.id, url });
+  }
+
+  return videos;
 }

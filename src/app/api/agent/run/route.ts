@@ -10,6 +10,7 @@ import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import {
   getAgentVisionImageIndexByAttachmentId,
   getAgentVisionImages,
+  getAgentVisionVideos,
 } from "@/lib/agent-vision-images";
 import { materializeAgentWorkflowOutput } from "@/lib/agent-workflow-output";
 import { stripReferenceMentionTokens } from "@/lib/prompt-mentions";
@@ -107,12 +108,40 @@ function parseAttachment(value: unknown): AgentTaskAttachment | null {
 
   if (
     typeof record.id !== "string" ||
-    record.kind !== "image" ||
     typeof record.name !== "string" ||
     typeof record.mimeType !== "string" ||
-    typeof record.imageUrl !== "string" ||
     typeof record.previewUrl !== "string"
   ) {
+    return null;
+  }
+
+  if (record.kind === "video") {
+    if (
+      typeof record.videoUrl !== "string" ||
+      !/^https?:\/\//i.test(record.videoUrl.trim())
+    ) {
+      return null;
+    }
+
+    return {
+      id: record.id,
+      kind: "video",
+      name: record.name,
+      mimeType: record.mimeType,
+      mediaUrl: typeof record.mediaUrl === "string" ? record.mediaUrl : record.videoUrl,
+      videoUrl: record.videoUrl,
+      previewUrl: record.previewUrl,
+      thumbnailUrl: typeof record.thumbnailUrl === "string" ? record.thumbnailUrl : undefined,
+      width: typeof record.width === "number" ? record.width : undefined,
+      height: typeof record.height === "number" ? record.height : undefined,
+      sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+      durationSeconds: typeof record.durationSeconds === "number" ? record.durationSeconds : undefined,
+      status: record.status === "ready" ? "ready" : "attached",
+      sourceNodeId: typeof record.sourceNodeId === "string" ? record.sourceNodeId : undefined,
+    };
+  }
+
+  if (record.kind !== "image" || typeof record.imageUrl !== "string") {
     return null;
   }
 
@@ -121,6 +150,7 @@ function parseAttachment(value: unknown): AgentTaskAttachment | null {
     kind: "image",
     name: record.name,
     mimeType: record.mimeType,
+    mediaUrl: typeof record.mediaUrl === "string" ? record.mediaUrl : record.imageUrl,
     imageUrl: record.imageUrl,
     hostedImageUrl: typeof record.hostedImageUrl === "string" ? record.hostedImageUrl : undefined,
     originalImageUrl: typeof record.originalImageUrl === "string" ? record.originalImageUrl : undefined,
@@ -156,6 +186,9 @@ function parseContext(value: unknown): AgentTaskContext | null {
 
     return parsed ? [parsed] : [];
   });
+  if (attachments.length !== rawAttachments.length) {
+    return null;
+  }
   const canvasSummary =
     record.canvasSummary && typeof record.canvasSummary === "object"
       ? record.canvasSummary as Record<string, unknown>
@@ -678,10 +711,12 @@ function createAgentUserPrompt(
     },
     attachments: state.context.input.attachments.map((attachment, index) => ({
       attachmentId: attachment.id,
-      label: `图片${index + 1}`,
+      kind: attachment.kind,
+      label: `${attachment.kind === "video" ? "视频" : "图片"}${index + 1}`,
       fileName: attachment.name,
       width: attachment.width,
       height: attachment.height,
+      durationSeconds: attachment.kind === "video" ? attachment.durationSeconds : undefined,
       visualInputIndex: visionImageIndexByAttachmentId.get(attachment.id),
       sourceNodeId: attachment.sourceNodeId,
     })),
@@ -747,6 +782,9 @@ async function generateAgentWorkflowCandidate(params: {
     apiKey: params.apiKey,
     images: getAgentVisionImages(params.state.context.input.attachments).map((image) => ({
       url: image.url,
+    })),
+    videos: getAgentVisionVideos(params.state.context.input.attachments).map((video) => ({
+      url: video.url,
     })),
     temperature: params.selfRepair ? 0.1 : 0.2,
     maxTokens: 4000,
@@ -969,6 +1007,16 @@ export async function POST(request: Request) {
 
     const provider = isAgentTextProvider(body.provider) ? body.provider : undefined;
     const model = typeof body.model === "string" ? body.model : undefined;
+    const hasVideoAttachments = context.input.attachments.some(
+      (attachment) => attachment.kind === "video",
+    );
+
+    if (hasVideoAttachments && (!provider || !model?.startsWith("gemini-"))) {
+      return NextResponse.json(
+        { ok: false, error: "视频理解仅支持 Comfly 或 Zhenzhen 的 Gemini 模型" },
+        { status: 400 },
+      );
+    }
 
     try {
       const result = await runAgentLoop({
