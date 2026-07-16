@@ -2249,7 +2249,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             error instanceof Error ? error.message : undefined,
             'GenLink 规则运行超时，请稍后重试，或切换文本模型后再试。',
           );
-          console.error('[canvas-agent] ecom start failed', errorText);
 
           setMessages((current) => [
             ...current,
@@ -2295,7 +2294,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               error instanceof Error ? error.message : undefined,
               'GenLink 电商编排确认失败，请稍后重试。',
             );
-            console.error('[canvas-agent] ecom auto confirm failed', errorText);
 
             setMessages((current) => [
               ...current,
@@ -2346,7 +2344,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         error instanceof Error ? error.message : undefined,
         'Agent 请求失败',
       );
-      console.error('[canvas-agent] run failed', errorText);
 
       setMessages((current) => [
         ...current,

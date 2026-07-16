@@ -750,6 +750,101 @@ function isGeminiTextModel(model: string): boolean {
   return /^gemini-/i.test(model);
 }
 
+function normalizeGeminiResponseSchema(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeGeminiResponseSchema(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const schema = value as Record<string, unknown>;
+  const anyOf = Array.isArray(schema.anyOf) ? schema.anyOf : null;
+  const nonNullAnyOf = anyOf?.filter((item) => (
+    !item ||
+    typeof item !== "object" ||
+    (item as Record<string, unknown>).type !== "null"
+  ));
+  const collapsesNullableAnyOf = Boolean(
+    anyOf &&
+    nonNullAnyOf?.length === 1 &&
+    nonNullAnyOf.length < anyOf.length,
+  );
+  const source = collapsesNullableAnyOf
+    ? nonNullAnyOf?.[0] as Record<string, unknown>
+    : schema;
+  const normalized: Record<string, unknown> = {};
+  let nullable = collapsesNullableAnyOf || schema.nullable === true;
+
+  for (const [key, child] of Object.entries(source)) {
+    if (key === "additionalProperties") {
+      continue;
+    }
+
+    if (key === "type" && Array.isArray(child)) {
+      const nonNullTypes = child.filter((type) => type !== "null");
+      nullable ||= nonNullTypes.length < child.length;
+
+      if (nonNullTypes.length === 1) {
+        normalized.type = nonNullTypes[0];
+      } else if (nonNullTypes.length > 1) {
+        normalized.anyOf = nonNullTypes.map((type) => ({ type }));
+      }
+      continue;
+    }
+
+    if (key === "enum" && Array.isArray(child)) {
+      const enumValues = child.filter((item) => item !== null);
+      nullable ||= enumValues.length < child.length;
+      normalized.enum = enumValues;
+      continue;
+    }
+
+    normalized[key] = normalizeGeminiResponseSchema(child);
+  }
+
+  if (nullable) {
+    normalized.nullable = true;
+  }
+
+  return normalized;
+}
+
+function resolveTextResponseFormat(
+  responseFormat: GenerateTextParams["responseFormat"],
+  model: string,
+): GenerateTextParams["responseFormat"] {
+  if (
+    !responseFormat?.json_schema ||
+    responseFormat.type !== "json_schema" ||
+    !isGeminiTextModel(model)
+  ) {
+    return responseFormat;
+  }
+
+  return {
+    ...responseFormat,
+    json_schema: {
+      ...responseFormat.json_schema,
+      schema: normalizeGeminiResponseSchema(
+        responseFormat.json_schema.schema,
+      ) as Record<string, unknown>,
+    },
+  };
+}
+
+function isGeminiResponseSchemaCompatibilityError(error: unknown): boolean {
+  return (
+    error instanceof VibeApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    /Invalid JSON payload|generation_config\.response_schema|Proto field is not repeating|additionalProperties/i.test(
+      error.message,
+    )
+  );
+}
+
 function parseDataUrl(url: string):
   | { mediaType: string; data: string }
   | null {
@@ -2344,6 +2439,10 @@ export async function generateTextStream(
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
   const isClaude = isClaudeModel(requestedModel);
+  const responseFormat = resolveTextResponseFormat(
+    params.responseFormat,
+    requestedModel,
+  );
   if (isClaude && params.responseFormat) {
     throw new VibeApiError(400, "Structured response_format is not supported for Claude text models");
   }
@@ -2400,7 +2499,7 @@ export async function generateTextStream(
         temperature: params.temperature ?? 0.7,
         max_tokens: params.maxTokens,
         stream: true,
-        ...(params.responseFormat ? { response_format: params.responseFormat } : {}),
+        ...(responseFormat ? { response_format: responseFormat } : {}),
       };
 
   let upstreamResponse: Response;
@@ -2416,6 +2515,17 @@ export async function generateTextStream(
       providerLabel,
     );
   } catch (error) {
+    if (
+      isGeminiTextModel(requestedModel) &&
+      responseFormat?.type === "json_schema" &&
+      isGeminiResponseSchemaCompatibilityError(error)
+    ) {
+      return generateTextStream({
+        ...params,
+        responseFormat: { type: "json_object" },
+      });
+    }
+
     if (error instanceof VibeApiError && error.status === 502) {
       const fallback = await generateText({
         ...params,
@@ -2588,6 +2698,10 @@ export async function generateText(
   }
 
   const requestedModel = params.model ?? DEFAULT_TEXT_MODEL;
+  const responseFormat = resolveTextResponseFormat(
+    params.responseFormat,
+    requestedModel,
+  );
   if (isClaudeModel(requestedModel) && params.responseFormat) {
     throw new VibeApiError(400, "Structured response_format is not supported for Claude text models");
   }
@@ -2653,33 +2767,59 @@ export async function generateText(
     };
   }
 
-  const json = await requestJsonWithBaseUrl<VibeChatResponse>(
-    baseUrl,
-    "/chat/completions",
-    {
-      model: providerModel,
-      messages: [
-        ...(params.systemPrompt
-          ? [{ role: "system" as const, content: params.systemPrompt }]
-          : []),
-        {
-          role: "user" as const,
-          content: createOpenAiUserContent(
-            params.prompt,
-            params.images,
-            params.videos,
-          ),
-        },
-      ],
-      temperature: params.temperature ?? 0.7,
-      max_tokens: params.maxTokens,
-      ...(params.responseFormat ? { response_format: params.responseFormat } : {}),
-    },
-    params.apiKey,
-    createHeaders,
-    params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-    providerLabel,
-  );
+  const requestBody = {
+    model: providerModel,
+    messages: [
+      ...(params.systemPrompt
+        ? [{ role: "system" as const, content: params.systemPrompt }]
+        : []),
+      {
+        role: "user" as const,
+        content: createOpenAiUserContent(
+          params.prompt,
+          params.images,
+          params.videos,
+        ),
+      },
+    ],
+    temperature: params.temperature ?? 0.7,
+    max_tokens: params.maxTokens,
+    ...(responseFormat ? { response_format: responseFormat } : {}),
+  };
+  let json: VibeChatResponse;
+
+  try {
+    json = await requestJsonWithBaseUrl<VibeChatResponse>(
+      baseUrl,
+      "/chat/completions",
+      requestBody,
+      params.apiKey,
+      createHeaders,
+      params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      providerLabel,
+    );
+  } catch (error) {
+    if (
+      !isGeminiTextModel(requestedModel) ||
+      responseFormat?.type !== "json_schema" ||
+      !isGeminiResponseSchemaCompatibilityError(error)
+    ) {
+      throw error;
+    }
+
+    json = await requestJsonWithBaseUrl<VibeChatResponse>(
+      baseUrl,
+      "/chat/completions",
+      {
+        ...requestBody,
+        response_format: { type: "json_object" },
+      },
+      params.apiKey,
+      createHeaders,
+      params.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      providerLabel,
+    );
+  }
 
   const content = normalizeMessageContent(json.choices?.[0]?.message?.content);
 

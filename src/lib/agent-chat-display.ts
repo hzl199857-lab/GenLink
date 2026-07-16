@@ -125,7 +125,8 @@ export function formatAgentChatErrorText(text: string | undefined, fallback: str
   if (
     INTERNAL_AGENT_TEXT_PATTERNS.some((pattern) => pattern.test(value)) ||
     /\b(first|repair|previousOpenClawText|create_workflow|fence)=/i.test(value) ||
-    /did not return|failed validation|JSON object|exited with code|terminated/i.test(value)
+    /did not return|failed validation|JSON object|exited with code|terminated/i.test(value) ||
+    /Invalid JSON payload|generation_config\.response_schema|Proto field is not repeating|additionalProperties/i.test(value)
   ) {
     return fallback;
   }
