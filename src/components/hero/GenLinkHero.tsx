@@ -86,8 +86,8 @@ export function GenLinkHero({
           <div className="mx-auto mt-7 w-full max-w-[900px] sm:mt-8">
             <div className="mx-auto w-full max-w-[820px]">
               <HeroAgentComposer {...composer} />
+              {recentProjects ? <HeroRecentProjects {...recentProjects} /> : null}
             </div>
-            {recentProjects ? <HeroRecentProjects {...recentProjects} /> : null}
           </div>
         </div>
       </div>

@@ -29,9 +29,6 @@ function formatUpdatedAt(value: string): string {
   })}`;
 }
 
-const cardClassName =
-  "w-[190px] shrink-0 snap-start overflow-hidden rounded-[8px] bg-[#151619] text-left shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 sm:w-[210px] lg:w-auto";
-
 export function HeroRecentProjects({
   projects,
   loading,
@@ -42,10 +39,16 @@ export function HeroRecentProjects({
   onAllProjects,
 }: HeroRecentProjectsProps) {
   const recentProjects = selectRecentProjects(projects);
+  const desktopCardWidth =
+    recentProjects.length >= 3 ? "lg:w-[172px]" : "lg:w-[190px]";
+  const cardClassName = [
+    "w-[190px] shrink-0 snap-start overflow-hidden rounded-[8px] bg-[#151619] text-left shadow-[0_14px_34px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70 sm:w-[210px]",
+    desktopCardWidth,
+  ].join(" ");
 
   return (
     <section aria-label="最近项目" className="mt-3 w-full">
-      <div className="flex snap-x gap-2.5 overflow-x-auto px-0.5 pb-2 lg:grid lg:grid-cols-4 lg:overflow-visible">
+      <div className="flex snap-x items-stretch gap-2.5 overflow-x-auto pb-2">
         <button
           type="button"
           disabled={busy}
@@ -103,19 +106,20 @@ export function HeroRecentProjects({
             </div>
           </button>
         ))}
-      </div>
 
-      <div className="mt-1 flex min-h-8 items-center justify-between gap-3 px-1">
-        {error ? <p className="text-[12px] text-red-300/82">{error}</p> : <span />}
         <button
           type="button"
-          className="flex h-8 shrink-0 items-center gap-1.5 text-[12px] text-white/48 transition hover:text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
+          className="mb-1 flex h-8 shrink-0 self-end items-center gap-1.5 px-1 text-[12px] text-white/48 transition hover:text-white/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
           onClick={onAllProjects}
         >
           所有项目
           <ArrowRight size={13} />
         </button>
       </div>
+
+      {error ? (
+        <p className="mt-1 px-1 text-[12px] text-red-300/82">{error}</p>
+      ) : null}
     </section>
   );
 }

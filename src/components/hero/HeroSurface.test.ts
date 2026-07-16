@@ -29,6 +29,22 @@ test("the recent project strip uses only existing project metadata", () => {
   assert.doesNotMatch(source, /promptSummary|promptPreview/);
 });
 
+test("the project strip aligns with the composer and keeps all projects inline", () => {
+  const heroSource = readHeroFile("GenLinkHero.tsx");
+  const projectsSource = readHeroFile("HeroRecentProjects.tsx");
+
+  assert.match(
+    heroSource,
+    /max-w-\[820px\][\s\S]*HeroAgentComposer[\s\S]*HeroRecentProjects/,
+  );
+  assert.match(
+    projectsSource,
+    /recentProjects\.map[\s\S]*onClick=\{onAllProjects\}/,
+  );
+  assert.match(projectsSource, /self-end/);
+  assert.doesNotMatch(projectsSource, /lg:grid-cols-4/);
+});
+
 test("the hero replaces the old start button with the composer", () => {
   const source = readHeroFile("GenLinkHero.tsx");
 
