@@ -50,6 +50,7 @@ import { stripReferenceMentionTokens } from '@/lib/prompt-mentions';
 import {
   getApiProviderLabel,
   readStoredApiKey,
+  readStoredApiSettings,
   readStoredSelectedApiProvider,
   readUserScopedCanvasSetting,
   writeUserScopedCanvasSetting,
@@ -74,9 +75,9 @@ import {
   type AgentEcomPlannerOption,
 } from '@/lib/agent-ecom-planner';
 import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
+import { resolveAgentApiCredential } from '@/lib/agent-api-key';
 import {
   AGENT_TEXT_PROVIDER_OPTIONS,
-  AGENT_TEXT_PROVIDERS,
   isAgentTextProvider,
 } from '@/lib/agent-provider-options';
 import {
@@ -600,31 +601,13 @@ function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
   provider: AgentProvider;
   apiKey: string;
 } {
-  const candidates: AgentProvider[] = [
+  const credential = resolveAgentApiCredential(
+    readStoredApiSettings(),
     preferredProvider,
-    readStoredSelectedApiProvider('text'),
-    readStoredSelectedApiProvider('image'),
-    ...AGENT_TEXT_PROVIDERS,
-  ].filter((provider, index, providers) => (
-    isAgentTextProvider(provider) && providers.indexOf(provider) === index
-  ));
+  );
 
-  for (const candidate of candidates) {
-    const textKey = readStoredApiKey('text', candidate);
-
-    if (textKey) {
-      return { provider: candidate, apiKey: textKey };
-    }
-
-    const imageKey = readStoredApiKey('image', candidate);
-
-    if (imageKey) {
-      return { provider: candidate, apiKey: imageKey };
-    }
-  }
-
-  return {
-    provider: isAgentTextProvider(preferredProvider) ? preferredProvider : 'vibe',
+  return credential ?? {
+    provider: isAgentTextProvider(preferredProvider) ? preferredProvider : 'comfly',
     apiKey: '',
   };
 }
