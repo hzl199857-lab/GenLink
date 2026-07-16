@@ -108,6 +108,10 @@ import {
 } from '@/lib/canvas-image-assets';
 import { uploadImageAsset } from '@/lib/browser-oss-upload';
 import { layoutAgentWorkflowNodes } from '@/lib/canvas/agent-layout';
+import {
+  calculateNodeLayout,
+  type CanvasLayoutMode,
+} from '@/lib/canvas/selection-layout';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
   CanvasEdge,
@@ -5246,7 +5250,54 @@ function updateGroupBoundsAndMembership(
   });
 }
 
-function layoutGroupNodes(groupId: string, mode: GroupLayoutMode) {
+function getCanvasNodeLayout(
+  nodeIds: string[],
+  mode: CanvasLayoutMode,
+  anchor: { x: number; y: number },
+) {
+  const state = useCanvasStore.getState();
+  const targetNodeIds = new Set(nodeIds);
+  const layoutItems = state.nodes
+    .filter((node) => targetNodeIds.has(node.id))
+    .map((node) => ({
+      node,
+      bounds: getNodeGroupBounds(node),
+    }));
+
+  if (layoutItems.length <= 1) {
+    return null;
+  }
+
+  const nextPositionsByNodeId = calculateNodeLayout(
+    layoutItems.map(({ node, bounds }) => ({
+      id: node.id,
+      position: node.position,
+      bounds,
+    })),
+    mode,
+    anchor,
+    { x: GROUP_LAYOUT_GAP_X, y: GROUP_LAYOUT_GAP_Y },
+  );
+  const nextRects = layoutItems.map(({ node, bounds }) => {
+    const nextPosition = nextPositionsByNodeId.get(node.id) ?? node.position;
+    return {
+      x: bounds.x + nextPosition.x - node.position.x,
+      y: bounds.y + nextPosition.y - node.position.y,
+      width: bounds.width,
+      height: bounds.height,
+    };
+  });
+
+  const nextContentBounds = getBoundsForRects(nextRects);
+
+  if (!nextContentBounds) {
+    return null;
+  }
+
+  return { nextPositionsByNodeId, nextContentBounds };
+}
+
+function layoutGroupNodes(groupId: string, mode: CanvasLayoutMode) {
   const state = useCanvasStore.getState();
   const group = state.groups.find((candidate) => candidate.id === groupId);
 
@@ -5254,70 +5305,63 @@ function layoutGroupNodes(groupId: string, mode: GroupLayoutMode) {
     return false;
   }
 
-  const groupNodeIds = new Set(group.nodeIds);
-  const layoutItems = state.nodes
-    .filter((node) => groupNodeIds.has(node.id))
-    .map((node) => ({
-      node,
-      bounds: getNodeGroupBounds(node),
-    }))
-    .sort((a, b) => a.bounds.y - b.bounds.y || a.bounds.x - b.bounds.x);
-
-  if (layoutItems.length <= 1) {
-    return false;
-  }
-
-  const maxWidth = Math.max(...layoutItems.map((item) => item.bounds.width));
-  const maxHeight = Math.max(...layoutItems.map((item) => item.bounds.height));
-  const columns = mode === 'grid'
-    ? Math.max(1, Math.ceil(Math.sqrt(layoutItems.length)))
-    : mode === 'horizontal'
-      ? layoutItems.length
-      : 1;
   const padding = MULTI_NODE_SELECTION_PADDING;
-  const startX = group.x + padding;
-  const startY = group.y + padding;
-  const nextPositionsByNodeId = new Map<string, { x: number; y: number }>();
-  const nextRects: MultiNodeSelectionBounds[] = [];
-
-  layoutItems.forEach((item, index) => {
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    const nextBounds = {
-      x: startX + column * (maxWidth + GROUP_LAYOUT_GAP_X),
-      y: startY + row * (maxHeight + GROUP_LAYOUT_GAP_Y),
-      width: item.bounds.width,
-      height: item.bounds.height,
-    };
-
-    nextPositionsByNodeId.set(item.node.id, {
-      x: item.node.position.x + nextBounds.x - item.bounds.x,
-      y: item.node.position.y + nextBounds.y - item.bounds.y,
-    });
-    nextRects.push(nextBounds);
+  const layout = getCanvasNodeLayout(group.nodeIds, mode, {
+    x: group.x + padding,
+    y: group.y + padding,
   });
 
-  const nextContentBounds = getBoundsForRects(nextRects);
-
-  if (!nextContentBounds) {
+  if (!layout) {
     return false;
   }
 
   const nextGroupBounds = {
-    x: nextContentBounds.x - padding,
-    y: nextContentBounds.y - padding,
-    width: nextContentBounds.width + padding * 2,
-    height: nextContentBounds.height + padding * 2,
+    x: layout.nextContentBounds.x - padding,
+    y: layout.nextContentBounds.y - padding,
+    width: layout.nextContentBounds.width + padding * 2,
+    height: layout.nextContentBounds.height + padding * 2,
   };
 
   useCanvasStore.setState((currentState) => ({
     nodes: currentState.nodes.map((node) => {
-      const nextPosition = nextPositionsByNodeId.get(node.id);
+      const nextPosition = layout.nextPositionsByNodeId.get(node.id);
       return nextPosition ? { ...node, position: nextPosition } : node;
     }),
     groups: currentState.groups.map((candidate) =>
       candidate.id === groupId ? { ...candidate, ...nextGroupBounds } : candidate,
     ),
+    dirty: true,
+  }));
+
+  return true;
+}
+
+function layoutSelectedNodes(nodeIds: string[], mode: CanvasLayoutMode) {
+  const selectedNodeIds = new Set(nodeIds);
+  const selectedBounds = getBoundsForRects(
+    useCanvasStore.getState().nodes
+      .filter((node) => selectedNodeIds.has(node.id))
+      .map(getNodeGroupBounds),
+  );
+
+  if (!selectedBounds) {
+    return false;
+  }
+
+  const layout = getCanvasNodeLayout(nodeIds, mode, {
+    x: selectedBounds.x,
+    y: selectedBounds.y,
+  });
+
+  if (!layout) {
+    return false;
+  }
+
+  useCanvasStore.setState((state) => ({
+    nodes: state.nodes.map((node) => {
+      const nextPosition = layout.nextPositionsByNodeId.get(node.id);
+      return nextPosition ? { ...node, position: nextPosition } : node;
+    }),
     dirty: true,
   }));
 
@@ -6104,6 +6148,7 @@ type MultiNodeSelectionOverlayProps = {
   selectedNodeIds: Set<string>;
   groups: NodeGroup[];
   visible: boolean;
+  onLayout: (nodeIds: string[], mode: CanvasLayoutMode) => void;
   onGroup: (nodeIds: string[]) => void;
   onStartSelectionConnection: (nodeIds: string[], event: React.MouseEvent<HTMLElement>) => void;
   onSelectionFramePointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -6132,7 +6177,7 @@ type GroupOverlayProps = {
 };
 
 type GroupExecutionMode = 'parallel' | 'sequence';
-type GroupLayoutMode = 'grid' | 'horizontal' | 'vertical';
+type GroupLayoutMode = CanvasLayoutMode;
 
 const GroupExecutionMenuContext =
   React.createContext<((mode: GroupExecutionMode) => void) | null>(null);
@@ -7082,6 +7127,7 @@ function MultiNodeSelectionOverlay({
   selectedNodeIds,
   groups,
   visible,
+  onLayout,
   onGroup,
   onStartSelectionConnection,
   onSelectionFramePointerDown,
@@ -7193,36 +7239,40 @@ function MultiNodeSelectionOverlay({
         height: `${paddedBounds.height}px`,
       }}
     >
-      <div
-        data-canvas-menu-ignore="true"
-        className="pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
-        style={{
-          top: `${-MULTI_NODE_SELECTION_TOOLBAR_GAP}px`,
-          transform: 'translate(-50%, -100%)',
-          transformOrigin: 'bottom center',
-        }}
-        onPointerDown={(event) => event.stopPropagation()}
+      <GroupLayoutMenuContext.Provider
+        value={(mode) => onLayout(selectedNodes.map((node) => node.id), mode)}
       >
-        <MultiNodeSelectionToolbarButton icon={Group} compact />
-        <div className="mx-1 h-5 w-px bg-white/10" />
-        <MultiNodeSelectionToolbarButton icon={FolderPlus}>
-          加入组
-        </MultiNodeSelectionToolbarButton>
-        <div className="mx-1 h-5 w-px bg-white/10" />
-        <MultiNodeSelectionToolbarButton icon={Copy}>
-          复制
-        </MultiNodeSelectionToolbarButton>
-        <div className="mx-1 h-5 w-px bg-white/10" />
-        <MultiNodeSelectionToolbarButton icon={Plus} compact />
-        <div className="mx-1 h-5 w-px bg-white/10" />
-        <MultiNodeSelectionToolbarButton
-          icon={Group}
-          onClick={() => onGroup(selectedNodes.map((n) => n.id))}
+        <div
+          data-canvas-menu-ignore="true"
+          className="pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center rounded-gl-pill border border-white/10 bg-gl-panel/95 px-2 text-gl-text-primary shadow-gl-toolbar backdrop-blur-md"
+          style={{
+            top: `${-MULTI_NODE_SELECTION_TOOLBAR_GAP}px`,
+            transform: 'translate(-50%, -100%)',
+            transformOrigin: 'bottom center',
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
         >
-          打组
-        </MultiNodeSelectionToolbarButton>
-        <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
-      </div>
+          <MultiNodeSelectionToolbarButton icon={Group}>布局</MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={FolderPlus}>
+            加入组
+          </MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Copy}>
+            复制
+          </MultiNodeSelectionToolbarButton>
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton icon={Plus} compact />
+          <div className="mx-1 h-5 w-px bg-white/10" />
+          <MultiNodeSelectionToolbarButton
+            icon={Group}
+            onClick={() => onGroup(selectedNodes.map((n) => n.id))}
+          >
+            打组
+          </MultiNodeSelectionToolbarButton>
+          <ChevronDown size={14} strokeWidth={2} className="-ml-1 mr-2 text-gl-text-secondary" />
+        </div>
+      </GroupLayoutMenuContext.Provider>
       <div
         data-canvas-menu-ignore="true"
         className="pointer-events-auto absolute inset-0 z-10 cursor-move"
@@ -15007,6 +15057,12 @@ function InnerCanvas({
     setSelectedGroupId(group.id);
   }, [createGroup, clearEdgeSelection]);
 
+  const handleLayoutSelectedNodes = useCallback((nodeIds: string[], mode: CanvasLayoutMode) => {
+    if (!layoutSelectedNodes(nodeIds, mode)) {
+      showProjectMessage('当前选择没有可布局的节点');
+    }
+  }, [showProjectMessage]);
+
   const handleResizeGroup = useCallback((
     groupId: string,
     bounds: { x: number; y: number; width: number; height: number },
@@ -15317,6 +15373,7 @@ function InnerCanvas({
           selectedNodeIds={selectedNodeIds}
           groups={storeGroups}
           visible={!selectedGroupId && !groupDragActive && !selectionInProgress && !paneSelectionDragging}
+          onLayout={handleLayoutSelectedNodes}
           onGroup={handleGroup}
           onStartSelectionConnection={handleStartSelectionConnection}
           onSelectionFramePointerDown={handleSelectionFramePointerDown}

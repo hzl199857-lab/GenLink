@@ -124,10 +124,15 @@ test("multi-node selection uses group bounds so labels remain inside the frame",
 });
 
 test("group layout uses group bounds so generation labels remain inside the frame", () => {
-  const layoutGroupNodesFunction = source.match(
-    /function layoutGroupNodes[\s\S]*?\n}\n\ntype CanvasNodeRenderData/,
+  const canvasNodeLayoutFunction = source.match(
+    /function getCanvasNodeLayout[\s\S]*?\n}\n\nfunction layoutGroupNodes/,
   )?.[0] ?? "";
 
-  assert.match(layoutGroupNodesFunction, /bounds: getNodeGroupBounds\(node\)/);
-  assert.doesNotMatch(layoutGroupNodesFunction, /bounds: getEstimatedNodeBounds\(node\)/);
+  assert.match(canvasNodeLayoutFunction, /bounds: getNodeGroupBounds\(node\)/);
+  assert.doesNotMatch(canvasNodeLayoutFunction, /bounds: getEstimatedNodeBounds\(node\)/);
+});
+
+test("multi-node selection delegates to the shared layout helper", () => {
+  assert.match(source, /function layoutSelectedNodes[\s\S]*?getCanvasNodeLayout\(nodeIds, mode/);
+  assert.match(source, /<GroupLayoutMenuContext\.Provider[\s\S]*?onLayout\(selectedNodes\.map/);
 });
