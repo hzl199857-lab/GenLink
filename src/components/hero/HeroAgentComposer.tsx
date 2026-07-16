@@ -185,93 +185,95 @@ export function HeroAgentComposer({
       ) : null}
 
       {modelSettingsOpen ? (
-        <div className="absolute left-3 top-[calc(100%+8px)] z-30 max-h-[min(420px,calc(100vh-2rem))] w-[calc(100%-1.5rem)] overflow-y-auto rounded-xl border border-[#363636] bg-[#212121] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.48)] sm:bottom-12 sm:top-auto sm:w-[560px]">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="text-xs font-medium text-white/78">生成偏好</div>
-            <button
-              type="button"
-              className="rounded-full bg-white/[0.08] px-2 py-1 text-[11px] text-white/72 outline-none transition hover:bg-white/[0.12]"
-              onClick={() =>
-                onImagePreferenceChange({
-                  ...imagePreference,
-                  mode: imagePreference.mode === "auto" ? "manual" : "auto",
-                })
-              }
+        <div className="absolute left-3 top-[calc(100%+8px)] z-30 flex max-h-[min(420px,calc(100vh-2rem))] w-[calc(100%-1.5rem)] flex-col overflow-visible rounded-xl border border-[#363636] bg-[#212121] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.48)] sm:bottom-12 sm:top-auto sm:w-[560px]">
+          <div className="min-h-0 overflow-y-auto">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-xs font-medium text-white/78">生成偏好</div>
+              <button
+                type="button"
+                className="rounded-full bg-white/[0.08] px-2 py-1 text-[11px] text-white/72 outline-none transition hover:bg-white/[0.12]"
+                onClick={() =>
+                  onImagePreferenceChange({
+                    ...imagePreference,
+                    mode: imagePreference.mode === "auto" ? "manual" : "auto",
+                  })
+                }
+              >
+                {imagePreference.mode === "auto" ? "自动" : "手动"}
+              </button>
+            </div>
+            <div className="mb-3 grid grid-cols-2 rounded-lg bg-black/45 p-1 text-xs font-medium">
+              <button type="button" className="h-8 rounded-md bg-white/[0.14] text-white">
+                图片
+              </button>
+              <button type="button" className="h-8 cursor-not-allowed rounded-md text-white/32" disabled>
+                视频
+              </button>
+            </div>
+            <div
+              className={[
+                "mb-3 grid grid-cols-3 gap-1.5 transition-opacity",
+                aspectRatioControlsDisabled ? "opacity-35" : "opacity-100",
+              ].join(" ")}
             >
-              {imagePreference.mode === "auto" ? "自动" : "手动"}
-            </button>
-          </div>
-          <div className="mb-3 grid grid-cols-2 rounded-lg bg-black/45 p-1 text-xs font-medium">
-            <button type="button" className="h-8 rounded-md bg-white/[0.14] text-white">
-              图片
-            </button>
-            <button type="button" className="h-8 cursor-not-allowed rounded-md text-white/32" disabled>
-              视频
-            </button>
-          </div>
-          <div
-            className={[
-              "mb-3 grid grid-cols-3 gap-1.5 transition-opacity",
-              aspectRatioControlsDisabled ? "opacity-35" : "opacity-100",
-            ].join(" ")}
-          >
-            {["auto", "1:1", "16:9", "9:16", "4:3", "3:4"].map((ratio) => {
-              const selected = resolvedImagePreference.aspectRatio === ratio;
+              {["auto", "1:1", "16:9", "9:16", "4:3", "3:4"].map((ratio) => {
+                const selected = resolvedImagePreference.aspectRatio === ratio;
 
-              return (
-                <button
-                  key={ratio}
-                  type="button"
-                  className={[
-                    "h-8 rounded-md px-2 text-xs outline-none transition",
-                    aspectRatioControlsDisabled
-                      ? "cursor-not-allowed"
-                      : "hover:bg-white/[0.09]",
-                    selected
-                      ? "bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]"
-                      : "bg-white/[0.05] text-white/54",
-                  ].join(" ")}
-                  disabled={aspectRatioControlsDisabled}
-                  onClick={() =>
-                    onImagePreferenceChange({
-                      ...imagePreference,
-                      mode: "manual",
-                      aspectRatio: ratio,
-                    })
-                  }
-                >
-                  {ratio}
-                </button>
-              );
-            })}
-          </div>
-          <div className="mb-3 flex gap-1.5">
-            {IMAGE_SIZE_OPTIONS.map((option) => {
-              const selected = resolvedImagePreference.quality === option;
+                return (
+                  <button
+                    key={ratio}
+                    type="button"
+                    className={[
+                      "h-8 rounded-md px-2 text-xs outline-none transition",
+                      aspectRatioControlsDisabled
+                        ? "cursor-not-allowed"
+                        : "hover:bg-white/[0.09]",
+                      selected
+                        ? "bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]"
+                        : "bg-white/[0.05] text-white/54",
+                    ].join(" ")}
+                    disabled={aspectRatioControlsDisabled}
+                    onClick={() =>
+                      onImagePreferenceChange({
+                        ...imagePreference,
+                        mode: "manual",
+                        aspectRatio: ratio,
+                      })
+                    }
+                  >
+                    {ratio}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mb-3 flex gap-1.5">
+              {IMAGE_SIZE_OPTIONS.map((option) => {
+                const selected = resolvedImagePreference.quality === option;
 
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  className={[
-                    "h-8 rounded-md px-3 text-xs font-medium outline-none transition hover:bg-white/[0.09]",
-                    selected
-                      ? "bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]"
-                      : "bg-white/[0.05] text-white/54",
-                  ].join(" ")}
-                  onClick={() =>
-                    onImagePreferenceChange({
-                      ...imagePreference,
-                      quality: option,
-                    })
-                  }
-                >
-                  {option.toLowerCase()}
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    className={[
+                      "h-8 rounded-md px-3 text-xs font-medium outline-none transition hover:bg-white/[0.09]",
+                      selected
+                        ? "bg-[#19d3ff] text-[#061019] shadow-[0_0_0_1px_rgba(25,211,255,0.18)]"
+                        : "bg-white/[0.05] text-white/54",
+                    ].join(" ")}
+                    onClick={() =>
+                      onImagePreferenceChange({
+                        ...imagePreference,
+                        quality: option,
+                      })
+                    }
+                  >
+                    {option.toLowerCase()}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid shrink-0 grid-cols-2 gap-2">
             <AgentPanelSelect
               label="Provider"
               value={resolvedImagePreference.provider}

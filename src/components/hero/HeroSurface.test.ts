@@ -109,5 +109,8 @@ test("the home settings menus stay compact and match the composer surface", () =
 
   assert.match(source, /sm:w-\[500px\]/);
   assert.match(source, /sm:w-\[560px\]/);
+  assert.match(source, /flex-col overflow-visible/);
+  assert.match(source, /min-h-0 overflow-y-auto/);
+  assert.match(source, /grid shrink-0 grid-cols-2/);
   assert.doesNotMatch(source, /bg-\[#11141b\]/);
 });
