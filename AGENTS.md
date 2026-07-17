@@ -51,6 +51,7 @@ PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma npx prisma 
 - 写入和生成工具要显式保留确认与权限行为。
 - 当 Agent 需要操作当前打开的画布时，优先使用结构化 live operation 协议，不要使用浏览器点击自动化或自由格式 JSON 指令。
 - 工具结果应摘要化大媒体和长文本。除非某个工具契约明确要求，否则不要通过 MCP 结果返回完整 base64 图片、视频或大 blob。
+- Agent 面板中的方案、创意回复和工作流内容必须来自用户所选 Agent。允许程序执行规则校验并要求同一 Agent 修复重试；最终仍不合格时应明确报错，不得用本地模板生成内容并冒充 Agent 回复。系统进度、校验错误和执行状态文案不受此限制。
 
 ## API 与存储
 

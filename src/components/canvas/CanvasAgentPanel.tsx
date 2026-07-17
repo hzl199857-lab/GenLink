@@ -116,7 +116,6 @@ import {
 import { hasBlockingAgentDecision } from '@/lib/agent-submit-state';
 import { applyImageGenerationActionOptionsToMaterializedNodes } from '@/lib/agent-node-preferences';
 import { decideAgentPhaseRoute } from '@/lib/openclaw/agent-phase-policy';
-import { reconcileOpenClawEcomPlanReferenceMode } from '@/lib/openclaw/ecom-plan-reference';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -3132,14 +3131,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       return;
     }
 
-    const planMessageForExecution = {
-      ...planMessage,
-      plan: reconcileOpenClawEcomPlanReferenceMode(
-        planMessage.plan,
-        planMessage.session,
-        planMessage.values,
-      ),
-    };
+    const planMessageForExecution = planMessage;
 
     setBusyMode('mcp');
     setMessages((current) => current.map((message) => (
@@ -4364,11 +4356,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             }
 
             if (message.type === 'planf_ecom_plan') {
-              const displayPlan = reconcileOpenClawEcomPlanReferenceMode(
-                message.plan,
-                message.session,
-                message.values,
-              );
+              const displayPlan = message.plan;
               const protocolLabel = `creative-doc / ${displayPlan.type}`;
               const summaryText = sanitizeAgentChatText(message.summary);
               const checkpointPrompt = sanitizeAgentChatText(displayPlan.checkpointPrompt);

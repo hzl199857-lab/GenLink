@@ -3,17 +3,16 @@ import { requireAuth } from "@/lib/auth-guard";
 
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
-import {
-  createPlanfEcomWorkflowFromAnchor,
-  createPlanfEcomWorkflowFromPlan,
-  type OpenClawPlanfEcomSession,
-} from "@/lib/openclaw/planf-ecom-session";
+import type { OpenClawPlanfEcomSession } from "@/lib/openclaw/planf-ecom-session";
 import {
   normalizeOpenClawEcomCreativeDoc,
   buildOpenClawEcomWorkflowMessage,
   parseOpenClawEcomWorkflow,
 } from "@/lib/openclaw/ecom-protocol";
-import { reconcileOpenClawEcomPlanReferenceMode } from "@/lib/openclaw/ecom-plan-reference";
+import {
+  reconcileOpenClawEcomPlanReferenceMode,
+  validateOpenClawEcomPlanMatchesDeliverySpec,
+} from "@/lib/openclaw/ecom-plan-reference";
 import { bindUploadedReferencesToEcomWorkflow } from "@/lib/openclaw/ecom-workflow-reference";
 import { validateEcomWorkflowMatchesPlan } from "@/lib/openclaw/ecom-workflow-contract";
 import {
@@ -35,12 +34,18 @@ import {
   buildPlanfEcomRulesMessage,
 } from "@/lib/openclaw/rules-context";
 import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
-import type { CanvasAgentAction } from "@/types/agent";
 import type { GLWorkflow } from "@/lib/planf-ecom";
 
 export const runtime = "nodejs";
 
 const ECOM_WORKFLOW_TIMEOUT_MS = 5 * 60_000;
+
+class OpenClawEcomWorkflowGenerationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenClawEcomWorkflowGenerationError";
+  }
+}
 
 type CreateWorkflowRequestBody = {
   session?: unknown;
@@ -174,42 +179,6 @@ function parseReferences(value: unknown): Array<{ attachmentId: string; name?: s
   });
 }
 
-function isExistingAnchorConnection(action: CanvasAgentAction): boolean {
-  return action.type === "connect_nodes" && action.sourceRef.kind === "existing";
-}
-
-function mergeWorkflowActionsWithoutDuplicateConnections(
-  primaryActions: CanvasAgentAction[],
-  fallbackActions: CanvasAgentAction[],
-): CanvasAgentAction[] {
-  const merged: CanvasAgentAction[] = [];
-  const connectionKeys = new Set<string>();
-
-  for (const action of [...primaryActions, ...fallbackActions]) {
-    if (action.type !== "connect_nodes") {
-      merged.push(action);
-      continue;
-    }
-
-    const sourceKey = action.sourceRef.kind === "existing"
-      ? `existing:${action.sourceRef.nodeId}`
-      : `created:${action.sourceRef.clientActionId}`;
-    const targetKey = action.targetRef.kind === "existing"
-      ? `existing:${action.targetRef.nodeId}`
-      : `created:${action.targetRef.clientActionId}`;
-    const key = `${sourceKey}->${targetKey}`;
-
-    if (connectionKeys.has(key)) {
-      continue;
-    }
-
-    connectionKeys.add(key);
-    merged.push(action);
-  }
-
-  return merged;
-}
-
 function getAllowedExistingSourceIds(input: {
   references: ReturnType<typeof parseReferences>;
   anchor: ReturnType<typeof parseAnchor>;
@@ -250,28 +219,6 @@ function parseAndValidateOpenClawWorkflow(input: {
   }
 
   return workflow;
-}
-
-async function tryRunOpenClawWorkflow(input: Parameters<typeof runOpenClawWorkflow>[0]) {
-  try {
-    return {
-      workflow: await runOpenClawWorkflow(input),
-    };
-  } catch (error) {
-    if (
-      error instanceof AgentModelCompatibilityError ||
-      error instanceof RealOpenClawRuntimeError ||
-      error instanceof PlanfRulesContextError
-    ) {
-      throw error;
-    }
-
-    console.warn("[openclaw/planf/ecom/create-workflow] using local workflow fallback", error);
-
-    return {
-      fallbackReason: error instanceof Error ? error.message : "workflow generation failed",
-    };
-  }
 }
 
 async function runOpenClawWorkflow(input: {
@@ -355,11 +302,15 @@ async function runOpenClawWorkflow(input: {
       });
     } catch (repairError) {
       const repairMessage = repairError instanceof Error ? repairError.message : "workflow repair parse failed";
-      throw new Error([
-        `GenLink rules runtime did not return a valid workflow-json. first=${firstMessage}; repair=${repairMessage}.`,
-        `firstText=${first.text.slice(0, 800)}`,
-        `repairText=${repaired.text.slice(0, 800)}`,
-      ].join(" "));
+
+      console.warn("[openclaw/planf/ecom/create-workflow] agent workflow validation failed", {
+        firstMessage,
+        repairMessage,
+      });
+
+      throw new OpenClawEcomWorkflowGenerationError(
+        `所选 Agent 连续两次返回的画布工作流都未通过规则校验（${repairMessage}），请重试。`,
+      );
     }
   }
 }
@@ -391,6 +342,12 @@ export async function POST(request: Request) {
       return errorJson("session, values, and confirmed plan are required", 400, "parse_request");
     }
 
+    const planValidation = validateOpenClawEcomPlanMatchesDeliverySpec(parsedPlan, session, values);
+
+    if (!planValidation.ok) {
+      return errorJson(planValidation.error, 400, "parse_request");
+    }
+
     const plan = reconcileOpenClawEcomPlanReferenceMode(parsedPlan, session, values);
 
     if (plan.meta.anchorMode === "user-upload" && references.length === 0) {
@@ -405,10 +362,7 @@ export async function POST(request: Request) {
       return errorJson("OPENCLAW_REAL_RUNTIME=0 disables the real OpenClaw runtime.", 502, "generate_workflow");
     }
 
-    const localResponse = anchor
-      ? createPlanfEcomWorkflowFromAnchor({ session, values, anchor })
-      : createPlanfEcomWorkflowFromPlan({ session, values });
-    const workflowResult = await tryRunOpenClawWorkflow({
+    const workflow = await runOpenClawWorkflow({
       session,
       values,
       plan,
@@ -418,25 +372,20 @@ export async function POST(request: Request) {
       model: typeof body.model === "string" ? body.model : undefined,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
     });
-    const workflow = workflowResult.workflow;
-    const baseWorkflow = workflow ?? localResponse.workflow;
     const referenceSourceNodeIds = plan.meta.anchorMode === "user-upload"
       ? references.map((reference) => reference.sourceNodeId)
       : anchor ? [anchor.nodeId] : [];
     const resolvedWorkflow = referenceSourceNodeIds.length > 0
-      ? bindUploadedReferencesToEcomWorkflow(baseWorkflow, referenceSourceNodeIds)
-      : baseWorkflow;
+      ? bindUploadedReferencesToEcomWorkflow(workflow, referenceSourceNodeIds)
+      : workflow;
     const response = {
-      ...localResponse,
-      summary: workflow
-        ? localResponse.summary
-        : "模型工作流未通过规则校验，已按 GenLink 规则创建本地标准工作流。",
+      ok: true as const,
+      summary: resolvedWorkflow.intent.request,
       workflow: resolvedWorkflow,
       meta: {
-        usedModel: Boolean(workflow),
-        usedFallback: !workflow,
+        usedModel: true,
+        usedFallback: false,
         model: typeof body.model === "string" ? body.model : undefined,
-        fallbackReason: workflowResult.fallbackReason,
       },
     };
 
@@ -458,13 +407,13 @@ export async function POST(request: Request) {
       allowedExistingSourceIds: getAllowedExistingSourceIds({ references, anchor }),
     });
 
-    const mcpActions = toolResult.actions ?? response.actions.filter((action) => !isExistingAnchorConnection(action));
-    const existingAnchorActions = response.actions.filter(isExistingAnchorConnection);
+    if (!toolResult.actions) {
+      throw new OpenClawMcpClientError("MCP workflow materialization returned no canvas actions");
+    }
 
     return NextResponse.json({
       ...response,
-      summary: "GenLink 已产出画布工作流，并物化为画布节点。",
-      actions: mergeWorkflowActionsWithoutDuplicateConnections(mcpActions, existingAnchorActions),
+      actions: toolResult.actions,
       nodes: toolResult.nodes,
       edges: toolResult.edges,
       nodeIdMap: toolResult.nodeIdMap,
@@ -498,6 +447,10 @@ export async function POST(request: Request) {
     }
 
     if (error instanceof PlanfRulesContextError) {
+      return errorJson(error.message, 502, "generate_workflow");
+    }
+
+    if (error instanceof OpenClawEcomWorkflowGenerationError) {
       return errorJson(error.message, 502, "generate_workflow");
     }
 

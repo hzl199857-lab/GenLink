@@ -23,7 +23,7 @@ for (const routePath of routePaths) {
   });
 }
 
-test("fallback helpers do not swallow model compatibility failures", () => {
+test("ecommerce routes never replace invalid Agent output with local content", () => {
   const confirmSource = readFileSync(
     new URL("../../app/api/openclaw/planf/ecom/confirm/route.ts", import.meta.url),
     "utf8",
@@ -32,23 +32,19 @@ test("fallback helpers do not swallow model compatibility failures", () => {
     new URL("../../app/api/openclaw/planf/ecom/create-workflow/route.ts", import.meta.url),
     "utf8",
   );
+  const panelSource = readFileSync(
+    new URL("../../components/canvas/CanvasAgentPanel.tsx", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(
-    confirmSource,
-    /error instanceof AgentModelCompatibilityError \|\|[\s\S]*?error instanceof RealOpenClawRuntimeError/,
-  );
-  assert.match(
-    workflowSource,
-    /error instanceof AgentModelCompatibilityError \|\|[\s\S]*?error instanceof RealOpenClawRuntimeError/,
-  );
-  assert.match(
-    confirmSource,
-    /error instanceof RealOpenClawRuntimeError \|\|[\s\S]*?error instanceof PlanfRulesContextError/,
-  );
-  assert.match(
-    workflowSource,
-    /error instanceof RealOpenClawRuntimeError \|\|[\s\S]*?error instanceof PlanfRulesContextError/,
-  );
+  assert.doesNotMatch(confirmSource, /confirmPlanfEcomSession/);
+  assert.doesNotMatch(workflowSource, /createPlanfEcomWorkflowFrom(?:Plan|Anchor)/);
+  assert.doesNotMatch(confirmSource, /using local .*fallback/i);
+  assert.doesNotMatch(workflowSource, /using local .*fallback/i);
+  assert.match(confirmSource, /genlink-planf-confirm-repair-/);
+  assert.match(workflowSource, /genlink-planf-workflow-repair-/);
+  assert.match(workflowSource, /usedFallback:\s*false/);
+  assert.doesNotMatch(panelSource, /reconcileOpenClawEcomPlanReferenceMode/);
 });
 
 test("all ecommerce stages inject allowlisted rule contents before calling the model", () => {

@@ -43,6 +43,10 @@ type AgentPanelEcomPlan = Extract<
   { type: "planf_ecom_plan" }
 >["plan"];
 
+export type EcomPlanDeliveryValidation =
+  | { ok: true }
+  | { ok: false; error: string };
+
 const PLATFORM_LABELS: Record<string, string> = {
   taobao: "淘宝/天猫",
   jd: "京东",
@@ -92,7 +96,6 @@ export function reconcileOpenClawEcomPlanReferenceMode(
 
   return {
     ...plan,
-    checkpointPrompt: `编排已出（${anchorMode}，${deliveryRounds} 轮交付），下一步？A 确认开始生成 / B 调整某张方向 / C 只要其中某几张 / D 换风格`,
     meta: {
       ...plan.meta,
       imageSet: deliverySpec.imageSet,
@@ -145,4 +148,56 @@ export function reconcileOpenClawEcomPlanReferenceMode(
       };
     }),
   };
+}
+
+export function validateOpenClawEcomPlanMatchesDeliverySpec(
+  plan: OpenClawPlanfEcomImagePlan,
+  session: EcomReferenceSession,
+  values?: EcomReferenceValues,
+): EcomPlanDeliveryValidation {
+  const expected = reconcileOpenClawEcomPlanReferenceMode(plan, session, values);
+  const errors: string[] = [];
+  const metaChecks: Array<[string, unknown, unknown]> = [
+    ["imageSet", plan.meta.imageSet, expected.meta.imageSet],
+    ["styleMode", plan.meta.styleMode, expected.meta.styleMode],
+    ["anchorMode", plan.meta.anchorMode, expected.meta.anchorMode],
+    ["deliveryRounds", plan.meta.deliveryRounds, expected.meta.deliveryRounds],
+    ["totalImages", plan.meta.totalImages, expected.meta.totalImages],
+    ["mainRatio", plan.meta.mainRatio, expected.meta.mainRatio],
+  ];
+
+  for (const [field, actual, expectedValue] of metaChecks) {
+    if (actual !== expectedValue) {
+      errors.push(
+        `creative-doc meta.${field} ${String(actual)} does not match confirmed delivery rule ${String(expectedValue)}`,
+      );
+    }
+  }
+
+  if (plan.imageSlots.length !== expected.imageSlots.length) {
+    errors.push(
+      `creative-doc image slot count ${plan.imageSlots.length} does not match confirmed delivery count ${expected.imageSlots.length}`,
+    );
+  } else {
+    for (const [index, slot] of plan.imageSlots.entries()) {
+      const expectedSlot = expected.imageSlots[index];
+      const slotChecks: Array<[string, unknown, unknown]> = [
+        ["round", slot.round, expectedSlot.round],
+        ["subType", slot.subType, expectedSlot.subType],
+        ["ratio", slot.ratio, expectedSlot.ratio],
+      ];
+
+      for (const [field, actual, expectedValue] of slotChecks) {
+        if (actual !== expectedValue) {
+          errors.push(
+            `creative-doc image slot ${index + 1} ${field} ${String(actual)} does not match confirmed delivery rule ${String(expectedValue)}`,
+          );
+        }
+      }
+    }
+  }
+
+  return errors.length > 0
+    ? { ok: false, error: errors.join("; ") }
+    : { ok: true };
 }

@@ -108,11 +108,26 @@ test("parses OpenClaw creative-doc into the ecom plan shape", () => {
   ].join("\n"));
 
   assert.deepEqual(parsed.plan, plan);
+  assert.equal(parsed.summary, plan.checkpointPrompt);
   assert.equal(parsed.protocol.type, "ecom-image-plan");
   assert.equal(parsed.values.productName, values.productName);
 });
 
-test("keeps session reference state authoritative over the model plan", () => {
+test("builds an Agent repair request when creative-doc validation fails", () => {
+  const message = buildOpenClawEcomConfirmMessage({
+    session,
+    values,
+    previousText: "```creative-doc\n{\"type\":\"ecom-image-plan\"}\n```",
+    previousValidationError: "creative-doc is missing meta, imageSlots, or options",
+  });
+
+  assert.match(message, /previous creative-doc failed GenLink validation/);
+  assert.match(message, /Rewrite the complete creative-doc now/);
+  assert.match(message, /exactly one ```creative-doc fence/);
+  assert.match(message, /previousOpenClawText/);
+});
+
+test("accepts an Agent plan that matches session delivery rules without replacing its content", () => {
   const modelPlan = {
     type: "ecom-image-plan",
     title: "UGC image set",
@@ -124,37 +139,29 @@ test("keeps session reference state authoritative over the model plan", () => {
     meta: {
       productName: "Sunglasses",
       category: "accessories",
-      platform: "taobao",
+      platform: "xiaohongshu",
       imageSet: "full-set",
-      anchorMode: "white-bg-first",
+      anchorMode: "user-upload",
       amazonMode: false,
-      mainRatio: "1:1",
-      totalImages: 2,
-      deliveryRounds: 2,
+      mainRatio: "3:4",
+      totalImages: 6,
+      deliveryRounds: 1,
       styleMode: "ugc",
-      extraConstraints: "No product reference was uploaded",
+      extraConstraints: "Keep the uploaded product identity",
     },
-    imageSlots: [
-      {
-        index: 1,
-        slot: "white background",
-        round: 1,
-        subType: "text-image",
-        anchorSource: "independent generation",
-        ratio: "1:1",
-        intent: "show the product",
-      },
-      {
-        index: 2,
-        slot: "street snapshot",
-        round: 2,
-        subType: "image-image",
-        anchorSource: "white background anchor",
-        ratio: "1:1",
-        intent: "UGC street photo",
-      },
+    imageSlots: Array.from({ length: 6 }, (_, index) => ({
+      index: index + 1,
+      slot: `Agent UGC concept ${index + 1}`,
+      round: 1,
+      subType: "image-image",
+      anchorSource: "uploaded product image",
+      ratio: "3:4",
+      intent: `Agent visual intent ${index + 1}`,
+    })),
+    options: [
+      { id: "A", label: "confirm" },
+      { id: "B", label: "adjust one image" },
     ],
-    options: [{ id: "A", label: "confirm" }],
   };
 
   const parsed = parseOpenClawEcomCreativeDoc(
@@ -171,33 +178,26 @@ test("keeps session reference state authoritative over the model plan", () => {
   assert.ok(parsed.plan.imageSlots.every((slot) => slot.subType === "image-image"));
   assert.ok(parsed.plan.imageSlots.every((slot) => slot.round === 1));
   assert.ok(parsed.plan.imageSlots.every((slot) => slot.ratio === "3:4"));
-  assert.match(parsed.plan.checkpointPrompt, /user-upload/);
+  assert.equal(parsed.plan.imageSlots[0].slot, "Agent UGC concept 1");
+  assert.equal(parsed.plan.checkpointPrompt, modelPlan.checkpointPrompt);
+  assert.equal(parsed.summary, modelPlan.checkpointPrompt);
 
-  const noReferenceParsed = parseOpenClawEcomCreativeDoc(
-    JSON.stringify({
-      ...modelPlan,
-      meta: {
-        ...modelPlan.meta,
-        anchorMode: "user-upload",
-        deliveryRounds: 1,
-      },
-    }),
-    { ...values, productName: "Sunglasses", platform: "xiaohongshu", styleMode: "ugc" },
-    { ...session, referenceImageCount: 0 },
+  assert.throws(
+    () => parseOpenClawEcomCreativeDoc(
+      JSON.stringify(modelPlan),
+      { ...values, productName: "Sunglasses", platform: "xiaohongshu", styleMode: "ugc" },
+      { ...session, referenceImageCount: 0 },
+    ),
+    /anchorMode user-upload does not match confirmed delivery rule white-bg-first; creative-doc meta.deliveryRounds 1 does not match confirmed delivery rule 2/,
   );
-
-  assert.equal(noReferenceParsed.plan.meta.anchorMode, "white-bg-first");
-  assert.equal(noReferenceParsed.plan.meta.deliveryRounds, 2);
-  assert.equal(noReferenceParsed.plan.imageSlots.length, 6);
-  assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.subType), [
-    "text-image",
-    "image-image",
-    "image-image",
-    "image-image",
-    "image-image",
-    "image-image",
-  ]);
-  assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.round), [1, 2, 2, 2, 2, 2]);
+  assert.throws(
+    () => parseOpenClawEcomCreativeDoc(
+      JSON.stringify({ ...modelPlan, options: [] }),
+      { ...values, productName: "Sunglasses", platform: "xiaohongshu", styleMode: "ugc" },
+      session,
+    ),
+    /options must include A and at least one adjustment option/,
+  );
 });
 
 test("normalizes ecommerce creative-doc domain aliases", () => {

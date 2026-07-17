@@ -59,17 +59,20 @@ export function validateEcomWorkflowMatchesPlan(input: {
     };
   }
 
+  const errors: string[] = [];
+
   for (const [index, node] of imageNodes.entries()) {
     const expected = expectedSlots[index];
     const ratio = typeof node.data.aspectRatio === "string" ? node.data.aspectRatio.trim() : "";
 
     if (ratio !== expected.ratio) {
-      return {
-        ok: false,
-        error: `workflow image node ${node.id} aspectRatio ${ratio || "missing"} does not match confirmed slot ${index + 1} (${expected.slot}) ratio ${expected.ratio}`,
-      };
+      errors.push(
+        `workflow image node ${node.id} aspectRatio ${ratio || "missing"} does not match confirmed slot ${index + 1} (${expected.slot}) ratio ${expected.ratio}`,
+      );
     }
   }
 
-  return { ok: true };
+  return errors.length > 0
+    ? { ok: false, error: errors.join("; ") }
+    : { ok: true };
 }
