@@ -39,7 +39,10 @@ function createModelDefinition(model: (typeof OPENCLAW_AGENT_MODELS)[number]) {
     maxTokens: 8192,
     compat: {
       ...(model.id.startsWith("gemini-")
-        ? { maxTokensField: "max_tokens" }
+        ? {
+            maxTokensField: "max_tokens",
+            supportsTools: false,
+          }
         : {}),
       requiresStringContent: true,
       strictMessageKeys: true,

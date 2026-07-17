@@ -60,7 +60,8 @@ function buildRealOpenClawStartMessage(params: {
 }): string {
   return [
     "You are the GenLink embedded rules/protocol decision layer. The user-visible brand is always GenLink.",
-    "Read the current OpenClaw workspace rules starting from ./AGENTS.md, then ./BOOTSTRAP.md, ./IDENTITY.md, ./phase-policy.md, and ./skills/ecom-image/SKILL.md when needed.",
+    "The relevant GenLink rules are already available in the system context.",
+    "Do not read files or call tools. Use the injected rules and return the required JSON directly.",
     "You may use RH / PlanF Canvas internally as the canonical protocol architecture, but do not call yourself RH, RunningHub, or PlanF in user-visible text.",
     "Current stage: ecom-image entry triage and form-fields only.",
     "Do not create canvas nodes. Do not call genlink_canvas_create_workflow. Do not output creative-doc or workflow-json.",
@@ -68,7 +69,6 @@ function buildRealOpenClawStartMessage(params: {
     "Return exactly one JSON object for the schema below.",
     "The first non-whitespace character of your response must be { and the last non-whitespace character must be }.",
     "Do not output any preface, explanation, status text, tool call, command snippet, markdown fence, or trace before or after the JSON object.",
-    "If you read or consult rules internally, do not describe that action in the response.",
     "JSON schema: {\"type\":\"form-fields\",\"fields\":[...],\"route\":\"ecomImageTrack\",\"nextAction\":\"await-form-submit\",\"loadedFiles\":[\"AGENTS.md\",\"BOOTSTRAP.md\",\"IDENTITY.md\",\"phase-policy.md\"]}",
     "Allowed field types: text, select, multi-select, upload.",
     "select and multi-select options must be objects shaped as {\"label\":\"...\",\"value\":\"...\"}.",

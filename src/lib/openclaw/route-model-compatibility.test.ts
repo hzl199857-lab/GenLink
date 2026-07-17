@@ -42,3 +42,14 @@ test("fallback helpers do not swallow model compatibility failures", () => {
     /error instanceof AgentModelCompatibilityError \|\|[\s\S]*?error instanceof RealOpenClawRuntimeError/,
   );
 });
+
+test("the ecommerce start prompt uses injected rules without asking Gemini to call tools", () => {
+  const startSource = readFileSync(
+    new URL("../../app/api/openclaw/planf/ecom/start/route.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(startSource, /Read the current OpenClaw workspace rules/);
+  assert.match(startSource, /already available in the system context/);
+  assert.match(startSource, /Do not read files or call tools/);
+});

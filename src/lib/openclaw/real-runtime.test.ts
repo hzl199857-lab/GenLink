@@ -130,6 +130,12 @@ test("classifies model catalog and invalid config failures accurately", () => {
     classifyOpenClawFailure("Invalid config: models.providers is malformed"),
     "invalid_config",
   );
+  assert.equal(
+    classifyOpenClawFailure(
+      "400 contents[0].parts[1].function_response.name: Name cannot be empty",
+    ),
+    "provider_tool_protocol",
+  );
 });
 
 test("reports Provider content filtering instead of a generic rules failure", async () => {
@@ -174,6 +180,56 @@ test("reports Provider content filtering instead of a generic rules failure", as
       assert.ok(error instanceof RealOpenClawRuntimeError);
       assert.equal(error.diagnostic?.kind, "provider_content_filter");
       assert.match(error.publicMessage ?? "", /内容安全过滤/);
+      assert.match(error.publicMessage ?? "", /不是超时/);
+      return true;
+    },
+  );
+});
+
+test("reports incompatible Gemini tool responses instead of a generic rules failure", async () => {
+  const runtimeRoot = mkdtempSync(path.join(tmpdir(), "genlink-tool-protocol-"));
+  const entryPath = path.join(runtimeRoot, "openclaw.mjs");
+  const baseConfigPath = path.join(runtimeRoot, "openclaw-genlink.json");
+
+  writeFileSync(entryPath, "");
+  writeFileSync(baseConfigPath, `{
+    agents: { defaults: { model: { primary: "genlink_text/gpt-5.5" } } },
+    models: { providers: { genlink_text: { api: "openai-completions", models: [] } } },
+  }`);
+  process.env.OPENCLAW_CLI_ENTRY = entryPath;
+  process.env.OPENCLAW_CONFIG_PATH = baseConfigPath;
+  process.env.OPENCLAW_STATE_DIR = path.join(runtimeRoot, "state");
+  process.env.OPENCLAW_WORKSPACE_DIR = path.join(runtimeRoot, "workspace");
+  process.env.PLANF_RULES_ROOT = path.join(runtimeRoot, "rules");
+
+  spawnImplementation = (() => {
+    const child = new EventEmitter() as ReturnType<typeof childProcess.spawn>;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    Object.assign(child, { stdout, stderr, kill: () => true });
+    process.nextTick(() => {
+      stderr.write(
+        "400 contents[0].parts[1].function_response.name: Name cannot be empty",
+      );
+      stderr.end();
+      child.emit("close", 1);
+    });
+    return child;
+  }) as typeof childProcess.spawn;
+
+  await assert.rejects(
+    runRealOpenClaw({
+      message: "test",
+      sessionKey: "test-tool-protocol",
+      timeoutMs: 1_000,
+      provider: "comfly",
+      model: "genlink_text/gemini-3.5-flash",
+      apiKey: "request-secret-key",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RealOpenClawRuntimeError);
+      assert.equal(error.diagnostic?.kind, "provider_tool_protocol");
+      assert.match(error.publicMessage ?? "", /工具协议/);
       assert.match(error.publicMessage ?? "", /不是超时/);
       return true;
     },

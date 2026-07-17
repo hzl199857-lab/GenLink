@@ -66,7 +66,7 @@ test("builds the four-model OpenClaw catalog without changing unrelated settings
         models: Array<{
           id: string;
           maxTokens: number;
-          compat: { maxTokensField: string };
+          compat: { maxTokensField?: string; supportsTools?: boolean };
         }>;
       };
     };
@@ -89,10 +89,12 @@ test("builds the four-model OpenClaw catalog without changing unrelated settings
   for (const model of models.providers.genlink_text.models.slice(0, 2)) {
     assert.equal(model.maxTokens, 8192);
     assert.equal(model.compat.maxTokensField, "max_tokens");
+    assert.equal(model.compat.supportsTools, false);
   }
   for (const model of models.providers.genlink_text.models.slice(2)) {
     assert.equal(model.maxTokens, 8192);
     assert.equal(model.compat.maxTokensField, undefined);
+    assert.equal(model.compat.supportsTools, undefined);
   }
   assert.deepEqual(built.mcp, baseConfig.mcp);
   assert.deepEqual(built.tools, baseConfig.tools);

@@ -33,6 +33,7 @@ export type RealOpenClawRuntimeDiagnostic = {
     | "provider_network"
     | "provider_http_error"
     | "provider_content_filter"
+    | "provider_tool_protocol"
     | "unsupported_model"
     | "invalid_config"
     | "invalid_json"
@@ -237,6 +238,10 @@ function previewOpenClawOutput(text: string): string | undefined {
 }
 
 export function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
+  if (/function_response\.name:\s*Name cannot be empty|Tool [^\n]+ not found/i.test(output)) {
+    return "provider_tool_protocol";
+  }
+
   if (/finish_reason:\s*content_filter|content[_\s-]?filter(?:ed)?/i.test(output)) {
     return "provider_content_filter";
   }
@@ -283,6 +288,10 @@ function buildRuntimePublicMessage(diagnostic: RealOpenClawRuntimeDiagnostic): s
 
   if (diagnostic.kind === "provider_content_filter") {
     return `${providerLabel} 拒绝了当前请求（内容安全过滤）${modelText}。这不是超时；请调整提示词或切换模型后重试。`;
+  }
+
+  if (diagnostic.kind === "provider_tool_protocol") {
+    return `${providerLabel} 的 Gemini 工具协议与当前规则运行不兼容${modelText}。这不是超时；当前请求已改为禁用工具调用。`;
   }
 
   if (diagnostic.kind === "missing_api_key") {
