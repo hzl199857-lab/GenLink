@@ -99,6 +99,7 @@ const DEFAULT_OPENCLAW_ENTRY = path.join(
 const DEFAULT_OPENCLAW_CONFIG = path.join("E:", "GenLink-runtime", "openclaw-genlink.json");
 const DEFAULT_OPENCLAW_STATE = path.join("E:", "GenLink-runtime", "state");
 const DEFAULT_OPENCLAW_WORKSPACE = path.join("E:", "GenLink-runtime", "workspaces", "genlink-planf");
+const OPENCLAW_STDIN_MESSAGE_THRESHOLD = 16_000;
 const CORE_RULE_FILES = [
   "AGENTS.md",
   "BOOTSTRAP.md",
@@ -129,6 +130,11 @@ function getOpenClawStateDir(): string {
 
 function getOpenClawWorkspaceDir(): string {
   return process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_OPENCLAW_WORKSPACE;
+}
+
+function getOpenClawStdinRunner(): string {
+  return process.env.OPENCLAW_STDIN_RUNNER?.trim() ||
+    path.join(process.cwd(), "scripts", "openclaw-stdin-runner.mjs");
 }
 
 function getSourceRulesRoot(): string {
@@ -458,11 +464,14 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     model,
     baseUrlHost,
     timeoutMs: input.timeoutMs,
+    messageChars: input.message.length,
+    messageTransport: input.message.length > OPENCLAW_STDIN_MESSAGE_THRESHOLD
+      ? "stdin"
+      : "argument",
   });
 
   return await new Promise((resolve, reject) => {
-    const args = [
-      getOpenClawEntry(),
+    const openClawArgs = [
       "agent",
       "--local",
       "--json",
@@ -470,13 +479,16 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       input.sessionKey,
       "--timeout",
       String(Math.max(1, Math.ceil(input.timeoutMs / 1000))),
-      "--message",
-      input.message,
     ];
 
     if (model) {
-      args.push("--model", model);
+      openClawArgs.push("--model", model);
     }
+
+    const useStdinMessage = input.message.length > OPENCLAW_STDIN_MESSAGE_THRESHOLD;
+    const args = useStdinMessage
+      ? [getOpenClawStdinRunner(), getOpenClawEntry(), ...openClawArgs]
+      : [getOpenClawEntry(), ...openClawArgs, "--message", input.message];
 
     const child = spawn(process.execPath, args, {
       cwd: path.dirname(getOpenClawEntry()),
@@ -488,8 +500,12 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,
       },
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [useStdinMessage ? "pipe" : "ignore", "pipe", "pipe"],
     });
+
+    if (useStdinMessage) {
+      child.stdin?.end(input.message);
+    }
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {
@@ -515,12 +531,12 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       ));
     }, input.timeoutMs + 5_000);
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
+    child.stdout!.setEncoding("utf8");
+    child.stderr!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk) => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (error) => {

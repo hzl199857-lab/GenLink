@@ -121,6 +121,86 @@ test("uses the generated OpenClaw config without persisting the request API key"
   );
 });
 
+test("streams long OpenClaw messages instead of placing them in Windows spawn arguments", async () => {
+  const runtimeRoot = mkdtempSync(path.join(tmpdir(), "genlink-long-message-"));
+  const entryPath = path.join(runtimeRoot, "openclaw.mjs");
+  const baseConfigPath = path.join(runtimeRoot, "openclaw-genlink.json");
+  const longMessage = "rule-context\n".repeat(8_000);
+  let spawnArgs: readonly string[] = [];
+  let stdinMessage = "";
+
+  writeFileSync(entryPath, "");
+  writeFileSync(baseConfigPath, `{
+    agents: { defaults: { model: { primary: "genlink_text/gpt-5.5" } } },
+    models: { providers: { genlink_text: { api: "openai-completions", models: [] } } },
+  }`);
+  process.env.OPENCLAW_CLI_ENTRY = entryPath;
+  process.env.OPENCLAW_CONFIG_PATH = baseConfigPath;
+  process.env.OPENCLAW_STATE_DIR = path.join(runtimeRoot, "state");
+  process.env.OPENCLAW_WORKSPACE_DIR = path.join(runtimeRoot, "workspace");
+  process.env.PLANF_RULES_ROOT = path.join(runtimeRoot, "rules");
+
+  spawnImplementation = ((_command, args) => {
+    spawnArgs = Array.isArray(args) ? args : [];
+    const child = new EventEmitter() as ReturnType<typeof childProcess.spawn>;
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    stdin.on("data", (chunk) => {
+      stdinMessage += chunk.toString();
+    });
+    Object.assign(child, { stdin, stdout, stderr, kill: () => true });
+    process.nextTick(() => {
+      stdout.write(JSON.stringify({ payloads: [{ text: "ok" }] }));
+      stdout.end();
+      child.emit("close", 0);
+    });
+    return child;
+  }) as typeof childProcess.spawn;
+
+  await runRealOpenClaw({
+    message: longMessage,
+    sessionKey: "test-long-message",
+    timeoutMs: 1_000,
+    provider: "comfly",
+    model: "genlink_text/gemini-3.5-flash",
+    apiKey: "request-secret-key",
+  });
+
+  assert.equal(spawnArgs.includes(longMessage), false);
+  assert.match(spawnArgs[0] ?? "", /openclaw-stdin-runner\.mjs$/);
+  assert.equal(stdinMessage, longMessage);
+});
+
+test("stdin runner restores the OpenClaw argv inside the child process", () => {
+  const runtimeRoot = mkdtempSync(path.join(tmpdir(), "genlink-stdin-runner-"));
+  const entryPath = path.join(runtimeRoot, "fake-openclaw.mjs");
+  const runnerPath = path.join(process.cwd(), "scripts", "openclaw-stdin-runner.mjs");
+  const longMessage = "model-context\n".repeat(4_000);
+
+  writeFileSync(
+    entryPath,
+    'console.log(JSON.stringify(process.argv.slice(2)));',
+  );
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [runnerPath, entryPath, "agent", "--json"],
+    {
+      input: longMessage,
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim()), [
+    "agent",
+    "--json",
+    "--message",
+    longMessage,
+  ]);
+});
+
 test("classifies model catalog and invalid config failures accurately", () => {
   assert.equal(
     classifyOpenClawFailure("Unknown model genlink_text/gemini-3.5-flash"),
