@@ -498,6 +498,7 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
         OPENCLAW_STATE_DIR: getOpenClawStateDir(),
         GENLINK_OPENCLAW_TEXT_BASE_URL: baseUrl,
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,
+        ...(useStdinMessage ? { NODE_DISABLE_COMPILE_CACHE: "1" } : {}),
       },
       windowsHide: true,
       stdio: [useStdinMessage ? "pipe" : "ignore", "pipe", "pipe"],

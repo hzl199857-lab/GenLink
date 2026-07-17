@@ -127,6 +127,7 @@ test("streams long OpenClaw messages instead of placing them in Windows spawn ar
   const baseConfigPath = path.join(runtimeRoot, "openclaw-genlink.json");
   const longMessage = "rule-context\n".repeat(8_000);
   let spawnArgs: readonly string[] = [];
+  let spawnEnv: NodeJS.ProcessEnv | undefined;
   let stdinMessage = "";
 
   writeFileSync(entryPath, "");
@@ -140,8 +141,9 @@ test("streams long OpenClaw messages instead of placing them in Windows spawn ar
   process.env.OPENCLAW_WORKSPACE_DIR = path.join(runtimeRoot, "workspace");
   process.env.PLANF_RULES_ROOT = path.join(runtimeRoot, "rules");
 
-  spawnImplementation = ((_command, args) => {
+  spawnImplementation = ((_command, args, options) => {
     spawnArgs = Array.isArray(args) ? args : [];
+    spawnEnv = options?.env;
     const child = new EventEmitter() as ReturnType<typeof childProcess.spawn>;
     const stdin = new PassThrough();
     const stdout = new PassThrough();
@@ -169,6 +171,7 @@ test("streams long OpenClaw messages instead of placing them in Windows spawn ar
 
   assert.equal(spawnArgs.includes(longMessage), false);
   assert.match(spawnArgs[0] ?? "", /openclaw-stdin-runner\.mjs$/);
+  assert.equal(spawnEnv?.NODE_DISABLE_COMPILE_CACHE, "1");
   assert.equal(stdinMessage, longMessage);
 });
 
