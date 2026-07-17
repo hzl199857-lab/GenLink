@@ -112,6 +112,7 @@ import {
 import { hasBlockingAgentDecision } from '@/lib/agent-submit-state';
 import { applyImageGenerationActionOptionsToMaterializedNodes } from '@/lib/agent-node-preferences';
 import { decideAgentPhaseRoute } from '@/lib/openclaw/agent-phase-policy';
+import { reconcileOpenClawEcomPlanReferenceMode } from '@/lib/openclaw/ecom-plan-reference';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -3149,11 +3150,21 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       return;
     }
 
+    const planMessageForExecution = {
+      ...planMessage,
+      plan: reconcileOpenClawEcomPlanReferenceMode(
+        planMessage.plan,
+        planMessage.session,
+        planMessage.values,
+      ),
+    };
+
     setBusyMode('mcp');
     setMessages((current) => current.map((message) => (
       message.id === messageId && message.type === 'planf_ecom_plan'
         ? {
             ...message,
+            plan: planMessageForExecution.plan,
             status: 'submitted' as const,
             errorMessage: undefined,
             retryStage: undefined,
@@ -3161,16 +3172,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           }
         : message
     )));
-    void requestOpenClawPlanfEcomCreateWorkflow(planMessage, provider, model, projectId)
+    void requestOpenClawPlanfEcomCreateWorkflow(planMessageForExecution, provider, model, projectId)
       .then((result) => {
         const planAspectRatio = getPlanfEcomPreferredAspectRatio({
-          values: planMessage.values,
-          plan: planMessage.plan,
+          values: planMessageForExecution.values,
+          plan: planMessageForExecution.plan,
         });
         const mentionRestoredActions = restoreReferenceMentionLabelsInActions(
           result.actions,
-          planMessage.session.request,
-          planMessage.attachments,
+          planMessageForExecution.session.request,
+          planMessageForExecution.attachments,
         );
         const preferenceActions = mentionRestoredActions.map((action) => (
           action.type === 'create_image_generation_node'
@@ -3195,14 +3206,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         ));
         const executionActions = attachReferencesToImageActions(
           preferenceActions,
-          planMessage.attachments,
+          planMessageForExecution.attachments,
         );
         const preferenceNodes = applyImageGenerationActionOptionsToMaterializedNodes({
           nodes: result.nodes,
           actions: executionActions,
           nodeIdMap: result.nodeIdMap,
         });
-        const attachmentsForExecution = planMessage.attachments.map((attachment) => ({ ...attachment }));
+        const attachmentsForExecution = planMessageForExecution.attachments.map((attachment) => ({ ...attachment }));
         const executionResult = onConfirmPlan?.({
           actions: executionActions,
           nodes: preferenceNodes,
@@ -3223,7 +3234,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             role: 'agent',
             type: 'execution_plan',
             summary: result.summary,
-            userPrompt: planMessage.session.request,
+            userPrompt: planMessageForExecution.session.request,
             plan: result.plan,
             actions: executionActions,
             nodes: preferenceNodes,
@@ -3236,12 +3247,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
             groupId: executionResult.groupId,
             groupName: executionResult.groupName,
-            planfEcom: planMessage.plan.meta.anchorMode === 'white-bg-first'
+            planfEcom: planMessageForExecution.plan.meta.anchorMode === 'white-bg-first'
               ? {
                   phase: 'white-bg-anchor' as const,
-                  session: planMessage.session,
-                  values: planMessage.values,
-                  plan: planMessage.plan,
+                  session: planMessageForExecution.session,
+                  values: planMessageForExecution.values,
+                  plan: planMessageForExecution.plan,
                 }
               : undefined,
             status: executionResult.ok ? 'waiting_generation_confirmation' : 'error',
@@ -4371,12 +4382,17 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             }
 
             if (message.type === 'planf_ecom_plan') {
-              const protocolLabel = `creative-doc / ${message.plan.type}`;
+              const displayPlan = reconcileOpenClawEcomPlanReferenceMode(
+                message.plan,
+                message.session,
+                message.values,
+              );
+              const protocolLabel = `creative-doc / ${displayPlan.type}`;
               const summaryText = sanitizeAgentChatText(message.summary);
-              const checkpointPrompt = sanitizeAgentChatText(message.plan.checkpointPrompt);
+              const checkpointPrompt = sanitizeAgentChatText(displayPlan.checkpointPrompt);
               const imageSummary = getPlanfEcomImageSummary({
                 preference: resolvedImagePreference,
-                taskCount: message.plan.imageSlots.length,
+                taskCount: displayPlan.imageSlots.length,
               });
 
               return (
@@ -4396,7 +4412,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                             图片生成
                           </div>
                           <div className="mt-3 text-[16px] font-semibold text-white">
-                            生成 {message.plan.imageSlots.length} 张图片
+                            生成 {displayPlan.imageSlots.length} 张图片
                           </div>
                         </div>
                         <div className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-[#75e2b8]">
@@ -4404,19 +4420,19 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                           {getPlanfEcomPlanStatusLabel(message.status)}
                         </div>
                       </div>
-                      <div className="mt-3 text-sm font-semibold leading-6 text-white">{message.plan.title}</div>
+                      <div className="mt-3 text-sm font-semibold leading-6 text-white">{displayPlan.title}</div>
                       {summaryText ? (
                         <div className="mt-1 text-xs leading-5 text-white/54">{summaryText}</div>
                       ) : null}
 
-                      {message.plan.meta.extraConstraints ? (
+                      {displayPlan.meta.extraConstraints ? (
                         <div className="mt-3 rounded-md border border-white/10 bg-black/18 p-2 text-[11px] leading-5 text-white/48">
-                          {message.plan.meta.extraConstraints}
+                          {displayPlan.meta.extraConstraints}
                         </div>
                       ) : null}
 
                       <div className="mt-4 overflow-hidden rounded-[18px] bg-[#2a2b2e]">
-                        {message.plan.imageSlots.map((slot, slotIndex) => {
+                        {displayPlan.imageSlots.map((slot, slotIndex) => {
                           const slotKey = getPlanfEcomSlotKey({
                             messageId: message.id,
                             slotId: slot.index,
@@ -4483,7 +4499,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       {checkpointPrompt ? (
                         <div className="mt-4 text-xs font-medium text-white/62">{checkpointPrompt}</div>
                       ) : null}
-                      {message.plan.meta.anchorMode === 'white-bg-first' ? (
+                      {displayPlan.meta.anchorMode === 'white-bg-first' ? (
                         <div className="mt-2 rounded-md border border-[#ffc36a]/20 bg-[#ffc36a]/10 p-2 text-[11px] leading-5 text-[#ffd89b]">
                           当前没有产品参考图。按规则本轮只创建 #1 主锚白底图；主锚生成完成并确认后，下一轮再扇出其余图片。
                         </div>
@@ -4491,10 +4507,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       <div
                         className={[
                           'mt-3 flex gap-2',
-                          message.plan.options.length > 2 ? 'flex-col items-start' : 'flex-wrap',
+                          displayPlan.options.length > 2 ? 'flex-col items-start' : 'flex-wrap',
                         ].join(' ')}
                       >
-                        {message.plan.options.map((option) => (
+                        {displayPlan.options.map((option) => (
                           <button
                             key={option.id}
                             type="button"
@@ -4513,7 +4529,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                               }
                             }}
                           >
-                            {option.id}. {option.id === 'A' && message.plan.meta.anchorMode === 'white-bg-first'
+                            {option.id}. {option.id === 'A' && displayPlan.meta.anchorMode === 'white-bg-first'
                               ? '确认编排，先创建主锚白底'
                               : option.label}
                           </button>

@@ -5,6 +5,7 @@ import type {
   OpenClawPlanfEcomConfirmResult,
   OpenClawPlanfEcomImagePlan,
 } from "./planf-ecom-session";
+import { reconcileOpenClawEcomPlanReferenceMode } from "./ecom-plan-reference";
 
 type EcomProtocolInput = OpenClawPlanfEcomConfirmInput & {
   plan?: OpenClawPlanfEcomImagePlan;
@@ -522,10 +523,14 @@ export function buildOpenClawEcomWorkflowMessage(input: EcomProtocolInput): stri
 export function parseOpenClawEcomCreativeDoc(
   text: string,
   values?: OpenClawPlanfEcomConfirmInput["values"],
+  session?: OpenClawPlanfEcomConfirmInput["session"],
 ): OpenClawPlanfEcomConfirmResult {
   const fenced = extractFence(text, "creative-doc");
   const raw = fenced ? parseJson(fenced) : extractJsonObject(text);
-  const plan = normalizeOpenClawEcomCreativeDoc(raw);
+  const normalizedPlan = normalizeOpenClawEcomCreativeDoc(raw);
+  const plan = session
+    ? reconcileOpenClawEcomPlanReferenceMode(normalizedPlan, session, values)
+    : normalizedPlan;
 
   return {
     ok: true,

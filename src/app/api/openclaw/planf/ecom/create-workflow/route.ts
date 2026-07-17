@@ -13,6 +13,7 @@ import {
   buildOpenClawEcomWorkflowMessage,
   parseOpenClawEcomWorkflow,
 } from "@/lib/openclaw/ecom-protocol";
+import { reconcileOpenClawEcomPlanReferenceMode } from "@/lib/openclaw/ecom-plan-reference";
 import {
   AgentModelCompatibilityError,
   mapAgentPanelModelToOpenClaw,
@@ -354,7 +355,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as CreateWorkflowRequestBody;
     const session = parseSession(body.session);
     const values = parseValues(body.values);
-    const plan = parsePlan(body.plan);
+    const parsedPlan = parsePlan(body.plan);
     const anchor = parseAnchor(body.anchor);
     const references = parseReferences(body.references);
     const projectId = typeof body.projectId === "string" && body.projectId.trim()
@@ -364,9 +365,11 @@ export async function POST(request: Request) {
       ? body.canvasId.trim()
       : "default";
 
-    if (!session || !values || !plan) {
+    if (!session || !values || !parsedPlan) {
       return errorJson("session, values, and confirmed plan are required", 400, "parse_request");
     }
+
+    const plan = reconcileOpenClawEcomPlanReferenceMode(parsedPlan, session, values);
 
     if (!shouldUseRealOpenClawRuntime()) {
       return errorJson("OPENCLAW_REAL_RUNTIME=0 disables the real OpenClaw runtime.", 502, "generate_workflow");

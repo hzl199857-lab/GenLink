@@ -137,7 +137,7 @@ export async function POST(request: Request) {
           apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
         });
 
-        return parseOpenClawEcomCreativeDoc(real.text, values);
+        return parseOpenClawEcomCreativeDoc(real.text, values, session);
       } catch (error) {
         if (
           error instanceof AgentModelCompatibilityError ||

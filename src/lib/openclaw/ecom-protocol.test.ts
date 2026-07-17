@@ -112,6 +112,88 @@ test("parses OpenClaw creative-doc into the ecom plan shape", () => {
   assert.equal(parsed.values.productName, values.productName);
 });
 
+test("keeps session reference state authoritative over the model plan", () => {
+  const modelPlan = {
+    type: "ecom-image-plan",
+    title: "UGC image set",
+    domain: "ecom-image",
+    phase: 1,
+    totalPhases: 2,
+    checkpoint: true,
+    checkpointPrompt: "Create a white background anchor first",
+    meta: {
+      productName: "Sunglasses",
+      category: "accessories",
+      platform: "taobao",
+      imageSet: "full-set",
+      anchorMode: "white-bg-first",
+      amazonMode: false,
+      mainRatio: "1:1",
+      totalImages: 2,
+      deliveryRounds: 2,
+      styleMode: "ugc",
+      extraConstraints: "No product reference was uploaded",
+    },
+    imageSlots: [
+      {
+        index: 1,
+        slot: "white background",
+        round: 1,
+        subType: "text-image",
+        anchorSource: "independent generation",
+        ratio: "1:1",
+        intent: "show the product",
+      },
+      {
+        index: 2,
+        slot: "street snapshot",
+        round: 2,
+        subType: "image-image",
+        anchorSource: "white background anchor",
+        ratio: "1:1",
+        intent: "UGC street photo",
+      },
+    ],
+    options: [{ id: "A", label: "confirm" }],
+  };
+
+  const parsed = parseOpenClawEcomCreativeDoc(
+    JSON.stringify(modelPlan),
+    { ...values, productName: "Sunglasses", styleMode: "ugc" },
+    session,
+  );
+
+  assert.equal(parsed.plan.meta.anchorMode, "user-upload");
+  assert.equal(parsed.plan.meta.deliveryRounds, 1);
+  assert.deepEqual(parsed.plan.imageSlots.map((slot) => slot.subType), [
+    "image-image",
+    "image-image",
+  ]);
+  assert.deepEqual(parsed.plan.imageSlots.map((slot) => slot.round), [1, 1]);
+  assert.match(parsed.plan.checkpointPrompt, /user-upload/);
+
+  const noReferenceParsed = parseOpenClawEcomCreativeDoc(
+    JSON.stringify({
+      ...modelPlan,
+      meta: {
+        ...modelPlan.meta,
+        anchorMode: "user-upload",
+        deliveryRounds: 1,
+      },
+    }),
+    { ...values, productName: "Sunglasses", styleMode: "ugc" },
+    { ...session, referenceImageCount: 0 },
+  );
+
+  assert.equal(noReferenceParsed.plan.meta.anchorMode, "white-bg-first");
+  assert.equal(noReferenceParsed.plan.meta.deliveryRounds, 2);
+  assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.subType), [
+    "text-image",
+    "image-image",
+  ]);
+  assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.round), [1, 2]);
+});
+
 test("normalizes ecommerce creative-doc domain aliases", () => {
   const plan = {
     type: "ecom-image-plan",

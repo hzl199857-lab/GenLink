@@ -59,3 +59,17 @@ test("all ecommerce stages inject allowlisted rule contents before calling the m
     assert.doesNotMatch(source, /Read the current OpenClaw workspace rules/);
   }
 });
+
+test("confirm and workflow routes enforce session reference state over model output", () => {
+  const confirmSource = readFileSync(
+    new URL("../../app/api/openclaw/planf/ecom/confirm/route.ts", import.meta.url),
+    "utf8",
+  );
+  const workflowSource = readFileSync(
+    new URL("../../app/api/openclaw/planf/ecom/create-workflow/route.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(confirmSource, /parseOpenClawEcomCreativeDoc\(real\.text, values, session\)/);
+  assert.match(workflowSource, /reconcileOpenClawEcomPlanReferenceMode\(parsedPlan, session, values\)/);
+});
