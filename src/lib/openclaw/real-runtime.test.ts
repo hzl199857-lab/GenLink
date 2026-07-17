@@ -114,6 +114,7 @@ test("uses the generated OpenClaw config without persisting the request API key"
 
   assert.equal(result.text, "ok");
   assert.notEqual(childEnv?.OPENCLAW_CONFIG_PATH, baseConfigPath);
+  assert.equal(childEnv?.OPENCLAW_NO_RESPAWN, undefined);
   assert.match(childEnv?.OPENCLAW_CONFIG_PATH ?? "", /openclaw-agent\.generated\.json$/);
   assert.doesNotMatch(
     readFileSync(childEnv?.OPENCLAW_CONFIG_PATH ?? "", "utf8"),
@@ -172,6 +173,7 @@ test("streams long OpenClaw messages instead of placing them in Windows spawn ar
   assert.equal(spawnArgs.includes(longMessage), false);
   assert.match(spawnArgs[0] ?? "", /openclaw-stdin-runner\.mjs$/);
   assert.equal(spawnEnv?.NODE_DISABLE_COMPILE_CACHE, "1");
+  assert.equal(spawnEnv?.OPENCLAW_NO_RESPAWN, "1");
   assert.equal(stdinMessage, longMessage);
 });
 
