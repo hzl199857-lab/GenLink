@@ -14,6 +14,7 @@ import {
   parseOpenClawEcomWorkflow,
 } from "@/lib/openclaw/ecom-protocol";
 import { reconcileOpenClawEcomPlanReferenceMode } from "@/lib/openclaw/ecom-plan-reference";
+import { bindUploadedReferencesToEcomWorkflow } from "@/lib/openclaw/ecom-workflow-reference";
 import {
   AgentModelCompatibilityError,
   mapAgentPanelModelToOpenClaw,
@@ -371,6 +372,14 @@ export async function POST(request: Request) {
 
     const plan = reconcileOpenClawEcomPlanReferenceMode(parsedPlan, session, values);
 
+    if (plan.meta.anchorMode === "user-upload" && references.length === 0) {
+      return errorJson(
+        "Uploaded reference image is missing its canvas source node id.",
+        400,
+        "parse_request",
+      );
+    }
+
     if (!shouldUseRealOpenClawRuntime()) {
       return errorJson("OPENCLAW_REAL_RUNTIME=0 disables the real OpenClaw runtime.", 502, "generate_workflow");
     }
@@ -388,9 +397,15 @@ export async function POST(request: Request) {
       model: typeof body.model === "string" ? body.model : undefined,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
     });
+    const resolvedWorkflow = plan.meta.anchorMode === "user-upload"
+      ? bindUploadedReferencesToEcomWorkflow(
+          workflow ?? localResponse.workflow,
+          references.map((reference) => reference.sourceNodeId),
+        )
+      : workflow ?? localResponse.workflow;
     const response = {
       ...localResponse,
-      workflow: workflow ?? localResponse.workflow,
+      workflow: resolvedWorkflow,
     };
 
     const mcp = createOpenClawMcpClient({

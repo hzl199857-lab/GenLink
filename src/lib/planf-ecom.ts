@@ -172,6 +172,7 @@ const PACKAGE_ROLE_LABELS: Record<PlanfEcomPackageMode, string[]> = {
     "Comparison 图，英文卖点对比和套装价值",
   ],
   "ugc-lifestyle": [
+    "白底标准主图，完整展示产品外观并锁定后续 UGC 图的产品身份",
     "素人手持/开箱图，真实 iPhone 随拍质感",
     "生活场景使用图，弱摆拍、强真实",
     "细节近拍图，保留手机摄影质感",

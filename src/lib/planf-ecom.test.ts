@@ -93,6 +93,20 @@ test("expands the full-set preset into eight image generation nodes", () => {
   assert.match(String(imageNodes[7].data.prompt), /第8张/);
 });
 
+test("expands the UGC preset into one white-background image and five lifestyle images", () => {
+  const workflow = buildPlanfEcomWorkflow({
+    request: "Create a UGC sunglasses image set",
+    styleMode: "ugc",
+    packageMode: "ugc-lifestyle",
+  });
+  const imageNodes = workflow.nodes.filter((node) => node.type === "image_generation");
+
+  assert.equal(imageNodes.length, 6);
+  assert.equal(imageNodes[0]?.data.packageIndex, 1);
+  assert.equal(imageNodes[0]?.data.packageTotal, 6);
+  assert.match(String(imageNodes[0]?.data.packageRole), /白底标准主图/);
+});
+
 test("converts a GL workflow-json into GenLink canvas agent actions", () => {
   const workflow = buildPlanfEcomWorkflow({
     request: "做一张淘宝夏季连衣裙主图",

@@ -41,7 +41,6 @@ const OPENCLAW_ROOT_FILES = [
 ] as const;
 
 const WORKFLOW_FILES = [
-  "TOOLS.md",
   "skills/_shared/self-check.md",
   "skills/engineer/SKILL.md",
   "skills/engineer/validation.md",
@@ -82,7 +81,7 @@ test("injects ecommerce rules without repeating OpenClaw root bootstrap files", 
   }
   assert.match(message, /sha256="[a-f0-9]{64}"/);
   assert.ok(message.indexOf("content:skills/ecom-image/SKILL.md") < message.indexOf("MODEL_TASK"));
-  assert.match(message, /OpenClaw already loaded the workspace root rules AGENTS\.md, BOOTSTRAP\.md, and IDENTITY\.md/);
+  assert.match(message, /OpenClaw already loaded the workspace root context AGENTS\.md, TOOLS\.md, and IDENTITY\.md/);
   assert.match(message, /Do not call file, shell, or tool APIs/);
 });
 
@@ -116,7 +115,7 @@ test("loads only the ecommerce reference required by the selected preset", async
   assert.doesNotMatch(detailMessage, /fashion-stylist\.md/);
 });
 
-test("injects workflow protocol, self-check, and engineer validation rules", async () => {
+test("injects only workflow assembly rules after the creative plan is confirmed", async () => {
   const rulesRoot = createRulesRoot([
     ...WORKFLOW_FILES,
     "skills/ecom-image/references/fashion-stylist.md",
@@ -132,7 +131,11 @@ test("injects workflow protocol, self-check, and engineer validation rules", asy
   for (const relativePath of WORKFLOW_FILES) {
     assert.match(message, new RegExp(`content:${relativePath.replaceAll("/", "\\/")}`));
   }
-  assert.match(message, /content:skills\/ecom-image\/references\/fashion-stylist\.md/);
+  for (const relativePath of BASE_FILES) {
+    assert.doesNotMatch(message, new RegExp(`path="${relativePath.replaceAll("/", "\\/")}"`));
+  }
+  assert.doesNotMatch(message, /fashion-stylist\.md/);
+  assert.doesNotMatch(message, /path="TOOLS\.md"/);
 });
 
 test("fails before the model call when an allowlisted rule is missing or empty", async () => {

@@ -20,7 +20,6 @@ const BASE_RULE_FILES = [
 ] as const;
 
 const WORKFLOW_RULE_FILES = [
-  "TOOLS.md",
   "skills/_shared/self-check.md",
   "skills/engineer/SKILL.md",
   "skills/engineer/validation.md",
@@ -42,24 +41,22 @@ function isDetailRulesRequest(input: BuildPlanfEcomRulesMessageInput): boolean {
 }
 
 function selectRuleFiles(input: BuildPlanfEcomRulesMessageInput): string[] {
-  const selected: string[] = [...BASE_RULE_FILES];
+  const selected: string[] = input.stage === "workflow"
+    ? [...WORKFLOW_RULE_FILES]
+    : [...BASE_RULE_FILES];
 
-  if (input.preset === "ugc-lifestyle" || input.styleMode === "ugc") {
+  if (input.stage !== "workflow" && (input.preset === "ugc-lifestyle" || input.styleMode === "ugc")) {
     selected.push("skills/ecom-image/references/ugc-style.md");
   }
-  if (input.preset === "editorial-stylist" || input.styleMode === "stylist") {
+  if (input.stage !== "workflow" && (input.preset === "editorial-stylist" || input.styleMode === "stylist")) {
     selected.push("skills/ecom-image/references/fashion-stylist.md");
   }
-  if (isDetailRulesRequest(input)) {
+  if (input.stage !== "workflow" && isDetailRulesRequest(input)) {
     selected.push("skills/ecom-image/references/detail-page-sop.md");
   }
   if (input.stage === "confirm") {
     selected.push("skills/_shared/self-check.md");
   }
-  if (input.stage === "workflow") {
-    selected.push(...WORKFLOW_RULE_FILES);
-  }
-
   return Array.from(new Set(selected));
 }
 
@@ -104,7 +101,7 @@ export async function buildPlanfEcomRulesMessage(
   );
   const context = [
     '<genlink_rules_context version="1">',
-    "OpenClaw already loaded the workspace root rules AGENTS.md, BOOTSTRAP.md, and IDENTITY.md.",
+    "OpenClaw already loaded the workspace root context AGENTS.md, TOOLS.md, and IDENTITY.md. The staged task message provides the required protocol directly, so BOOTSTRAP.md is not repeated.",
     "GenLink loaded the following additional exact allowlisted rule files before this model call.",
     "Treat their contents as authoritative for the task below.",
     "Do not call file, shell, or tool APIs. Do not claim that any unlisted file was loaded.",
