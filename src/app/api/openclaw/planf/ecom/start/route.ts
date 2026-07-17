@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth-guard";
 
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
+import { mergeEcomRuntimeFormFields } from "@/lib/openclaw/ecom-form-defaults";
 import {
   AgentModelCompatibilityError,
   mapAgentPanelModelToOpenClaw,
@@ -92,19 +93,11 @@ function applyRuntimeFormFields(
   session: OpenClawPlanfEcomSession,
   fields: OpenClawPlanfEcomSession["fields"],
 ): void {
-  const productField = fields.find((field) => field.id === "productName");
-  const fallbackProductField = session.fields.find((field) => (
-    field.id === "productName" && field.type === "text"
-  ));
-  const fallbackProductValue = typeof fallbackProductField?.value === "string"
-    ? fallbackProductField.value
-    : "";
-
-  if (productField?.type === "text") {
-    productField.value = fallbackProductValue;
-  }
-
-  session.fields = fields;
+  session.fields = mergeEcomRuntimeFormFields({
+    request: session.request,
+    defaultFields: session.fields,
+    runtimeFields: fields,
+  });
   session.message = "GenLink 已按规则库生成表单。请补齐这些参数，提交后进入电商图编排与画布工作流创建。";
   session.protocol = {
     name: "form-fields",

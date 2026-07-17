@@ -15,6 +15,7 @@ import {
 } from "@/lib/openclaw/ecom-protocol";
 import { reconcileOpenClawEcomPlanReferenceMode } from "@/lib/openclaw/ecom-plan-reference";
 import { bindUploadedReferencesToEcomWorkflow } from "@/lib/openclaw/ecom-workflow-reference";
+import { validateEcomWorkflowMatchesPlan } from "@/lib/openclaw/ecom-workflow-contract";
 import {
   AgentModelCompatibilityError,
   mapAgentPanelModelToOpenClaw,
@@ -226,6 +227,8 @@ function getAllowedExistingSourceIds(input: {
 function parseAndValidateOpenClawWorkflow(input: {
   text: string;
   allowedExistingSourceIds: string[];
+  plan: NonNullable<ReturnType<typeof parsePlan>>;
+  hasConfirmedAnchor: boolean;
 }): GLWorkflow {
   const workflow = parseOpenClawEcomWorkflow(input.text);
   const validation = validateGLWorkflowForCanvas(workflow, {
@@ -236,12 +239,24 @@ function parseAndValidateOpenClawWorkflow(input: {
     throw new Error(validation.error);
   }
 
+  const contractValidation = validateEcomWorkflowMatchesPlan({
+    workflow,
+    plan: input.plan,
+    hasConfirmedAnchor: input.hasConfirmedAnchor,
+  });
+
+  if (!contractValidation.ok) {
+    throw new Error(contractValidation.error);
+  }
+
   return workflow;
 }
 
 async function tryRunOpenClawWorkflow(input: Parameters<typeof runOpenClawWorkflow>[0]) {
   try {
-    return await runOpenClawWorkflow(input);
+    return {
+      workflow: await runOpenClawWorkflow(input),
+    };
   } catch (error) {
     if (
       error instanceof AgentModelCompatibilityError ||
@@ -253,7 +268,9 @@ async function tryRunOpenClawWorkflow(input: Parameters<typeof runOpenClawWorkfl
 
     console.warn("[openclaw/planf/ecom/create-workflow] using local workflow fallback", error);
 
-    return undefined;
+    return {
+      fallbackReason: error instanceof Error ? error.message : "workflow generation failed",
+    };
   }
 }
 
@@ -301,6 +318,8 @@ async function runOpenClawWorkflow(input: {
     return parseAndValidateOpenClawWorkflow({
       text: first.text,
       allowedExistingSourceIds,
+      plan: input.plan,
+      hasConfirmedAnchor: Boolean(input.anchor),
     });
   } catch (error) {
     const firstMessage = error instanceof Error ? error.message : "workflow validation failed";
@@ -331,6 +350,8 @@ async function runOpenClawWorkflow(input: {
       return parseAndValidateOpenClawWorkflow({
         text: repaired.text,
         allowedExistingSourceIds,
+        plan: input.plan,
+        hasConfirmedAnchor: Boolean(input.anchor),
       });
     } catch (repairError) {
       const repairMessage = repairError instanceof Error ? repairError.message : "workflow repair parse failed";
@@ -387,7 +408,7 @@ export async function POST(request: Request) {
     const localResponse = anchor
       ? createPlanfEcomWorkflowFromAnchor({ session, values, anchor })
       : createPlanfEcomWorkflowFromPlan({ session, values });
-    const workflow = await tryRunOpenClawWorkflow({
+    const workflowResult = await tryRunOpenClawWorkflow({
       session,
       values,
       plan,
@@ -397,15 +418,26 @@ export async function POST(request: Request) {
       model: typeof body.model === "string" ? body.model : undefined,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
     });
-    const resolvedWorkflow = plan.meta.anchorMode === "user-upload"
-      ? bindUploadedReferencesToEcomWorkflow(
-          workflow ?? localResponse.workflow,
-          references.map((reference) => reference.sourceNodeId),
-        )
-      : workflow ?? localResponse.workflow;
+    const workflow = workflowResult.workflow;
+    const baseWorkflow = workflow ?? localResponse.workflow;
+    const referenceSourceNodeIds = plan.meta.anchorMode === "user-upload"
+      ? references.map((reference) => reference.sourceNodeId)
+      : anchor ? [anchor.nodeId] : [];
+    const resolvedWorkflow = referenceSourceNodeIds.length > 0
+      ? bindUploadedReferencesToEcomWorkflow(baseWorkflow, referenceSourceNodeIds)
+      : baseWorkflow;
     const response = {
       ...localResponse,
+      summary: workflow
+        ? localResponse.summary
+        : "模型工作流未通过规则校验，已按 GenLink 规则创建本地标准工作流。",
       workflow: resolvedWorkflow,
+      meta: {
+        usedModel: Boolean(workflow),
+        usedFallback: !workflow,
+        model: typeof body.model === "string" ? body.model : undefined,
+        fallbackReason: workflowResult.fallbackReason,
+      },
     };
 
     const mcp = createOpenClawMcpClient({

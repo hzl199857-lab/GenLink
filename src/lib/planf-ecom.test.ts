@@ -104,7 +104,35 @@ test("expands the UGC preset into one white-background image and five lifestyle 
   assert.equal(imageNodes.length, 6);
   assert.equal(imageNodes[0]?.data.packageIndex, 1);
   assert.equal(imageNodes[0]?.data.packageTotal, 6);
-  assert.match(String(imageNodes[0]?.data.packageRole), /白底标准主图/);
+  assert.match(String(imageNodes[0]?.data.packageRole), /白底图/);
+});
+
+test("uses the rules-library automatic ratio for Rednote UGC images", () => {
+  const workflow = buildPlanfEcomWorkflow({
+    request: "Create a UGC sunglasses image set",
+    platform: "xiaohongshu",
+    styleMode: "ugc",
+    packageMode: "ugc-lifestyle",
+  });
+  const imageNodes = workflow.nodes.filter((node) => node.type === "image_generation");
+
+  assert.ok(imageNodes.every((node) => node.data.aspectRatio === "3:4"));
+});
+
+test("uses seven Amazon images and six stylist images", () => {
+  const amazon = buildPlanfEcomWorkflow({
+    request: "Create an Amazon listing image set",
+    platform: "amazon",
+    packageMode: "amazon-adapter",
+  });
+  const stylist = buildPlanfEcomWorkflow({
+    request: "Create an editorial stylist image set",
+    packageMode: "editorial-stylist",
+    styleMode: "stylist",
+  });
+
+  assert.equal(amazon.nodes.filter((node) => node.type === "image_generation").length, 7);
+  assert.equal(stylist.nodes.filter((node) => node.type === "image_generation").length, 6);
 });
 
 test("converts a GL workflow-json into GenLink canvas agent actions", () => {

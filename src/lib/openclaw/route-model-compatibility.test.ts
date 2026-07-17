@@ -74,4 +74,6 @@ test("confirm and workflow routes enforce session reference state over model out
   assert.match(workflowSource, /reconcileOpenClawEcomPlanReferenceMode\(parsedPlan, session, values\)/);
   assert.match(workflowSource, /bindUploadedReferencesToEcomWorkflow/);
   assert.match(workflowSource, /references\.map\(\(reference\) => reference\.sourceNodeId\)/);
+  assert.match(workflowSource, /validateEcomWorkflowMatchesPlan/);
+  assert.match(workflowSource, /anchor \? \[anchor\.nodeId\] : \[\]/);
 });

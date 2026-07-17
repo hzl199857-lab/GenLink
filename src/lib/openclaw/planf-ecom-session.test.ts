@@ -123,6 +123,69 @@ test("confirms an ecomImageTrack session into a full-set workflow", () => {
   assert.equal("actions" in result, false);
 });
 
+test("uses the canonical count and automatic ratios for every ecommerce preset", () => {
+  const cases = [
+    {
+      preset: "full-set-8" as const,
+      platform: "taobao",
+      expectedCount: 8,
+      expectedRatios: ["1:1"],
+    },
+    {
+      preset: "detail-page-pack" as const,
+      platform: "taobao",
+      expectedCount: 5,
+      expectedRatios: ["3:4", "3:4", "3:4", "1:1", "4:5"],
+    },
+    {
+      preset: "amazon-adapter" as const,
+      platform: "amazon",
+      expectedCount: 7,
+      expectedRatios: ["1:1"],
+    },
+    {
+      preset: "ugc-lifestyle" as const,
+      platform: "xiaohongshu",
+      expectedCount: 6,
+      expectedRatios: ["3:4"],
+    },
+    {
+      preset: "editorial-stylist" as const,
+      platform: "general",
+      expectedCount: 6,
+      expectedRatios: ["1:1"],
+    },
+  ];
+
+  for (const item of cases) {
+    const session = startPlanfEcomSession({
+      request: `Create ${item.preset} ecommerce images, product: sunglasses`,
+      preset: item.preset,
+      referenceImageCount: 1,
+    });
+    const result = confirmPlanfEcomSession({
+      session,
+      values: {
+        productName: "sunglasses",
+        platform: item.platform,
+        imageSet: item.preset === "detail-page-pack" ? "detail" : "full-set",
+        styleMode: item.preset === "ugc-lifestyle"
+          ? "ugc"
+          : item.preset === "editorial-stylist" ? "stylist" : "default",
+      },
+    });
+
+    assert.equal(result.plan.meta.totalImages, item.expectedCount, item.preset);
+    assert.equal(result.plan.imageSlots.length, item.expectedCount, item.preset);
+    const ratios = result.plan.imageSlots.map((slot) => slot.ratio);
+    assert.deepEqual(
+      item.expectedRatios.length === 1 ? Array.from(new Set(ratios)) : ratios,
+      item.expectedRatios,
+      item.preset,
+    );
+  }
+});
+
 test("creates only a white-bg anchor workflow first when no product reference exists", () => {
   const session = startPlanfEcomSession({
     request: "帮我做一套电商主图（8图标准），产品是：SONY便携式音箱",
@@ -191,4 +254,31 @@ test("fans out remaining full-set images from the confirmed white-bg anchor", ()
 
     return imageActions.some((imageAction) => imageAction.clientActionId === targetClientActionId);
   }));
+});
+
+test("fans out all five detail modules because the white-background anchor is not a detail module", () => {
+  const session = startPlanfEcomSession({
+    request: "Create a five-module product detail page, product: sunglasses",
+    preset: "detail-page-pack",
+    referenceImageCount: 0,
+  });
+  const values = {
+    productName: "sunglasses",
+    platform: "taobao",
+    imageSet: "detail",
+    styleMode: "default",
+  };
+  const workflow = createPlanfEcomWorkflowFromAnchor({
+    session,
+    values,
+    anchor: {
+      nodeId: "node-detail-anchor",
+      outputUrl: "https://assets.example.com/detail-anchor.png",
+    },
+  });
+  const imageActions = workflow.actions.filter((action) => action.type === "create_image_generation_node");
+  const ratios = imageActions.map((action) => action.options?.aspectRatio);
+
+  assert.equal(imageActions.length, 5);
+  assert.deepEqual(ratios, ["3:4", "3:4", "3:4", "1:1", "4:5"]);
 });

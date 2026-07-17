@@ -93,6 +93,10 @@ import {
 } from '@/lib/agent-chat-display';
 import { getAgentCanvasNodeChips } from '@/lib/agent-canvas-node-chips';
 import {
+  getEcomFanoutImageCount,
+  resolveEcomDeliverySpec,
+} from '@/lib/ecom-delivery-spec';
+import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_FLOATING_INSET,
   AGENT_PANEL_WIDTH_STORAGE_KEY,
@@ -194,13 +198,13 @@ const PLANF_ECOM_PRESETS: Array<{
   {
     id: 'ugc-lifestyle',
     label: '生活化上身',
-    prompt: '帮我做一组 UGC 生活化上身图（素人 + iPhone 美学 + 5张差异化构图），产品是：',
+    prompt: '帮我做一组 UGC 生活化上身图（1张白底主图 + 5张素人 iPhone 美学差异化构图，共6张），产品是：',
     routeMode: 'ugc',
   },
   {
     id: 'editorial-stylist',
     label: '造型大片',
-    prompt: '帮我做一组高转化模特图（5 Archetype + Muse Profile + Editorial 大片），产品是：',
+    prompt: '帮我做一组高转化模特图（1张白底主图 + 5 Archetype 编辑大片，共6张），产品是：',
     routeMode: 'stylist',
   },
   {
@@ -308,6 +312,7 @@ type PlanfEcomWorkflowApiResponse =
       edges?: CanvasEdge[];
       nodeIdMap?: Record<string, string>;
       edgeIdMap?: Record<string, string>;
+      meta?: AgentRunMeta;
       mcp?: {
         toolName: CanvasAgentToolName;
         auditId?: string;
@@ -748,9 +753,11 @@ function createPlanfEcomPanelResult(
       },
     ],
     meta: {
-      usedModel: true,
-      usedFallback: false,
-      model: 'planf-ecom',
+      ...(response.meta ?? {
+        usedModel: true,
+        usedFallback: false,
+        model: 'planf-ecom',
+      }),
     },
   };
 }
@@ -1189,23 +1196,14 @@ function getPlanfFanoutRemainingCount(
     return 0;
   }
 
-  if (planfEcom.values.imageSet === 'main') {
-    return 0;
-  }
+  const spec = resolveEcomDeliverySpec({
+    preset: planfEcom.session.preset,
+    imageSet: String(planfEcom.values.imageSet || planfEcom.plan.meta.imageSet || ''),
+    styleMode: String(planfEcom.values.styleMode || planfEcom.plan.meta.styleMode || ''),
+    platform: String(planfEcom.values.platform || planfEcom.plan.meta.platform || ''),
+  });
 
-  const totalByPreset: Record<PlanfEcomPresetId, number> = {
-    'full-set-8': 8,
-    'detail-page-pack': 5,
-    'amazon-adapter': 6,
-    'ugc-lifestyle': 5,
-    'editorial-stylist': 5,
-    [ECOM_PLANNER_PRESET_ID]: 0,
-  };
-  const total = planfEcom.values.imageSet === 'detail'
-    ? 5
-    : totalByPreset[planfEcom.session.preset as PlanfEcomPresetId] ?? 8;
-
-  return Math.max(0, total - 1);
+  return getEcomFanoutImageCount(spec);
 }
 
 function getPlanfSessionValues(session: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session']) {
@@ -1241,27 +1239,11 @@ function getPlanfEcomPreferredAspectRatio(input: {
   values: Record<string, unknown>;
   plan: Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>['plan'];
 }): string | undefined {
-  const styleMode = String(input.values.styleMode || input.plan.meta.styleMode || '').toLowerCase();
-  const platform = String(input.values.platform || input.plan.meta.platform || '').toLowerCase();
-  const imageSet = String(input.values.imageSet || input.plan.meta.imageSet || '').toLowerCase();
-
-  if (imageSet === 'main') {
-    return '1:1';
-  }
-
-  if (
-    styleMode === 'ugc' &&
-    (
-      platform === 'rednote' ||
-      platform === 'xiaohongshu' ||
-      platform.includes('小红书') ||
-      platform.includes('rednote')
-    )
-  ) {
-    return '3:4';
-  }
-
-  return '1:1';
+  return resolveEcomDeliverySpec({
+    imageSet: String(input.values.imageSet || input.plan.meta.imageSet || ''),
+    styleMode: String(input.values.styleMode || input.plan.meta.styleMode || ''),
+    platform: String(input.values.platform || input.plan.meta.platform || ''),
+  }).primaryRatio;
 }
 
 function resolveAgentActionAspectRatio(params: {

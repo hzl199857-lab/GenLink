@@ -159,17 +159,18 @@ test("keeps session reference state authoritative over the model plan", () => {
 
   const parsed = parseOpenClawEcomCreativeDoc(
     JSON.stringify(modelPlan),
-    { ...values, productName: "Sunglasses", styleMode: "ugc" },
+    { ...values, productName: "Sunglasses", platform: "xiaohongshu", styleMode: "ugc" },
     session,
   );
 
   assert.equal(parsed.plan.meta.anchorMode, "user-upload");
   assert.equal(parsed.plan.meta.deliveryRounds, 1);
-  assert.deepEqual(parsed.plan.imageSlots.map((slot) => slot.subType), [
-    "image-image",
-    "image-image",
-  ]);
-  assert.deepEqual(parsed.plan.imageSlots.map((slot) => slot.round), [1, 1]);
+  assert.equal(parsed.plan.meta.totalImages, 6);
+  assert.equal(parsed.plan.meta.platform, "小红书");
+  assert.equal(parsed.plan.imageSlots.length, 6);
+  assert.ok(parsed.plan.imageSlots.every((slot) => slot.subType === "image-image"));
+  assert.ok(parsed.plan.imageSlots.every((slot) => slot.round === 1));
+  assert.ok(parsed.plan.imageSlots.every((slot) => slot.ratio === "3:4"));
   assert.match(parsed.plan.checkpointPrompt, /user-upload/);
 
   const noReferenceParsed = parseOpenClawEcomCreativeDoc(
@@ -181,17 +182,22 @@ test("keeps session reference state authoritative over the model plan", () => {
         deliveryRounds: 1,
       },
     }),
-    { ...values, productName: "Sunglasses", styleMode: "ugc" },
+    { ...values, productName: "Sunglasses", platform: "xiaohongshu", styleMode: "ugc" },
     { ...session, referenceImageCount: 0 },
   );
 
   assert.equal(noReferenceParsed.plan.meta.anchorMode, "white-bg-first");
   assert.equal(noReferenceParsed.plan.meta.deliveryRounds, 2);
+  assert.equal(noReferenceParsed.plan.imageSlots.length, 6);
   assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.subType), [
     "text-image",
     "image-image",
+    "image-image",
+    "image-image",
+    "image-image",
+    "image-image",
   ]);
-  assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.round), [1, 2]);
+  assert.deepEqual(noReferenceParsed.plan.imageSlots.map((slot) => slot.round), [1, 2, 2, 2, 2, 2]);
 });
 
 test("normalizes ecommerce creative-doc domain aliases", () => {

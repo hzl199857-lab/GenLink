@@ -22,6 +22,12 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 
 const { buildPlanfEcomWorkflow } = require("../planf-ecom.ts") as typeof import("../planf-ecom");
 const { bindUploadedReferencesToEcomWorkflow } = require("./ecom-workflow-reference.ts") as typeof import("./ecom-workflow-reference");
+const {
+  confirmPlanfEcomSession,
+  createPlanfEcomWorkflowFromPlan,
+  startPlanfEcomSession,
+} = require("./planf-ecom-session.ts") as typeof import("./planf-ecom-session");
+const { validateEcomWorkflowMatchesPlan } = require("./ecom-workflow-contract.ts") as typeof import("./ecom-workflow-contract");
 
 describe("bindUploadedReferencesToEcomWorkflow", () => {
   it("replaces fallback prompt nodes with real reference edges", () => {
@@ -62,5 +68,35 @@ describe("bindUploadedReferencesToEcomWorkflow", () => {
 
     assert.equal(bound.edges.length, imageNodeCount * 2);
     assert.equal(new Set(bound.edges.map((edge) => edge.id)).size, bound.edges.length);
+  });
+
+  it("materializes the lifestyle preset as six 3:4 nodes connected to the uploaded reference", () => {
+    const sourceNodeId = "node-uploaded-sunglasses";
+    const session = startPlanfEcomSession({
+      request: "帮我做一组 UGC 生活化上身图，产品是：机能风墨镜",
+      preset: "ugc-lifestyle",
+      referenceImageCount: 1,
+    });
+    const values = {
+      productName: "机能风墨镜",
+      platform: "xiaohongshu",
+      imageSet: "full-set",
+      styleMode: "ugc",
+    };
+    const plan = confirmPlanfEcomSession({ session, values }).plan;
+    const localWorkflow = createPlanfEcomWorkflowFromPlan({ session, values }).workflow;
+    const workflow = bindUploadedReferencesToEcomWorkflow(localWorkflow, [sourceNodeId]);
+    const imageNodes = workflow.nodes.filter((node) => node.type === "image_generation");
+
+    assert.deepEqual(validateEcomWorkflowMatchesPlan({
+      workflow,
+      plan,
+      hasConfirmedAnchor: false,
+    }), { ok: true });
+    assert.equal(imageNodes.length, 6);
+    assert.ok(imageNodes.every((node) => node.data.aspectRatio === "3:4"));
+    assert.equal(workflow.nodes.some((node) => node.type === "text"), false);
+    assert.equal(workflow.edges.length, 6);
+    assert.ok(workflow.edges.every((edge) => edge.source === sourceNodeId));
   });
 });
