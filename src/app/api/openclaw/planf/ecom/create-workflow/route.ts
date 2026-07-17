@@ -27,6 +27,10 @@ import {
   getPublicRealOpenClawRuntimeDiagnostic,
   runRealOpenClaw,
 } from "@/lib/openclaw/real-runtime";
+import {
+  PlanfRulesContextError,
+  buildPlanfEcomRulesMessage,
+} from "@/lib/openclaw/rules-context";
 import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
 import type { CanvasAgentAction } from "@/types/agent";
 import type { GLWorkflow } from "@/lib/planf-ecom";
@@ -239,7 +243,8 @@ async function tryRunOpenClawWorkflow(input: Parameters<typeof runOpenClawWorkfl
   } catch (error) {
     if (
       error instanceof AgentModelCompatibilityError ||
-      error instanceof RealOpenClawRuntimeError
+      error instanceof RealOpenClawRuntimeError ||
+      error instanceof PlanfRulesContextError
     ) {
       throw error;
     }
@@ -270,13 +275,19 @@ async function runOpenClawWorkflow(input: {
     anchor: input.anchor,
   });
   const first = await runRealOpenClaw({
-    message: buildOpenClawEcomWorkflowMessage({
-      session: input.session,
+    message: await buildPlanfEcomRulesMessage({
+      stage: "workflow",
+      preset: input.session.preset,
+      imageSet: input.values.imageSet,
+      styleMode: input.values.styleMode,
+      taskMessage: buildOpenClawEcomWorkflowMessage({
+        session: input.session,
         values: input.values,
         plan: input.plan,
         anchor: input.anchor,
         referenceNodeMap: input.references,
       }),
+    }),
     sessionKey: `genlink-planf-workflow-${input.session.sessionId}`,
     timeoutMs: ECOM_WORKFLOW_TIMEOUT_MS,
     provider: openClawProvider,
@@ -292,14 +303,20 @@ async function runOpenClawWorkflow(input: {
   } catch (error) {
     const firstMessage = error instanceof Error ? error.message : "workflow validation failed";
     const repaired = await runRealOpenClaw({
-      message: buildOpenClawEcomWorkflowMessage({
-        session: input.session,
-        values: input.values,
-        plan: input.plan,
-        anchor: input.anchor,
-        referenceNodeMap: input.references,
-        previousText: first.text,
-        previousValidationError: firstMessage,
+      message: await buildPlanfEcomRulesMessage({
+        stage: "workflow",
+        preset: input.session.preset,
+        imageSet: input.values.imageSet,
+        styleMode: input.values.styleMode,
+        taskMessage: buildOpenClawEcomWorkflowMessage({
+          session: input.session,
+          values: input.values,
+          plan: input.plan,
+          anchor: input.anchor,
+          referenceNodeMap: input.references,
+          previousText: first.text,
+          previousValidationError: firstMessage,
+        }),
       }),
       sessionKey: `genlink-planf-workflow-repair-${input.session.sessionId}`,
       timeoutMs: ECOM_WORKFLOW_TIMEOUT_MS,
@@ -428,6 +445,10 @@ export async function POST(request: Request) {
 
     if (error instanceof OpenClawMcpClientError) {
       return errorJson(error.message, 502, "materialize_canvas");
+    }
+
+    if (error instanceof PlanfRulesContextError) {
+      return errorJson(error.message, 502, "generate_workflow");
     }
 
     const message = error instanceof Error

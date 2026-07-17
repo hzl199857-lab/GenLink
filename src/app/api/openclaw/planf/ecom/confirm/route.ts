@@ -20,6 +20,10 @@ import {
   getPublicRealOpenClawRuntimeDiagnostic,
   runRealOpenClaw,
 } from "@/lib/openclaw/real-runtime";
+import {
+  PlanfRulesContextError,
+  buildPlanfEcomRulesMessage,
+} from "@/lib/openclaw/rules-context";
 import { shouldUseRealOpenClawRuntime } from "@/lib/openclaw/start-policy";
 
 export const runtime = "nodejs";
@@ -119,7 +123,13 @@ export async function POST(request: Request) {
     const response = await (async () => {
       try {
         const real = await runRealOpenClaw({
-          message: buildOpenClawEcomConfirmMessage({ session, values }),
+          message: await buildPlanfEcomRulesMessage({
+            stage: "confirm",
+            preset: session.preset,
+            imageSet: values.imageSet,
+            styleMode: values.styleMode,
+            taskMessage: buildOpenClawEcomConfirmMessage({ session, values }),
+          }),
           sessionKey: `genlink-planf-confirm-${session.sessionId}`,
           timeoutMs: ECOM_CONFIRM_TIMEOUT_MS,
           provider: openClawProvider,
@@ -131,7 +141,8 @@ export async function POST(request: Request) {
       } catch (error) {
         if (
           error instanceof AgentModelCompatibilityError ||
-          error instanceof RealOpenClawRuntimeError
+          error instanceof RealOpenClawRuntimeError ||
+          error instanceof PlanfRulesContextError
         ) {
           throw error;
         }
@@ -168,6 +179,13 @@ export async function POST(request: Request) {
           diagnostic: getPublicRealOpenClawRuntimeDiagnostic(error.diagnostic),
         },
         { status: 504 },
+      );
+    }
+
+    if (error instanceof PlanfRulesContextError) {
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 502 },
       );
     }
 

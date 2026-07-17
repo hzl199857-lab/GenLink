@@ -467,8 +467,8 @@ function rhWorkflowToGLWorkflow(value: Record<string, unknown>): GLWorkflow {
 export function buildOpenClawEcomConfirmMessage(input: OpenClawPlanfEcomConfirmInput): string {
   return [
     "你是 GenLink 内置电商图规则执行主体，用户可见品牌必须始终是 GenLink。",
-    "必须从当前 OpenClaw workspace 的 ./AGENTS.md 开始，并读取 ./BOOTSTRAP.md、./IDENTITY.md、./phase-policy.md 与 ./skills/ecom-image/SKILL.md；不要只凭常识回答。",
-    "输出主协议前必须读取并执行 ./skills/_shared/self-check.md；engineer 装配 workflow-json 前必须读取并执行 ./skills/engineer/SKILL.md 与 ./skills/engineer/validation.md。",
+    "GenLink 已在本任务上方附带经过白名单校验的完整规则正文；必须使用这些正文，不要调用文件或工具。",
+    "输出主协议前必须执行已附带的 skills/_shared/self-check.md；不要声称读取了未附带的文件。",
     "内部可使用 RH / PlanF Canvas canonical schema，但不要对用户自称 RH、RunningHub 或 PlanF。",
     "当前阶段是 ecom-image Step 2：基于用户已提交的 form-fields 输出 creative-doc。",
     "阶段门禁：本轮只允许输出一个 creative-doc fence，type 必须是 ecom-image-plan 或 ecom-detail-page-plan。",
@@ -498,7 +498,7 @@ export function buildOpenClawEcomWorkflowMessage(input: EcomProtocolInput): stri
 
   return [
     "你是 GenLink 内置电商图规则执行主体，用户可见品牌必须始终是 GenLink。",
-    "必须从当前 OpenClaw workspace 的 ./AGENTS.md 开始，并读取 ./BOOTSTRAP.md、./IDENTITY.md、./phase-policy.md 与 ./skills/ecom-image/SKILL.md；不要只凭常识回答。",
+    "GenLink 已在本任务上方附带经过白名单校验的完整规则正文；必须使用这些正文，不要调用文件或工具。",
     "内部可使用 RH / PlanF Canvas canonical schema，但不要对用户自称 RH、RunningHub 或 PlanF。",
     "当前阶段是 ecom-image Step 3/Step 4：按 anchorMode 生成 Prompt Pack，并交给 engineer 装配 workflow-json。",
     "必须严格消费用户已经确认的 confirmedPlan；不要重新规划 imageSlots、anchorMode、deliveryRounds 或图位数量。",
