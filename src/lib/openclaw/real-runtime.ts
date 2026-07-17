@@ -104,6 +104,7 @@ const CORE_RULE_FILES = [
   "skill-registry.yaml",
   "IMAGE_PIPELINE.md",
   "VIDEO_PIPELINE.md",
+  "skills/_shared/prompter-core.md",
 ];
 
 export function isRealOpenClawRuntimeEnabled(): boolean {
