@@ -271,7 +271,7 @@ let notifyMaterialLibraryRequest:
   | ((source: PendingMaterialSource) => void)
   | null = null;
 const MATERIAL_LIBRARY_REQUEST_EVENT = 'genlink:material-library-request';
-const INITIAL_AGENT_API_KEY_NOTICE = '请先填写当前 Agent 模型可用的 API Key，保存后将自动继续当前任务。';
+const INITIAL_AGENT_API_KEY_NOTICE = '请先填写 Agent 使用的 API Key，保存后将自动继续当前任务。';
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
@@ -10655,7 +10655,7 @@ function InnerCanvas({
   const promptedInitialAgentRequestIdRef = useRef<string | null>(null);
   const initialAgentRequestBlocked = Boolean(
     initialAgentRequest &&
-    !hasAgentApiCredential(apiSettings, initialAgentRequest.provider, initialAgentRequest.model),
+    !hasAgentApiCredential(apiSettings, initialAgentRequest.provider),
   );
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const materialUploadInputRef = React.useRef<HTMLInputElement>(null);
@@ -15142,7 +15142,7 @@ function InnerCanvas({
     persistApiSettings(values);
     if (
       initialAgentRequest &&
-      !hasAgentApiCredential(values, initialAgentRequest.provider, initialAgentRequest.model)
+      !hasAgentApiCredential(values, initialAgentRequest.provider)
     ) {
       setApiSettingsNotice(INITIAL_AGENT_API_KEY_NOTICE);
       setApiSettingsOpen(true);
@@ -15233,7 +15233,7 @@ function InnerCanvas({
     });
 
     if (attachments.length === 0) {
-      showProjectMessage('当前选择中没有可加入对话的图片或视频');
+      showProjectMessage('当前选择中没有可加入对话的图片');
       return;
     }
 
@@ -15719,8 +15719,8 @@ function InnerCanvas({
           setPendingAgentReferenceAttachments([]);
           showProjectMessage(
             result.addedCount > 0
-              ? `已添加 ${result.addedCount} 个参考媒体到对话`
-              : '所选参考媒体已在对话中',
+                ? `已添加 ${result.addedCount} 张参考图到对话`
+                : '所选参考图已在对话中',
           );
         }}
         onQuickReferenceSelect={(onSelect) => {

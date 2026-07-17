@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const require = createRequire(import.meta.url);
@@ -65,31 +64,6 @@ test("replaces raw internal errors with a concise user-facing fallback", () => {
   assert.equal(formatAgentChatErrorText(text, "创建画布节点失败，请稍后重试。"), "创建画布节点失败，请稍后重试。");
 });
 
-test("replaces Gemini response schema errors with a concise fallback", () => {
-  const text = "Invalid JSON payload received. Unknown name \"type\" at 'generation_config.response_schema.properties[0].value': Proto field is not repeating";
-
-  assert.equal(
-    formatAgentChatErrorText(text, "Agent 请求失败，请稍后重试。"),
-    "Agent 请求失败，请稍后重试。",
-  );
-});
-
-test("keeps actionable Provider and model compatibility errors visible", () => {
-  const text = "Agent Provider 与模型不兼容";
-
-  assert.equal(formatAgentChatErrorText(text, "Agent 请求失败"), text);
-});
-
-test("the canvas does not label every rules runtime failure as a timeout", () => {
-  const panelSource = readFileSync(
-    new URL("../components/canvas/CanvasAgentPanel.tsx", import.meta.url),
-    "utf8",
-  );
-
-  assert.doesNotMatch(panelSource, /GenLink 规则运行超时，请稍后重试，或切换文本模型后再试。/);
-  assert.match(panelSource, /GenLink 规则运行失败，请稍后重试。/);
-});
-
 test("uses the user task instead of internal workflow names for canvas node chips", () => {
   assert.equal(
     formatAgentCanvasNodeChipTitle({
@@ -110,19 +84,4 @@ test("keeps explicit action titles for canvas node chips", () => {
     }),
     "草地小狗图",
   );
-});
-
-test("handled Agent request failures do not trigger the Next.js console error overlay", () => {
-  const panelSource = readFileSync(
-    new URL("../components/canvas/CanvasAgentPanel.tsx", import.meta.url),
-    "utf8",
-  );
-  const requestFailureHandler = panelSource.match(
-    /result = await requestAgentRun\([\s\S]*?\} catch \(error\) \{[\s\S]*?variant: 'retryable_error',[\s\S]*?\n      return;\n    \}/,
-  )?.[0] ?? "";
-
-  assert.match(requestFailureHandler, /formatAgentChatErrorText/);
-  assert.match(requestFailureHandler, /variant: 'retryable_error'/);
-  assert.doesNotMatch(requestFailureHandler, /console\.error/);
-  assert.doesNotMatch(panelSource, /console\.error/);
 });

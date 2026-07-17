@@ -88,10 +88,6 @@ import {
   failMidjourneyUpscale,
   startMidjourneyUpscale,
 } from "@/lib/midjourney-image-state";
-import {
-  appendUniqueCanvasNodes,
-  dedupeCanvasNodesById,
-} from "@/lib/canvas/node-collections";
 
 type ApiErrorResponse = {
   ok: false;
@@ -2888,7 +2884,7 @@ function sanitizeImageGenerationNodeDataForPersistence(
 }
 
 function normalizeLoadedCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
-  return dedupeCanvasNodesById(nodes).map((node) => {
+  return nodes.map((node) => {
     if (node.type === "storyboard_script") {
       return {
         ...node,
@@ -4936,20 +4932,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   threeViewControllerNodeId: null,
 
   addNode: (node) => {
-    set((state) => {
-      const nodes = appendUniqueCanvasNodes(state.nodes, [node]);
-
-      if (nodes === state.nodes) {
-        return state;
-      }
-
-      return {
-        ...createUndoHistoryUpdate(state),
-        nodes,
-        dirty: true,
-        error: null,
-      };
-    });
+    set((state) => ({
+      ...createUndoHistoryUpdate(state),
+      nodes: [...state.nodes, node],
+      dirty: true,
+      error: null,
+    }));
   },
 
   addNodes: (nodes) => {
@@ -4957,20 +4945,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return;
     }
 
-    set((state) => {
-      const nextNodes = appendUniqueCanvasNodes(state.nodes, nodes);
-
-      if (nextNodes === state.nodes) {
-        return state;
-      }
-
-      return {
-        ...createUndoHistoryUpdate(state),
-        nodes: nextNodes,
-        dirty: true,
-        error: null,
-      };
-    });
+    set((state) => ({
+      ...createUndoHistoryUpdate(state),
+      nodes: [...state.nodes, ...nodes],
+      dirty: true,
+      error: null,
+    }));
   },
 
   addNodeAtCenter: (type, viewportCenter) => {

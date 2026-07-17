@@ -2,13 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { CanvasAgentAction } from "../types/agent";
-import {
-  getEcomPackageSlots,
-  type PlanfEcomPackageMode,
-} from "./ecom-delivery-spec";
 
 export type PlanfEcomStyleMode = "default" | "detail-page" | "ugc" | "stylist";
-export type { PlanfEcomPackageMode } from "./ecom-delivery-spec";
+export type PlanfEcomPackageMode =
+  | "single"
+  | "full-set-8"
+  | "detail-page-pack"
+  | "amazon-adapter"
+  | "ugc-lifestyle"
+  | "editorial-stylist";
 
 export type PlanfEcomPromptInput = {
   request: string;
@@ -139,6 +141,49 @@ const STYLE_RULES: Record<PlanfEcomStyleMode, Array<{ label: string; relativePat
       label: "造型大片",
       relativePath: "skills/ecom-image/references/fashion-stylist.md",
     },
+  ],
+};
+
+const PACKAGE_ROLE_LABELS: Record<PlanfEcomPackageMode, string[]> = {
+  single: ["单张高转化电商图"],
+  "full-set-8": [
+    "白底标准主图，主体清晰完整，突出产品外观",
+    "核心卖点图，突出最重要功能和购买理由",
+    "细节特写图，展示材质、接口、结构和工艺",
+    "使用场景图，把产品放进真实应用环境",
+    "尺寸规格图，清楚表达比例、长度、配件关系",
+    "安装/操作图，展示用户如何使用或安装",
+    "对比优势图，突出升级点、差异点和可靠性",
+    "整套收束图，组合产品、配件和品牌感",
+  ],
+  "detail-page-pack": [
+    "详情页首屏卖点图，建立产品价值感",
+    "卖点1功能强化图，讲清核心效果",
+    "卖点2材质/结构强化图，放大可信细节",
+    "卖点3场景强化图，展示使用结果",
+    "详情页收束图，整合参数、配件和购买理由",
+  ],
+  "amazon-adapter": [
+    "Amazon 白底主图，纯净背景，产品占比合规",
+    "Lifestyle 场景图，欧美家庭或商业使用语境",
+    "Feature callout 图，英文短文案突出核心功能",
+    "Dimension 图，英文尺寸信息和产品比例",
+    "A+ 模块图，品牌化排版和细节信息",
+    "Comparison 图，英文卖点对比和套装价值",
+  ],
+  "ugc-lifestyle": [
+    "素人手持/开箱图，真实 iPhone 随拍质感",
+    "生活场景使用图，弱摆拍、强真实",
+    "细节近拍图，保留手机摄影质感",
+    "社媒种草图，适合小红书/短视频封面",
+    "差异化构图图，换角度、换动作、换环境",
+  ],
+  "editorial-stylist": [
+    "Hero Muse 大片，建立高级视觉锚点",
+    "Archetype 1 极简高端风，强调轮廓和材质",
+    "Archetype 2 都市通勤风，强调使用人群",
+    "Archetype 3 场景叙事风，强调生活方式",
+    "Editorial 收束大片，形成完整品牌调性",
   ],
 };
 
@@ -326,7 +371,7 @@ export function buildOfflinePlanfEcomFinalPrompt(
   const loaded = loadPlanfEcomRules(styleMode, input.rulesRoot);
   const productLine = input.product?.trim() || request;
   const platformLine = input.platform?.trim() || "主流电商平台";
-  const ratioLine = input.aspectRatio?.trim();
+  const ratioLine = input.aspectRatio?.trim() || "1:1";
   const styleLine =
     styleMode === "detail-page"
       ? "详情页卖点图，单张画面承担套图中的核心卖点解释角色"
@@ -351,9 +396,7 @@ export function buildOfflinePlanfEcomFinalPrompt(
     prompt: [
       `为${platformLine}生成一张${styleLine}。`,
       `主体产品：${productLine}。`,
-      ratioLine
-        ? `画面比例：${ratioLine}，构图稳定，主体居中或黄金分割布局，留出平台安全边距。`
-        : "构图稳定，主体居中或采用黄金分割布局，留出平台安全边距；画面比例由当前交付图位规格决定。",
+      `画面比例：${ratioLine}，构图稳定，主体居中或黄金分割布局，留出平台安全边距。`,
       "画面要求：高端商业摄影质感，真实材质纹理清晰，产品轮廓准确，细节锐利，色彩干净耐看，背景服务于产品，不喧宾夺主。",
       "光线与镜头：柔和棚拍主光结合自然补光，层次分明，低噪点，高动态范围，真实景深，专业电商摄影。",
       "转化重点：突出产品卖点、使用场景和品质感，让用户一眼理解产品价值。",
@@ -369,14 +412,12 @@ export function buildPlanfEcomWorkflow(input: PlanfEcomPromptInput): GLWorkflow 
   const finalPrompt = buildOfflinePlanfEcomFinalPrompt(input);
   const request = input.request.trim();
   const packageMode = inferPlanfEcomPackageMode(request, input.packageMode);
-  const deliverySlots = getEcomPackageSlots(packageMode, input.platform);
-  const imageNodes: GLWorkflowNode[] = deliverySlots.map((deliverySlot, index) => {
+  const roleLabels = PACKAGE_ROLE_LABELS[packageMode];
+  const imageNodes: GLWorkflowNode[] = roleLabels.map((roleLabel, index) => {
     const number = index + 1;
-    const aspectRatio = input.aspectRatio?.trim() || deliverySlot.ratio;
     const prompt = [
       finalPrompt.prompt,
-      `第${number}张 / ${deliverySlots.length}：${deliverySlot.intent}`,
-      `本张画面比例必须为 ${aspectRatio}。`,
+      `第${number}张 / ${roleLabels.length}：${roleLabel}。`,
       "本张图必须和同套其他图片保持产品身份、材质、颜色、品牌调性一致，但构图和信息重点要明显差异化。",
     ].join(" ");
 
@@ -391,13 +432,13 @@ export function buildPlanfEcomWorkflow(input: PlanfEcomPromptInput): GLWorkflow 
         prompt,
         effectivePromptOverride: prompt,
         provider: "vibe",
-        aspectRatio,
+        aspectRatio: input.aspectRatio,
         parallelCount: 1,
         status: "idle",
         packageMode,
-        packageRole: deliverySlot.slot,
+        packageRole: roleLabel,
         packageIndex: number,
-        packageTotal: deliverySlots.length,
+        packageTotal: roleLabels.length,
       },
     };
   });

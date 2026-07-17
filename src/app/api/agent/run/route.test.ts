@@ -57,12 +57,7 @@ function createWorkflow(summary: string, nodeId: string) {
   };
 }
 
-function installRouteMocks(generateText: (params: {
-  prompt: string;
-  responseFormat?: unknown;
-  images?: Array<{ url: string }>;
-  videos?: Array<{ url: string }>;
-}) => Promise<unknown>) {
+function installRouteMocks(generateText: (params: { prompt: string; responseFormat?: unknown }) => Promise<unknown>) {
   Module._load = function patchedLoad(request: string, parent: NodeModule | null, isMain: boolean) {
     if (request === "next/server") {
       return {
@@ -112,109 +107,6 @@ function installRouteMocks(generateText: (params: {
   };
 }
 
-test("Agent run route sends images and videos to Gemini separately", async () => {
-  const calls: Array<{
-    images?: Array<{ url: string }>;
-    videos?: Array<{ url: string }>;
-  }> = [];
-
-  installRouteMocks(async (params) => {
-    calls.push(params);
-    return {
-      content: JSON.stringify(createWorkflow("已理解参考媒体并创建工作流。", "media_1")),
-      model: "gemini-3.5-flash",
-    };
-  });
-
-  try {
-    delete require.cache[require.resolve("./route.ts")];
-    const { POST } = require("./route.ts") as typeof import("./route");
-    const response = await POST(new Request("http://localhost/api/agent/run", {
-      method: "POST",
-      body: JSON.stringify({
-        message: "根据图片和视频创建方案",
-        provider: "comfly",
-        model: "gemini-3.5-flash",
-        context: {
-          input: {
-            message: "根据图片和视频创建方案",
-            referencedAttachmentIds: ["image-1", "video-1"],
-            attachments: [
-              {
-                id: "image-1",
-                kind: "image",
-                name: "image.png",
-                mimeType: "image/png",
-                mediaUrl: "https://cdn.example/image.png",
-                imageUrl: "https://cdn.example/image.png",
-                previewUrl: "https://cdn.example/image.png",
-                status: "ready",
-              },
-              {
-                id: "video-1",
-                kind: "video",
-                name: "video.mp4",
-                mimeType: "video/mp4",
-                mediaUrl: "https://cdn.example/video.mp4",
-                videoUrl: "https://cdn.example/video.mp4",
-                previewUrl: "https://cdn.example/video.mp4",
-                durationSeconds: 8,
-                status: "ready",
-              },
-            ],
-          },
-        },
-      }),
-    }));
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(calls[0]?.images, [{ url: "https://cdn.example/image.png" }]);
-    assert.deepEqual(calls[0]?.videos, [{ url: "https://cdn.example/video.mp4" }]);
-  } finally {
-    Module._load = originalLoad;
-  }
-});
-
-test("Agent run route rejects invalid video attachments instead of dropping them", async () => {
-  installRouteMocks(async () => ({
-    content: JSON.stringify(createWorkflow("不应执行", "invalid_1")),
-    model: "gemini-3.5-flash",
-  }));
-
-  try {
-    delete require.cache[require.resolve("./route.ts")];
-    const { POST } = require("./route.ts") as typeof import("./route");
-    const response = await POST(new Request("http://localhost/api/agent/run", {
-      method: "POST",
-      body: JSON.stringify({
-        message: "理解视频",
-        provider: "comfly",
-        model: "gemini-3.5-flash",
-        context: {
-          input: {
-            message: "理解视频",
-            referencedAttachmentIds: ["video-local"],
-            attachments: [{
-              id: "video-local",
-              kind: "video",
-              name: "local.mp4",
-              mimeType: "video/mp4",
-              mediaUrl: "blob:local-video",
-              videoUrl: "blob:local-video",
-              previewUrl: "blob:local-video",
-              status: "ready",
-            }],
-          },
-        },
-      }),
-    }));
-
-    assert.equal(response.status, 400);
-  } finally {
-    Module._load = originalLoad;
-  }
-});
-
 test("Agent run route asks the model to fully rewrite once after engineer validation fails", async () => {
   const calls: Array<{ prompt: string; responseFormat?: unknown }> = [];
 
@@ -225,19 +117,18 @@ test("Agent run route asks the model to fully rewrite once after engineer valida
       content: JSON.stringify(calls.length === 1
         ? createWorkflow("图片已经生成完成。", "bad_1")
         : createWorkflow("已创建图片工作流，等待用户确认生成。", "good_1")),
-      model: "gemini-3.5-flash",
+      model: "gpt-5.4-mini",
     };
   });
 
   try {
-    delete require.cache[require.resolve("./route.ts")];
     const { POST } = require("./route.ts") as typeof import("./route");
     const response = await POST(new Request("http://localhost/api/agent/run", {
       method: "POST",
       body: JSON.stringify({
         message: "生成一张产品图",
-        provider: "comfly",
-        model: "gemini-3.5-flash",
+        provider: "fucheers",
+        model: "gpt-5.4-mini",
         context: {
           input: {
             message: "生成一张产品图",
@@ -279,7 +170,7 @@ test("Agent run route lets the model read a planf canvas rule file before final 
             workflow: null,
           }
         : createWorkflow("已创建电商图片工作流，等待用户确认生成。", "ecom_1")),
-      model: "gemini-3.5-flash",
+      model: "gpt-5.4-mini",
     };
   });
 
@@ -291,7 +182,7 @@ test("Agent run route lets the model read a planf canvas rule file before final 
       body: JSON.stringify({
         message: "生成一张电商产品图",
         provider: "comfly",
-        model: "gemini-3.5-flash",
+        model: "gpt-5.4-mini",
         context: {
           input: {
             message: "生成一张电商产品图",
@@ -349,7 +240,7 @@ test("Agent run route returns chat replies without creating canvas actions", asy
         summary: "你好，我在。你可以告诉我想在画布上创建或修改什么内容。",
         workflow: null,
       }),
-      model: "gemini-3.5-flash",
+      model: "gpt-5.4-mini",
     };
   });
 
@@ -361,7 +252,7 @@ test("Agent run route returns chat replies without creating canvas actions", asy
       body: JSON.stringify({
         message: "你好",
         provider: "comfly",
-        model: "gemini-3.5-flash",
+        model: "gpt-5.4-mini",
         context: {
           input: {
             message: "你好",

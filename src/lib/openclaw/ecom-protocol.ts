@@ -5,10 +5,6 @@ import type {
   OpenClawPlanfEcomConfirmResult,
   OpenClawPlanfEcomImagePlan,
 } from "./planf-ecom-session";
-import {
-  reconcileOpenClawEcomPlanReferenceMode,
-  validateOpenClawEcomPlanMatchesDeliverySpec,
-} from "./ecom-plan-reference";
 
 type EcomProtocolInput = OpenClawPlanfEcomConfirmInput & {
   plan?: OpenClawPlanfEcomImagePlan;
@@ -23,11 +19,6 @@ type EcomProtocolInput = OpenClawPlanfEcomConfirmInput & {
     nodeId: string;
     outputUrl: string;
   };
-};
-
-type EcomConfirmProtocolInput = OpenClawPlanfEcomConfirmInput & {
-  previousText?: string;
-  previousValidationError?: string;
 };
 
 const RH_TO_GL_NODE_TYPE: Record<string, GLWorkflow["nodes"][number]["type"]> = {
@@ -172,7 +163,7 @@ function normalizeImageSlot(slot: unknown, index: number): OpenClawPlanfEcomImag
     round: normalizeRound(slot.round ?? slot["轮次"] ?? slot.phase ?? slot.stage),
     subType,
     anchorSource: readString(slot, ["anchorSource", "anchor 来源", "anchor", "锚点", "source"], ""),
-    ratio: readString(slot, ["ratio", "aspectRatio"], "1:1") as OpenClawPlanfEcomImagePlan["imageSlots"][number]["ratio"],
+    ratio: "1:1",
     intent,
   };
 }
@@ -205,74 +196,6 @@ function normalizeOptions(options: unknown): OpenClawPlanfEcomImagePlan["options
       ];
 }
 
-function validateLiveCreativeDocPayload(value: unknown): void {
-  if (!isRecord(value) || !isRecord(value.meta) || !Array.isArray(value.imageSlots) || !Array.isArray(value.options)) {
-    throw new Error("live creative-doc must include meta, imageSlots, and options");
-  }
-
-  if (value.phase !== 1 || value.totalPhases !== 2 || value.checkpoint !== true) {
-    throw new Error("live creative-doc must include phase=1, totalPhases=2, and checkpoint=true");
-  }
-
-  const meta = value.meta;
-  const requiredMetaStrings: Array<[string, string[]]> = [
-    ["productName", ["productName", "产品", "product"]],
-    ["category", ["category", "类目"]],
-    ["platform", ["platform", "平台"]],
-    ["imageSet", ["imageSet", "图集"]],
-    ["anchorMode", ["anchorMode", "锚点"]],
-    ["mainRatio", ["mainRatio", "aspectRatio"]],
-    ["styleMode", ["styleMode", "styleLayer"]],
-  ];
-
-  for (const [field, aliases] of requiredMetaStrings) {
-    if (!readString(meta, aliases)) {
-      throw new Error(`live creative-doc meta must include ${field}`);
-    }
-  }
-
-  if (readNumber(meta, ["totalImages", "imageCount", "count"], 0) <= 0 || meta.deliveryRounds === undefined) {
-    throw new Error("live creative-doc meta must include totalImages and deliveryRounds");
-  }
-
-  for (const [index, slot] of value.imageSlots.entries()) {
-    if (!isRecord(slot)) {
-      throw new Error(`live creative-doc image slot ${index + 1} must be an object`);
-    }
-
-    const slotIndex = readNumber(slot, ["index", "#", "id", "序号"], 0);
-    const slotName = readString(slot, ["slot", "图位", "title", "name", "module", "模块"]);
-    const intent = readString(slot, ["intent", "核心意图", "visualStrategy", "视觉策略", "description", "传播功能"]);
-    const subType = readString(slot, ["subType", "type"]);
-    const anchorSource = readString(slot, ["anchorSource", "anchor 来源", "anchor", "锚点", "source"]);
-    const ratio = readString(slot, ["ratio", "aspectRatio"]);
-    const round = slot.round ?? slot["轮次"] ?? slot.phase ?? slot.stage;
-
-    if (slotIndex <= 0 || !slotName || !intent || !anchorSource || !ratio || round === undefined) {
-      throw new Error(`live creative-doc image slot ${index + 1} is missing a required field`);
-    }
-
-    if (subType !== "image-image" && subType !== "text-image") {
-      throw new Error(`live creative-doc image slot ${index + 1} has invalid subType ${subType || "missing"}`);
-    }
-  }
-
-  const optionIds = value.options.flatMap((option) => {
-    if (!isRecord(option)) {
-      return [];
-    }
-
-    const id = readString(option, ["id", "key"]).slice(0, 1).toUpperCase();
-    const label = readString(option, ["label", "title", "text"]);
-
-    return label && (id === "A" || id === "B" || id === "C" || id === "D") ? [id] : [];
-  });
-
-  if (!optionIds.includes("A") || !optionIds.some((id) => id !== "A")) {
-    throw new Error("live creative-doc options must include A and at least one adjustment option");
-  }
-}
-
 export function normalizeOpenClawEcomCreativeDoc(value: unknown): OpenClawPlanfEcomImagePlan {
   if (!isRecord(value)) {
     throw new Error("creative-doc must be an object");
@@ -301,19 +224,11 @@ export function normalizeOpenClawEcomCreativeDoc(value: unknown): OpenClawPlanfE
   const meta = value.meta as Record<string, unknown>;
   const deliveryRounds = normalizeRound(meta.deliveryRounds);
   const totalImages = readNumber(meta, ["totalImages", "imageCount", "count"], value.imageSlots.length);
-  const title = readString(value, ["title"]);
-  const checkpointPrompt = readString(value, ["checkpointPrompt"]);
-
-  if (!title || !checkpointPrompt) {
-    throw new Error("creative-doc must include title and checkpointPrompt");
-  }
 
   return {
     ...value,
-    title,
     domain: "ecom-image",
     checkpoint: true,
-    checkpointPrompt,
     meta: {
       ...meta,
       productName: readString(meta, ["productName", "产品", "product"], "未命名产品"),
@@ -322,7 +237,7 @@ export function normalizeOpenClawEcomCreativeDoc(value: unknown): OpenClawPlanfE
       imageSet: readString(meta, ["imageSet", "图集"], "full-set"),
       anchorMode: readString(meta, ["anchorMode", "锚点"], "user-upload"),
       amazonMode: Boolean(meta.amazonMode),
-      mainRatio: readString(meta, ["mainRatio", "aspectRatio"], "1:1") as OpenClawPlanfEcomImagePlan["meta"]["mainRatio"],
+      mainRatio: "1:1",
       totalImages,
       deliveryRounds,
       styleMode: readString(meta, ["styleMode", "styleLayer"], "default"),
@@ -549,21 +464,11 @@ function rhWorkflowToGLWorkflow(value: Record<string, unknown>): GLWorkflow {
   };
 }
 
-export function buildOpenClawEcomConfirmMessage(input: EcomConfirmProtocolInput): string {
-  const repairLines = input.previousText || input.previousValidationError
-    ? [
-        `[SYSTEM NOTICE] Your previous creative-doc failed GenLink validation: ${input.previousValidationError ?? "response did not contain a valid creative-doc"}.`,
-        "Rewrite the complete creative-doc now. Preserve the user's intent, but fix every missing or invalid field.",
-        "Output exactly one ```creative-doc fence and no natural-language text before or after it.",
-        `previousOpenClawText=${JSON.stringify((input.previousText ?? "").slice(0, 12_000))}`,
-        "",
-      ]
-    : [];
-
+export function buildOpenClawEcomConfirmMessage(input: OpenClawPlanfEcomConfirmInput): string {
   return [
     "你是 GenLink 内置电商图规则执行主体，用户可见品牌必须始终是 GenLink。",
-    "GenLink 已在本任务上方附带经过白名单校验的完整规则正文；必须使用这些正文，不要调用文件或工具。",
-    "输出主协议前必须执行已附带的 skills/_shared/self-check.md；不要声称读取了未附带的文件。",
+    "必须从当前 OpenClaw workspace 的 ./AGENTS.md 开始，并读取 ./BOOTSTRAP.md、./IDENTITY.md、./phase-policy.md 与 ./skills/ecom-image/SKILL.md；不要只凭常识回答。",
+    "输出主协议前必须读取并执行 ./skills/_shared/self-check.md；engineer 装配 workflow-json 前必须读取并执行 ./skills/engineer/SKILL.md 与 ./skills/engineer/validation.md。",
     "内部可使用 RH / PlanF Canvas canonical schema，但不要对用户自称 RH、RunningHub 或 PlanF。",
     "当前阶段是 ecom-image Step 2：基于用户已提交的 form-fields 输出 creative-doc。",
     "阶段门禁：本轮只允许输出一个 creative-doc fence，type 必须是 ecom-image-plan 或 ecom-detail-page-plan。",
@@ -571,7 +476,6 @@ export function buildOpenClawEcomConfirmMessage(input: EcomConfirmProtocolInput)
     "creative-doc 必须包含 meta、imageSlots、options，并显式保留 anchorMode、deliveryRounds、checkpoint=true、checkpointPrompt。",
     "imageSlots 每一项必须包含 index、slot、round、subType、anchorSource、ratio、intent；slot 和 intent 禁止为空，round 必须是 1 或 2。",
     "options 必须包含 A=确认编排开始生成，以及 B/C/D 至少一个调整选项，等待用户确认后才能进入 Prompt Pack / workflow-json。",
-    ...repairLines,
     "",
     `session=${JSON.stringify(input.session)}`,
     `values=${JSON.stringify(input.values)}`,
@@ -594,7 +498,7 @@ export function buildOpenClawEcomWorkflowMessage(input: EcomProtocolInput): stri
 
   return [
     "你是 GenLink 内置电商图规则执行主体，用户可见品牌必须始终是 GenLink。",
-    "GenLink 已在本任务上方附带经过白名单校验的完整规则正文；必须使用这些正文，不要调用文件或工具。",
+    "必须从当前 OpenClaw workspace 的 ./AGENTS.md 开始，并读取 ./BOOTSTRAP.md、./IDENTITY.md、./phase-policy.md 与 ./skills/ecom-image/SKILL.md；不要只凭常识回答。",
     "内部可使用 RH / PlanF Canvas canonical schema，但不要对用户自称 RH、RunningHub 或 PlanF。",
     "当前阶段是 ecom-image Step 3/Step 4：按 anchorMode 生成 Prompt Pack，并交给 engineer 装配 workflow-json。",
     "必须严格消费用户已经确认的 confirmedPlan；不要重新规划 imageSlots、anchorMode、deliveryRounds 或图位数量。",
@@ -618,31 +522,14 @@ export function buildOpenClawEcomWorkflowMessage(input: EcomProtocolInput): stri
 export function parseOpenClawEcomCreativeDoc(
   text: string,
   values?: OpenClawPlanfEcomConfirmInput["values"],
-  session?: OpenClawPlanfEcomConfirmInput["session"],
 ): OpenClawPlanfEcomConfirmResult {
   const fenced = extractFence(text, "creative-doc");
   const raw = fenced ? parseJson(fenced) : extractJsonObject(text);
-
-  if (session) {
-    validateLiveCreativeDocPayload(raw);
-  }
-
-  const normalizedPlan = normalizeOpenClawEcomCreativeDoc(raw);
-  const deliveryValidation = session
-    ? validateOpenClawEcomPlanMatchesDeliverySpec(normalizedPlan, session, values)
-    : { ok: true as const };
-
-  if (!deliveryValidation.ok) {
-    throw new Error(deliveryValidation.error);
-  }
-
-  const plan = session
-    ? reconcileOpenClawEcomPlanReferenceMode(normalizedPlan, session, values)
-    : normalizedPlan;
+  const plan = normalizeOpenClawEcomCreativeDoc(raw);
 
   return {
     ok: true,
-    summary: normalizedPlan.checkpointPrompt,
+    summary: `${plan.meta.productName} 的电商图编排方案已由 OpenClaw 生成，等待确认后进入 Prompt Pack / workflow-json。`,
     protocol: {
       name: "creative-doc",
       type: plan.type,

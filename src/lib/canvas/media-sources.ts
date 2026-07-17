@@ -127,7 +127,7 @@ function createVideoAttachment(node: CanvasNode): AgentTaskAttachment | null {
 export function createAgentAttachmentFromCanvasNode(
   node: CanvasNode,
 ): AgentTaskAttachment | null {
-  return createImageAttachment(node) ?? createVideoAttachment(node);
+  return createImageAttachment(node);
 }
 
 export function getAgentAttachmentDedupeKey(attachment: AgentTaskAttachment): string {
@@ -139,7 +139,7 @@ export function getAgentAttachmentDedupeKey(attachment: AgentTaskAttachment): st
 export function createMaterialSourceFromCanvasNode(
   node: CanvasNode,
 ): PendingMaterialSource | null {
-  const attachment = createAgentAttachmentFromCanvasNode(node);
+  const attachment = createImageAttachment(node) ?? createVideoAttachment(node);
 
   if (attachment) {
     const outputFileName = node.type === "image_generation"

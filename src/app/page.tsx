@@ -27,7 +27,6 @@ import {
 } from '@/lib/home-agent-entry';
 import {
   AGENT_MODEL_OPTIONS,
-  resolveAgentModelForProvider,
   type AgentModelId,
 } from '@/lib/agent-model-options';
 import {
@@ -96,12 +95,8 @@ function HomePageContent() {
       null,
     );
   const [heroPrompt, setHeroPrompt] = useState('');
-  const [heroProvider, setHeroProvider] = useState<AgentProvider>('comfly');
+  const [heroProvider, setHeroProvider] = useState<AgentProvider>('vibe');
   const [heroModel, setHeroModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
-  const handleHeroProviderChange = useCallback((nextProvider: AgentProvider) => {
-    setHeroProvider(nextProvider);
-    setHeroModel((current) => resolveAgentModelForProvider(nextProvider, current));
-  }, []);
   const [heroImagePreference, setHeroImagePreference] =
     useState<AgentImageGenerationPreference>({
       mode: 'auto',
@@ -655,7 +650,7 @@ function HomePageContent() {
             busy: heroRunBusy,
             error: heroRunError,
             onPromptChange: setHeroPrompt,
-            onProviderChange: handleHeroProviderChange,
+            onProviderChange: setHeroProvider,
             onModelChange: setHeroModel,
             onImagePreferenceChange: setHeroImagePreference,
             onFilesChange: setHeroFiles,

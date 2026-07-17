@@ -4,10 +4,7 @@ import { requireAuth } from "@/lib/auth-guard";
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { decideAgentPhaseRoute } from "@/lib/openclaw/agent-phase-policy";
 import { buildOpenClawAgentMessage, createAgentResultFromOpenClawText } from "@/lib/openclaw/agent-workflow";
-import {
-  AgentModelCompatibilityError,
-  mapAgentPanelModelToOpenClaw,
-} from "@/lib/openclaw/model-mapping";
+import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
 import {
   RealOpenClawRuntimeError,
   getPublicRealOpenClawRuntimeDiagnostic,
@@ -197,13 +194,6 @@ export async function POST(request: Request) {
       result,
     });
   } catch (error) {
-    if (error instanceof AgentModelCompatibilityError) {
-      return NextResponse.json(
-        { ok: false, error: error.message },
-        { status: 400 },
-      );
-    }
-
     if (error instanceof RealOpenClawRuntimeError) {
       return NextResponse.json(
         {

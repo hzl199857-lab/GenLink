@@ -5,7 +5,6 @@ import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { ImageApiProvider } from "@/lib/vibe";
-import { prepareOpenClawRuntimeConfig } from "./runtime-config";
 
 export type RealOpenClawRunInput = {
   message: string;
@@ -32,10 +31,6 @@ export type RealOpenClawRuntimeDiagnostic = {
     | "provider_timeout"
     | "provider_network"
     | "provider_http_error"
-    | "provider_content_filter"
-    | "provider_tool_protocol"
-    | "unsupported_model"
-    | "invalid_config"
     | "invalid_json"
     | "empty_output"
     | "process_failed";
@@ -99,7 +94,6 @@ const DEFAULT_OPENCLAW_ENTRY = path.join(
 const DEFAULT_OPENCLAW_CONFIG = path.join("E:", "GenLink-runtime", "openclaw-genlink.json");
 const DEFAULT_OPENCLAW_STATE = path.join("E:", "GenLink-runtime", "state");
 const DEFAULT_OPENCLAW_WORKSPACE = path.join("E:", "GenLink-runtime", "workspaces", "genlink-planf");
-const OPENCLAW_STDIN_MESSAGE_THRESHOLD = 16_000;
 const CORE_RULE_FILES = [
   "AGENTS.md",
   "BOOTSTRAP.md",
@@ -130,11 +124,6 @@ function getOpenClawStateDir(): string {
 
 function getOpenClawWorkspaceDir(): string {
   return process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_OPENCLAW_WORKSPACE;
-}
-
-function getOpenClawStdinRunner(): string {
-  return process.env.OPENCLAW_STDIN_RUNNER?.trim() ||
-    path.join(process.cwd(), "scripts", "openclaw-stdin-runner.mjs");
 }
 
 function getSourceRulesRoot(): string {
@@ -243,23 +232,7 @@ function previewOpenClawOutput(text: string): string | undefined {
     .slice(0, 800);
 }
 
-export function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
-  if (/function_response\.name:\s*Name cannot be empty|Tool [^\n]+ not found/i.test(output)) {
-    return "provider_tool_protocol";
-  }
-
-  if (/finish_reason:\s*content_filter|content[_\s-]?filter(?:ed)?/i.test(output)) {
-    return "provider_content_filter";
-  }
-
-  if (/unknown model|model[^\n]*(not found|not registered|unregistered)|unsupported model/i.test(output)) {
-    return "unsupported_model";
-  }
-
-  if (/invalid config|configuration error|failed to (load|parse) config|models\.providers[^\n]*(invalid|malformed)/i.test(output)) {
-    return "invalid_config";
-  }
-
+function classifyOpenClawFailure(output: string): RealOpenClawRuntimeDiagnostic["kind"] {
   if (/timed?\s*out|timeout|AbortError|LLM request timed out/i.test(output)) {
     return "provider_timeout";
   }
@@ -292,28 +265,12 @@ function buildRuntimePublicMessage(diagnostic: RealOpenClawRuntimeDiagnostic): s
     return `${providerLabel} 返回了上游 HTTP 错误${modelText}${hostText}。请检查该 provider 的 API Key、模型名和后台错误记录。`;
   }
 
-  if (diagnostic.kind === "provider_content_filter") {
-    return `${providerLabel} 拒绝了当前请求（内容安全过滤）${modelText}。这不是超时；请调整提示词或切换模型后重试。`;
-  }
-
-  if (diagnostic.kind === "provider_tool_protocol") {
-    return `${providerLabel} 的 Gemini 工具协议与当前规则运行不兼容${modelText}。这不是超时；当前请求已改为禁用工具调用。`;
-  }
-
   if (diagnostic.kind === "missing_api_key") {
     return `${providerLabel} 缺少 API Key，请先在 API 设置里保存该 provider 的文本模型 Key。`;
   }
 
   if (diagnostic.kind === "missing_runtime") {
     return "服务器上的 GenLink 规则运行时未安装或路径配置不正确。";
-  }
-
-  if (diagnostic.kind === "unsupported_model") {
-    return `当前模型未在 GenLink 规则运行配置中注册${modelText}。请检查模型选择或重新生成 OpenClaw 配置。`;
-  }
-
-  if (diagnostic.kind === "invalid_config") {
-    return "GenLink 规则运行配置无效，无法启动 Agent。请检查 OpenClaw 配置文件。";
   }
 
   if (diagnostic.kind === "workspace_sync_failed") {
@@ -435,43 +392,16 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
     );
   }
 
-  let runtimeConfigPath: string;
-  try {
-    runtimeConfigPath = prepareOpenClawRuntimeConfig({
-      baseConfigPath: getOpenClawConfigPath(),
-      stateDir: getOpenClawStateDir(),
-    }).configPath;
-  } catch (error) {
-    const diagnostic: RealOpenClawRuntimeDiagnostic = {
-      kind: "invalid_config",
-      provider,
-      model,
-      baseUrlHost,
-      elapsedMs: Date.now() - startedAt,
-    };
-
-    throw new RealOpenClawRuntimeError(
-      `OpenClaw config preparation failed: ${error instanceof Error ? error.message : "unknown error"}`,
-      {
-        publicMessage: buildRuntimePublicMessage(diagnostic),
-        diagnostic,
-      },
-    );
-  }
-
   console.info("[openclaw-runtime] start", {
     provider,
     model,
     baseUrlHost,
     timeoutMs: input.timeoutMs,
-    messageChars: input.message.length,
-    messageTransport: input.message.length > OPENCLAW_STDIN_MESSAGE_THRESHOLD
-      ? "stdin"
-      : "argument",
   });
 
   return await new Promise((resolve, reject) => {
-    const openClawArgs = [
+    const args = [
+      getOpenClawEntry(),
       "agent",
       "--local",
       "--json",
@@ -479,39 +409,26 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       input.sessionKey,
       "--timeout",
       String(Math.max(1, Math.ceil(input.timeoutMs / 1000))),
+      "--message",
+      input.message,
     ];
 
     if (model) {
-      openClawArgs.push("--model", model);
+      args.push("--model", model);
     }
-
-    const useStdinMessage = input.message.length > OPENCLAW_STDIN_MESSAGE_THRESHOLD;
-    const args = useStdinMessage
-      ? [getOpenClawStdinRunner(), getOpenClawEntry(), ...openClawArgs]
-      : [getOpenClawEntry(), ...openClawArgs, "--message", input.message];
 
     const child = spawn(process.execPath, args, {
       cwd: path.dirname(getOpenClawEntry()),
       env: {
         ...process.env,
-        OPENCLAW_CONFIG_PATH: runtimeConfigPath,
+        OPENCLAW_CONFIG_PATH: getOpenClawConfigPath(),
         OPENCLAW_STATE_DIR: getOpenClawStateDir(),
         GENLINK_OPENCLAW_TEXT_BASE_URL: baseUrl,
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,
-        ...(useStdinMessage
-          ? {
-              NODE_DISABLE_COMPILE_CACHE: "1",
-              OPENCLAW_NO_RESPAWN: "1",
-            }
-          : {}),
       },
       windowsHide: true,
-      stdio: [useStdinMessage ? "pipe" : "ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-
-    if (useStdinMessage) {
-      child.stdin?.end(input.message);
-    }
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {
@@ -537,12 +454,12 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       ));
     }, input.timeoutMs + 5_000);
 
-    child.stdout!.setEncoding("utf8");
-    child.stderr!.setEncoding("utf8");
-    child.stdout!.on("data", (chunk) => {
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
       stdout += chunk;
     });
-    child.stderr!.on("data", (chunk) => {
+    child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (error) => {

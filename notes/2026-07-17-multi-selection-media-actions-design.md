@@ -5,17 +5,17 @@
 为画布多节点框选工具栏补齐真实功能，并将 Agent 参考附件与素材库从图片扩展到所需媒体类型：
 
 - 框选节点可直接使用网格、横向、纵向布局，无需先打组。
-- 框选的图片和视频可批量加入 Agent 对话，并由 Gemini 直接理解视频。
+- 框选的图片可批量加入 Agent 对话，沿用稳定的 GPT 图片理解链路。
 - 框选的图片、视频和音频可一次选择位置后批量保存到素材库。
 - 素材库可预览并重新应用图片、视频和音频。
-- 首页 Agent 与画布 Agent 同步使用 Gemini 模型，但不修改画布节点自己的 Provider 和模型菜单。
+- 首页 Agent 与画布 Agent 使用 GPT-5.4 Mini / GPT-5.5；素材库媒体能力不改变画布节点自己的 Provider 和模型菜单。
 
 ## 框选工具栏
 
 工具栏从左到右调整为：
 
 1. **布局**：显示名称和布局图标，打开与成组后相同的“网格 / 横向 / 纵向”菜单。布局直接作用于当前选中节点，不创建组。
-2. **加入对话**：使用对话加号图标，显示当前选择中可加入的图片和视频总数。点击后批量去重并加入 Agent 参考附件区域，同时打开 Agent 面板。音频和其他节点不计数、不加入。
+2. **加入对话**：使用对话加号图标，显示当前选择中可加入的图片总数。点击后批量去重并加入 Agent 参考图区域，同时打开 Agent 面板。视频、音频和其他节点不计数、不加入。
 3. **保存到素材库**：使用素材库图标，显示当前选择中可保存的图片、视频和音频总数。点击后打开一次批量位置选择面板。
 4. **打组**：保留现有按钮和行为。
 
@@ -36,27 +36,27 @@
 
 ### 附件契约
 
-`AgentTaskAttachment` 扩展为图片和视频两类。公共字段包括稳定附件 ID、媒体类型、名称、MIME、媒体 URL、预览 URL、尺寸、文件大小、源节点 ID；视频额外保留时长。
+`AgentTaskAttachment` 可保留图片和视频的历史数据兼容结构，但当前 Agent 实时入口只创建和发送图片附件。素材库使用独立的媒体来源契约处理视频和音频。
 
 框选批量加入对话时：
 
-- 支持 `image_generation`、`image`、`uploaded_image`、`video_generation`、`video_upscale`、`video` 中已有稳定输出的节点。
+- 支持 `image_generation`、`image`、`uploaded_image` 中已有稳定输出的节点。
 - 以源节点 ID 或稳定媒体 URL 去重。
 - 一次性把所有有效附件送入 Agent 面板，避免逐条异步状态覆盖。
-- Agent 参考区域使用图片缩略图或视频缩略预览，并支持删除、悬停预览和历史消息回显。
+- Agent 参考区域使用图片缩略图，并支持删除、悬停预览和历史消息回显。
 
-### Gemini 直接理解视频
+### 恢复旧 GPT Agent
 
-首页 Agent 与画布 Agent 共用的模型选项替换为：
+首页 Agent 与画布 Agent 共用原有模型选项：
 
-- `gemini-3.5-flash`，默认模型。
-- `gemini-3.1-pro`，上游映射为 `gemini-3.1-pro-preview`。
+- `gpt-5.4-mini`，默认模型。
+- `gpt-5.5`。
 
-仅这两个 Agent 入口的推理 Provider 限定为 Comfly、Zhenzhen，因为当前 `generateText` 视频输入契约只允许 Gemini 搭配这两个 Provider。文本节点、图片节点、视频节点、音频节点自己的 Provider 和模型菜单完全不变。
+Agent Provider 恢复为 Vibe、Fucheers、Comfly、Zhenzhen、GRS AI，默认使用 Vibe。文本节点、图片节点、视频节点、音频节点自己的 Provider 和模型菜单完全不变。
 
-Agent 服务端解析附件时将图片传给 `generateText.images`，视频传给 `generateText.videos`。图片、视频、用户提示词和 Agent 系统协议在一次请求中交给 Gemini，不增加摘要转交步骤。请求继续使用现有结构化响应格式、工程校验和自动修复循环。
+Agent 服务端只解析图片附件并传给 `generateText.images`，沿用旧 GPT 结构化响应格式、规则读取、工程校验和自动修复循环。视频和音频只进入素材库，不会在 Agent 面板里显示为已理解。
 
-当视频 URL 不是上游可读取的稳定 URL、缺少 Provider Key、模型不可用或上游拒绝视频时，服务端返回明确错误，Agent 面板展示中文失败信息；不得静默忽略视频后继续运行。
+首次从首页提交任务但缺少 API Key 时，进入画布后打开设置并提示填写；已有可用 Key 时直接执行任务。
 
 ## 多媒体素材数据
 
@@ -100,13 +100,13 @@ Agent 服务端解析附件时将图片传给 `generateText.images`，视频传�
 ## 主要代码边界
 
 - `src/components/canvas/InfiniteCanvas.tsx`：连接框选动作、Agent 批量附件、素材批量保存和画布节点创建；复杂数据转换抽出 helper。
-- `src/components/canvas/CanvasAgentPanel.tsx`：批量附件接收和图片/视频附件 UI。
+- `src/components/canvas/CanvasAgentPanel.tsx`：批量图片附件接收和参考图 UI。
 - `src/components/canvas/MaterialLibraryDialog.tsx`：增加批量位置选择模式。
 - `src/components/canvas/MaterialLibraryPanel.tsx`：多媒体列表、悬停预览和应用入口。
 - `src/types/agent.ts`、`src/types/canvas.ts`：附件与素材类型契约。
-- `src/lib/agent-vision-images.ts`：拆分图片和视频多模态输入选择。
-- `src/app/api/agent/run/route.ts`：校验并传递视频附件。
-- `src/lib/agent-model-options.ts`、`src/lib/agent-provider-options.ts`：两个 Agent 入口共用的 Gemini 模型和受支持 Provider。
+- `src/lib/agent-vision-images.ts`：选择可供 GPT 读取的稳定图片输入。
+- `src/app/api/agent/run/route.ts`：校验并传递图片附件，执行旧 GPT 工作流。
+- `src/lib/agent-model-options.ts`、`src/lib/agent-provider-options.ts`：两个 Agent 入口共用的 GPT 模型和受支持 Provider。
 - `src/lib/canvas/`：新增聚焦的框选布局、媒体来源和批量保存纯函数及测试，避免继续扩大 `InfiniteCanvas.tsx` 的纯逻辑职责。
 - `src/store/canvas-store.ts`、`src/lib/project-storage.ts`：多媒体素材持久化、恢复和批量写入。
 
@@ -116,9 +116,9 @@ Agent 服务端解析附件时将图片传给 `generateText.images`，视频传�
 
 - 框选布局与成组布局使用相同计算规则，三种模式的位置正确。
 - 框选工具栏按钮、名称、图标、计数、删除纯加号按钮和动作回调正确。
-- Agent 媒体筛选只接受图片和视频，批量附件去重且不会覆盖并发添加。
-- 首页与画布 Agent 仅展示两个 Gemini 模型，默认 Flash，并只展示 Comfly、Zhenzhen。
-- Agent route 正确解析视频附件并将其传入 `generateText.videos`；无效视频不得静默降级。
+- Agent 实时附件只接受图片，批量附件去重且不会覆盖并发添加。
+- 首页与画布 Agent 仅展示 GPT-5.4 Mini / GPT-5.5，并恢复完整文本 Provider 列表。
+- Agent route 正确解析图片附件并将其传入 `generateText.images`；视频和音频不进入 Agent。
 - 批量素材保存不要求命名，正确处理图片、视频、音频、重名和重复媒体。
 - 素材持久化不保存临时 object URL，旧图片素材仍可恢复。
 - 素材面板为三类媒体渲染正确预览，并按类型创建对应画布节点。
@@ -130,4 +130,4 @@ npx tsc --noEmit
 npm run lint
 ```
 
-同时运行所有新增与受影响的聚焦 `*.test.ts`，启动本地开发服务器，在桌面视口实际验证框选工具栏、批量位置选择、视频/音频悬停播放和真实 Gemini 视频 Agent 请求。
+同时运行所有新增与受影响的聚焦 `*.test.ts`，启动本地开发服务器，在桌面视口实际验证框选工具栏、批量位置选择、视频/音频悬停播放和 GPT 图片参考任务。

@@ -309,14 +309,11 @@ function buildStackedAgentNodes(params: {
   }
 
   for (const imageNode of imageNodes) {
-    const connectedPromptNode = findPromptNodeForImage({
+    const promptNode = findPromptNodeForImage({
       imageNode,
       textNodes,
       incomingEdges: params.incomingEdges,
     });
-    const promptNode = connectedPromptNode && !placedNodeIds.has(connectedPromptNode.id)
-      ? connectedPromptNode
-      : null;
     const promptBounds = promptNode ? estimateCanvasNodeBounds(promptNode) : null;
     const imageBounds = estimateCanvasNodeBounds(imageNode);
     const rowHeight = Math.max(promptBounds?.height ?? 0, imageBounds.height);

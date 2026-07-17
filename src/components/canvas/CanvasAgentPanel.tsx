@@ -74,12 +74,7 @@ import {
   type AgentEcomPlannerAttachmentRole,
   type AgentEcomPlannerOption,
 } from '@/lib/agent-ecom-planner';
-import {
-  AGENT_MODEL_OPTIONS,
-  getAgentModelOptions,
-  resolveAgentModelForProvider,
-  type AgentModelId,
-} from '@/lib/agent-model-options';
+import { AGENT_MODEL_OPTIONS } from '@/lib/agent-model-options';
 import { resolveAgentApiCredential } from '@/lib/agent-api-key';
 import {
   AGENT_TEXT_PROVIDER_OPTIONS,
@@ -92,10 +87,6 @@ import {
   shouldShowAgentInternalText,
 } from '@/lib/agent-chat-display';
 import { getAgentCanvasNodeChips } from '@/lib/agent-canvas-node-chips';
-import {
-  getEcomFanoutImageCount,
-  resolveEcomDeliverySpec,
-} from '@/lib/ecom-delivery-spec';
 import {
   AGENT_PANEL_DEFAULT_WIDTH,
   AGENT_PANEL_FLOATING_INSET,
@@ -197,13 +188,13 @@ const PLANF_ECOM_PRESETS: Array<{
   {
     id: 'ugc-lifestyle',
     label: '生活化上身',
-    prompt: '帮我做一组 UGC 生活化上身图（1张白底主图 + 5张素人 iPhone 美学差异化构图，共6张），产品是：',
+    prompt: '帮我做一组 UGC 生活化上身图（素人 + iPhone 美学 + 5张差异化构图），产品是：',
     routeMode: 'ugc',
   },
   {
     id: 'editorial-stylist',
     label: '造型大片',
-    prompt: '帮我做一组高转化模特图（1张白底主图 + 5 Archetype 编辑大片，共6张），产品是：',
+    prompt: '帮我做一组高转化模特图（5 Archetype + Muse Profile + Editorial 大片），产品是：',
     routeMode: 'stylist',
   },
   {
@@ -311,7 +302,6 @@ type PlanfEcomWorkflowApiResponse =
       edges?: CanvasEdge[];
       nodeIdMap?: Record<string, string>;
       edgeIdMap?: Record<string, string>;
-      meta?: AgentRunMeta;
       mcp?: {
         toolName: CanvasAgentToolName;
         auditId?: string;
@@ -608,21 +598,17 @@ function AgentAvatarMark() {
   );
 }
 
-function resolveAgentTextRunConfig(
-  preferredProvider: AgentProvider,
-  model: AgentModelId,
-): {
+function resolveAgentTextRunConfig(preferredProvider: AgentProvider): {
   provider: AgentProvider;
   apiKey: string;
 } {
   const credential = resolveAgentApiCredential(
     readStoredApiSettings(),
     preferredProvider,
-    model,
   );
 
   return credential ?? {
-    provider: isAgentTextProvider(preferredProvider) ? preferredProvider : 'comfly',
+    provider: isAgentTextProvider(preferredProvider) ? preferredProvider : 'vibe',
     apiKey: '',
   };
 }
@@ -752,11 +738,9 @@ function createPlanfEcomPanelResult(
       },
     ],
     meta: {
-      ...(response.meta ?? {
-        usedModel: true,
-        usedFallback: false,
-        model: 'planf-ecom',
-      }),
+      usedModel: true,
+      usedFallback: false,
+      model: 'planf-ecom',
     },
   };
 }
@@ -833,9 +817,9 @@ async function requestOpenClawPlanfEcomStart(params: {
   preset: PlanfEcomPresetId;
   referenceImageCount: number;
   provider: AgentProvider;
-  model: AgentModelId;
+  model: string;
 }): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session']> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
   const response = await fetch('/api/openclaw/planf/ecom/start', {
     method: 'POST',
     headers: {
@@ -868,9 +852,9 @@ async function requestAgentEcomPlannerOptions(params: {
   optionId?: 'A' | 'B' | 'C';
   sharedPlannerContext?: AgentEcomPlannerSharedContext;
   provider: AgentProvider;
-  model: AgentModelId;
+  model: string;
 }): Promise<AgentEcomPlannerApiPlanner> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
   const clientRequestId = createPanelId(`ecom-planner-${params.optionId ?? 'all'}`);
   const response = await fetchAgentApi(
     '/api/openclaw/planf/ecom/planner',
@@ -916,10 +900,10 @@ async function requestAgentEcomPlannerPromptMarkdown(params: {
   plannerMessage: Extract<AgentPanelMessage, { type: 'ecom_planner_options' }>;
   option: AgentEcomPlannerOption;
   provider: AgentProvider;
-  model: AgentModelId;
+  model: string;
   onProgress?: (event: AgentEcomPlannerPromptStreamEvent) => void;
 }): Promise<AgentEcomPlannerPromptMarkdownApiPrompt> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
   const optionSummary = params.option.uiSummary
     ? [
         params.option.uiSummary.coreDifference,
@@ -1195,14 +1179,23 @@ function getPlanfFanoutRemainingCount(
     return 0;
   }
 
-  const spec = resolveEcomDeliverySpec({
-    preset: planfEcom.session.preset,
-    imageSet: String(planfEcom.values.imageSet || planfEcom.plan.meta.imageSet || ''),
-    styleMode: String(planfEcom.values.styleMode || planfEcom.plan.meta.styleMode || ''),
-    platform: String(planfEcom.values.platform || planfEcom.plan.meta.platform || ''),
-  });
+  if (planfEcom.values.imageSet === 'main') {
+    return 0;
+  }
 
-  return getEcomFanoutImageCount(spec);
+  const totalByPreset: Record<PlanfEcomPresetId, number> = {
+    'full-set-8': 8,
+    'detail-page-pack': 5,
+    'amazon-adapter': 6,
+    'ugc-lifestyle': 5,
+    'editorial-stylist': 5,
+    [ECOM_PLANNER_PRESET_ID]: 0,
+  };
+  const total = planfEcom.values.imageSet === 'detail'
+    ? 5
+    : totalByPreset[planfEcom.session.preset as PlanfEcomPresetId] ?? 8;
+
+  return Math.max(0, total - 1);
 }
 
 function getPlanfSessionValues(session: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session']) {
@@ -1238,11 +1231,27 @@ function getPlanfEcomPreferredAspectRatio(input: {
   values: Record<string, unknown>;
   plan: Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>['plan'];
 }): string | undefined {
-  return resolveEcomDeliverySpec({
-    imageSet: String(input.values.imageSet || input.plan.meta.imageSet || ''),
-    styleMode: String(input.values.styleMode || input.plan.meta.styleMode || ''),
-    platform: String(input.values.platform || input.plan.meta.platform || ''),
-  }).primaryRatio;
+  const styleMode = String(input.values.styleMode || input.plan.meta.styleMode || '').toLowerCase();
+  const platform = String(input.values.platform || input.plan.meta.platform || '').toLowerCase();
+  const imageSet = String(input.values.imageSet || input.plan.meta.imageSet || '').toLowerCase();
+
+  if (imageSet === 'main') {
+    return '1:1';
+  }
+
+  if (
+    styleMode === 'ugc' &&
+    (
+      platform === 'rednote' ||
+      platform === 'xiaohongshu' ||
+      platform.includes('小红书') ||
+      platform.includes('rednote')
+    )
+  ) {
+    return '3:4';
+  }
+
+  return '1:1';
 }
 
 function resolveAgentActionAspectRatio(params: {
@@ -1262,10 +1271,10 @@ function resolveAgentActionAspectRatio(params: {
 async function requestOpenClawPlanfEcomConfirm(
   session: Extract<AgentPanelMessage, { type: 'planf_ecom_session' }>['session'],
   provider: AgentProvider,
-  model: AgentModelId,
+  model: string,
   projectId?: string,
 ): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>> {
-  const textRunConfig = resolveAgentTextRunConfig(provider, model);
+  const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/confirm', {
     method: 'POST',
     headers: {
@@ -1307,11 +1316,11 @@ async function requestOpenClawPlanfEcomConfirm(
 async function requestOpenClawPlanfEcomCreateWorkflow(
   planMessage: Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>,
   provider: AgentProvider,
-  model: AgentModelId,
+  model: string,
   projectId?: string,
   anchor?: PlanfEcomAnchor,
 ): Promise<AgentRunPanelResult> {
-  const textRunConfig = resolveAgentTextRunConfig(provider, model);
+  const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/create-workflow', {
     method: 'POST',
     headers: {
@@ -1354,10 +1363,10 @@ async function requestOpenClawPlanfEcomFanoutWorkflow(
   planfEcom: NonNullable<Extract<AgentPanelMessage, { type: 'execution_plan' }>['planfEcom']>,
   anchor: PlanfEcomAnchor,
   provider: AgentProvider,
-  model: AgentModelId,
+  model: string,
   projectId?: string,
 ): Promise<AgentRunPanelResult> {
-  const textRunConfig = resolveAgentTextRunConfig(provider, model);
+  const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/create-workflow', {
     method: 'POST',
     headers: {
@@ -1395,10 +1404,10 @@ async function requestOpenClawPlanfEcomReplan(
     instruction: string;
   },
   provider: AgentProvider,
-  model: AgentModelId,
+  model: string,
   projectId?: string,
 ): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>> {
-  const textRunConfig = resolveAgentTextRunConfig(provider, model);
+  const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/confirm', {
     method: 'POST',
     headers: {
@@ -1444,9 +1453,9 @@ async function requestAgentRun(params: {
   message: string;
   context: AgentTaskContext;
   provider: AgentProvider;
-  model: AgentModelId;
+  model: string;
 }): Promise<AgentRunPanelResult> {
-  const textRunConfig = resolveAgentTextRunConfig(params.provider, params.model);
+  const textRunConfig = resolveAgentTextRunConfig(params.provider);
   const response = await fetchAgentApi(
     '/api/agent/run',
     {
@@ -1612,13 +1621,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     [projectId, projectName, userId],
   );
   const hydratedDraftScopeRef = useRef<string | null>(null);
-  const [provider, setProvider] = useState<AgentProvider>('comfly');
-  const [model, setModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
-  const activeAgentModelOptions = getAgentModelOptions(provider);
-  const handleAgentProviderChange = (nextProvider: AgentProvider) => {
-    setProvider(nextProvider);
-    setModel((current) => resolveAgentModelForProvider(nextProvider, current));
-  };
+  const [provider, setProvider] = useState<AgentProvider>('vibe');
+  const [model, setModel] = useState<string>(AGENT_MODEL_OPTIONS[0].id);
   const [messages, setMessages] = useState<AgentPanelMessage[]>([]);
   const [busyMode, setBusyMode] = useState<AgentBusyMode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -1770,14 +1774,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     );
 
     setDraft((currentDraft) => (isPlanfPresetPromptDraft(currentDraft) ? '' : currentDraft));
-  }, [
-    selectedPlanfPresetId,
-    setDraft,
-    setPlanfPresetOpen,
-    setPlanfRouteMode,
-    setReferenceUploadNudgeRequested,
-    setSelectedPlanfPresetId,
-  ]);
+  }, [selectedPlanfPresetId]);
 
   const handleOpenHistory = useCallback(() => {
     setHistoryThreads(listAgentThreads(userId, projectId, projectName));
@@ -1928,7 +1925,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         },
       ]);
     });
-  }, [setAttachments, setMessages, setReferenceUploadNudgeRequested]);
+  }, [setMessages]);
 
   const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     addImageFiles(Array.from(event.target.files ?? []), pendingAttachmentRoleRef.current);
@@ -2020,7 +2017,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
 
       return result;
     });
-  }, [onQuickReferenceSelect, setAttachments, setReferenceUploadNudgeRequested]);
+  }, [onQuickReferenceSelect]);
 
   useEffect(() => {
     if (pendingReferenceAttachments.length === 0) {
@@ -2050,7 +2047,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const runAgent = useCallback(async (params: {
     prompt: string;
     provider: AgentProvider;
-    model: AgentModelId;
+    model: string;
     imagePreference: Required<AgentImageGenerationPreference>;
     taskAttachments: AgentTaskAttachment[];
     selectedAttachments: AgentTaskAttachment[];
@@ -2250,8 +2247,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         } catch (error) {
           const errorText = formatAgentChatErrorText(
             error instanceof Error ? error.message : undefined,
-            'GenLink 规则运行失败，请稍后重试。',
+            'GenLink 规则运行超时，请稍后重试，或切换文本模型后再试。',
           );
+          console.error('[canvas-agent] ecom start failed', errorText);
 
           setMessages((current) => [
             ...current,
@@ -2297,6 +2295,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               error instanceof Error ? error.message : undefined,
               'GenLink 电商编排确认失败，请稍后重试。',
             );
+            console.error('[canvas-agent] ecom auto confirm failed', errorText);
 
             setMessages((current) => [
               ...current,
@@ -2347,6 +2346,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         error instanceof Error ? error.message : undefined,
         'Agent 请求失败',
       );
+      console.error('[canvas-agent] run failed', errorText);
 
       setMessages((current) => [
         ...current,
@@ -2454,7 +2454,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const submitAgentRequest = useCallback((submission: {
     prompt: string;
     provider: AgentProvider;
-    model: AgentModelId;
+    model: string;
     imagePreference: Required<AgentImageGenerationPreference>;
     attachments: AgentTaskAttachment[];
     selectedPlanfPresetId: PlanfEcomPresetId | null;
@@ -2579,12 +2579,6 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     hasUserDecisionPending,
     onCreateSourceNodes,
     runAgent,
-    setAttachments,
-    setBusyMode,
-    setDraft,
-    setMessages,
-    setPlanfRouteMode,
-    setSelectedPlanfPresetId,
   ]);
 
   const handleSubmit = useCallback(() => {
@@ -3131,14 +3125,11 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       return;
     }
 
-    const planMessageForExecution = planMessage;
-
     setBusyMode('mcp');
     setMessages((current) => current.map((message) => (
       message.id === messageId && message.type === 'planf_ecom_plan'
         ? {
             ...message,
-            plan: planMessageForExecution.plan,
             status: 'submitted' as const,
             errorMessage: undefined,
             retryStage: undefined,
@@ -3146,16 +3137,16 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           }
         : message
     )));
-    void requestOpenClawPlanfEcomCreateWorkflow(planMessageForExecution, provider, model, projectId)
+    void requestOpenClawPlanfEcomCreateWorkflow(planMessage, provider, model, projectId)
       .then((result) => {
         const planAspectRatio = getPlanfEcomPreferredAspectRatio({
-          values: planMessageForExecution.values,
-          plan: planMessageForExecution.plan,
+          values: planMessage.values,
+          plan: planMessage.plan,
         });
         const mentionRestoredActions = restoreReferenceMentionLabelsInActions(
           result.actions,
-          planMessageForExecution.session.request,
-          planMessageForExecution.attachments,
+          planMessage.session.request,
+          planMessage.attachments,
         );
         const preferenceActions = mentionRestoredActions.map((action) => (
           action.type === 'create_image_generation_node'
@@ -3180,14 +3171,14 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         ));
         const executionActions = attachReferencesToImageActions(
           preferenceActions,
-          planMessageForExecution.attachments,
+          planMessage.attachments,
         );
         const preferenceNodes = applyImageGenerationActionOptionsToMaterializedNodes({
           nodes: result.nodes,
           actions: executionActions,
           nodeIdMap: result.nodeIdMap,
         });
-        const attachmentsForExecution = planMessageForExecution.attachments.map((attachment) => ({ ...attachment }));
+        const attachmentsForExecution = planMessage.attachments.map((attachment) => ({ ...attachment }));
         const executionResult = onConfirmPlan?.({
           actions: executionActions,
           nodes: preferenceNodes,
@@ -3208,7 +3199,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             role: 'agent',
             type: 'execution_plan',
             summary: result.summary,
-            userPrompt: planMessageForExecution.session.request,
+            userPrompt: planMessage.session.request,
             plan: result.plan,
             actions: executionActions,
             nodes: preferenceNodes,
@@ -3221,12 +3212,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             imageGenerationNodeIds: executionResult.imageGenerationNodeIds,
             groupId: executionResult.groupId,
             groupName: executionResult.groupName,
-            planfEcom: planMessageForExecution.plan.meta.anchorMode === 'white-bg-first'
+            planfEcom: planMessage.plan.meta.anchorMode === 'white-bg-first'
               ? {
                   phase: 'white-bg-anchor' as const,
-                  session: planMessageForExecution.session,
-                  values: planMessageForExecution.values,
-                  plan: planMessageForExecution.plan,
+                  session: planMessage.session,
+                  values: planMessage.values,
+                  plan: planMessage.plan,
                 }
               : undefined,
             status: executionResult.ok ? 'waiting_generation_confirmation' : 'error',
@@ -3371,11 +3362,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         : message
     )));
     setBusyMode('thinking');
-    const selectedProvider = selectionMessage.provider ?? provider;
     void runAgent({
       prompt: selectionMessage.prompt,
-      provider: selectedProvider,
-      model: resolveAgentModelForProvider(selectedProvider, selectionMessage.model ?? model),
+      provider: selectionMessage.provider ?? provider,
+      model: selectionMessage.model ?? model,
       imagePreference: resolvedImagePreference,
       taskAttachments: selectionMessage.attachments,
       selectedAttachments: [selectedAttachment],
@@ -4356,13 +4346,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
             }
 
             if (message.type === 'planf_ecom_plan') {
-              const displayPlan = message.plan;
-              const protocolLabel = `creative-doc / ${displayPlan.type}`;
+              const protocolLabel = `creative-doc / ${message.plan.type}`;
               const summaryText = sanitizeAgentChatText(message.summary);
-              const checkpointPrompt = sanitizeAgentChatText(displayPlan.checkpointPrompt);
+              const checkpointPrompt = sanitizeAgentChatText(message.plan.checkpointPrompt);
               const imageSummary = getPlanfEcomImageSummary({
                 preference: resolvedImagePreference,
-                taskCount: displayPlan.imageSlots.length,
+                taskCount: message.plan.imageSlots.length,
               });
 
               return (
@@ -4382,7 +4371,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                             图片生成
                           </div>
                           <div className="mt-3 text-[16px] font-semibold text-white">
-                            生成 {displayPlan.imageSlots.length} 张图片
+                            生成 {message.plan.imageSlots.length} 张图片
                           </div>
                         </div>
                         <div className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-[#75e2b8]">
@@ -4390,19 +4379,19 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                           {getPlanfEcomPlanStatusLabel(message.status)}
                         </div>
                       </div>
-                      <div className="mt-3 text-sm font-semibold leading-6 text-white">{displayPlan.title}</div>
+                      <div className="mt-3 text-sm font-semibold leading-6 text-white">{message.plan.title}</div>
                       {summaryText ? (
                         <div className="mt-1 text-xs leading-5 text-white/54">{summaryText}</div>
                       ) : null}
 
-                      {displayPlan.meta.extraConstraints ? (
+                      {message.plan.meta.extraConstraints ? (
                         <div className="mt-3 rounded-md border border-white/10 bg-black/18 p-2 text-[11px] leading-5 text-white/48">
-                          {displayPlan.meta.extraConstraints}
+                          {message.plan.meta.extraConstraints}
                         </div>
                       ) : null}
 
                       <div className="mt-4 overflow-hidden rounded-[18px] bg-[#2a2b2e]">
-                        {displayPlan.imageSlots.map((slot, slotIndex) => {
+                        {message.plan.imageSlots.map((slot, slotIndex) => {
                           const slotKey = getPlanfEcomSlotKey({
                             messageId: message.id,
                             slotId: slot.index,
@@ -4469,7 +4458,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       {checkpointPrompt ? (
                         <div className="mt-4 text-xs font-medium text-white/62">{checkpointPrompt}</div>
                       ) : null}
-                      {displayPlan.meta.anchorMode === 'white-bg-first' ? (
+                      {message.plan.meta.anchorMode === 'white-bg-first' ? (
                         <div className="mt-2 rounded-md border border-[#ffc36a]/20 bg-[#ffc36a]/10 p-2 text-[11px] leading-5 text-[#ffd89b]">
                           当前没有产品参考图。按规则本轮只创建 #1 主锚白底图；主锚生成完成并确认后，下一轮再扇出其余图片。
                         </div>
@@ -4477,10 +4466,10 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                       <div
                         className={[
                           'mt-3 flex gap-2',
-                          displayPlan.options.length > 2 ? 'flex-col items-start' : 'flex-wrap',
+                          message.plan.options.length > 2 ? 'flex-col items-start' : 'flex-wrap',
                         ].join(' ')}
                       >
-                        {displayPlan.options.map((option) => (
+                        {message.plan.options.map((option) => (
                           <button
                             key={option.id}
                             type="button"
@@ -4499,7 +4488,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                               }
                             }}
                           >
-                            {option.id}. {option.id === 'A' && displayPlan.meta.anchorMode === 'white-bg-first'
+                            {option.id}. {option.id === 'A' && message.plan.meta.anchorMode === 'white-bg-first'
                               ? '确认编排，先创建主锚白底'
                               : option.label}
                           </button>
@@ -4750,12 +4739,12 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     value: option.id,
                     label: option.label,
                   }))}
-                  onChange={handleAgentProviderChange}
+                  onChange={setProvider}
                 />
                 <AgentPanelSelect
                   label="Model"
                   value={model}
-                  options={activeAgentModelOptions.map((option) => ({
+                  options={AGENT_MODEL_OPTIONS.map((option) => ({
                     value: option.id,
                     label: option.label,
                   }))}

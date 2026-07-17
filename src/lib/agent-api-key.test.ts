@@ -58,7 +58,7 @@ test("prefers the requested Agent provider credential", () => {
     },
   });
 
-  assert.deepEqual(resolveAgentApiCredential(settings, "comfly", "gemini-3.5-flash"), {
+  assert.deepEqual(resolveAgentApiCredential(settings, "comfly"), {
     provider: "comfly",
     apiKey: "comfly-key",
   });
@@ -73,7 +73,7 @@ test("falls back to another supported Agent provider", () => {
     },
   });
 
-  assert.deepEqual(resolveAgentApiCredential(settings, "comfly", "gemini-3.1-pro"), {
+  assert.deepEqual(resolveAgentApiCredential(settings, "comfly"), {
     provider: "zhenzhen",
     apiKey: "zhenzhen-key",
   });
@@ -87,7 +87,7 @@ test("accepts a legacy image-only key for an Agent provider", () => {
     },
   });
 
-  assert.deepEqual(resolveAgentApiCredential(settings, "comfly", "gemini-3.5-flash"), {
+  assert.deepEqual(resolveAgentApiCredential(settings, "comfly"), {
     provider: "comfly",
     apiKey: "image-comfly-key",
   });
@@ -99,54 +99,6 @@ test("reports when no Agent credential is configured", () => {
     imageProvider: "runninghub",
   });
 
-  assert.equal(resolveAgentApiCredential(settings, "comfly", "gemini-3.5-flash"), null);
-  assert.equal(hasAgentApiCredential(settings, "comfly", "gemini-3.5-flash"), false);
-});
-
-test("keeps the selected legacy Provider for GPT models", () => {
-  const settings = createSettings({
-    textProvider: "comfly",
-    textApiKeys: {
-      ...createSettings().textApiKeys,
-      vibe: "vibe-key",
-      comfly: "comfly-key",
-    },
-  });
-
-  assert.deepEqual(resolveAgentApiCredential(settings, "vibe", "gpt-5.5"), {
-    provider: "vibe",
-    apiKey: "vibe-key",
-  });
-});
-
-test("skips GPT-only Provider credentials for Gemini models", () => {
-  const settings = createSettings({
-    textProvider: "vibe",
-    textApiKeys: {
-      ...createSettings().textApiKeys,
-      vibe: "vibe-key",
-      comfly: "comfly-key",
-    },
-  });
-
-  assert.deepEqual(resolveAgentApiCredential(settings, "vibe", "gemini-3.5-flash"), {
-    provider: "comfly",
-    apiKey: "comfly-key",
-  });
-});
-
-test("does not report a GPT-only key as usable for Gemini", () => {
-  const settings = createSettings({
-    textProvider: "vibe",
-    imageProvider: "runninghub",
-    textApiKeys: {
-      ...createSettings().textApiKeys,
-      vibe: "vibe-key",
-    },
-  });
-
-  assert.equal(
-    hasAgentApiCredential(settings, "comfly", "gemini-3.5-flash"),
-    false,
-  );
+  assert.equal(resolveAgentApiCredential(settings, "comfly"), null);
+  assert.equal(hasAgentApiCredential(settings, "comfly"), false);
 });

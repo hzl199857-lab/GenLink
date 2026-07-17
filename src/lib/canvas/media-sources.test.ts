@@ -91,7 +91,7 @@ const uploadedAudio: CanvasNode = {
   },
 };
 
-test("creates Agent attachments from image and video nodes only", () => {
+test("creates Agent attachments from image nodes only", () => {
   assert.deepEqual(createAgentAttachmentFromCanvasNode(uploadedImage), {
     id: "node-image-1",
     kind: "image",
@@ -111,14 +111,8 @@ test("creates Agent attachments from image and video nodes only", () => {
     sourceNodeId: "image-1",
   });
 
-  const generatedAttachment = createAgentAttachmentFromCanvasNode(generatedVideo);
-  assert.equal(generatedAttachment?.kind, "video");
-  assert.equal(generatedAttachment?.mediaUrl, "https://cdn.example/ad.mp4");
-  assert.equal(generatedAttachment?.durationSeconds, 8);
-
-  const uploadedAttachment = createAgentAttachmentFromCanvasNode(uploadedVideo);
-  assert.equal(uploadedAttachment?.kind, "video");
-  assert.equal(uploadedAttachment?.width, 1920);
+  assert.equal(createAgentAttachmentFromCanvasNode(generatedVideo), null);
+  assert.equal(createAgentAttachmentFromCanvasNode(uploadedVideo), null);
   assert.equal(createAgentAttachmentFromCanvasNode(uploadedAudio), null);
 });
 
@@ -129,6 +123,11 @@ test("creates material sources from image, video, and audio nodes", () => {
   assert.equal(video?.kind, "video");
   assert.equal(video?.mediaUrl, "https://cdn.example/shot.mp4");
   assert.equal(video?.durationSeconds, 12);
+
+  const generated = createMaterialSourceFromCanvasNode(generatedVideo);
+  assert.equal(generated?.kind, "video");
+  assert.equal(generated?.mediaUrl, "https://cdn.example/ad.mp4");
+  assert.equal(generated?.durationSeconds, 8);
 
   const audio = createMaterialSourceFromCanvasNode(uploadedAudio);
   assert.equal(audio?.kind, "audio");
