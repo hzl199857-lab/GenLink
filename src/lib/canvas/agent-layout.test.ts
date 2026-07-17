@@ -128,6 +128,34 @@ describe("layoutAgentWorkflowNodes", () => {
     }
   });
 
+  it("places a shared prompt node only once when it feeds multiple images", () => {
+    const incomingNodes: CanvasNode[] = [
+      textNode("shared-prompt"),
+      imageGenerationNode("image-1"),
+      imageGenerationNode("image-2"),
+      imageGenerationNode("image-3"),
+    ];
+
+    const positioned = layoutAgentWorkflowNodes({
+      incomingNodes,
+      incomingEdges: [
+        edge("e1", "shared-prompt", "image-1"),
+        edge("e2", "shared-prompt", "image-2"),
+        edge("e3", "shared-prompt", "image-3"),
+      ],
+      existingNodes: [],
+      sourceNodes: [],
+      fallbackStartPosition: { x: 500, y: 100 },
+    });
+
+    assert.equal(positioned.length, incomingNodes.length);
+    assert.equal(new Set(positioned.map((node) => node.id)).size, incomingNodes.length);
+    assert.equal(
+      positioned.filter((node) => node.id === "shared-prompt").length,
+      1,
+    );
+  });
+
   it("moves the workflow down when the first right-side slot overlaps existing nodes", () => {
     const source = uploadedImageNode("source", 100, 200);
     const blocker = uploadedImageNode("blocker", 660, 180);

@@ -29,12 +29,15 @@ const {
 } = require("./rules-context.ts") as typeof import("./rules-context");
 
 const BASE_FILES = [
-  "AGENTS.md",
-  "BOOTSTRAP.md",
-  "IDENTITY.md",
   "phase-policy.md",
   "skills/ecom-image/SKILL.md",
   "skills/ecom-image/references/categories.md",
+] as const;
+
+const OPENCLAW_ROOT_FILES = [
+  "AGENTS.md",
+  "BOOTSTRAP.md",
+  "IDENTITY.md",
 ] as const;
 
 const WORKFLOW_FILES = [
@@ -60,7 +63,7 @@ function createRulesRoot(extraFiles: readonly string[] = []) {
   return root;
 }
 
-test("injects complete allowlisted ecommerce rule contents before the model task", async () => {
+test("injects ecommerce rules without repeating OpenClaw root bootstrap files", async () => {
   const rulesRoot = createRulesRoot();
   const message = await buildPlanfEcomRulesMessage({
     stage: "start",
@@ -73,8 +76,13 @@ test("injects complete allowlisted ecommerce rule contents before the model task
     assert.match(message, new RegExp(`path="${relativePath.replaceAll("/", "\\/")}"`));
     assert.match(message, new RegExp(`content:${relativePath.replaceAll("/", "\\/")}`));
   }
+  for (const relativePath of OPENCLAW_ROOT_FILES) {
+    assert.doesNotMatch(message, new RegExp(`path="${relativePath}"`));
+    assert.doesNotMatch(message, new RegExp(`content:${relativePath}`));
+  }
   assert.match(message, /sha256="[a-f0-9]{64}"/);
-  assert.ok(message.indexOf("content:AGENTS.md") < message.indexOf("MODEL_TASK"));
+  assert.ok(message.indexOf("content:skills/ecom-image/SKILL.md") < message.indexOf("MODEL_TASK"));
+  assert.match(message, /OpenClaw already loaded the workspace root rules AGENTS\.md, BOOTSTRAP\.md, and IDENTITY\.md/);
   assert.match(message, /Do not call file, shell, or tool APIs/);
 });
 

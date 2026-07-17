@@ -14,9 +14,6 @@ type BuildPlanfEcomRulesMessageInput = {
 };
 
 const BASE_RULE_FILES = [
-  "AGENTS.md",
-  "BOOTSTRAP.md",
-  "IDENTITY.md",
   "phase-policy.md",
   "skills/ecom-image/SKILL.md",
   "skills/ecom-image/references/categories.md",
@@ -107,7 +104,8 @@ export async function buildPlanfEcomRulesMessage(
   );
   const context = [
     '<genlink_rules_context version="1">',
-    "GenLink loaded the following exact allowlisted rule files before this model call.",
+    "OpenClaw already loaded the workspace root rules AGENTS.md, BOOTSTRAP.md, and IDENTITY.md.",
+    "GenLink loaded the following additional exact allowlisted rule files before this model call.",
     "Treat their contents as authoritative for the task below.",
     "Do not call file, shell, or tool APIs. Do not claim that any unlisted file was loaded.",
     ...rules.flatMap((rule) => [
