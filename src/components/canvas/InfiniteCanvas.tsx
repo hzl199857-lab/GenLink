@@ -2631,6 +2631,81 @@ function createAgentSourceImageNodes(params: {
   return { nodes, nodeIdsByAttachmentId };
 }
 
+function placeAgentSourceNodesInOpenSpace(
+  sourceNodes: Array<Extract<CanvasNode, { type: 'image' }>>,
+  existingNodes: CanvasNode[],
+  preferredPosition: { x: number; y: number },
+): Array<Extract<CanvasNode, { type: 'image' }>> {
+  if (sourceNodes.length === 0) {
+    return sourceNodes;
+  }
+
+  const sourceBounds = getBoundsForNodes(sourceNodes, 0);
+  if (!sourceBounds) {
+    return sourceNodes;
+  }
+
+  const occupiedBounds = existingNodes.map((node) => getNodeGroupBounds(node));
+  const stepX = sourceBounds.width + 160;
+  const stepY = sourceBounds.height + 120;
+  const candidates: Array<{ x: number; y: number }> = [preferredPosition];
+
+  for (let ring = 1; ring <= 8; ring += 1) {
+    for (let xOffset = -ring; xOffset <= ring; xOffset += 1) {
+      for (let yOffset = -ring; yOffset <= ring; yOffset += 1) {
+        if (Math.max(Math.abs(xOffset), Math.abs(yOffset)) !== ring) {
+          continue;
+        }
+
+        candidates.push({
+          x: preferredPosition.x + xOffset * stepX,
+          y: preferredPosition.y + yOffset * stepY,
+        });
+      }
+    }
+  }
+
+  const openPosition = candidates.find((candidate) => {
+    const dx = candidate.x - preferredPosition.x;
+    const dy = candidate.y - preferredPosition.y;
+    return !sourceNodes.some((node) => {
+      const bounds = getNodeGroupBounds({
+        ...node,
+        position: {
+          x: node.position.x + dx,
+          y: node.position.y + dy,
+        },
+      });
+
+      return occupiedBounds.some((occupied) => rectanglesOverlap(
+        {
+          left: bounds.x,
+          top: bounds.y,
+          right: bounds.x + bounds.width,
+          bottom: bounds.y + bounds.height,
+        },
+        {
+          left: occupied.x,
+          top: occupied.y,
+          right: occupied.x + occupied.width,
+          bottom: occupied.y + occupied.height,
+        },
+      ));
+    });
+  }) ?? candidates[candidates.length - 1];
+
+  const dx = openPosition.x - preferredPosition.x;
+  const dy = openPosition.y - preferredPosition.y;
+
+  return sourceNodes.map((node) => ({
+    ...node,
+    position: {
+      x: Math.round(node.position.x + dx),
+      y: Math.round(node.position.y + dy),
+    },
+  }));
+}
+
 function createAgentGenerationNodesAndEdges(params: {
   actions: CanvasAgentAction[];
   startPosition: { x: number; y: number };
@@ -14227,6 +14302,15 @@ function InnerCanvas({
       }),
       existingNodeIds,
     });
+    const existingNodes = useCanvasStore.getState().nodes;
+    result.nodes = placeAgentSourceNodesInOpenSpace(
+      result.nodes,
+      existingNodes,
+      project({
+        x: window.innerWidth / 2 - UPLOADED_IMAGE_MAX_CARD_WIDTH / 2,
+        y: window.innerHeight / 2 - 220,
+      }),
+    );
 
     if (result.nodes.length > 0) {
       addNodes(result.nodes);
@@ -14288,12 +14372,14 @@ function InnerCanvas({
           y: window.innerHeight / 2 - 180,
         });
     const canvasNodesBeforeCreate = useCanvasStore.getState().nodes;
+    const sourceNodeIdSet = new Set(existingSourceNodes.map((node) => node.id));
+    const serverNodes = payload.nodes?.filter((node) => !sourceNodeIdSet.has(node.id)) ?? [];
     const rawResult = payload.nodes?.length
       ? {
-          nodes: payload.nodes,
+          nodes: serverNodes,
           edges: payload.edges ?? [],
-          focusNodeId: payload.nodes[payload.nodes.length - 1]?.id ?? null,
-          imageGenerationNodeIds: payload.nodes.flatMap((node) => (
+          focusNodeId: serverNodes[serverNodes.length - 1]?.id ?? null,
+          imageGenerationNodeIds: serverNodes.flatMap((node) => (
             node.type === 'image_generation' ? [node.id] : []
           )),
           nodeIdMap: payload.actions.reduce<Record<string, string>>((map, action) => {
@@ -14312,7 +14398,7 @@ function InnerCanvas({
               return map;
             }
 
-            if (payload.nodes?.some((node) => node.id === action.clientActionId)) {
+            if (serverNodes.some((node) => node.id === action.clientActionId)) {
               map[action.clientActionId] = action.clientActionId;
             }
 

@@ -7,6 +7,8 @@ import {
 } from "../planf-ecom";
 import type { CanvasAgentAction } from "../../types/agent";
 
+type EcomAspectRatio = "1:1" | "3:4" | "4:5" | "9:16" | "16:9";
+
 export type PlanfEcomPresetId =
   | "full-set-8"
   | "detail-page-pack"
@@ -155,7 +157,7 @@ export type OpenClawPlanfEcomImagePlan = {
     round: 1 | 2;
     subType: "image-image" | "text-image";
     anchorSource: string;
-    ratio: "1:1";
+    ratio: EcomAspectRatio;
     intent: string;
   }>;
   options: Array<{
@@ -249,7 +251,7 @@ const PRESET_TO_MODE: Record<PlanfEcomPresetId, {
       { label: "路由锁定", detail: "route=ecomImageTrack，并启用 amazonMode add-on。" },
       { label: "规则加载", detail: "加载 ecom-image/SKILL.md，叠加 Amazon 白底、A+、英文 callout 约束。" },
       { label: "参考图处理", detail: referenceImageCount > 0 ? `发现 ${referenceImageCount} 张参考图，主图与附图都需要保持同一产品外观。` : "没有参考图，将通过产品名和类目收敛主体描述。" },
-      { label: "节点策略", detail: "确认后创建 6 个节点：白底主图、Lifestyle、Feature、Dimension、A+、Comparison。" },
+      { label: "节点策略", detail: "确认后创建 8 个节点：白底主图、场景、卖点、尺寸、A+、对比、使用和细节图。" },
     ],
   },
   "ugc-lifestyle": {
@@ -270,7 +272,7 @@ const PRESET_TO_MODE: Record<PlanfEcomPresetId, {
       { label: "路由锁定", detail: "route=ecomImageTrack，styleMode=ugc。" },
       { label: "规则加载", detail: "加载 ecom-image/references/ugc-style.md，切换到 iPhone/social realism。" },
       { label: "参考图处理", detail: referenceImageCount > 0 ? `发现 ${referenceImageCount} 张参考图，产品形态保持一致，场景与人物可以重构。` : "没有参考图，需要用产品名和类目约束主体。" },
-      { label: "节点策略", detail: "确认后创建 5 个节点：手持/开箱、生活使用、细节近拍、种草封面、差异构图。" },
+      { label: "节点策略", detail: "确认后创建 6 个节点：1 张白底锚点 + 5 张差异化 UGC 构图。" },
     ],
   },
   "editorial-stylist": {
@@ -291,7 +293,7 @@ const PRESET_TO_MODE: Record<PlanfEcomPresetId, {
       { label: "路由锁定", detail: "route=ecomImageTrack，styleMode=stylist。" },
       { label: "规则加载", detail: "加载 ecom-image/references/fashion-stylist.md，进入 Muse Profile / Archetype 逻辑。" },
       { label: "参考图处理", detail: referenceImageCount > 0 ? `发现 ${referenceImageCount} 张参考图，保持产品身份，同时重构人物、服化道和光影。` : "没有参考图，需要通过产品名和类目先确定造型边界。" },
-      { label: "节点策略", detail: "确认后创建 5 个节点：Hero Muse、三组 Archetype、Editorial 收束大片。" },
+      { label: "节点策略", detail: "确认后创建 6 个节点：1 张白底锚点 + 5 张 Archetype 编辑大片。" },
     ],
   },
   "ecom-planner": {
@@ -452,11 +454,53 @@ function resolveStyleMode(value?: string): "default" | "ugc" | "stylist" {
   return value === "ugc" || value === "stylist" ? value : "default";
 }
 
+function resolvePackageMode(
+  preset: PlanfEcomPresetId,
+  imageSet: "full-set" | "detail" | "main",
+  styleMode: "default" | "ugc" | "stylist",
+): PlanfEcomPackageMode {
+  if (imageSet === "main") {
+    return "single";
+  }
+
+  if (imageSet === "detail") {
+    return "detail-page-pack";
+  }
+
+  if (styleMode === "ugc") {
+    return "ugc-lifestyle";
+  }
+
+  if (styleMode === "stylist") {
+    return "editorial-stylist";
+  }
+
+  if (preset === "amazon-adapter") {
+    return "amazon-adapter";
+  }
+
+  return "full-set-8";
+}
+
+function detailPageRatios(platformValue: string): EcomAspectRatio[] {
+  if (platformValue === "xiaohongshu") {
+    return ["3:4", "3:4", "3:4", "3:4", "3:4"];
+  }
+
+  if (platformValue === "douyin" || platformValue === "weixin") {
+    return ["9:16", "4:5", "4:5", "4:5", "4:5"];
+  }
+
+  return ["3:4", "4:5", "3:4", "1:1", "4:5"];
+}
+
 function buildPlanImageSlots(params: {
   imageSet: "full-set" | "detail" | "main";
   anchorMode: "user-upload" | "white-bg-first" | "single-shot";
   deliveryRounds: 1 | 2;
   preset: PlanfEcomPresetId;
+  packageMode: PlanfEcomPackageMode;
+  platformValue: string;
 }): OpenClawPlanfEcomImagePlan["imageSlots"] {
   if (params.imageSet === "main") {
     return [{
@@ -471,6 +515,7 @@ function buildPlanImageSlots(params: {
   }
 
   if (params.imageSet === "detail") {
+    const ratios = detailPageRatios(params.platformValue);
     return [
       "首屏 KV",
       "核心卖点模块 1",
@@ -485,21 +530,50 @@ function buildPlanImageSlots(params: {
       anchorSource: params.anchorMode === "user-upload"
         ? "上传产品图"
         : index === 0 ? "独立主锚白底" : "第 1 轮主锚白底真实 nodeId",
-      ratio: "1:1",
+      ratio: ratios[index],
       intent: `${slot}，承载详情页文案策略和模块化视觉表达。`,
     }));
   }
 
-  const slots = [
-    ["白底图（主锚）", "纯白背景商品全貌，作为整套产品一致性锚点。"],
-    ["场景图 A（具象）", "真实生活使用场景，增强代入感。"],
-    ["场景图 B（抽象）", "高级质感场景，提升品牌调性。"],
-    ["卖点图 1（左右布局）", "核心卖点 + 参数文案区。"],
-    ["卖点图 2（上下布局）", "次卖点 + 文案说明。"],
-    ["卖点图 3（中心环绕）", "第三卖点或系列展示。"],
-    ["用户使用图", "真实用户使用场景，强化可信度。"],
-    ["细节图", "微距特写材质、工艺或核心部件。"],
-  ] as const;
+  const slots = params.packageMode === "ugc-lifestyle"
+    ? [
+        ["白底图（主锚）", "纯白背景商品全貌，作为平台合规和产品一致性锚点。"],
+        ["Mirror Selfie 镜面自拍", "镜面自拍，镜内外反射一致，保留 iPhone 随拍质感。"],
+        ["Candid Street Snap 街拍抓拍", "行走或回头的自然抓拍，使用真实街景和自然光。"],
+        ["0.5x 超广角", "低机位或近距离超广角构图，产品突出在前景。"],
+        ["Direct Flash 直闪", "直闪近距离画面，硬阴影和轻微胶片噪点。"],
+        ["Lifestyle Seated 坐着生活场景", "咖啡馆、沙发或餐桌上的放松使用场景。"],
+      ] as const
+    : params.packageMode === "editorial-stylist"
+      ? [
+          ["白底图（主锚）", "纯白背景商品全貌，作为平台合规和产品一致性锚点。"],
+          ["Hero Muse 大片", "建立高级视觉锚点的全身 Editorial 造型大片。"],
+          ["Archetype 1 极简高端风", "极简建筑空间，强调轮廓、材质和高级感。"],
+          ["Archetype 2 都市通勤风", "都市通勤叙事，强调目标人群和穿搭关系。"],
+          ["Archetype 3 场景叙事风", "生活方式叙事场景，使用编辑级动态姿态。"],
+          ["Editorial 收束大片", "产品英雄细节与品牌调性收束画面。"],
+        ] as const
+      : params.packageMode === "amazon-adapter"
+        ? [
+            ["Amazon 白底主图", "纯白背景展示完整产品，符合 Amazon 主图准入要求。"],
+            ["Lifestyle 场景图", "欧美家庭或商业使用语境，突出真实使用方式。"],
+            ["Feature callout 图", "英文短文案突出核心功能和购买理由。"],
+            ["Dimension 图", "英文尺寸信息和产品比例，单位使用英制。"],
+            ["A+ 模块图", "品牌化 A+ 排版和产品细节信息。"],
+            ["Comparison 图", "英文卖点对比和套装价值，避免未经证实的竞品比较。"],
+            ["用户使用图", "欧美用户真实使用场景，保持产品外观一致。"],
+            ["产品细节图", "微距展示材质、工艺或核心部件细节。"],
+          ] as const
+        : [
+          ["白底图（主锚）", "纯白背景商品全貌，作为整套产品一致性锚点。"],
+          ["场景图 A（具象）", "真实生活使用场景，增强代入感。"],
+          ["场景图 B（抽象）", "高级质感场景，提升品牌调性。"],
+          ["卖点图 1（左右布局）", "核心卖点 + 参数文案区。"],
+          ["卖点图 2（上下布局）", "次卖点 + 文案说明。"],
+          ["卖点图 3（中心环绕）", "第三卖点或系列展示。"],
+          ["用户使用图", "真实用户使用场景，强化可信度。"],
+          ["细节图", "微距特写材质、工艺或核心部件。"],
+        ] as const;
 
   return slots.map(([slot, intent], index) => ({
     index: index + 1,
@@ -521,6 +595,7 @@ function buildEcomImagePlan(input: OpenClawPlanfEcomConfirmInput): OpenClawPlanf
   const categoryValue = input.values.category || presetConfig.categoryDefault;
   const imageSet = resolveImageSet(input.session.preset, input.values.imageSet);
   const styleMode = resolveStyleMode(input.values.styleMode || presetConfig.styleModeDefault);
+  const packageMode = resolvePackageMode(input.session.preset, imageSet, styleMode);
   const platform = readOptionLabel(PLATFORM_OPTIONS, platformValue);
   const category = readOptionLabel(CATEGORY_OPTIONS, categoryValue);
   const anchorMode = input.session.referenceImageCount > 0
@@ -532,6 +607,8 @@ function buildEcomImagePlan(input: OpenClawPlanfEcomConfirmInput): OpenClawPlanf
     anchorMode,
     deliveryRounds,
     preset: input.session.preset,
+    packageMode,
+    platformValue,
   });
   const sellingPoints = [
     ...(input.values.sellingPoints ?? []),
@@ -808,7 +885,10 @@ export function createPlanfEcomWorkflowFromPlan(input: OpenClawPlanfEcomConfirmI
   const sellingPointsText = input.values.sellingPointsText?.trim();
   const platformValue = input.values.platform || presetConfig.defaultPlatformValue;
   const categoryValue = input.values.category;
-  const styleModeValue = input.values.styleMode || presetConfig.styleModeDefault;
+  const styleModeValue = resolveStyleMode(input.values.styleMode || presetConfig.styleModeDefault);
+  const packageMode = plan.meta.anchorMode === "white-bg-first"
+    ? "single"
+    : resolvePackageMode(input.session.preset, plan.meta.imageSet, styleModeValue);
   const platform = readOptionLabel(PLATFORM_OPTIONS, platformValue);
   const category = readOptionLabel(CATEGORY_OPTIONS, categoryValue);
   const styleModeLabel = readOptionLabel(STYLE_MODE_OPTIONS, styleModeValue);
@@ -836,9 +916,10 @@ export function createPlanfEcomWorkflowFromPlan(input: OpenClawPlanfEcomConfirmI
     request: `${input.session.request}；确认产品：${productName}`,
     product: productName,
     platform,
-    styleMode: presetConfig.styleMode,
-    packageMode: plan.meta.anchorMode === "white-bg-first" ? "single" : presetConfig.packageMode,
-    aspectRatio: "1:1",
+    styleMode: styleModeValue,
+    packageMode,
+    aspectRatio: plan.imageSlots[0]?.ratio || "1:1",
+    aspectRatios: plan.imageSlots.map((slot) => slot.ratio),
     extraConstraints,
   });
 }
@@ -851,7 +932,8 @@ export function createPlanfEcomWorkflowFromAnchor(input: OpenClawPlanfEcomAnchor
   const sellingPointsText = input.values.sellingPointsText?.trim();
   const platformValue = input.values.platform || presetConfig.defaultPlatformValue;
   const categoryValue = input.values.category;
-  const styleModeValue = input.values.styleMode || presetConfig.styleModeDefault;
+  const styleModeValue = resolveStyleMode(input.values.styleMode || presetConfig.styleModeDefault);
+  const packageMode = resolvePackageMode(input.session.preset, plan.meta.imageSet, styleModeValue);
   const platform = readOptionLabel(PLATFORM_OPTIONS, platformValue);
   const category = readOptionLabel(CATEGORY_OPTIONS, categoryValue);
   const styleModeLabel = readOptionLabel(STYLE_MODE_OPTIONS, styleModeValue);
@@ -871,9 +953,10 @@ export function createPlanfEcomWorkflowFromAnchor(input: OpenClawPlanfEcomAnchor
     request: `${input.session.request}；确认产品：${productName}；使用已确认主锚白底扇出其余图`,
     product: productName,
     platform,
-    styleMode: presetConfig.styleMode,
-    packageMode: presetConfig.packageMode,
-    aspectRatio: "1:1",
+    styleMode: styleModeValue,
+    packageMode,
+    aspectRatio: plan.imageSlots[0]?.ratio || "1:1",
+    aspectRatios: plan.imageSlots.map((slot) => slot.ratio),
     extraConstraints,
   });
   const workflow = {

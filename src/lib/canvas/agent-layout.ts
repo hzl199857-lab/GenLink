@@ -27,7 +27,9 @@ const UPLOADED_IMAGE_MIN_CARD_WIDTH = 300;
 const AGENT_NODE_COLUMN_GAP = 140;
 const AGENT_NODE_ROW_GAP = 92;
 const AGENT_CANVAS_COLLISION_PADDING = 48;
-const AGENT_LAYOUT_MAX_ROWS_BEFORE_COLUMN_SHIFT = 24;
+const AGENT_GRID_COLUMN_GAP = 160;
+const AGENT_GRID_COLUMNS = 3;
+const AGENT_LAYOUT_MAX_ROWS_BEFORE_COLUMN_SHIFT = 4;
 
 function parseCanvasAspectRatio(value: unknown): number | null {
   if (typeof value !== "string") {
@@ -293,7 +295,6 @@ function buildStackedAgentNodes(params: {
   const pairedTextNodeIds = new Set<string>();
   const placedNodeIds = new Set<string>();
   const placedNodes: CanvasNode[] = [];
-  let rowY = params.origin.y;
 
   if (imageNodes.length === 0) {
     const originalBounds = getBoundsForRects(params.incomingNodes.map(estimateCanvasNodeBounds));
@@ -308,43 +309,69 @@ function buildStackedAgentNodes(params: {
     return baseNodes;
   }
 
-  for (const imageNode of imageNodes) {
+  const cells = imageNodes.map((imageNode, index) => {
     const promptNode = findPromptNodeForImage({
       imageNode,
       textNodes,
       incomingEdges: params.incomingEdges,
     });
-    const promptBounds = promptNode ? estimateCanvasNodeBounds(promptNode) : null;
     const imageBounds = estimateCanvasNodeBounds(imageNode);
-    const rowHeight = Math.max(promptBounds?.height ?? 0, imageBounds.height);
-    const imageX = params.origin.x;
-    const promptX = imageX + imageBounds.width + AGENT_NODE_COLUMN_GAP;
+    const promptBounds = promptNode ? estimateCanvasNodeBounds(promptNode) : null;
 
-    if (promptNode) {
-      pairedTextNodeIds.add(promptNode.id);
-      placedNodeIds.add(promptNode.id);
+    return {
+      imageNode,
+      promptNode,
+      column: index % AGENT_GRID_COLUMNS,
+      row: Math.floor(index / AGENT_GRID_COLUMNS),
+      width: imageBounds.width + (promptBounds ? AGENT_NODE_COLUMN_GAP + promptBounds.width : 0),
+      height: Math.max(imageBounds.height, promptBounds?.height ?? 0),
+    };
+  });
+  const columnWidths = Array.from({ length: AGENT_GRID_COLUMNS }, (_, column) =>
+    Math.max(0, ...cells.filter((cell) => cell.column === column).map((cell) => cell.width)),
+  );
+  const rowHeights = Array.from(
+    { length: Math.max(...cells.map((cell) => cell.row), 0) + 1 },
+    (_, row) => Math.max(0, ...cells.filter((cell) => cell.row === row).map((cell) => cell.height)),
+  );
+  const columnOffsets = columnWidths.reduce<number[]>((offsets, width, column) => {
+    offsets[column] = (offsets[column - 1] ?? 0) + (column > 0 ? AGENT_GRID_COLUMN_GAP : 0) + width;
+    return offsets;
+  }, []);
+  const rowOffsets = rowHeights.reduce<number[]>((offsets, height, row) => {
+    offsets[row] = (offsets[row - 1] ?? 0) + (row > 0 ? AGENT_NODE_ROW_GAP : 0) + height;
+    return offsets;
+  }, []);
+
+  for (const cell of cells) {
+    const imageBounds = estimateCanvasNodeBounds(cell.imageNode);
+    const cellX = params.origin.x + (cell.column > 0 ? columnOffsets[cell.column - 1] : 0);
+    const cellY = params.origin.y + (cell.row > 0 ? rowOffsets[cell.row - 1] : 0);
+
+    if (cell.promptNode) {
+      pairedTextNodeIds.add(cell.promptNode.id);
+      placedNodeIds.add(cell.promptNode.id);
       placedNodes.push({
-        ...promptNode,
+        ...cell.promptNode,
         position: {
-          x: promptX,
-          y: Math.round(rowY - estimateCanvasNodeBounds(promptNode).y + promptNode.position.y),
+          x: Math.round(cellX + imageBounds.width + AGENT_NODE_COLUMN_GAP),
+          y: Math.round(cellY + 8),
         },
       } as CanvasNode);
     }
 
-    placedNodeIds.add(imageNode.id);
+    placedNodeIds.add(cell.imageNode.id);
     placedNodes.push({
-      ...imageNode,
+      ...cell.imageNode,
       position: {
-        x: imageX,
-        y: Math.round(rowY),
+        x: Math.round(cellX),
+        y: Math.round(cellY),
       },
     } as CanvasNode);
-
-    rowY += rowHeight + AGENT_NODE_ROW_GAP;
   }
 
   const unpairedTextNodes = textNodes.filter((node) => !pairedTextNodeIds.has(node.id));
+  let rowY = params.origin.y + (rowOffsets[rowOffsets.length - 1] ?? 0);
   for (const textNode of unpairedTextNodes) {
     placedNodeIds.add(textNode.id);
     placedNodes.push({
@@ -394,7 +421,10 @@ export function layoutAgentWorkflowNodes(params: {
   }
 
   const sourceBounds = getBoundsForRects(params.sourceNodes.map(estimateCanvasNodeBounds));
-  const existingRects = params.existingNodes.map(estimateCanvasNodeBounds);
+  const sourceNodeIds = new Set(params.sourceNodes.map((node) => node.id));
+  const existingRects = params.existingNodes
+    .filter((node) => !sourceNodeIds.has(node.id))
+    .map(estimateCanvasNodeBounds);
   const anchor = sourceBounds
     ? {
         x: sourceBounds.x + sourceBounds.width + AGENT_NODE_COLUMN_GAP,

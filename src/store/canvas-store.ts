@@ -88,6 +88,7 @@ import {
   failMidjourneyUpscale,
   startMidjourneyUpscale,
 } from "@/lib/midjourney-image-state";
+import { getMissingApiKeyErrorMessage } from "@/lib/canvas/api-key-error-message";
 
 type ApiErrorResponse = {
   ok: false;
@@ -639,10 +640,7 @@ function assertStoredApiKey(kind: ApiModelKind, provider: ApiProvider): string {
   const apiKey = readStoredApiKey(kind, provider);
 
   if (!apiKey) {
-    const kindLabel = kind === "text" ? "text" : kind === "video" ? "video" : "image";
-    throw new Error(
-      `Please configure the ${kindLabel} ${getApiProviderLabel(provider)} API Key in API settings first.`,
-    );
+    throw new Error(getMissingApiKeyErrorMessage(kind, getApiProviderLabel(provider)));
   }
 
   return apiKey;

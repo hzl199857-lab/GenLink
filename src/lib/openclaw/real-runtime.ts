@@ -94,6 +94,7 @@ const DEFAULT_OPENCLAW_ENTRY = path.join(
 const DEFAULT_OPENCLAW_CONFIG = path.join("E:", "GenLink-runtime", "openclaw-genlink.json");
 const DEFAULT_OPENCLAW_STATE = path.join("E:", "GenLink-runtime", "state");
 const DEFAULT_OPENCLAW_WORKSPACE = path.join("E:", "GenLink-runtime", "workspaces", "genlink-planf");
+const DEFAULT_OPENCLAW_STDIN_RUNNER = path.join(process.cwd(), "scripts", "openclaw-stdin-runner.mjs");
 const CORE_RULE_FILES = [
   "AGENTS.md",
   "BOOTSTRAP.md",
@@ -125,6 +126,10 @@ function getOpenClawStateDir(): string {
 
 function getOpenClawWorkspaceDir(): string {
   return process.env.OPENCLAW_WORKSPACE_DIR?.trim() || DEFAULT_OPENCLAW_WORKSPACE;
+}
+
+function getOpenClawStdinRunner(): string {
+  return process.env.OPENCLAW_STDIN_RUNNER?.trim() || DEFAULT_OPENCLAW_STDIN_RUNNER;
 }
 
 function getSourceRulesRoot(): string {
@@ -402,6 +407,7 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
 
   return await new Promise((resolve, reject) => {
     const args = [
+      getOpenClawStdinRunner(),
       getOpenClawEntry(),
       "agent",
       "--local",
@@ -410,8 +416,6 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
       input.sessionKey,
       "--timeout",
       String(Math.max(1, Math.ceil(input.timeoutMs / 1000))),
-      "--message",
-      input.message,
     ];
 
     if (model) {
@@ -426,9 +430,11 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
         OPENCLAW_STATE_DIR: getOpenClawStateDir(),
         GENLINK_OPENCLAW_TEXT_BASE_URL: baseUrl,
         GENLINK_OPENCLAW_TEXT_API_KEY: apiKey,
+        NODE_DISABLE_COMPILE_CACHE: "1",
+        OPENCLAW_NO_RESPAWN: "1",
       },
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -457,6 +463,12 @@ export async function runRealOpenClaw(input: RealOpenClawRunInput): Promise<Real
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
+    child.stdin.on("error", (error) => {
+      console.error("[openclaw-runtime] stdin write failed", {
+        message: error.message,
+      });
+    });
+    child.stdin.end(input.message);
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
     });

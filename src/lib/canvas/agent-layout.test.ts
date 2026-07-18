@@ -128,6 +128,33 @@ describe("layoutAgentWorkflowNodes", () => {
     }
   });
 
+  it("keeps a larger batch in a compact grid beside the reference", () => {
+    const source = uploadedImageNode("source", 100, 200);
+    const incomingNodes: CanvasNode[] = Array.from({ length: 6 }, (_, index) =>
+      imageGenerationNode(`image-${index + 1}`),
+    );
+
+    const positioned = layoutAgentWorkflowNodes({
+      incomingNodes,
+      incomingEdges: [],
+      existingNodes: [source],
+      sourceNodes: [source],
+      fallbackStartPosition: { x: 0, y: 0 },
+    });
+    const sourceBounds = estimateCanvasNodeBounds(source);
+    const imageNodes = positioned.filter((node) => node.type === "image_generation");
+    const imageRects = imageNodes.map(estimateCanvasNodeBounds);
+
+    assert.equal(new Set(imageNodes.map((node) => node.position.y)).size, 2);
+    assert.ok(imageNodes.every((node) => node.position.x >= sourceBounds.x + sourceBounds.width + 140));
+
+    for (let i = 0; i < imageRects.length; i += 1) {
+      for (let j = i + 1; j < imageRects.length; j += 1) {
+        assert.equal(rectsOverlap(imageRects[i], imageRects[j], 0), false);
+      }
+    }
+  });
+
   it("moves the workflow down when the first right-side slot overlaps existing nodes", () => {
     const source = uploadedImageNode("source", 100, 200);
     const blocker = uploadedImageNode("blocker", 660, 180);

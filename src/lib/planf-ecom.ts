@@ -19,6 +19,7 @@ export type PlanfEcomPromptInput = {
   product?: string;
   platform?: string;
   aspectRatio?: string;
+  aspectRatios?: string[];
   extraConstraints?: string;
   rulesRoot?: string;
 };
@@ -170,8 +171,11 @@ const PACKAGE_ROLE_LABELS: Record<PlanfEcomPackageMode, string[]> = {
     "Dimension 图，英文尺寸信息和产品比例",
     "A+ 模块图，品牌化排版和细节信息",
     "Comparison 图，英文卖点对比和套装价值",
+    "用户使用图，欧美用户真实使用场景",
+    "产品细节图，展示材质、工艺或核心部件",
   ],
   "ugc-lifestyle": [
+    "白底图（平台合规主锚）",
     "素人手持/开箱图，真实 iPhone 随拍质感",
     "生活场景使用图，弱摆拍、强真实",
     "细节近拍图，保留手机摄影质感",
@@ -179,6 +183,7 @@ const PACKAGE_ROLE_LABELS: Record<PlanfEcomPackageMode, string[]> = {
     "差异化构图图，换角度、换动作、换环境",
   ],
   "editorial-stylist": [
+    "白底图（平台合规主锚）",
     "Hero Muse 大片，建立高级视觉锚点",
     "Archetype 1 极简高端风，强调轮廓和材质",
     "Archetype 2 都市通勤风，强调使用人群",
@@ -415,11 +420,13 @@ export function buildPlanfEcomWorkflow(input: PlanfEcomPromptInput): GLWorkflow 
   const roleLabels = PACKAGE_ROLE_LABELS[packageMode];
   const imageNodes: GLWorkflowNode[] = roleLabels.map((roleLabel, index) => {
     const number = index + 1;
+    const nodeAspectRatio = input.aspectRatios?.[index] || input.aspectRatio;
     const prompt = [
       finalPrompt.prompt,
       `第${number}张 / ${roleLabels.length}：${roleLabel}。`,
+      nodeAspectRatio ? `本张图画面比例：${nodeAspectRatio}。` : undefined,
       "本张图必须和同套其他图片保持产品身份、材质、颜色、品牌调性一致，但构图和信息重点要明显差异化。",
-    ].join(" ");
+    ].filter((line): line is string => Boolean(line)).join(" ");
 
     return {
       id: `image-${number}`,
@@ -432,7 +439,7 @@ export function buildPlanfEcomWorkflow(input: PlanfEcomPromptInput): GLWorkflow 
         prompt,
         effectivePromptOverride: prompt,
         provider: "vibe",
-        aspectRatio: input.aspectRatio,
+        aspectRatio: nodeAspectRatio,
         parallelCount: 1,
         status: "idle",
         packageMode,

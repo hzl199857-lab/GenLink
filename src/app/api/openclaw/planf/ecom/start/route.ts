@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth-guard";
 
 import { isAgentTextProvider } from "@/lib/agent-provider-options";
 import { proxyOpenClawRequest } from "@/lib/openclaw/backend-proxy";
+import { mergeEcomRuntimeFormFields } from "@/lib/openclaw/ecom-form-defaults";
 import { mapAgentPanelModelToOpenClaw } from "@/lib/openclaw/model-mapping";
 import {
   startPlanfEcomSession,
@@ -14,6 +15,7 @@ import {
   getPublicRealOpenClawRuntimeDiagnostic,
   runRealOpenClaw,
 } from "@/lib/openclaw/real-runtime";
+import { buildPlanfEcomRulesMessage } from "@/lib/openclaw/rules-context";
 import {
   normalizeOpenClawFormFieldsForPreset,
   parseOpenClawFormFields,
@@ -57,7 +59,8 @@ function buildRealOpenClawStartMessage(params: {
 }): string {
   return [
     "You are the GenLink embedded rules/protocol decision layer. The user-visible brand is always GenLink.",
-    "Read the current OpenClaw workspace rules starting from ./AGENTS.md, then ./BOOTSTRAP.md, ./IDENTITY.md, ./phase-policy.md, and ./skills/ecom-image/SKILL.md when needed.",
+    "The exact allowlisted GenLink rule contents are attached above this task.",
+    "Do not read files or call tools. Use those rule contents and return the required JSON directly.",
     "You may use RH / PlanF Canvas internally as the canonical protocol architecture, but do not call yourself RH, RunningHub, or PlanF in user-visible text.",
     "Current stage: ecom-image entry triage and form-fields only.",
     "Do not create canvas nodes. Do not call genlink_canvas_create_workflow. Do not output creative-doc or workflow-json.",
@@ -65,8 +68,7 @@ function buildRealOpenClawStartMessage(params: {
     "Return exactly one JSON object for the schema below.",
     "The first non-whitespace character of your response must be { and the last non-whitespace character must be }.",
     "Do not output any preface, explanation, status text, tool call, command snippet, markdown fence, or trace before or after the JSON object.",
-    "If you read or consult rules internally, do not describe that action in the response.",
-    "JSON schema: {\"type\":\"form-fields\",\"fields\":[...],\"route\":\"ecomImageTrack\",\"nextAction\":\"await-form-submit\",\"loadedFiles\":[\"AGENTS.md\",\"BOOTSTRAP.md\",\"IDENTITY.md\",\"phase-policy.md\"]}",
+    "JSON schema: {\"type\":\"form-fields\",\"fields\":[...],\"route\":\"ecomImageTrack\",\"nextAction\":\"await-form-submit\",\"loadedFiles\":[\"AGENTS.md\",\"BOOTSTRAP.md\",\"IDENTITY.md\",\"phase-policy.md\",\"skills/ecom-image/SKILL.md\",\"skills/ecom-image/references/categories.md\"]}",
     "Allowed field types: text, select, multi-select, upload.",
     "select and multi-select options must be objects shaped as {\"label\":\"...\",\"value\":\"...\"}.",
     "The fields array must include productName, category, and platform. The local UI may hide already-known fields later, but this protocol output must remain complete for validation.",
@@ -100,7 +102,11 @@ function applyRuntimeFormFields(
     productField.value = fallbackProductValue;
   }
 
-  session.fields = fields;
+  session.fields = mergeEcomRuntimeFormFields({
+    request: session.request,
+    defaultFields: session.fields,
+    runtimeFields: fields,
+  });
   session.message = "GenLink 已按规则库生成表单。请补齐这些参数，提交后进入电商图编排与画布工作流创建。";
   session.protocol = {
     name: "form-fields",
@@ -158,10 +164,14 @@ export async function POST(request: Request) {
     }
 
     const real = await runRealOpenClaw({
-      message: buildRealOpenClawStartMessage({
-        request: userRequest,
+      message: await buildPlanfEcomRulesMessage({
+        stage: "start",
         preset,
-        referenceImageCount,
+        taskMessage: buildRealOpenClawStartMessage({
+          request: userRequest,
+          preset,
+          referenceImageCount,
+        }),
       }),
       sessionKey: `genlink-planf-start-${session.sessionId}`,
       timeoutMs: FORM_FIELDS_MODEL_TIMEOUT_MS,

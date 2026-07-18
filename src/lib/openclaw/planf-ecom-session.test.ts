@@ -94,6 +94,98 @@ test("returns preset-specific agent triage and field defaults", () => {
   assert.ok(ugc.thinkingSteps.some((step) => step.detail.includes("2 张参考图")));
 });
 
+test("uses the documented six-image UGC structure and preserves it in the workflow", () => {
+  const session = startPlanfEcomSession({
+    request: "帮我做一组 UGC 生活化上身图，产品是：防晒帽",
+    preset: "ugc-lifestyle",
+    referenceImageCount: 1,
+  });
+  const values = {
+    productName: "防晒帽",
+    category: "apparel",
+    platform: "xiaohongshu",
+    styleMode: "ugc",
+  };
+  const plan = confirmPlanfEcomSession({ session, values });
+  const workflow = createPlanfEcomWorkflowFromPlan({ session, values });
+  const imageActions = workflow.actions.filter((action) => action.type === "create_image_generation_node");
+
+  assert.equal(plan.plan.meta.totalImages, 6);
+  assert.equal(plan.plan.imageSlots.length, 6);
+  assert.equal(plan.plan.imageSlots[0].slot, "白底图（主锚）");
+  assert.equal(plan.plan.imageSlots.slice(1).length, 5);
+  assert.equal(imageActions.length, 6);
+  assert.equal(workflow.workflow.intent.packageMode, "ugc-lifestyle");
+});
+
+test("uses the documented six-image editorial structure for the stylist preset", () => {
+  const session = startPlanfEcomSession({
+    request: "帮我做一组造型师编辑大片，产品是：丝巾",
+    preset: "editorial-stylist",
+    referenceImageCount: 1,
+  });
+  const values = {
+    productName: "丝巾",
+    category: "apparel",
+    platform: "taobao",
+    styleMode: "stylist",
+  };
+  const plan = confirmPlanfEcomSession({ session, values });
+  const workflow = createPlanfEcomWorkflowFromPlan({ session, values });
+
+  assert.equal(plan.plan.meta.totalImages, 6);
+  assert.equal(plan.plan.imageSlots[0].slot, "白底图（主锚）");
+  assert.equal(workflow.workflow.intent.packageMode, "editorial-stylist");
+  assert.equal(
+    workflow.actions.filter((action) => action.type === "create_image_generation_node").length,
+    6,
+  );
+});
+
+test("keeps the Amazon adapter on the documented eight-image full set", () => {
+  const session = startPlanfEcomSession({
+    request: "帮我做一套亚马逊主图集，产品是：旅行收纳包",
+    preset: "amazon-adapter",
+    referenceImageCount: 1,
+  });
+  const values = {
+    productName: "旅行收纳包",
+    category: "shoebag",
+    platform: "amazon",
+    styleMode: "default",
+  };
+  const plan = confirmPlanfEcomSession({ session, values });
+  const workflow = createPlanfEcomWorkflowFromPlan({ session, values });
+
+  assert.equal(plan.plan.meta.totalImages, 8);
+  assert.equal(workflow.workflow.intent.packageMode, "amazon-adapter");
+  assert.equal(
+    workflow.actions.filter((action) => action.type === "create_image_generation_node").length,
+    8,
+  );
+});
+
+test("applies detail-page module ratios to both the plan and generated nodes", () => {
+  const session = startPlanfEcomSession({
+    request: "帮我做详情页图，产品是：便携式音箱",
+    preset: "detail-page-pack",
+    referenceImageCount: 1,
+  });
+  const values = {
+    productName: "便携式音箱",
+    category: "digital3c",
+    platform: "taobao",
+    styleMode: "default",
+  };
+  const plan = confirmPlanfEcomSession({ session, values });
+  const workflow = createPlanfEcomWorkflowFromPlan({ session, values });
+  const imageActions = workflow.actions.filter((action) => action.type === "create_image_generation_node");
+  const ratios = imageActions.map((action) => action.options?.aspectRatio);
+
+  assert.deepEqual(plan.plan.imageSlots.map((slot) => slot.ratio), ["3:4", "4:5", "3:4", "1:1", "4:5"]);
+  assert.deepEqual(ratios, ["3:4", "4:5", "3:4", "1:1", "4:5"]);
+});
+
 test("confirms an ecomImageTrack session into a full-set workflow", () => {
   const session = startPlanfEcomSession({
     request: "帮我做一套电商主图（8图标准），产品是：LED 无极调节灯棒",
