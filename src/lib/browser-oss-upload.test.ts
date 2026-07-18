@@ -73,7 +73,7 @@ test("falls back to server image upload when direct OSS upload returns a network
   assert.deepEqual(calls.map((call) => call.url), [
     "/api/image-hosting/upload-url",
     "https://bucket.oss-cn-hangzhou.aliyuncs.com/images/file.png?signature=1",
-    "/api/image-hosting/upload-stream?fileName=file.png&folder=images",
+    "/api/image-hosting/upload-stream?fileName=file.png&folder=images&size=5",
   ]);
   assert.equal(calls[2]?.init?.body, blob);
   assert.equal(new Headers(calls[2]?.init?.headers).get("Content-Type"), "image/png");
@@ -110,7 +110,7 @@ test("uses server image upload immediately when policy is server", async () => {
     mode: "server",
   });
   assert.deepEqual(calls.map((call) => call.url), [
-    "/api/image-hosting/upload-stream?fileName=file.png&folder=images",
+    "/api/image-hosting/upload-stream?fileName=file.png&folder=images&size=5",
   ]);
   assert.equal(calls[0]?.init?.method, "POST");
   assert.equal(calls[0]?.init?.body, blob);
@@ -159,7 +159,7 @@ test("uploads reference image blobs with direct OSS fallback", async () => {
   assert.deepEqual(calls.map((call) => call.url), [
     "/api/image-hosting/upload-url",
     "https://bucket.oss-cn-hangzhou.aliyuncs.com/references/file.png?signature=1",
-    "/api/image-hosting/upload-stream?fileName=reference.png&folder=references",
+    "/api/image-hosting/upload-stream?fileName=reference.png&folder=references&size=5",
   ]);
   assert.equal(calls[2]?.init?.body, blob);
   assert.equal(new Headers(calls[2]?.init?.headers).get("Content-Type"), "image/png");

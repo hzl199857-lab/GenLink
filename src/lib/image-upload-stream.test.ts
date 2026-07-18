@@ -40,6 +40,7 @@ function createImageRequest(
     contentType?: string;
     fileName?: string;
     folder?: string;
+    size?: string;
     signal?: AbortSignal;
   } = {},
 ): Request {
@@ -48,6 +49,7 @@ function createImageRequest(
 
   if (options.fileName) url.searchParams.set("fileName", options.fileName);
   if (options.folder) url.searchParams.set("folder", options.folder);
+  if (options.size) url.searchParams.set("size", options.size);
 
   const headers = new Headers({ "Content-Type": contentType });
   const contentLength = options.contentLength === undefined
@@ -79,6 +81,7 @@ function createDeps(options: {
   const calls = {
     createTarget: [] as TargetInput[],
     uploadUrl: "",
+    uploadHeaders: new Headers(),
     uploadedBytes: [] as number[],
   };
   const createUploadTarget = (input: TargetInput) => {
@@ -92,6 +95,7 @@ function createDeps(options: {
   };
   const fetchImpl: typeof fetch = async (input, init) => {
     calls.uploadUrl = input.toString();
+    calls.uploadHeaders = new Headers(init?.headers);
 
     if (options.networkError) {
       throw options.networkError;
@@ -138,7 +142,7 @@ test("streams uploads without Content-Length through chunked proxy hops", async 
   const { calls, deps } = createDeps();
 
   const result = await forwardImageUploadRequest(
-    createImageRequest(bytes, { contentLength: null }),
+    createImageRequest(bytes, { contentLength: null, size: String(bytes.byteLength) }),
     deps,
   );
 
@@ -146,6 +150,7 @@ test("streams uploads without Content-Length through chunked proxy hops", async 
     imageUrl: "https://cdn.example/references/product.png",
   });
   assert.deepEqual(calls.uploadedBytes, [...bytes]);
+  assert.equal(calls.uploadHeaders.get("Content-Length"), String(bytes.byteLength));
 });
 
 test("rejects declared uploads above 100MB before creating a target", async () => {

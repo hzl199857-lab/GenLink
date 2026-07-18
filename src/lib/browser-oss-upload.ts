@@ -139,6 +139,8 @@ async function uploadImageAssetViaServer(
     query.set("folder", input.folder);
   }
 
+  query.set("size", String(input.data.size));
+
   const queryString = query.toString();
   const endpoint = `/api/image-hosting/upload-stream${queryString ? `?${queryString}` : ""}`;
   const response = await fetchImpl(endpoint, {

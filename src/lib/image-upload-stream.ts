@@ -34,7 +34,8 @@ type StreamingRequestInit = RequestInit & {
 };
 
 function parseContentLength(request: Request, maxBytes: number): number | undefined {
-  const rawHeader = request.headers.get("content-length");
+  const requestUrl = new URL(request.url);
+  const rawHeader = request.headers.get("content-length") ?? requestUrl.searchParams.get("size");
 
   if (rawHeader === null) {
     return undefined;
