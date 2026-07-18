@@ -124,13 +124,28 @@ test("rejects non-image uploads", async () => {
   await assert.rejects(forwardImageUploadRequest(request, deps), hasStatus(400));
 });
 
-test("rejects missing, invalid, and empty content lengths", async () => {
-  for (const contentLength of [null, "four", "0", "-1"]) {
+test("rejects invalid and empty content lengths when they are provided", async () => {
+  for (const contentLength of ["four", "0", "-1"]) {
     const { deps } = createDeps();
     const request = createImageRequest(new Uint8Array([1]), { contentLength });
 
     await assert.rejects(forwardImageUploadRequest(request, deps), hasStatus(400));
   }
+});
+
+test("streams uploads without Content-Length through chunked proxy hops", async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const { calls, deps } = createDeps();
+
+  const result = await forwardImageUploadRequest(
+    createImageRequest(bytes, { contentLength: null }),
+    deps,
+  );
+
+  assert.deepEqual(result, {
+    imageUrl: "https://cdn.example/references/product.png",
+  });
+  assert.deepEqual(calls.uploadedBytes, [...bytes]);
 });
 
 test("rejects declared uploads above 100MB before creating a target", async () => {

@@ -33,8 +33,14 @@ type StreamingRequestInit = RequestInit & {
   duplex: "half";
 };
 
-function parseContentLength(request: Request, maxBytes: number): number {
-  const rawValue = request.headers.get("content-length")?.trim() ?? "";
+function parseContentLength(request: Request, maxBytes: number): number | undefined {
+  const rawHeader = request.headers.get("content-length");
+
+  if (rawHeader === null) {
+    return undefined;
+  }
+
+  const rawValue = rawHeader.trim();
 
   if (!/^\d+$/.test(rawValue)) {
     throw new ImageUploadStreamError(400, "缺少有效的图片大小");
@@ -67,6 +73,7 @@ function createLimitedBody(
   source: ReadableStream<Uint8Array>,
   maxBytes: number,
   onLimitExceeded: () => void,
+  onEmpty: () => void,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let receivedBytes = 0;
@@ -77,6 +84,12 @@ function createLimitedBody(
         const result = await reader.read();
 
         if (result.done) {
+          if (receivedBytes === 0) {
+            onEmpty();
+            controller.error(new ImageUploadStreamError(400, "图片内容不能为空"));
+            return;
+          }
+
           controller.close();
           return;
         }
@@ -125,6 +138,7 @@ export async function forwardImageUploadRequest(
   const upstreamController = new AbortController();
   const abortUpstream = () => upstreamController.abort(request.signal.reason);
   let limitExceeded = false;
+  let bodyWasEmpty = false;
 
   if (request.signal.aborted) {
     abortUpstream();
@@ -135,13 +149,17 @@ export async function forwardImageUploadRequest(
   const body = createLimitedBody(request.body, maxBytes, () => {
     limitExceeded = true;
     upstreamController.abort(new ImageUploadStreamError(413, "单张图片不能超过 100MB"));
+  }, () => {
+    bodyWasEmpty = true;
+    upstreamController.abort(new ImageUploadStreamError(400, "图片内容不能为空"));
   });
+  const headers = {
+    ...target.headers,
+    ...(contentLength === undefined ? {} : { "Content-Length": String(contentLength) }),
+  };
   const init: StreamingRequestInit = {
     method: "PUT",
-    headers: {
-      ...target.headers,
-      "Content-Length": String(contentLength),
-    },
+    headers,
     body,
     duplex: "half",
     signal: upstreamController.signal,
@@ -159,6 +177,10 @@ export async function forwardImageUploadRequest(
   } catch (error) {
     if (limitExceeded) {
       throw new ImageUploadStreamError(413, "单张图片不能超过 100MB", { cause: error });
+    }
+
+    if (bodyWasEmpty) {
+      throw new ImageUploadStreamError(400, "图片内容不能为空", { cause: error });
     }
 
     if (request.signal.aborted) {
