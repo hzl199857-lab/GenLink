@@ -15563,7 +15563,7 @@ function InnerCanvas({
   return (
     <>
       {saveMessage ? (
-        <div className="fixed bottom-8 left-1/2 z-[95] -translate-x-1/2 rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
+        <div className="fixed bottom-8 left-1/2 z-[95] -translate-x-1/2 rounded-[16px] border border-white/10 bg-[#242527]/95 px-4 py-2 text-[13px] text-white shadow-[0_18px_42px_rgba(0,0,0,0.45)] backdrop-blur-xl">
           {saveMessage}
         </div>
       ) : null}

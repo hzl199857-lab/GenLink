@@ -87,3 +87,16 @@ test("does not show the legacy project message for node selection mode", () => {
     /if \(mode\.targetKind === 'agent'\) \{\s*showProjectMessage\(/,
   );
 });
+
+test("uses the quick reference surface style for bottom project messages", () => {
+  const saveMessageMarkup = infiniteCanvasSource.match(
+    /\{saveMessage \? \([\s\S]*?\) : null\}/,
+  )?.[0] ?? "";
+
+  assert.match(saveMessageMarkup, /rounded-\[16px\]/);
+  assert.match(saveMessageMarkup, /border-white\/10/);
+  assert.match(saveMessageMarkup, /bg-\[#242527\]\/95/);
+  assert.match(saveMessageMarkup, /shadow-\[0_18px_42px_rgba\(0,0,0,0\.45\)\]/);
+  assert.match(saveMessageMarkup, /backdrop-blur-xl/);
+  assert.doesNotMatch(saveMessageMarkup, /border-white\/12|bg-\[#1d1f23\]/);
+});
