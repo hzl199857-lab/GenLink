@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Ellipsis, ExternalLink, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
+import { getNextCanvasName } from '@/lib/canvas/multi-canvas';
 import type { ProjectCanvasMetadata } from '@/types/canvas';
 
 type CanvasSwitcherProps = {
@@ -12,7 +13,7 @@ type CanvasSwitcherProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelectCanvas?: (canvasId: string) => void | Promise<void>;
-  onCreateCanvas?: () => void | Promise<void>;
+  onCreateCanvas?: (name: string) => void | Promise<void>;
   onRenameCanvas?: (canvasId: string, name: string) => void | Promise<void>;
   onDuplicateCanvas?: (canvasId: string) => void | Promise<void>;
   onDeleteCanvas?: (canvasId: string) => void | Promise<void>;
@@ -37,12 +38,17 @@ export function CanvasSwitcher({
 }: CanvasSwitcherProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const createInputRef = useRef<HTMLInputElement | null>(null);
+  const createSubmittingRef = useRef(false);
   const canvasItemRefs = useRef(new Map<string, HTMLDivElement>());
   const actionTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const actionMenuRefs = useRef(new Map<string, HTMLDivElement>());
   const [actionCanvasId, setActionCanvasId] = useState<string | null>(null);
   const [renamingCanvasId, setRenamingCanvasId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  const [creatingCanvas, setCreatingCanvas] = useState(false);
+  const [createDefaultName, setCreateDefaultName] = useState('');
+  const [createDraft, setCreateDraft] = useState('');
   const activeCanvas = canvases.find((canvas) => canvas.id === activeCanvasId) ?? canvases[0];
 
   useEffect(() => {
@@ -53,7 +59,23 @@ export function CanvasSwitcher({
   }, [renamingCanvasId]);
 
   useEffect(() => {
+    if (!creatingCanvas) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      createInputRef.current?.focus();
+      createInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [creatingCanvas]);
+
+  useEffect(() => {
     if (!open) {
+      return;
+    }
+
+    if (creatingCanvas) {
       return;
     }
 
@@ -63,7 +85,7 @@ export function CanvasSwitcher({
       target?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeCanvasId, open]);
+  }, [activeCanvasId, creatingCanvas, open]);
 
   useEffect(() => {
     if (!actionCanvasId) {
@@ -87,9 +109,46 @@ export function CanvasSwitcher({
       void onRenameCanvas?.(canvasId, nextName);
     }
   };
+  const resetCreateDraft = () => {
+    createSubmittingRef.current = false;
+    setCreatingCanvas(false);
+    setCreateDefaultName('');
+    setCreateDraft('');
+  };
+  const cancelCreate = () => {
+    resetCreateDraft();
+  };
+  const commitCreate = () => {
+    if (!creatingCanvas || createSubmittingRef.current) {
+      return;
+    }
+
+    createSubmittingRef.current = true;
+    const name = createDraft.trim() || createDefaultName;
+    setCreatingCanvas(false);
+    setActionCanvasId(null);
+    setRenamingCanvasId(null);
+    onOpenChange(false);
+    void Promise.resolve()
+      .then(() => onCreateCanvas?.(name))
+      .finally(() => {
+        createSubmittingRef.current = false;
+        setCreateDefaultName('');
+        setCreateDraft('');
+      });
+  };
+  const startCreate = () => {
+    const defaultName = getNextCanvasName(canvases.map((canvas) => canvas.name));
+    setActionCanvasId(null);
+    setRenamingCanvasId(null);
+    setCreateDefaultName(defaultName);
+    setCreateDraft(defaultName);
+    setCreatingCanvas(true);
+  };
   const changeOpen = (nextOpen: boolean) => {
     setActionCanvasId(null);
     setRenamingCanvasId(null);
+    resetCreateDraft();
     onOpenChange(nextOpen);
   };
   const closeCanvasMenuAndRestoreFocus = () => {
@@ -103,7 +162,7 @@ export function CanvasSwitcher({
     });
   };
   const handleCanvasMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (actionCanvasId || renamingCanvasId) {
+    if (actionCanvasId || renamingCanvasId || creatingCanvas) {
       return;
     }
     if (
@@ -212,6 +271,8 @@ export function CanvasSwitcher({
               event.stopPropagation();
               if (actionCanvasId) {
                 closeActionMenuAndRestoreFocus(actionCanvasId);
+              } else if (creatingCanvas) {
+                cancelCreate();
               } else if (renamingCanvasId) {
                 setRenamingCanvasId(null);
               } else {
@@ -229,15 +290,37 @@ export function CanvasSwitcher({
               type="button"
               title="新建画布"
               aria-label="新建画布"
-              disabled={busy || writeBlocked}
+              disabled={busy || writeBlocked || creatingCanvas}
               className="flex h-7 w-7 items-center justify-center rounded-[7px] text-white/72 transition hover:bg-white/[0.09] hover:text-white disabled:opacity-35"
-              onClick={() => void onCreateCanvas?.()}
+              onClick={startCreate}
             >
               <Plus size={17} />
             </button>
           </div>
 
           <div className="space-y-0.5">
+            {creatingCanvas ? (
+              <div className="flex h-10 w-full items-center rounded-[8px] bg-white/[0.09] px-2.5">
+                <input
+                  ref={createInputRef}
+                  value={createDraft}
+                  aria-label="新画布名称"
+                  onChange={(event) => setCreateDraft(event.target.value)}
+                  onBlur={commitCreate}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    } else if (event.key === 'Escape') {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      cancelCreate();
+                    }
+                  }}
+                  className="min-w-0 flex-1 rounded-[5px] bg-black/25 px-1.5 py-1 text-[13px] font-medium text-white outline-none ring-1 ring-white/15"
+                />
+              </div>
+            ) : null}
             {canvases.map((canvas) => {
               const current = canvas.id === activeCanvasId;
               const renaming = canvas.id === renamingCanvasId;
@@ -300,8 +383,8 @@ export function CanvasSwitcher({
                       <span className="min-w-0 flex-1 truncate">{canvas.name}</span>
                     )}
                     {!renaming ? (
-                      <>
-                        <Check size={15} className={`absolute right-2.5 text-white/80 ${current ? 'group-hover/canvas-row:hidden group-focus-within/canvas-row:hidden' : 'hidden'}`} />
+                      <span className="relative ml-2 h-7 w-7 shrink-0">
+                        <Check size={15} className={`absolute inset-0 m-auto text-white/80 ${current ? 'group-hover/canvas-row:hidden group-focus-within/canvas-row:hidden' : 'hidden'}`} />
                         <button
                           ref={(element) => {
                             if (element) {
@@ -313,7 +396,7 @@ export function CanvasSwitcher({
                           type="button"
                           aria-label={`${canvas.name} 操作`}
                           disabled={busy || writeBlocked}
-                          className={`flex h-7 w-7 items-center justify-center rounded-[6px] text-white/62 transition hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:text-white/22 disabled:hover:bg-transparent ${current ? 'opacity-0 group-hover/canvas-row:opacity-100 group-focus-within/canvas-row:opacity-100' : ''}`}
+                          className={`absolute inset-0 flex h-7 w-7 items-center justify-center rounded-[6px] text-white/62 transition hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:text-white/22 disabled:hover:bg-transparent ${current ? 'opacity-0 group-hover/canvas-row:opacity-100 group-focus-within/canvas-row:opacity-100' : ''}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             setActionCanvasId((value) => value === canvas.id ? null : canvas.id);
@@ -321,7 +404,7 @@ export function CanvasSwitcher({
                         >
                           <Ellipsis size={16} />
                         </button>
-                      </>
+                      </span>
                     ) : null}
                   </div>
 

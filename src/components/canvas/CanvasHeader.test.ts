@@ -29,6 +29,28 @@ test("canvas switcher exposes creation and item management commands", () => {
   assert.match(source, /event\.key === 'Escape'/);
 });
 
+test("new canvas creation is drafted before the callback runs", () => {
+  const source = readSource("CanvasSwitcher.tsx");
+
+  assert.match(source, /const \[creatingCanvas, setCreatingCanvas\] = useState\(false\)/);
+  assert.match(source, /const \[createDefaultName, setCreateDefaultName\] = useState\(''\)/);
+  assert.match(source, /const \[createDraft, setCreateDraft\] = useState\(''\)/);
+  assert.match(source, /onCreateCanvas\?: \(name: string\)/);
+  assert.match(source, /onBlur=\{commitCreate\}/);
+  assert.match(source, /event\.key === 'Escape'[\s\S]*cancelCreate\(\)/);
+  assert.match(source, /createDraft\.trim\(\) \|\| createDefaultName/);
+  assert.match(source, /aria-label="新画布名称"/);
+});
+
+test("the active canvas check swaps with a fixed-width action button", () => {
+  const source = readSource("CanvasSwitcher.tsx");
+
+  assert.match(source, /aria-checked=\{current\}/);
+  assert.match(source, /group-hover\/canvas-row:hidden/);
+  assert.match(source, /group-hover\/canvas-row:opacity-100/);
+  assert.match(source, /relative ml-2 h-7 w-7 shrink-0/);
+});
+
 test("canvas switcher resets private menu state when its controlled menu closes", () => {
   const source = readSource("CanvasSwitcher.tsx");
   const changeOpen = source.match(/const changeOpen = \(nextOpen: boolean\) => \{[\s\S]*?\n  \};/)?.[0];
@@ -101,7 +123,8 @@ test("write blocking preserves canvas navigation while disabling write actions",
   assert.match(switcherSource, /writeBlocked\?: boolean/);
   assert.match(switcherSource, /disabled=\{busy \|\| !activeCanvas\}/);
   assert.match(switcherSource, /aria-disabled=\{busy \|\| renaming\}/);
-  assert.ok((switcherSource.match(/disabled=\{busy \|\| writeBlocked\}/g)?.length ?? 0) >= 5);
+  assert.ok((switcherSource.match(/disabled=\{busy \|\| writeBlocked\}/g)?.length ?? 0) >= 4);
+  assert.match(switcherSource, /disabled=\{busy \|\| writeBlocked \|\| creatingCanvas\}/);
   assert.match(switcherSource, /disabled=\{busy \|\| writeBlocked \|\| canvases\.length <= 1\}/);
   assert.match(headerSource, /writeBlocked=\{writeBlocked\}/);
   assert.match(projectMenuSource, /writeBlocked\?: boolean/);
