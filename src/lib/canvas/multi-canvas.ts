@@ -34,7 +34,7 @@ function rewriteGraphReferences(value: unknown, idMap: Map<string, string>): unk
 export function getNextCanvasName(existingNames: string[]): string {
   const usedNumbers = new Set(
     existingNames.flatMap((name) => {
-      const match = /^画布\s+(\d+)$/.exec(name.trim());
+      const match = /^画布\s*(\d+)$/.exec(name.trim());
       return match ? [Number.parseInt(match[1], 10)] : [];
     }),
   );
@@ -44,7 +44,7 @@ export function getNextCanvasName(existingNames: string[]): string {
     index += 1;
   }
 
-  return `画布 ${index}`;
+  return `画布${index}`;
 }
 
 export function getDuplicateCanvasName(sourceName: string, existingNames: string[]): string {

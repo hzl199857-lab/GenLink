@@ -4796,7 +4796,7 @@ export interface CanvasState {
   setProjectName: (name: string) => void;
   setActiveCanvasViewport: (viewport: CanvasViewport) => void;
   switchCanvas: (canvasId: string) => Promise<void>;
-  createCanvas: () => Promise<string>;
+  createCanvas: (name?: string) => Promise<string>;
   renameCanvas: (canvasId: string, name: string) => Promise<void>;
   duplicateCanvas: (canvasId: string) => Promise<string>;
   deleteCanvas: (canvasId: string) => Promise<void>;
@@ -6289,7 +6289,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
   },
 
-  createCanvas: async () => {
+  createCanvas: async (name) => {
     const initialState = get();
 
     if (!initialState.currentProject || !initialState.activeUserId) {
@@ -6303,7 +6303,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const state = get();
     const timestamp = nowIso();
     const canvasId = crypto.randomUUID();
-    const canvasName = getNextCanvasName(state.projectCanvases.map((canvas) => canvas.name));
+    const canvasName = name?.trim()
+      || getNextCanvasName(state.projectCanvases.map((canvas) => canvas.name));
     const metadata: ProjectCanvasMetadata = {
       id: canvasId,
       name: canvasName,

@@ -239,9 +239,35 @@ test("creates a blank canvas and prevents deleting the final canvas", async () =
 
   assert.equal(state.activeCanvasId, createdCanvasId);
   assert.equal(state.projectCanvases.length, 2);
-  assert.equal(state.projectCanvases[1]?.name, "画布 2");
+  assert.equal(state.projectCanvases[1]?.name, "画布2");
   assert.deepEqual(state.nodes, []);
   assert.deepEqual(state.activeCanvasViewport, { x: 0, y: 0, zoom: 1 });
+});
+
+test("creates canvases with a trimmed custom name and a compact default fallback", async () => {
+  installBrowserStorage();
+  const initialCanvas = { ...canvases[0], name: "概念设计" };
+  projectStorage.loadProjectSnapshot = async () => ({
+    ...makeSnapshot("canvas-a"),
+    canvases: [initialCanvas],
+  });
+  projectStorage.hydrateProjectSnapshotPreviewUrls = async (_project, snapshot) => ({ snapshot, previewUrls: [] });
+  projectStorage.saveProjectSnapshot = async (_project, snapshot) => ({ project, snapshot });
+
+  canvasStore.useCanvasStore.getState().setActiveUserId("user-a");
+  await canvasStore.useCanvasStore.getState().loadProject(project);
+
+  const customCanvasId = await canvasStore.useCanvasStore.getState().createCanvas("  分镜方案  ");
+  assert.equal(
+    canvasStore.useCanvasStore.getState().projectCanvases.find((item) => item.id === customCanvasId)?.name,
+    "分镜方案",
+  );
+
+  const defaultCanvasId = await canvasStore.useCanvasStore.getState().createCanvas("   ");
+  assert.equal(
+    canvasStore.useCanvasStore.getState().projectCanvases.find((item) => item.id === defaultCanvasId)?.name,
+    "画布1",
+  );
 });
 
 test("duplicates, renames, and deletes canvases without removing shared materials", async () => {

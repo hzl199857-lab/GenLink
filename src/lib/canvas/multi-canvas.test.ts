@@ -33,8 +33,9 @@ const {
 
 const NOW = "2026-07-19T12:00:00.000Z";
 
-test("allocates the first available numbered canvas name", () => {
-  assert.equal(getNextCanvasName(["画布 1", "画布 3", "概念设计"]), "画布 2");
+test("allocates the first compact canvas name across legacy and compact names", () => {
+  assert.equal(getNextCanvasName(["画布 1", "画布2", "画布 3", "概念设计"]), "画布4");
+  assert.equal(getNextCanvasName(["画布2", "画布 4"]), "画布1");
 });
 
 test("allocates a stable duplicate name", () => {
