@@ -40,6 +40,8 @@ import {
   type ProjectHandleRecord,
   renameProjectDirectory,
   saveProjectSnapshot,
+  type ProjectCanvasMutation,
+  type ProjectSharedManifestFields,
 } from "@/lib/project-storage";
 import type {
   AITextResultNodeData,
@@ -391,6 +393,7 @@ type CanvasRuntimeSession = {
   redoStack: CanvasHistorySnapshot[];
   dirty: boolean;
   lastSavedSignature: string;
+  lastSavedSaveStateSignature: string;
 };
 
 let lastCanvasHistoryPushAt = 0;
@@ -2436,7 +2439,7 @@ function createNode(type: NodeType, position: { x: number; y: number }): CanvasN
   }
 }
 
-function createSnapshot(state: {
+type ProjectSnapshotState = {
   projectId: string | null;
   projectName: string;
   projectCreatedAt?: string | null;
@@ -2449,7 +2452,9 @@ function createSnapshot(state: {
   groups: NodeGroup[];
   materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
-}): ProjectSnapshot {
+};
+
+function createSnapshot(state: ProjectSnapshotState): ProjectSnapshot {
   const snapshot = buildProjectSnapshot({
     id: state.projectId ?? crypto.randomUUID(),
     name: state.projectName,
@@ -3058,12 +3063,57 @@ function sanitizeMaterialsForPersistence(materials: MaterialLibraryItem[]): Mate
   return materials.map(sanitizeMaterialForPersistence);
 }
 
+function createProjectSharedManifestBase(
+  snapshot: Pick<
+    ProjectSnapshot,
+    "name" | "materialFolders" | "materials" | "thumbnailFileName"
+  >,
+): ProjectSharedManifestFields {
+  return {
+    name: snapshot.name.trim() || "Untitled",
+    materialFolders: snapshot.materialFolders?.length
+      ? snapshot.materialFolders.map((folder) => ({ ...folder }))
+      : undefined,
+    materials: snapshot.materials?.length
+      ? sanitizeMaterialsForPersistence(snapshot.materials).map((material) => ({ ...material }))
+      : undefined,
+    thumbnailFileName: snapshot.thumbnailFileName?.trim() || undefined,
+  };
+}
+
 function getPersistentProjectSnapshotSignature(
   value: Pick<ProjectSnapshot, "name" | "nodes" | "edges" | "groups" | "materialFolders" | "materials">,
 ): string {
   return getProjectSnapshotSignature({
     ...value,
     materials: sanitizeMaterialsForPersistence(value.materials ?? []),
+  });
+}
+
+function getProjectSaveStateSignature(snapshot: ProjectSnapshot): string {
+  return JSON.stringify({
+    persistent: getPersistentProjectSnapshotSignature({
+      ...snapshot,
+      nodes: sanitizeNodesForPersistence(snapshot.nodes),
+    }),
+    canvases: snapshot.canvases ?? [],
+    activeCanvasId: snapshot.activeCanvasId ?? null,
+    viewport: snapshot.viewport ?? null,
+    thumbnailFileName: snapshot.thumbnailFileName ?? null,
+  });
+}
+
+function getEmptyProjectSaveStateSignature(name: string): string {
+  return getProjectSaveStateSignature({
+    id: "",
+    name,
+    nodes: [],
+    edges: [],
+    groups: [],
+    materialFolders: [],
+    materials: [],
+    createdAt: "",
+    updatedAt: "",
   });
 }
 
@@ -3179,25 +3229,10 @@ function collectPreviewUrlsFromNodes(nodes: CanvasNode[]): string[] {
   return [...urls];
 }
 
-function computeDirtyState(state: {
-  projectName: string;
-  nodes: CanvasNode[];
-  edges: CanvasEdge[];
-  groups: NodeGroup[];
-  materialFolders: MaterialLibraryFolder[];
-  materials: MaterialLibraryItem[];
-  lastSavedSignature: string;
-}): boolean {
-  const currentSignature = getPersistentProjectSnapshotSignature({
-    name: state.projectName,
-    nodes: state.nodes,
-    edges: state.edges,
-    groups: state.groups,
-    materialFolders: state.materialFolders,
-    materials: state.materials,
-  });
-
-  return currentSignature !== state.lastSavedSignature;
+function computeDirtyState(
+  state: ProjectSnapshotState & { lastSavedSaveStateSignature: string },
+): boolean {
+  return getProjectSaveStateSignature(createSnapshot(state)) !== state.lastSavedSaveStateSignature;
 }
 
 function createCanvasHistorySnapshot(state: {
@@ -4545,6 +4580,8 @@ export interface CanvasState {
   activeCanvasViewport: CanvasViewport;
   canvasSessions: Record<string, CanvasRuntimeSession>;
   currentProject: ProjectHandleRecord | null;
+  // Baseline for detecting explicit changes in this window; it may differ from newer disk values.
+  projectSharedManifestBase: ProjectSharedManifestFields | null;
   currentProjectThumbnailFileName?: string;
   currentProjectPreviewUrls: string[];
   nodes: CanvasNode[];
@@ -4557,6 +4594,7 @@ export interface CanvasState {
   dirty: boolean;
   lastSavedAt: string | null;
   lastSavedSignature: string;
+  lastSavedSaveStateSignature: string;
   saveMessage: string | null;
   undoStack: CanvasHistorySnapshot[];
   redoStack: CanvasHistorySnapshot[];
@@ -4768,7 +4806,7 @@ export interface CanvasState {
   markCleanFromSnapshot: (snapshot: ProjectSnapshot) => void;
   newProject: (name?: string) => void;
   createProjectSnapshot: () => ProjectSnapshot;
-  saveProject: () => Promise<ProjectSnapshot>;
+  saveProject: (canvasMutation?: ProjectCanvasMutation) => Promise<ProjectSnapshot>;
   loadProject: (project: ProjectHandleRecord) => Promise<void>;
   listProjects: () => Promise<ProjectHandleRecord[]>;
   deleteProject: (project: ProjectHandleRecord) => Promise<void>;
@@ -4842,9 +4880,10 @@ type CanvasStateUpdate =
   | Partial<CanvasState>
   | ((state: CanvasState) => Partial<CanvasState>);
 
-function captureCanvasUserScope(
+function captureCanvasScope(
   get: () => CanvasState,
   set: (update: CanvasStateUpdate) => void,
+  isCurrentContext: (currentState: CanvasState) => boolean,
 ) {
   const { activeUserId: userId, userScopeEpoch: epoch } = get();
 
@@ -4854,7 +4893,9 @@ function captureCanvasUserScope(
 
   const isCurrent = () => {
     const state = get();
-    return state.activeUserId === userId && state.userScopeEpoch === epoch;
+    return state.activeUserId === userId
+      && state.userScopeEpoch === epoch
+      && isCurrentContext(state);
   };
   const assertCurrent = () => {
     if (!isCurrent()) {
@@ -4893,6 +4934,40 @@ function captureCanvasUserScope(
   };
 }
 
+function captureCanvasUserScope(
+  get: () => CanvasState,
+  set: (update: CanvasStateUpdate) => void,
+) {
+  return captureCanvasScope(get, set, () => true);
+}
+
+function captureCanvasProjectScope(
+  get: () => CanvasState,
+  set: (update: CanvasStateUpdate) => void,
+) {
+  const { projectId } = get();
+
+  return captureCanvasScope(
+    get,
+    set,
+    (currentState) => currentState.projectId === projectId,
+  );
+}
+
+function captureCanvasOperationScope(
+  get: () => CanvasState,
+  set: (update: CanvasStateUpdate) => void,
+) {
+  const { projectId, activeCanvasId } = get();
+
+  return captureCanvasScope(
+    get,
+    set,
+    (currentState) => currentState.projectId === projectId
+      && currentState.activeCanvasId === activeCanvasId,
+  );
+}
+
 function revokeStalePersistedPreview(result: { previewUrl: string }) {
   revokeObjectUrls([result.previewUrl]);
 }
@@ -4925,6 +5000,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
       canvasSessions: {},
       currentProject: null,
+      projectSharedManifestBase: null,
       currentProjectThumbnailFileName: undefined,
       currentProjectPreviewUrls: [],
       nodes: [],
@@ -4944,6 +5020,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         materialFolders: [],
         materials: [],
       }),
+      lastSavedSaveStateSignature: getEmptyProjectSaveStateSignature("Untitled"),
       saveMessage: null,
       undoStack: [],
       redoStack: [],
@@ -4958,6 +5035,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
   canvasSessions: {},
   currentProject: null,
+  projectSharedManifestBase: null,
   currentProjectThumbnailFileName: undefined,
   currentProjectPreviewUrls: [],
   nodes: [],
@@ -4977,6 +5055,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     materialFolders: [],
     materials: [],
   }),
+  lastSavedSaveStateSignature: getEmptyProjectSaveStateSignature("Untitled"),
   saveMessage: null,
   undoStack: [],
   redoStack: [],
@@ -5761,7 +5840,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateTextFromTextNode: async (textNodeId) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const textNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "text" }> =>
@@ -5924,7 +6003,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateStoryboardFromStoryboardNode: async (storyboardNodeId) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const storyboardNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "storyboard_script" }> =>
@@ -6119,15 +6198,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => ({
       ...createUndoHistoryUpdate(state, { coalesce: true }),
       projectName: name,
-      dirty: computeDirtyState({
-        projectName: name,
-        nodes: state.nodes,
-        edges: state.edges,
-        groups: state.groups,
-        materialFolders: state.materialFolders,
-        materials: state.materials,
-        lastSavedSignature: state.lastSavedSignature,
-      }),
+      dirty: computeDirtyState({ ...state, projectName: name }),
       error: null,
     }));
   },
@@ -6153,7 +6224,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       await initialState.saveProject();
     }
 
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const previousCanvasId = state.activeCanvasId;
     const previousSession = previousCanvasId ? {
@@ -6165,6 +6236,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       redoStack: state.redoStack,
       dirty: false,
       lastSavedSignature: state.lastSavedSignature,
+      lastSavedSaveStateSignature: state.lastSavedSaveStateSignature,
     } satisfies CanvasRuntimeSession : null;
 
     scope.set({ loading: true, error: null });
@@ -6200,6 +6272,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           ...hydrated.snapshot,
           nodes: loadedNodes,
         }),
+        lastSavedSaveStateSignature: getProjectSaveStateSignature({
+          ...hydrated.snapshot,
+          nodes: loadedNodes,
+        }),
         undoStack: cachedTarget?.undoStack ?? [],
         redoStack: cachedTarget?.redoStack ?? [],
       });
@@ -6223,7 +6299,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       await initialState.saveProject();
     }
 
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const timestamp = nowIso();
     const canvasId = crypto.randomUUID();
@@ -6255,11 +6331,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       state.currentProject!,
       snapshot,
       scope.userId,
+      undefined,
+      state.projectSharedManifestBase ?? undefined,
     ));
 
     revokeObjectUrls(state.currentProjectPreviewUrls);
     scope.set({
       currentProject: saved.project,
+      projectSharedManifestBase: createProjectSharedManifestBase(snapshot),
       currentProjectPreviewUrls: [],
       projectCanvases: saved.snapshot.canvases ?? snapshot.canvases ?? [],
       activeCanvasId: canvasId,
@@ -6272,7 +6351,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       dirty: false,
       error: null,
       lastSavedAt: saved.snapshot.updatedAt,
-      lastSavedSignature: getPersistentProjectSnapshotSignature(saved.snapshot),
+      lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
+      lastSavedSaveStateSignature: getProjectSaveStateSignature({
+        ...snapshot,
+        canvases: saved.snapshot.canvases ?? snapshot.canvases,
+      }),
     });
 
     return canvasId;
@@ -6281,6 +6364,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   renameCanvas: async (canvasId, name) => {
     const nextName = name.trim();
     const state = get();
+    const timestamp = nowIso();
 
     if (!nextName) {
       throw new Error("画布名称不能为空");
@@ -6289,18 +6373,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       throw new Error("画布不存在");
     }
 
+    const scope = captureCanvasOperationScope(get, set);
     const previousCanvases = state.projectCanvases;
-    set({
+    scope.set({
       projectCanvases: previousCanvases.map((canvas) => (
-        canvas.id === canvasId ? { ...canvas, name: nextName, updatedAt: nowIso() } : canvas
+        canvas.id === canvasId ? { ...canvas, name: nextName, updatedAt: timestamp } : canvas
       )),
       dirty: true,
     });
 
     try {
-      await get().saveProject();
+      await scope.wait(get().saveProject({
+        type: "rename",
+        canvasId,
+        name: nextName,
+        updatedAt: timestamp,
+      }));
     } catch (error) {
-      set({ projectCanvases: previousCanvases });
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
+      scope.set({ projectCanvases: previousCanvases });
       throw error;
     }
   },
@@ -6315,7 +6408,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       await initialState.saveProject();
     }
 
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceMetadata = state.projectCanvases.find((canvas) => canvas.id === canvasId);
 
@@ -6371,13 +6464,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       createdAt: state.projectCreatedAt ?? timestamp,
       updatedAt: timestamp,
     };
-    const saved = await scope.wait(saveProjectSnapshot(state.currentProject!, snapshot, scope.userId));
+    const saved = await scope.wait(saveProjectSnapshot(
+      state.currentProject!,
+      snapshot,
+      scope.userId,
+      undefined,
+      state.projectSharedManifestBase ?? undefined,
+    ));
     const loadedDuplicateNodes = normalizeLoadedCanvasNodes(duplicate.nodes);
     const duplicatePreviewUrls = collectPreviewUrlsFromNodes(loadedDuplicateNodes);
 
     revokeObjectUrls(state.currentProjectPreviewUrls);
     scope.set({
       currentProject: saved.project,
+      projectSharedManifestBase: createProjectSharedManifestBase(snapshot),
       currentProjectPreviewUrls: duplicatePreviewUrls,
       projectCanvases: saved.snapshot.canvases ?? snapshot.canvases ?? [],
       activeCanvasId: duplicate.id,
@@ -6390,7 +6490,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       dirty: false,
       error: null,
       lastSavedAt: saved.snapshot.updatedAt,
-      lastSavedSignature: getPersistentProjectSnapshotSignature(saved.snapshot),
+      lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
+      lastSavedSaveStateSignature: getProjectSaveStateSignature({
+        ...snapshot,
+        canvases: saved.snapshot.canvases ?? snapshot.canvases,
+      }),
     });
 
     return duplicate.id;
@@ -6418,7 +6522,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ),
       dirty: true,
     }));
-    await get().saveProject();
+    await get().saveProject({
+      type: "delete",
+      canvasId,
+      updatedAt: nowIso(),
+    });
 
     const current = get();
     if (current.activeUserId) {
@@ -6455,6 +6563,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       const current = createCanvasHistorySnapshot(state);
+      const restoredState = {
+        ...state,
+        projectName: previous.projectName,
+        nodes: previous.nodes,
+        edges: previous.edges,
+        groups: previous.groups,
+        materialFolders: previous.materialFolders,
+        materials: previous.materials,
+      };
 
       lastCanvasHistoryPushAt = 0;
 
@@ -6467,7 +6584,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         materials: previous.materials,
         undoStack: state.undoStack.slice(0, -1),
         redoStack: [...state.redoStack, current].slice(-CANVAS_HISTORY_LIMIT),
-        dirty: getCanvasHistorySignature(previous) !== state.lastSavedSignature,
+        dirty: computeDirtyState(restoredState),
         error: null,
       };
     });
@@ -6482,6 +6599,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       const current = createCanvasHistorySnapshot(state);
+      const restoredState = {
+        ...state,
+        projectName: next.projectName,
+        nodes: next.nodes,
+        edges: next.edges,
+        groups: next.groups,
+        materialFolders: next.materialFolders,
+        materials: next.materials,
+      };
 
       lastCanvasHistoryPushAt = 0;
 
@@ -6494,7 +6620,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         materials: next.materials,
         undoStack: [...state.undoStack, current].slice(-CANVAS_HISTORY_LIMIT),
         redoStack: state.redoStack.slice(0, -1),
-        dirty: getCanvasHistorySignature(next) !== state.lastSavedSignature,
+        dirty: computeDirtyState(restoredState),
         error: null,
       };
     });
@@ -6510,6 +6636,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       activeCanvasViewport: snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
       lastSavedAt: snapshot.updatedAt,
       lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
+      lastSavedSaveStateSignature: getProjectSaveStateSignature(snapshot),
       dirty: false,
     });
   },
@@ -6583,7 +6710,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateImageFromImageGenerationNode: async (imageGenerationNodeId, promptOverride, options) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const imageGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -7101,7 +7228,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   upscaleMidjourneyGridImage: async (imageGenerationNodeId, quadrant) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const node = get().nodes.find(
       (candidate): candidate is Extract<CanvasNode, { type: "image_generation" }> =>
         candidate.id === imageGenerationNodeId && candidate.type === "image_generation",
@@ -7211,7 +7338,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateVideoFromVideoGenerationNode: async (videoGenerationNodeId, promptOverride) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const videoGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "video_generation" }> =>
@@ -7516,7 +7643,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateAudioFromAudioGenerationNode: async (audioGenerationNodeId, promptOverride) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const audioGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "audio_generation" }> =>
@@ -7807,7 +7934,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   separateAudioFromNode: async (sourceNodeId) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === sourceNodeId);
 
@@ -8088,7 +8215,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   runVideoUpscaleFromNode: async (videoUpscaleNodeId) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const videoUpscaleNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "video_upscale" }> =>
@@ -8319,7 +8446,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   splitImageGenerationNodeToGrid: async (imageGenerationNodeId, dimension) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const imageGenerationNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -8463,7 +8590,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   cropImageGenerationNode: async (imageGenerationNodeId, cropRect) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image_generation" }> =>
@@ -8567,7 +8694,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   splitUploadedImageNodeToGrid: async (nodeId, dimension) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "uploaded_image" }> =>
@@ -8679,7 +8806,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   cropUploadedImageNode: async (nodeId, cropRect) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "uploaded_image" }> =>
@@ -8760,7 +8887,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   splitImageNodeToGrid: async (nodeId, dimension) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image" }> =>
@@ -8872,7 +8999,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   cropImageNode: async (nodeId, cropRect) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "image" }> =>
@@ -8953,7 +9080,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createVideoNodeFromProcessedResult: async (params) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === params.sourceNodeId);
 
@@ -9037,7 +9164,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createImageNodeFromVideoFrame: async (params) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === params.sourceNodeId);
 
@@ -9132,7 +9259,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   generateThreeViewImageFromNode: async (nodeId, cameraAngle) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === nodeId);
 
@@ -9365,7 +9492,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createPanorama360ScreenshotNode: async (nodeId, capture) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "panorama-360" }> =>
@@ -9483,7 +9610,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createDirectorDeskCaptureNode: async (nodeId, capture) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find(
       (node): node is Extract<CanvasNode, { type: "director" }> =>
@@ -9621,7 +9748,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   createPanorama360FromImageNode: async (nodeId) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
     const sourceNode = state.nodes.find((node) => node.id === nodeId);
 
@@ -10527,6 +10654,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
       canvasSessions: {},
       currentProject: null,
+      projectSharedManifestBase: null,
       currentProjectThumbnailFileName: undefined,
       currentProjectPreviewUrls: [],
       nodes: [],
@@ -10546,6 +10674,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         materialFolders: [],
         materials: [],
       }),
+      lastSavedSaveStateSignature: getEmptyProjectSaveStateSignature(nextName),
       saveMessage: null,
       undoStack: [],
       redoStack: [],
@@ -10554,8 +10683,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   createProjectSnapshot: () => createSnapshot(get()),
 
-  saveProject: async () => {
-    const scope = captureCanvasUserScope(get, set);
+  saveProject: async (canvasMutation) => {
+    const scope = captureCanvasOperationScope(get, set);
     scope.set({ loading: true, error: null });
 
     try {
@@ -10573,23 +10702,53 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         state.currentProject,
         snapshot,
         scope.userId,
+        canvasMutation,
+        state.projectSharedManifestBase ?? undefined,
       ));
+      const confirmedUiSnapshot: ProjectSnapshot = {
+        ...savedSnapshot,
+        materialFolders: snapshot.materialFolders,
+        materials: snapshot.materials,
+      };
+      const persistedSignature = getPersistentProjectSnapshotSignature(snapshot);
+      const saveStateSignature = getProjectSaveStateSignature(snapshot);
 
-      scope.set({
-        projectId: savedSnapshot.id,
-        projectName: savedSnapshot.name,
-        projectCreatedAt: savedSnapshot.createdAt,
-        projectCanvases: savedSnapshot.canvases ?? state.projectCanvases,
-        activeCanvasId: savedSnapshot.activeCanvasId ?? state.activeCanvasId,
-        activeCanvasViewport: savedSnapshot.viewport ?? state.activeCanvasViewport,
-        currentProject: updatedProject,
-        currentProjectThumbnailFileName: savedSnapshot.thumbnailFileName,
-        currentProjectPreviewUrls: state.currentProjectPreviewUrls,
-        loading: false,
-        error: null,
-        dirty: false,
-        lastSavedAt: savedSnapshot.updatedAt,
-        lastSavedSignature: getPersistentProjectSnapshotSignature(savedSnapshot),
+      scope.set((currentState) => {
+        const currentSnapshot = createSnapshot(currentState);
+        const hasPendingChanges = getProjectSaveStateSignature(currentSnapshot) !== saveStateSignature;
+        const projectNameChanged = currentState.projectName !== snapshot.name;
+        const canvasesChanged = JSON.stringify(currentState.projectCanvases) !== JSON.stringify(snapshot.canvases ?? []);
+        const viewportChanged = JSON.stringify(currentState.activeCanvasViewport) !== JSON.stringify(snapshot.viewport ?? null);
+        const thumbnailChanged = currentState.currentProjectThumbnailFileName !== snapshot.thumbnailFileName;
+
+        return {
+          projectId: savedSnapshot.id,
+          projectName: projectNameChanged ? currentState.projectName : savedSnapshot.name,
+          projectCreatedAt: savedSnapshot.createdAt,
+          projectCanvases: canvasesChanged
+            ? currentState.projectCanvases
+            : savedSnapshot.canvases ?? state.projectCanvases,
+          activeCanvasId: savedSnapshot.activeCanvasId ?? state.activeCanvasId,
+          activeCanvasViewport: viewportChanged
+            ? currentState.activeCanvasViewport
+            : savedSnapshot.viewport ?? state.activeCanvasViewport,
+          currentProject: updatedProject,
+          projectSharedManifestBase: createProjectSharedManifestBase(confirmedUiSnapshot),
+          currentProjectThumbnailFileName: thumbnailChanged
+            ? currentState.currentProjectThumbnailFileName
+            : savedSnapshot.thumbnailFileName,
+          currentProjectPreviewUrls: currentState.currentProjectPreviewUrls,
+          loading: false,
+          error: null,
+          dirty: hasPendingChanges,
+          lastSavedAt: savedSnapshot.updatedAt,
+          lastSavedSignature: hasPendingChanges
+            ? persistedSignature
+            : getPersistentProjectSnapshotSignature(confirmedUiSnapshot),
+          lastSavedSaveStateSignature: hasPendingChanges
+            ? saveStateSignature
+            : getProjectSaveStateSignature(confirmedUiSnapshot),
+        };
       });
 
       return savedSnapshot;
@@ -10604,7 +10763,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   loadProject: async (project) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     scope.set({ loading: true, error: null, saveMessage: null });
 
     try {
@@ -10631,6 +10790,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         activeCanvasViewport: hydrated.snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
         canvasSessions: {},
         currentProject: project,
+        projectSharedManifestBase: createProjectSharedManifestBase(hydrated.snapshot),
         currentProjectThumbnailFileName: hydrated.snapshot.thumbnailFileName,
         currentProjectPreviewUrls: hydrated.previewUrls,
         nodes: loadedNodes,
@@ -10643,6 +10803,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         dirty: false,
         lastSavedAt: hydrated.snapshot.updatedAt,
         lastSavedSignature: getPersistentProjectSnapshotSignature({
+          ...hydrated.snapshot,
+          nodes: loadedNodes,
+        }),
+        lastSavedSaveStateSignature: getProjectSaveStateSignature({
           ...hydrated.snapshot,
           nodes: loadedNodes,
         }),
@@ -10713,17 +10877,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         scope.set((state) => ({
           projectName: renamedProject.name,
           currentProject: renamedProject,
+          projectSharedManifestBase: state.projectSharedManifestBase
+            ? { ...state.projectSharedManifestBase, name: renamedProject.name }
+            : null,
           loading: false,
           error: null,
-          dirty: computeDirtyState({
-            projectName: renamedProject.name,
-            nodes: state.nodes,
-            edges: state.edges,
-            groups: state.groups,
-            materialFolders: state.materialFolders,
-            materials: state.materials,
-            lastSavedSignature: state.lastSavedSignature,
-          }),
+          dirty: computeDirtyState({ ...state, projectName: renamedProject.name }),
         }));
       } else {
         scope.set({ loading: false, error: null });
@@ -10773,6 +10932,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       activeCanvasViewport: snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
       canvasSessions: {},
       currentProject: project,
+      projectSharedManifestBase: createProjectSharedManifestBase(snapshot),
       currentProjectThumbnailFileName: snapshot.thumbnailFileName,
       currentProjectPreviewUrls: nextPreviewUrls,
       nodes: loadedNodes,
@@ -10785,6 +10945,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       dirty: false,
       lastSavedAt: snapshot.updatedAt,
       lastSavedSignature: getPersistentProjectSnapshotSignature({
+        ...snapshot,
+        nodes: loadedNodes,
+      }),
+      lastSavedSaveStateSignature: getProjectSaveStateSignature({
         ...snapshot,
         nodes: loadedNodes,
       }),
@@ -10803,18 +10967,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       activeCanvasId: snapshot.activeCanvasId ?? snapshot.canvases?.[0]?.id ?? null,
       activeCanvasViewport: snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
       currentProject: project,
+      projectSharedManifestBase: createProjectSharedManifestBase(snapshot),
       currentProjectThumbnailFileName: snapshot.thumbnailFileName,
       loading: false,
       error: null,
       dirty: false,
       lastSavedAt: snapshot.updatedAt,
       lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
+      lastSavedSaveStateSignature: getProjectSaveStateSignature(snapshot),
       saveMessage: null,
     });
   },
 
   persistProjectOutput: async (params) => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasOperationScope(get, set);
     const state = get();
 
     if (!state.currentProject) {
@@ -11013,7 +11179,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   listCurrentProjectHistory: async () => {
-    const scope = captureCanvasUserScope(get, set);
+    const scope = captureCanvasProjectScope(get, set);
     const state = get();
 
     if (!state.currentProject) {

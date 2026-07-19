@@ -34,6 +34,7 @@ const PROJECT_FILE_NAME = "project.json";
 const CANVAS_DIRECTORY_NAME = "canvases";
 const OUTPUT_DIRECTORY_NAME = "output";
 const OUTPUT_HISTORY_FILE_NAME = "history.json";
+const PROJECT_MANIFEST_LOCK_PREFIX = "genlink:project-manifest";
 const THUMBNAIL_IMAGE_EXTENSION_PATTERN = /\.(png|jpe?g|webp|gif|bmp|svg|avif)$/i;
 
 type PersistedProjectRecord = {
@@ -98,6 +99,19 @@ export interface ProjectLibraryItem {
 export interface ProjectHandleRecord extends ProjectLibraryItem {
   projectHandle: FileSystemDirectoryHandle;
   parentHandle: FileSystemDirectoryHandle;
+}
+
+export type ProjectCanvasMutation =
+  | { type: "rename"; canvasId: string; name: string; updatedAt: string }
+  | { type: "delete"; canvasId: string; updatedAt: string };
+
+export type ProjectSharedManifestFields = Pick<
+  ProjectManifest,
+  "name" | "materialFolders" | "materials" | "thumbnailFileName"
+>;
+
+function areManifestFieldValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
 export interface CreateProjectResult {
@@ -960,6 +974,188 @@ async function createProjectDirectorySkeleton(
   await writeJsonFileVerified(projectHandle, PROJECT_FILE_NAME, manifest);
 }
 
+export async function persistProjectSnapshotFiles(
+  projectHandle: FileSystemDirectoryHandle,
+  manifest: ProjectManifest,
+  activeCanvas: CanvasDocument,
+  mutation?: ProjectCanvasMutation,
+  sharedManifestBase?: ProjectSharedManifestFields,
+): Promise<ProjectManifest> {
+  const run = async (): Promise<ProjectManifest> => {
+    const parsedManifest = JSON.parse(
+      await readTextFile(projectHandle, PROJECT_FILE_NAME),
+    ) as ProjectManifest;
+    if (
+      parsedManifest.version !== 2 ||
+      parsedManifest.id !== manifest.id ||
+      !Array.isArray(parsedManifest.canvases)
+    ) {
+      throw new Error("项目文件损坏，无法保存");
+    }
+
+    const incomingActiveMetadata = manifest.canvases.find(
+      (canvas) => canvas.id === activeCanvas.id,
+    );
+    if (!incomingActiveMetadata) {
+      throw new Error("活动画布不在项目清单中");
+    }
+
+    const deletedCanvasIds = new Set(
+      Array.isArray(parsedManifest.deletedCanvasIds)
+        ? parsedManifest.deletedCanvasIds.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+    if (deletedCanvasIds.has(activeCanvas.id)) {
+      throw new Error("该画布已被删除，无法保存");
+    }
+
+    let canvases = parsedManifest.canvases.map((canvas) => ({ ...canvas }));
+    const activeCanvasIndex = canvases.findIndex((canvas) => canvas.id === activeCanvas.id);
+    if (activeCanvasIndex >= 0) {
+      canvases[activeCanvasIndex] = {
+        ...canvases[activeCanvasIndex],
+        updatedAt: incomingActiveMetadata.updatedAt,
+      };
+    } else {
+      canvases.push({ ...incomingActiveMetadata });
+    }
+
+    if (mutation?.type === "delete") {
+      if (mutation.canvasId === activeCanvas.id) {
+        throw new Error("不能删除当前活动画布");
+      }
+      canvases = canvases.filter((canvas) => canvas.id !== mutation.canvasId);
+      deletedCanvasIds.add(mutation.canvasId);
+    }
+
+    if (canvases.length === 0) {
+      throw new Error("最后一个画布不能删除");
+    }
+
+    if (mutation?.type === "rename") {
+      const renameIndex = canvases.findIndex((canvas) => canvas.id === mutation.canvasId);
+      if (renameIndex < 0 || deletedCanvasIds.has(mutation.canvasId)) {
+        throw new Error("画布不存在");
+      }
+      canvases[renameIndex] = {
+        ...canvases[renameIndex],
+        name: mutation.name,
+        updatedAt: mutation.updatedAt,
+      };
+    }
+
+    const materialFolders = sharedManifestBase &&
+      !areManifestFieldValuesEqual(manifest.materialFolders, sharedManifestBase.materialFolders)
+      ? manifest.materialFolders
+      : parsedManifest.materialFolders;
+    const materials = sharedManifestBase &&
+      !areManifestFieldValuesEqual(manifest.materials, sharedManifestBase.materials)
+      ? manifest.materials
+      : parsedManifest.materials;
+    const thumbnailFileName = sharedManifestBase &&
+      (manifest.thumbnailFileName ?? null) !== (sharedManifestBase.thumbnailFileName ?? null)
+      ? manifest.thumbnailFileName
+      : parsedManifest.thumbnailFileName;
+    const sharedFields: ProjectSharedManifestFields = {
+      name: sharedManifestBase && manifest.name !== sharedManifestBase.name
+        ? manifest.name
+        : parsedManifest.name,
+      materialFolders,
+      materials,
+      thumbnailFileName,
+    };
+    const nextManifest: ProjectManifest = {
+      ...parsedManifest,
+      ...sharedFields,
+      canvases,
+      deletedCanvasIds: deletedCanvasIds.size > 0 ? [...deletedCanvasIds] : undefined,
+      updatedAt: mutation?.updatedAt ?? manifest.updatedAt,
+    };
+    if (!nextManifest.materialFolders?.length) {
+      delete nextManifest.materialFolders;
+    }
+    if (!nextManifest.materials?.length) {
+      delete nextManifest.materials;
+    }
+    if (!nextManifest.thumbnailFileName?.trim()) {
+      delete nextManifest.thumbnailFileName;
+    }
+    const canvasDirectory = await projectHandle.getDirectoryHandle(CANVAS_DIRECTORY_NAME, {
+      create: true,
+    });
+    const canvasEntries: Array<[string, FileSystemHandle]> = [];
+    for await (const entry of canvasDirectory.entries()) {
+      canvasEntries.push(entry);
+    }
+
+    let renamedCanvas: CanvasDocument | null = null;
+    let renamedCanvasFileName: string | null = null;
+    if (mutation?.type === "rename" && mutation.canvasId !== activeCanvas.id) {
+      const renamedMetadata = canvases.find((canvas) => canvas.id === mutation.canvasId)!;
+      const actualEntryName = canvasEntries.find(
+        ([entryName]) => entryName.toLowerCase() === renamedMetadata.fileName.toLowerCase(),
+      )?.[0] ?? renamedMetadata.fileName;
+      const parsedCanvas = JSON.parse(
+        await readTextFile(canvasDirectory, actualEntryName),
+      ) as CanvasDocument;
+      if (parsedCanvas.version !== 1 || parsedCanvas.id !== mutation.canvasId) {
+        throw new Error("画布文件损坏，无法保存");
+      }
+      renamedCanvas = {
+        ...parsedCanvas,
+        name: renamedMetadata.name,
+        createdAt: renamedMetadata.createdAt,
+        updatedAt: renamedMetadata.updatedAt,
+      };
+      renamedCanvasFileName = renamedMetadata.fileName;
+    }
+
+    const referencedFileNames = new Set(
+      nextManifest.canvases.map((canvas) => canvas.fileName.toLowerCase()),
+    );
+    const orphanedFileNames = canvasEntries.flatMap(([entryName, entryHandle]) => (
+      entryHandle.kind === "file" &&
+      entryName.toLowerCase().endsWith(".json") &&
+      !referencedFileNames.has(entryName.toLowerCase())
+        ? [entryName]
+        : []
+    ));
+    const persistedActiveMetadata = nextManifest.canvases.find(
+      (canvas) => canvas.id === activeCanvas.id,
+    )!;
+
+    await writeJsonFileVerified(
+      canvasDirectory,
+      persistedActiveMetadata.fileName,
+      {
+        ...activeCanvas,
+        name: persistedActiveMetadata.name,
+        createdAt: persistedActiveMetadata.createdAt,
+        updatedAt: persistedActiveMetadata.updatedAt,
+      },
+    );
+    if (renamedCanvas && renamedCanvasFileName) {
+      await writeJsonFileVerified(canvasDirectory, renamedCanvasFileName, renamedCanvas);
+    }
+    await writeJsonFileVerified(projectHandle, PROJECT_FILE_NAME, nextManifest);
+    for (const orphanedFileName of orphanedFileNames) {
+      await canvasDirectory.removeEntry(orphanedFileName);
+    }
+
+    return nextManifest;
+  };
+
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request(
+      `${PROJECT_MANIFEST_LOCK_PREFIX}:${encodeURIComponent(manifest.id)}`,
+      { mode: "exclusive" },
+      run,
+    );
+  }
+
+  return run();
+}
+
 async function readProjectSnapshotInternal(
   projectHandle: FileSystemDirectoryHandle,
   preferredCanvasId?: string,
@@ -1412,15 +1608,22 @@ export async function saveProjectSnapshot(
   project: ProjectHandleRecord,
   snapshot: ProjectSnapshot,
   userId: string,
+  canvasMutation?: ProjectCanvasMutation,
+  sharedManifestBase?: ProjectSharedManifestFields,
 ): Promise<{ project: ProjectHandleRecord; snapshot: ProjectSnapshot }> {
   await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle);
   const existingSnapshot = await readProjectSnapshotInternal(project.projectHandle).catch(() => null);
-  const thumbnailFileName = snapshot.thumbnailFileName ?? existingSnapshot?.thumbnailFileName;
+  const thumbnailChangedFromBase = Boolean(
+    sharedManifestBase &&
+    (snapshot.thumbnailFileName ?? null) !== (sharedManifestBase.thumbnailFileName ?? null),
+  );
+  const thumbnailFileName = thumbnailChangedFromBase
+    ? snapshot.thumbnailFileName
+    : snapshot.thumbnailFileName ?? existingSnapshot?.thumbnailFileName;
   const timestamp = new Date().toISOString();
   const sourceSnapshot: ProjectSnapshot = {
     ...snapshot,
-    name: project.name,
     thumbnailFileName,
     updatedAt: timestamp,
   };
@@ -1444,17 +1647,29 @@ export async function saveProjectSnapshot(
     ...canvas,
     updatedAt: timestamp,
   };
-  const canvasDirectory = await project.projectHandle.getDirectoryHandle(CANVAS_DIRECTORY_NAME, {
-    create: true,
-  });
-
-  await writeJsonFileVerified(canvasDirectory, canvasMetadata.fileName, nextCanvas);
-  await writeJsonFileVerified(project.projectHandle, PROJECT_FILE_NAME, manifest);
-  const nextSnapshot = mergeProjectManifestAndCanvas(manifest, nextCanvas);
+  const persistedManifest = await persistProjectSnapshotFiles(
+    project.projectHandle,
+    manifest,
+    nextCanvas,
+    canvasMutation,
+    sharedManifestBase,
+  );
+  const persistedActiveMetadata = persistedManifest.canvases.find(
+    (item) => item.id === nextCanvas.id,
+  );
+  const persistedCanvas = persistedActiveMetadata
+    ? {
+        ...nextCanvas,
+        name: persistedActiveMetadata.name,
+        createdAt: persistedActiveMetadata.createdAt,
+        updatedAt: persistedActiveMetadata.updatedAt,
+      }
+    : nextCanvas;
+  const nextSnapshot = mergeProjectManifestAndCanvas(persistedManifest, persistedCanvas);
 
   const nextRecord: PersistedProjectRecord = {
     ...project,
-    name: project.name,
+    name: nextSnapshot.name,
     updatedAt: nextSnapshot.updatedAt,
   };
 

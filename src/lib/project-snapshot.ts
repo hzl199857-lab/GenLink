@@ -87,6 +87,9 @@ export function buildProjectManifestFromSnapshot(snapshot: ProjectSnapshot): Pro
     id: snapshot.id,
     name: snapshot.name.trim() || "Untitled",
     canvases: canvases.map((canvas) => ({ ...canvas })),
+    deletedCanvasIds: snapshot.deletedCanvasIds?.length
+      ? [...snapshot.deletedCanvasIds]
+      : undefined,
     materialFolders: snapshot.materialFolders?.length ? snapshot.materialFolders : undefined,
     materials: snapshot.materials?.length ? snapshot.materials : undefined,
     thumbnailFileName: snapshot.thumbnailFileName?.trim() || undefined,
@@ -120,6 +123,9 @@ export function mergeProjectManifestAndCanvas(
     id: manifest.id,
     name: manifest.name,
     canvases: manifest.canvases.map((item) => ({ ...item })),
+    deletedCanvasIds: manifest.deletedCanvasIds?.length
+      ? [...manifest.deletedCanvasIds]
+      : undefined,
     activeCanvasId: canvas.id,
     nodes: canvas.nodes,
     edges: canvas.edges,

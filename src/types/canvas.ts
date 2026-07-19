@@ -647,6 +647,7 @@ export interface ProjectManifest {
   id: string;
   name: string;
   canvases: ProjectCanvasMetadata[];
+  deletedCanvasIds?: string[];
   materialFolders?: MaterialLibraryFolder[];
   materials?: MaterialLibraryItem[];
   thumbnailFileName?: string;
@@ -659,6 +660,7 @@ export interface ProjectSnapshot {
   id: string;
   name: string;
   canvases?: ProjectCanvasMetadata[];
+  deletedCanvasIds?: string[];
   activeCanvasId?: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];

@@ -171,6 +171,96 @@ test("old-user processed results are discarded and object URLs are revoked", asy
   assert.deepEqual(revoked, ["blob:old-user"]);
 });
 
+test("old-project processed results cannot overwrite the newly opened project", async () => {
+  installBrowserStorage();
+  const persisted = deferred<{ fileName: string; previewUrl: string; sizeBytes: number }>();
+  const revoked: string[] = [];
+  const targetProject = { ...project, id: "project-b", name: "Project B" };
+  const targetNodes = [{
+    id: "target-project-node",
+    type: "text" as const,
+    position: { x: 10, y: 20 },
+    data: { text: "keep project B" },
+  }];
+  projectStorage.persistGeneratedOutput = async () => persisted.promise;
+  URL.revokeObjectURL = (url) => { revoked.push(url); };
+  canvas.useCanvasStore.getState().setActiveUserId("user-a");
+  canvas.useCanvasStore.setState({
+    currentProject: project,
+    projectId: project.id,
+    activeCanvasId: "canvas-a",
+    nodes: [{
+      id: "video-a",
+      type: "video",
+      position: { x: 0, y: 0 },
+      data: { videoUrl: "blob:source", width: 32, height: 32 },
+    }],
+  });
+
+  const operation = canvas.useCanvasStore.getState().createImageNodeFromVideoFrame({
+    sourceNodeId: "video-a",
+    dataUrl: "data:image/png;base64,AA==",
+    width: 32,
+    height: 32,
+  });
+  canvas.useCanvasStore.setState({
+    currentProject: targetProject,
+    projectId: targetProject.id,
+    activeCanvasId: "canvas-b",
+    nodes: targetNodes,
+  });
+  persisted.resolve({ fileName: "old-project.png", previewUrl: "blob:old-project", sizeBytes: 2 });
+
+  await assert.rejects(operation, canvas.isStaleCanvasUserScopeError);
+  const state = canvas.useCanvasStore.getState();
+  assert.equal(state.projectId, targetProject.id);
+  assert.equal(state.activeCanvasId, "canvas-b");
+  assert.deepEqual(state.nodes, targetNodes);
+  assert.deepEqual(revoked, ["blob:old-project"]);
+});
+
+test("old-canvas processed results cannot overwrite the newly active canvas", async () => {
+  installBrowserStorage();
+  const persisted = deferred<{ fileName: string; previewUrl: string; sizeBytes: number }>();
+  const revoked: string[] = [];
+  const targetNodes = [{
+    id: "target-canvas-node",
+    type: "text" as const,
+    position: { x: 30, y: 40 },
+    data: { text: "keep canvas B" },
+  }];
+  projectStorage.persistGeneratedOutput = async () => persisted.promise;
+  URL.revokeObjectURL = (url) => { revoked.push(url); };
+  canvas.useCanvasStore.getState().setActiveUserId("user-a");
+  canvas.useCanvasStore.setState({
+    currentProject: project,
+    projectId: project.id,
+    activeCanvasId: "canvas-a",
+    nodes: [{
+      id: "video-a",
+      type: "video",
+      position: { x: 0, y: 0 },
+      data: { videoUrl: "blob:source", width: 32, height: 32 },
+    }],
+  });
+
+  const operation = canvas.useCanvasStore.getState().createImageNodeFromVideoFrame({
+    sourceNodeId: "video-a",
+    dataUrl: "data:image/png;base64,AA==",
+    width: 32,
+    height: 32,
+  });
+  canvas.useCanvasStore.setState({ activeCanvasId: "canvas-b", nodes: targetNodes });
+  persisted.resolve({ fileName: "old-canvas.png", previewUrl: "blob:old-canvas", sizeBytes: 2 });
+
+  await assert.rejects(operation, canvas.isStaleCanvasUserScopeError);
+  const state = canvas.useCanvasStore.getState();
+  assert.equal(state.projectId, project.id);
+  assert.equal(state.activeCanvasId, "canvas-b");
+  assert.deepEqual(state.nodes, targetNodes);
+  assert.deepEqual(revoked, ["blob:old-canvas"]);
+});
+
 test("scoped component work cannot commit after switching accounts", async () => {
   const runScopedOperation = (
     canvas as unknown as {
@@ -221,6 +311,25 @@ test("stale project listings revoke thumbnails while current listings keep them"
   const currentProjects = await canvas.useCanvasStore.getState().listProjects();
   assert.equal(currentProjects[0]?.thumbnailUrl, "blob:current-thumbnail");
   assert.deepEqual(revoked, ["blob:old-thumbnail"]);
+});
+
+test("project listings remain current when only the active canvas changes", async () => {
+  installBrowserStorage();
+  const listed = deferred<Array<typeof project & { thumbnailUrl?: string }>>();
+  const revoked: string[] = [];
+  projectStorage.listProjectLibrary = async () => listed.promise;
+  URL.revokeObjectURL = (url) => { revoked.push(url); };
+  canvas.useCanvasStore.getState().setActiveUserId("user-a");
+  canvas.useCanvasStore.setState({ projectId: project.id, activeCanvasId: "canvas-a" });
+
+  const operation = canvas.useCanvasStore.getState().listProjects();
+  canvas.useCanvasStore.setState({ activeCanvasId: "canvas-b" });
+  listed.resolve([{ ...project, thumbnailUrl: "blob:project-thumbnail" }]);
+
+  const projects = await operation;
+  assert.equal(projects[0]?.thumbnailUrl, "blob:project-thumbnail");
+  assert.deepEqual(revoked, []);
+  assert.equal(canvas.useCanvasStore.getState().activeCanvasId, "canvas-b");
 });
 
 test("stale project history revokes previews while current history keeps them", async () => {
@@ -291,20 +400,31 @@ test("all project create entry points use scoped component work", () => {
   }
 });
 
-test("all async canvas actions use the shared user-scope guard", () => {
+test("async canvas actions use guards matching their data ownership", () => {
   const sourceText = readFileSync(path.join(process.cwd(), "src/store/canvas-store.ts"), "utf8");
   const sourceFile = ts.createSourceFile("canvas-store.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const expectedActions = [
+  const canvasOperationActions = [
     "generateTextFromTextNode", "generateStoryboardFromStoryboardNode", "generateImageFromImageGenerationNode",
-    "generateVideoFromVideoGenerationNode", "generateAudioFromAudioGenerationNode", "separateAudioFromNode",
+    "upscaleMidjourneyGridImage", "generateVideoFromVideoGenerationNode", "generateAudioFromAudioGenerationNode", "separateAudioFromNode",
     "runVideoUpscaleFromNode", "splitImageGenerationNodeToGrid", "cropImageGenerationNode",
     "splitUploadedImageNodeToGrid", "cropUploadedImageNode", "splitImageNodeToGrid", "cropImageNode",
     "createVideoNodeFromProcessedResult", "createImageNodeFromVideoFrame", "generateThreeViewImageFromNode",
     "createPanorama360ScreenshotNode", "createDirectorDeskCaptureNode", "createPanorama360FromImageNode",
-    "saveProject", "loadProject", "listProjects", "deleteProject", "renameProject", "duplicateProject",
-    "persistProjectOutput", "listCurrentProjectHistory",
+    "persistProjectOutput", "saveProject", "loadProject", "switchCanvas", "createCanvas", "renameCanvas", "duplicateCanvas",
   ];
+  const projectActions = ["listCurrentProjectHistory"];
+  const userActions = ["listProjects", "deleteProject", "renameProject", "duplicateProject"];
+  const exemptActions = new Map([
+    ["deleteCanvas", "switching the active canvas intentionally changes scope before the delegated scoped save"],
+  ]);
+  const expectedScopes = new Map([
+    ...canvasOperationActions.map((name) => [name, "captureCanvasOperationScope"] as const),
+    ...projectActions.map((name) => [name, "captureCanvasProjectScope"] as const),
+    ...userActions.map((name) => [name, "captureCanvasUserScope"] as const),
+  ]);
+  const expectedActions = [...expectedScopes.keys(), ...exemptActions.keys()];
   const actions = new Map<string, import("typescript").ArrowFunction>();
+  const storeStart = sourceText.indexOf("export const useCanvasStore");
 
   function visit(node: import("typescript").Node) {
     if (
@@ -312,7 +432,7 @@ test("all async canvas actions use the shared user-scope guard", () => {
       ts.isIdentifier(node.name) &&
       ts.isArrowFunction(node.initializer) &&
       node.initializer.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
-      expectedActions.includes(node.name.text)
+      node.getStart(sourceFile) > storeStart
     ) {
       actions.set(node.name.text, node.initializer);
     }
@@ -321,13 +441,35 @@ test("all async canvas actions use the shared user-scope guard", () => {
   visit(sourceFile);
 
   assert.deepEqual([...actions.keys()].sort(), [...expectedActions].sort());
-  for (const name of expectedActions) {
+  for (const [name, reason] of exemptActions) {
+    assert.ok(actions.has(name), `${name} exemption must reference a store async action`);
+    assert.ok(reason.length > 20, `${name} exemption must explain the ownership exception`);
+  }
+  for (const [name, expectedScope] of expectedScopes) {
     const action = actions.get(name)!;
     const bodyText = action.body.getText(sourceFile);
-    assert.match(bodyText, /const scope = captureCanvasUserScope\(get, set\);/, `${name} must capture user scope`);
+    assert.match(
+      bodyText,
+      new RegExp(`const scope = ${expectedScope}\\(get, set\\);`),
+      `${name} must capture ${expectedScope}`,
+    );
+    let scopeDeclarationEnd = action.body.getStart(sourceFile);
+
+    function findScopeDeclaration(node: import("typescript").Node) {
+      if (
+        ts.isVariableDeclaration(node)
+        && ts.isIdentifier(node.name)
+        && node.name.text === "scope"
+      ) {
+        scopeDeclarationEnd = node.getEnd();
+        return;
+      }
+      ts.forEachChild(node, findScopeDeclaration);
+    }
+    findScopeDeclaration(action.body);
 
     function inspect(node: import("typescript").Node) {
-      if (ts.isAwaitExpression(node)) {
+      if (ts.isAwaitExpression(node) && node.getStart(sourceFile) > scopeDeclarationEnd) {
         assert.match(node.expression.getText(sourceFile), /^scope\.wait\(/, `${name} has an unguarded await`);
       }
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "set") {
