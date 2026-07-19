@@ -89,49 +89,63 @@ function parseContentType(request: Request): string {
   return value;
 }
 
-function createLimitedBody(
+async function readLimitedBody(
   source: ReadableStream<Uint8Array>,
   maxBytes: number,
-  onLimitExceeded: () => void,
-  onEmpty: () => void,
-): ReadableStream<Uint8Array> {
+  signal: AbortSignal,
+): Promise<Uint8Array> {
   const reader = source.getReader();
+  const chunks: Uint8Array[] = [];
   let receivedBytes = 0;
+  let aborted = signal.aborted;
+  const abortReader = () => {
+    aborted = true;
+    void reader.cancel(signal.reason);
+  };
 
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const result = await reader.read();
+  signal.addEventListener("abort", abortReader, { once: true });
 
-        if (result.done) {
-          if (receivedBytes === 0) {
-            onEmpty();
-            controller.error(new ImageUploadStreamError(400, "图片内容不能为空"));
-            return;
-          }
+  try {
+    while (true) {
+      const result = await reader.read();
 
-          controller.close();
-          return;
-        }
-
-        receivedBytes += result.value.byteLength;
-
-        if (receivedBytes > maxBytes) {
-          onLimitExceeded();
-          await reader.cancel("Image upload size limit exceeded");
-          controller.error(new ImageUploadStreamError(413, "单张图片不能超过 100MB"));
-          return;
-        }
-
-        controller.enqueue(result.value);
-      } catch (error) {
-        controller.error(error);
+      if (aborted) {
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException("The upload was cancelled", "AbortError");
       }
-    },
-    async cancel(reason) {
-      await reader.cancel(reason);
-    },
-  });
+
+      if (result.done) {
+        break;
+      }
+
+      receivedBytes += result.value.byteLength;
+
+      if (receivedBytes > maxBytes) {
+        await reader.cancel("Image upload size limit exceeded");
+        throw new ImageUploadStreamError(413, "单张图片不能超过 100MB");
+      }
+
+      chunks.push(result.value);
+    }
+  } finally {
+    signal.removeEventListener("abort", abortReader);
+    reader.releaseLock();
+  }
+
+  if (receivedBytes === 0) {
+    throw new ImageUploadStreamError(400, "图片内容不能为空");
+  }
+
+  const body = new Uint8Array(receivedBytes);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return body;
 }
 
 export async function forwardImageUploadRequest(
@@ -139,13 +153,24 @@ export async function forwardImageUploadRequest(
   deps: ImageUploadStreamDependencies,
 ): Promise<{ imageUrl: string }> {
   const maxBytes = deps.maxBytes ?? MAX_STREAM_IMAGE_UPLOAD_BYTES;
-  const contentLength = parseContentLength(request, maxBytes);
+  parseContentLength(request, maxBytes);
   const contentType = parseContentType(request);
 
   if (!request.body) {
     throw new ImageUploadStreamError(400, "图片内容不能为空");
   }
 
+  let body: Uint8Array;
+
+  try {
+    body = await readLimitedBody(request.body, maxBytes, request.signal);
+  } catch (error) {
+    if (request.signal.aborted) {
+      throw new ImageUploadStreamError(499, "图片上传已取消", { cause: error });
+    }
+
+    throw error;
+  }
   const requestUrl = new URL(request.url);
   const fileName = requestUrl.searchParams.get("fileName")?.trim() || undefined;
   const folder = requestUrl.searchParams.get("folder")?.trim() || undefined;
@@ -157,8 +182,6 @@ export async function forwardImageUploadRequest(
   });
   const upstreamController = new AbortController();
   const abortUpstream = () => upstreamController.abort(request.signal.reason);
-  let limitExceeded = false;
-  let bodyWasEmpty = false;
 
   if (request.signal.aborted) {
     abortUpstream();
@@ -166,21 +189,14 @@ export async function forwardImageUploadRequest(
     request.signal.addEventListener("abort", abortUpstream, { once: true });
   }
 
-  const body = createLimitedBody(request.body, maxBytes, () => {
-    limitExceeded = true;
-    upstreamController.abort(new ImageUploadStreamError(413, "单张图片不能超过 100MB"));
-  }, () => {
-    bodyWasEmpty = true;
-    upstreamController.abort(new ImageUploadStreamError(400, "图片内容不能为空"));
-  });
   const headers = {
     ...target.headers,
-    ...(contentLength === undefined ? {} : { "Content-Length": String(contentLength) }),
+    "Content-Length": String(body.byteLength),
   };
   const init: StreamingRequestInit = {
     method: "PUT",
     headers,
-    body,
+    body: body as unknown as BodyInit,
     duplex: "half",
     signal: upstreamController.signal,
   };
@@ -195,14 +211,6 @@ export async function forwardImageUploadRequest(
 
     return { imageUrl: target.imageUrl };
   } catch (error) {
-    if (limitExceeded) {
-      throw new ImageUploadStreamError(413, "单张图片不能超过 100MB", { cause: error });
-    }
-
-    if (bodyWasEmpty) {
-      throw new ImageUploadStreamError(400, "图片内容不能为空", { cause: error });
-    }
-
     if (request.signal.aborted) {
       throw new ImageUploadStreamError(499, "图片上传已取消", { cause: error });
     }

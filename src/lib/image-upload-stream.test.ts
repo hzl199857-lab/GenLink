@@ -168,6 +168,21 @@ test("uses the browser size when a proxy supplies a stale Content-Length", async
   assert.equal(calls.uploadHeaders.get("Content-Length"), String(bytes.byteLength));
 });
 
+test("uses the bytes actually received when the proxy-reported size is stale", async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const { calls, deps } = createDeps();
+
+  await forwardImageUploadRequest(
+    createImageRequest(bytes, {
+      contentLength: "3",
+      size: "3",
+    }),
+    deps,
+  );
+
+  assert.equal(calls.uploadHeaders.get("Content-Length"), String(bytes.byteLength));
+});
+
 test("rejects declared uploads above 100MB before creating a target", async () => {
   const { calls, deps } = createDeps();
   const request = createImageRequest(new Uint8Array([1]), {
@@ -245,7 +260,7 @@ test("returns a sanitized upstream error for OSS failures", async () => {
   );
 });
 
-test("propagates request cancellation to the OSS request", async () => {
+test("stops before creating an OSS request when the client cancels while buffering", async () => {
   const controller = new AbortController();
   let upstreamAborted = false;
   const request = createImageRequest(new Uint8Array([1, 2, 3]), {
@@ -269,5 +284,5 @@ test("propagates request cancellation to the OSS request", async () => {
   controller.abort();
 
   await assert.rejects(promise, hasStatus(499));
-  assert.equal(upstreamAborted, true);
+  assert.equal(upstreamAborted, false);
 });
