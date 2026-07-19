@@ -153,6 +153,21 @@ test("streams uploads without Content-Length through chunked proxy hops", async 
   assert.equal(calls.uploadHeaders.get("Content-Length"), String(bytes.byteLength));
 });
 
+test("uses the browser size when a proxy supplies a stale Content-Length", async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const { calls, deps } = createDeps();
+
+  await forwardImageUploadRequest(
+    createImageRequest(bytes, {
+      contentLength: "0",
+      size: String(bytes.byteLength),
+    }),
+    deps,
+  );
+
+  assert.equal(calls.uploadHeaders.get("Content-Length"), String(bytes.byteLength));
+});
+
 test("rejects declared uploads above 100MB before creating a target", async () => {
   const { calls, deps } = createDeps();
   const request = createImageRequest(new Uint8Array([1]), {
@@ -211,13 +226,22 @@ test("returns a sanitized upstream error for OSS failures", async () => {
     },
   );
 
-  const networkFailure = createDeps({ networkError: new Error("socket closed") });
+  const networkFailure = createDeps({
+    networkError: Object.assign(new Error("fetch failed"), {
+      cause: new Error("getaddrinfo ENOTFOUND oss-cn-guangzhou.aliyuncs.com"),
+    }),
+  });
   await assert.rejects(
     forwardImageUploadRequest(
       createImageRequest(new Uint8Array([1])),
       networkFailure.deps,
     ),
-    hasStatus(502),
+    (error: unknown) => {
+      assert.ok(error instanceof ImageUploadStreamError);
+      assert.equal(error.status, 502);
+      assert.match(error.message, /getaddrinfo ENOTFOUND/);
+      return true;
+    },
   );
 });
 

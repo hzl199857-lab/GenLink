@@ -33,21 +33,40 @@ type StreamingRequestInit = RequestInit & {
   duplex: "half";
 };
 
+function summarizeUploadFailure(error: unknown): string {
+  let current = error;
+  let depth = 0;
+
+  while (current instanceof Error && current.cause instanceof Error && depth < 3) {
+    current = current.cause;
+    depth += 1;
+  }
+
+  if (!(current instanceof Error)) {
+    return "网络连接失败";
+  }
+
+  const reason = current.message.trim().replace(/\s+/g, " ");
+  return reason ? reason.slice(0, 160) : "网络连接失败";
+}
+
 function parseContentLength(request: Request, maxBytes: number): number | undefined {
   const requestUrl = new URL(request.url);
-  const rawHeader = request.headers.get("content-length") ?? requestUrl.searchParams.get("size");
+  const rawHeader = request.headers.get("content-length");
+  const rawSize = requestUrl.searchParams.get("size");
+  const rawValue = rawSize ?? rawHeader;
 
-  if (rawHeader === null) {
+  if (rawValue === null) {
     return undefined;
   }
 
-  const rawValue = rawHeader.trim();
+  const trimmedValue = rawValue.trim();
 
-  if (!/^\d+$/.test(rawValue)) {
+  if (!/^\d+$/.test(trimmedValue)) {
     throw new ImageUploadStreamError(400, "缺少有效的图片大小");
   }
 
-  const value = Number(rawValue);
+  const value = Number(trimmedValue);
 
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new ImageUploadStreamError(400, "图片内容不能为空");
@@ -192,7 +211,11 @@ export async function forwardImageUploadRequest(
       throw error;
     }
 
-    throw new ImageUploadStreamError(502, "OSS 图片上传失败", { cause: error });
+    throw new ImageUploadStreamError(
+      502,
+      `OSS 图片上传失败：${summarizeUploadFailure(error)}`,
+      { cause: error },
+    );
   } finally {
     request.signal.removeEventListener("abort", abortUpstream);
   }
