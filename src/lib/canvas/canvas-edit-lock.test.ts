@@ -20,8 +20,10 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 };
 
 const {
+  acquireCanvasEditLock,
   buildCanvasDeepLink,
   buildCanvasEditLockKey,
+  clearCanvasEditOwnerForWindow,
   isCanvasEditLeaseStale,
   parseCanvasLockMessage,
 } = require("./canvas-edit-lock.ts") as typeof import("./canvas-edit-lock");
@@ -58,4 +60,51 @@ test("accepts only scoped canvas lock messages", () => {
     ownerId: "window-1",
   });
   assert.equal(parseCanvasLockMessage({ type: "released", projectId: "project-1" }), null);
+});
+
+test("clears only the cloned canvas owner before fallback lock acquisition", async () => {
+  const sessionValues = new Map([
+    ["genlink.canvasEditOwnerId", "cloned-owner"],
+    ["genlink.preference", "preserve-me"],
+  ]);
+  const localValues = new Map<string, string>();
+  const target = {
+    sessionStorage: {
+      getItem: (key: string) => sessionValues.get(key) ?? null,
+      setItem: (key: string, value: string) => sessionValues.set(key, value),
+      removeItem: (key: string) => sessionValues.delete(key),
+      clear: () => sessionValues.clear(),
+    },
+    localStorage: {
+      getItem: (key: string) => localValues.get(key) ?? null,
+      setItem: (key: string, value: string) => localValues.set(key, value),
+      removeItem: (key: string) => localValues.delete(key),
+    },
+    setInterval,
+    clearInterval,
+  };
+  const previousWindow = globalThis.window;
+
+  try {
+    clearCanvasEditOwnerForWindow(target as unknown as Window);
+    assert.equal(sessionValues.get("genlink.canvasEditOwnerId"), undefined);
+    assert.equal(sessionValues.get("genlink.preference"), "preserve-me");
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: target,
+    });
+    const result = await acquireCanvasEditLock("project-1", "canvas-1");
+    assert.equal(result.acquired, true);
+    assert.notEqual(result.ownerId, "cloned-owner");
+    assert.equal(sessionValues.get("genlink.preference"), "preserve-me");
+    if (result.acquired) {
+      result.release();
+    }
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+  }
 });

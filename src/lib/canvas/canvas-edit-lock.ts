@@ -29,6 +29,12 @@ export type CanvasEditLockResult =
       handoff: () => void;
     };
 
+export function clearCanvasEditOwnerForWindow(
+  target: Pick<Window, 'sessionStorage'>,
+): void {
+  target.sessionStorage.removeItem(OWNER_SESSION_KEY);
+}
+
 export function buildCanvasEditLockKey(projectId: string, canvasId: string): string {
   return `${LOCK_PREFIX}:${encodeURIComponent(projectId.trim())}:${encodeURIComponent(canvasId.trim())}`;
 }

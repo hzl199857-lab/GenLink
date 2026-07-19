@@ -486,12 +486,12 @@ function HomePageContent() {
       deepLinkCanvasId
     ) {
       handledAppEntryRef.current = true;
-      setPendingCanvasDeepLink({
-        projectId: deepLinkProjectId,
-        canvasId: deepLinkCanvasId,
-      });
 
       const timer = window.setTimeout(() => {
+        setPendingCanvasDeepLink({
+          projectId: deepLinkProjectId,
+          canvasId: deepLinkCanvasId,
+        });
         showEntryLoader('canvas');
         showAppMode('library');
         router.replace('/');
@@ -653,7 +653,7 @@ function HomePageContent() {
       showEntryLoader('library');
     }
 
-    showAppMode('library');
+    router.push('/?app=library');
   };
 
   const handleSignOut = async () => {
@@ -775,6 +775,7 @@ function HomePageContent() {
                 activeAgentRequestIdRef.current = null;
               }}
               onBackToLibrary={openProjectLibraryFromCanvas}
+              onBackHome={backToHero}
               onCanvasReady={() => {
                 if (refreshRestoreLoading) {
                   setEntryLoaderLeaving(true);

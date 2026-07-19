@@ -114,6 +114,7 @@ import {
 import {
   acquireCanvasEditLock,
   buildCanvasDeepLink,
+  clearCanvasEditOwnerForWindow,
   type CanvasEditLockResult,
 } from '@/lib/canvas/canvas-edit-lock';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
@@ -209,6 +210,7 @@ import { AddNodeMenu, type AddNodeMenuAction } from './AddNodeMenu';
 import { CanvasContextMenu, getCanvasContextMenuPosition, type CanvasContextMenuPlatform } from './CanvasContextMenu';
 import { NodeContextMenu } from './NodeContextMenu';
 import { CanvasHeader } from './CanvasHeader';
+import { DeleteCanvasDialog } from './DeleteCanvasDialog';
 import { CanvasAgentPanel } from './CanvasAgentPanel';
 import UniqueLoading from '../ui/grid-loading';
 import { CanvasToolbar } from './CanvasToolbar';
@@ -10112,8 +10114,16 @@ interface InnerCanvasProps {
   initialAgentRequest?: CanvasAgentLaunchRequest | null;
   onInitialAgentRequestConsumed?: (id: string) => void;
   onBackToLibrary?: () => void;
+  onBackHome?: () => void;
   onCanvasReady?: () => void;
 }
+
+type CanvasEditLockStatus = 'idle' | 'checking' | 'acquired' | 'blocked';
+
+type CanvasEditLockState = {
+  key: string | null;
+  status: CanvasEditLockStatus;
+};
 
 type CanvasAgentDockProps = {
   userId: string;
@@ -10263,19 +10273,41 @@ function InnerCanvas({
   initialAgentRequest,
   onInitialAgentRequestConsumed,
   onBackToLibrary,
+  onBackHome,
   onCanvasReady,
 }: InnerCanvasProps) {
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
   const projectName = useCanvasStore((s) => s.projectName);
   const activeCanvasId = useCanvasStore((s) => s.activeCanvasId);
+  const activeCanvasViewport = useCanvasStore((s) => s.activeCanvasViewport);
+  const projectCanvases = useCanvasStore((s) => s.projectCanvases);
   const currentProject = useCanvasStore((s) => s.currentProject);
   const canvasEditLockRef = useRef<Extract<CanvasEditLockResult, { acquired: true }> | null>(null);
-  const [canvasEditBlocked, setCanvasEditBlocked] = useState(false);
+  const canvasEditLockKeyRef = useRef<string | null>(null);
+  const canvasEditLockKey = currentProject?.id && activeCanvasId
+    ? `${currentProject.id}:${activeCanvasId}`
+    : null;
+  const [canvasEditLockState, setCanvasEditLockState] = useState<CanvasEditLockState>({
+    key: null,
+    status: 'idle',
+  });
+  const canvasEditLockStatus: CanvasEditLockStatus = !canvasEditLockKey
+    ? 'idle'
+    : canvasEditLockState.key === canvasEditLockKey
+      ? canvasEditLockState.status
+      : 'checking';
+  const canvasWriteBlocked = canvasEditLockStatus === 'checking' || canvasEditLockStatus === 'blocked';
   const loading = useCanvasStore((s) => s.loading);
   const dirty = useCanvasStore((s) => s.dirty);
   const saveMessage = useCanvasStore((s) => s.saveMessage);
   const saveProject = useCanvasStore((s) => s.saveProject);
+  const switchCanvas = useCanvasStore((s) => s.switchCanvas);
+  const createCanvas = useCanvasStore((s) => s.createCanvas);
+  const renameCanvas = useCanvasStore((s) => s.renameCanvas);
+  const duplicateCanvas = useCanvasStore((s) => s.duplicateCanvas);
+  const deleteCanvas = useCanvasStore((s) => s.deleteCanvas);
+  const setActiveCanvasViewport = useCanvasStore((s) => s.setActiveCanvasViewport);
   const setSaveMessage = useCanvasStore((s) => s.setSaveMessage);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
@@ -10408,6 +10440,9 @@ function InnerCanvas({
   const [projectDialogVariant, setProjectDialogVariant] = useState<'create' | 'save'>('create');
   const [projectDialogBusy, setProjectDialogBusy] = useState(false);
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
+  const canvasHeaderActionPendingRef = useRef(false);
+  const [canvasHeaderPending, setCanvasHeaderPending] = useState(false);
+  const [pendingDeleteCanvas, setPendingDeleteCanvas] = useState<{ id: string; name: string } | null>(null);
   const [openDirectorNodeId, setOpenDirectorNodeId] = useState<string | null>(null);
   const [gridSnapEnabled, setGridSnapEnabled] = useState(false);
   const gridSnapEnabledRef = useRef(gridSnapEnabled);
@@ -10418,6 +10453,12 @@ function InnerCanvas({
     parentDirectoryLabel: '',
   });
   const edgeStyle = useStoredCanvasEdgeStyle(userId);
+  const canvasHeaderBusy = loading || canvasHeaderPending;
+  const blockCanvasEditing = useCallback(() => {
+    setPendingDeleteCanvas(null);
+    setDeleteProjectDialogOpen(false);
+    setCanvasEditLockState({ key: canvasEditLockKey, status: 'blocked' });
+  }, [canvasEditLockKey]);
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
     : null;
@@ -10425,36 +10466,49 @@ function InnerCanvas({
   useEffect(() => {
     canvasEditLockRef.current?.release();
     canvasEditLockRef.current = null;
+    canvasEditLockKeyRef.current = null;
 
-    if (!currentProject?.id || !activeCanvasId) {
-      setCanvasEditBlocked(false);
-      return;
+    if (!currentProject?.id || !activeCanvasId || !canvasEditLockKey) {
+      const timer = window.setTimeout(() => {
+        setCanvasEditLockState({ key: null, status: 'idle' });
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
     let cancelled = false;
-    void acquireCanvasEditLock(currentProject.id, activeCanvasId).then((result) => {
-      if (cancelled) {
-        if (result.acquired) {
-          result.release();
+    const timer = window.setTimeout(() => {
+      setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
+      void acquireCanvasEditLock(currentProject.id, activeCanvasId).then((result) => {
+        if (cancelled) {
+          if (result.acquired) {
+            result.release();
+          }
+          return;
         }
-        return;
-      }
 
-      if (!result.acquired) {
-        setCanvasEditBlocked(true);
-        return;
-      }
+        if (!result.acquired) {
+          blockCanvasEditing();
+          return;
+        }
 
-      canvasEditLockRef.current = result;
-      setCanvasEditBlocked(false);
-    });
+        canvasEditLockRef.current = result;
+        canvasEditLockKeyRef.current = canvasEditLockKey;
+        setCanvasEditLockState({ key: canvasEditLockKey, status: 'acquired' });
+      }).catch(() => {
+        if (!cancelled) {
+          blockCanvasEditing();
+        }
+      });
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
       canvasEditLockRef.current?.release();
       canvasEditLockRef.current = null;
+      canvasEditLockKeyRef.current = null;
     };
-  }, [activeCanvasId, currentProject?.id]);
+  }, [activeCanvasId, blockCanvasEditing, canvasEditLockKey, currentProject?.id]);
 
   useEffect(() => {
     return () => {
@@ -10813,6 +10867,13 @@ function InnerCanvas({
   const [selectionInProgress, setSelectionInProgress] = useState(false);
 
   const { fitView, getViewport, project, setViewport } = useReactFlow();
+  useEffect(() => {
+    if (!activeCanvasId) {
+      return;
+    }
+
+    void setViewport(activeCanvasViewport, { duration: 0 });
+  }, [activeCanvasId, activeCanvasViewport, setViewport]);
   const updateNodeInternals = useUpdateNodeInternals();
   const refreshRestoreViewportAppliedRef = useRef<string | null>(null);
   const contextMenuPlatform = useMemo<CanvasContextMenuPlatform>(() => {
@@ -10849,6 +10910,21 @@ function InnerCanvas({
       setSaveMessage(null);
     }, 2200);
   }, [setSaveMessage]);
+
+  const ensureCanvasWriteAvailable = useCallback(() => {
+    if (!canvasWriteBlocked) {
+      return true;
+    }
+
+    setPendingDeleteCanvas(null);
+    setDeleteProjectDialogOpen(false);
+    showProjectMessage(
+      canvasEditLockStatus === 'checking'
+        ? '正在获取画布编辑权，请稍后重试'
+        : '当前画布已被其他窗口占用，请切换到可编辑画布后重试',
+    );
+    return false;
+  }, [canvasEditLockStatus, canvasWriteBlocked, showProjectMessage]);
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -13756,7 +13832,8 @@ function InnerCanvas({
     clearConnectionMenu();
     setImageInfoPopover(null);
     setImageLightbox(null);
-  }, [clearConnectionMenu, isInteractiveCanvasTarget]);
+    setActiveCanvasViewport(getViewport());
+  }, [clearConnectionMenu, getViewport, isInteractiveCanvasTarget, setActiveCanvasViewport]);
 
   const handlePaneContextMenu = useCallback((event: React.MouseEvent) => {
     if (isNodeInternalTarget(event.target) || isInteractiveCanvasTarget(event.target)) {
@@ -15423,6 +15500,10 @@ function InnerCanvas({
   }, [showProjectMessage]);
 
   const handleSaveProject = useCallback(async () => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
     const project = useCanvasStore.getState().currentProject;
 
     if (getProjectSaveIntent(project) === 'open-save-dialog') {
@@ -15445,7 +15526,7 @@ function InnerCanvas({
     } catch (error) {
       showProjectMessage(error instanceof Error ? error.message : '保存项目失败');
     }
-  }, [projectName, saveProject, setSaveMessage, showProjectMessage]);
+  }, [ensureCanvasWriteAvailable, projectName, saveProject, setSaveMessage, showProjectMessage]);
 
   useEffect(() => {
     const handleSaveShortcut = (event: KeyboardEvent) => {
@@ -15457,16 +15538,20 @@ function InnerCanvas({
 
       event.preventDefault();
 
-      if (!event.repeat) {
+      if (!event.repeat && ensureCanvasWriteAvailable()) {
         void handleSaveProject();
       }
     };
 
     window.addEventListener('keydown', handleSaveShortcut);
     return () => window.removeEventListener('keydown', handleSaveShortcut);
-  }, [handleSaveProject]);
+  }, [ensureCanvasWriteAvailable, handleSaveProject]);
 
   const handleRenameCurrentProject = useCallback(async (nextName: string) => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
@@ -15480,9 +15565,13 @@ function InnerCanvas({
     } catch (error) {
       showProjectMessage(error instanceof Error ? error.message : '重命名失败');
     }
-  }, [renameProject, showProjectMessage]);
+  }, [ensureCanvasWriteAvailable, renameProject, showProjectMessage]);
 
   const handleOpenCreateProjectDialog = useCallback(() => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
     setProjectDialogVariant('create');
     setCreateDraft({
       projectName: '',
@@ -15490,7 +15579,7 @@ function InnerCanvas({
       parentDirectoryLabel: '',
     });
     setProjectDialogOpen(true);
-  }, []);
+  }, [ensureCanvasWriteAvailable]);
 
   const handlePickProjectDirectory = useCallback(async () => {
     try {
@@ -15506,6 +15595,10 @@ function InnerCanvas({
   }, [showProjectMessage]);
 
   const handleConfirmCreateProject = useCallback(async () => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
     if (!createDraft.parentHandle || !createDraft.projectName.trim()) {
       return;
     }
@@ -15551,9 +15644,13 @@ function InnerCanvas({
     } finally {
       setProjectDialogBusy(false);
     }
-  }, [attachProject, bindDraftProject, createDraft.parentHandle, createDraft.projectName, projectDialogVariant, showProjectMessage]);
+  }, [attachProject, bindDraftProject, createDraft.parentHandle, createDraft.projectName, ensureCanvasWriteAvailable, projectDialogVariant, showProjectMessage]);
 
   const handleRequestDeleteCurrentProject = useCallback(() => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
@@ -15562,9 +15659,14 @@ function InnerCanvas({
     }
 
     setDeleteProjectDialogOpen(true);
-  }, [showProjectMessage]);
+  }, [ensureCanvasWriteAvailable, showProjectMessage]);
 
   const handleConfirmDeleteCurrentProject = useCallback(async () => {
+    if (!ensureCanvasWriteAvailable()) {
+      setDeleteProjectDialogOpen(false);
+      return;
+    }
+
     const project = useCanvasStore.getState().currentProject;
 
     if (!project) {
@@ -15581,7 +15683,7 @@ function InnerCanvas({
     } catch (error) {
       showProjectMessage(error instanceof Error ? error.message : '删除失败');
     }
-  }, [deleteProject, onBackToLibrary, showProjectMessage]);
+  }, [deleteProject, ensureCanvasWriteAvailable, onBackToLibrary, showProjectMessage]);
 
   useEffect(() => {
     if (!dirty || !currentProject) {
@@ -15589,6 +15691,10 @@ function InnerCanvas({
     }
 
     const timer = window.setInterval(() => {
+      if (!ensureCanvasWriteAvailable()) {
+        return;
+      }
+
       const latestState = useCanvasStore.getState();
 
       if (!latestState.currentProject || !latestState.dirty || latestState.loading) {
@@ -15599,7 +15705,137 @@ function InnerCanvas({
     }, 5 * 60 * 1000);
 
     return () => window.clearInterval(timer);
-  }, [currentProject, dirty]);
+  }, [currentProject, dirty, ensureCanvasWriteAvailable]);
+
+  const runCanvasHeaderAction = useCallback(async (
+    action: () => Promise<unknown>,
+    fallbackMessage: string,
+  ) => {
+    if (canvasHeaderActionPendingRef.current) {
+      return;
+    }
+
+    canvasHeaderActionPendingRef.current = true;
+    setCanvasHeaderPending(true);
+    try {
+      await action();
+    } catch (error) {
+      showProjectMessage(error instanceof Error ? error.message : fallbackMessage);
+    } finally {
+      canvasHeaderActionPendingRef.current = false;
+      setCanvasHeaderPending(false);
+    }
+  }, [showProjectMessage]);
+
+  const runCanvasHeaderWriteAction = useCallback(async (
+    action: () => Promise<unknown>,
+    fallbackMessage: string,
+  ) => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
+    await runCanvasHeaderAction(action, fallbackMessage);
+  }, [ensureCanvasWriteAvailable, runCanvasHeaderAction]);
+
+  const handleRequestDeleteCanvas = useCallback((canvasId: string) => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
+    const canvas = projectCanvases.find((item) => item.id === canvasId);
+    if (!canvas) {
+      showProjectMessage('画布不存在');
+      return;
+    }
+    if (projectCanvases.length <= 1) {
+      showProjectMessage('最后一个画布不能删除');
+      return;
+    }
+
+    setPendingDeleteCanvas({ id: canvas.id, name: canvas.name });
+  }, [ensureCanvasWriteAvailable, projectCanvases, showProjectMessage]);
+
+  const handleConfirmDeleteCanvas = useCallback(async () => {
+    if (!ensureCanvasWriteAvailable()) {
+      setPendingDeleteCanvas(null);
+      return;
+    }
+
+    const target = pendingDeleteCanvas;
+    if (!target) {
+      return;
+    }
+
+    await runCanvasHeaderAction(async () => {
+      await deleteCanvas(target.id);
+      setPendingDeleteCanvas(null);
+    }, '删除画布失败');
+  }, [deleteCanvas, ensureCanvasWriteAvailable, pendingDeleteCanvas, runCanvasHeaderAction]);
+
+  const handleCloseDeleteCanvasDialog = useCallback(() => {
+    if (canvasHeaderBusy || canvasWriteBlocked) {
+      return;
+    }
+
+    setPendingDeleteCanvas(null);
+  }, [canvasHeaderBusy, canvasWriteBlocked]);
+
+  const handleOpenCanvasInNewWindow = useCallback(async (canvasId: string) => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
+    if (!currentProject?.id) {
+      return;
+    }
+
+    const nextWindow = window.open('', '_blank');
+    if (!nextWindow) {
+      showProjectMessage('浏览器阻止了新窗口，请允许弹出窗口后重试');
+      return;
+    }
+
+    try {
+      clearCanvasEditOwnerForWindow(nextWindow);
+      nextWindow.opener = null;
+
+      if (canvasId === activeCanvasId && !canvasEditLockRef.current) {
+        nextWindow.close();
+        showProjectMessage('当前画布编辑权尚未就绪或已被占用，请稍后重试');
+        return;
+      }
+
+      const activeCanvasLock = canvasId === activeCanvasId
+        ? canvasEditLockRef.current
+        : null;
+
+      if (dirty) {
+        await saveProject();
+      }
+
+      if (nextWindow.closed) {
+        showProjectMessage('新窗口已关闭，当前画布仍保留在此窗口');
+        return;
+      }
+
+      if (activeCanvasLock) {
+        activeCanvasLock.handoff();
+        canvasEditLockRef.current = null;
+        canvasEditLockKeyRef.current = null;
+        blockCanvasEditing();
+      }
+
+      nextWindow.location.href = buildCanvasDeepLink(
+        currentProject.id,
+        canvasId,
+        window.location.origin,
+      );
+    } catch (error) {
+      nextWindow.close();
+      throw error;
+    }
+  }, [activeCanvasId, blockCanvasEditing, currentProject, dirty, ensureCanvasWriteAvailable, saveProject, showProjectMessage]);
 
   return (
     <>
@@ -15619,24 +15855,58 @@ function InnerCanvas({
       ) : null}
       <CanvasHeader
         projectName={projectName}
-        busy={loading}
+        busy={canvasHeaderBusy}
+        writeBlocked={canvasWriteBlocked}
+        canvases={projectCanvases}
+        activeCanvasId={activeCanvasId}
         onProjectNameCommit={handleRenameCurrentProject}
-        onBackToLibrary={onBackToLibrary}
+        onBackHome={onBackHome}
+        onAllProjects={onBackToLibrary}
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
+        onSelectCanvas={(canvasId) => runCanvasHeaderAction(
+          () => switchCanvas(canvasId),
+          '切换画布失败',
+        )}
+        onCreateCanvas={() => runCanvasHeaderWriteAction(
+          () => createCanvas(),
+          '新建画布失败',
+        )}
+        onRenameCanvas={(canvasId, name) => runCanvasHeaderWriteAction(
+          () => renameCanvas(canvasId, name),
+          '重命名画布失败',
+        )}
+        onDuplicateCanvas={(canvasId) => runCanvasHeaderWriteAction(
+          () => duplicateCanvas(canvasId),
+          '复制画布失败',
+        )}
+        onDeleteCanvas={handleRequestDeleteCanvas}
+        onOpenCanvasInNewWindow={(canvasId) => runCanvasHeaderWriteAction(
+          () => handleOpenCanvasInNewWindow(canvasId),
+          '打开画布失败',
+        )}
       />
-      {canvasEditBlocked ? (
-        <div className="fixed inset-0 z-[45] flex items-center justify-center bg-[#090a0c]/72 backdrop-blur-[2px]">
+      {canvasWriteBlocked ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#090a0c]/72 backdrop-blur-[2px]">
           <div className="rounded-[16px] border border-white/10 bg-[#242527] px-6 py-5 text-center text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
-            <div className="text-[15px] font-semibold">该画布已在其他窗口打开</div>
-            <div className="mt-1 text-[12px] text-white/48">你可以切换到其他画布，或在原窗口关闭后重试。</div>
-            <button
-              type="button"
-              className="mt-4 rounded-[9px] bg-white/10 px-3 py-2 text-[12px] font-medium transition hover:bg-white/16"
-              onClick={() => window.location.reload()}
-            >
-              重新获取编辑权
-            </button>
+            {canvasEditLockStatus === 'checking' ? (
+              <>
+                <div className="text-[15px] font-semibold">正在获取画布编辑权</div>
+                <div className="mt-1 text-[12px] text-white/48">请稍候，获取成功后即可继续编辑。</div>
+              </>
+            ) : (
+              <>
+                <div className="text-[15px] font-semibold">该画布已在其他窗口打开</div>
+                <div className="mt-1 text-[12px] text-white/48">你可以切换到其他画布，或在原窗口关闭后重试。</div>
+                <button
+                  type="button"
+                  className="mt-4 rounded-[9px] bg-white/10 px-3 py-2 text-[12px] font-medium transition hover:bg-white/16"
+                  onClick={() => window.location.reload()}
+                >
+                  重新获取编辑权
+                </button>
+              </>
+            )}
           </div>
         </div>
       ) : null}
@@ -15673,6 +15943,7 @@ function InnerCanvas({
         onPaneContextMenu={handlePaneContextMenu}
         onPaneScroll={handleViewportMove}
         onMoveStart={handleViewportMove}
+        onMoveEnd={handleViewportMove}
         onPaneMouseMove={handlePaneMouseMove}
         onPaneMouseLeave={handlePaneMouseLeave}
         onMouseDown={handlePaneMouseDown}
@@ -16001,7 +16272,7 @@ function InnerCanvas({
         open={projectDialogOpen}
         variant={projectDialogVariant}
         draft={createDraft}
-        loading={projectDialogBusy}
+        loading={projectDialogBusy || canvasWriteBlocked}
         onChangeProjectName={(value) =>
           setCreateDraft((current) => ({
             ...current,
@@ -16031,6 +16302,13 @@ function InnerCanvas({
           setDeleteProjectDialogOpen(false);
         }}
       />
+      <DeleteCanvasDialog
+        open={pendingDeleteCanvas !== null && !canvasWriteBlocked}
+        canvasName={pendingDeleteCanvas?.name ?? ''}
+        loading={canvasHeaderBusy || canvasWriteBlocked}
+        onConfirm={() => void handleConfirmDeleteCanvas()}
+        onClose={handleCloseDeleteCanvasDialog}
+      />
     </>
   );
 }
@@ -16042,6 +16320,7 @@ export function InfiniteCanvas({
   initialAgentRequest,
   onInitialAgentRequestConsumed,
   onBackToLibrary,
+  onBackHome,
   onCanvasReady,
 }: InnerCanvasProps) {
   return (
@@ -16052,6 +16331,7 @@ export function InfiniteCanvas({
         initialAgentRequest={initialAgentRequest}
         onInitialAgentRequestConsumed={onInitialAgentRequestConsumed}
         onBackToLibrary={onBackToLibrary}
+        onBackHome={onBackHome}
         onCanvasReady={onCanvasReady}
       />
     </ReactFlowProvider>
