@@ -17,6 +17,11 @@ import {
 } from "@/lib/prompt-mentions";
 import { buildProjectSnapshot, getProjectSnapshotSignature } from "@/lib/project-snapshot";
 import {
+  duplicateCanvasDocument,
+  getDuplicateCanvasName,
+  getNextCanvasName,
+} from "@/lib/canvas/multi-canvas";
+import {
   getMaterialMediaUrl,
   sanitizeMaterialForPersistence,
 } from "@/lib/material-library";
@@ -39,8 +44,10 @@ import type {
   AITextResultNodeData,
   AudioGenerationNodeData,
   AudioNodeData,
+  CanvasDocument,
   CanvasEdge,
   CanvasNode,
+  CanvasViewport,
   DirectorNodeData,
   ImageGenerationResultItem,
   ImageGenerationNodeData,
@@ -55,6 +62,7 @@ import type {
   Panorama360NodeData,
   Panorama360ViewState,
   ProjectOutputHistoryItem,
+  ProjectCanvasMetadata,
   ProjectSnapshot,
   StoryboardGridNodeData,
   StoryboardReferenceImage,
@@ -371,6 +379,17 @@ type CanvasHistorySnapshot = {
   groups: NodeGroup[];
   materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
+};
+
+type CanvasRuntimeSession = {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  groups: NodeGroup[];
+  viewport: CanvasViewport;
+  undoStack: CanvasHistorySnapshot[];
+  redoStack: CanvasHistorySnapshot[];
+  dirty: boolean;
+  lastSavedSignature: string;
 };
 
 let lastCanvasHistoryPushAt = 0;
@@ -2421,13 +2440,16 @@ function createSnapshot(state: {
   projectName: string;
   projectCreatedAt?: string | null;
   currentProjectThumbnailFileName?: string;
+  projectCanvases: ProjectCanvasMetadata[];
+  activeCanvasId: string | null;
+  activeCanvasViewport: CanvasViewport;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups: NodeGroup[];
   materialFolders: MaterialLibraryFolder[];
   materials: MaterialLibraryItem[];
 }): ProjectSnapshot {
-  return buildProjectSnapshot({
+  const snapshot = buildProjectSnapshot({
     id: state.projectId ?? crypto.randomUUID(),
     name: state.projectName,
     nodes: sanitizeNodesForPersistence(state.nodes),
@@ -2439,6 +2461,18 @@ function createSnapshot(state: {
     createdAt: state.projectCreatedAt ?? undefined,
     updatedAt: nowIso(),
   });
+
+  if (!state.activeCanvasId || state.projectCanvases.length === 0) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    version: 2,
+    canvases: state.projectCanvases,
+    activeCanvasId: state.activeCanvasId,
+    viewport: state.activeCanvasViewport,
+  };
 }
 
 function toErrorMessage(error: unknown): string {
@@ -4505,6 +4539,10 @@ export interface CanvasState {
   projectId: string | null;
   projectName: string;
   projectCreatedAt: string | null;
+  projectCanvases: ProjectCanvasMetadata[];
+  activeCanvasId: string | null;
+  activeCanvasViewport: CanvasViewport;
+  canvasSessions: Record<string, CanvasRuntimeSession>;
   currentProject: ProjectHandleRecord | null;
   currentProjectThumbnailFileName?: string;
   currentProjectPreviewUrls: string[];
@@ -4717,6 +4755,12 @@ export interface CanvasState {
   ) => ConnectedImagePayload[];
 
   setProjectName: (name: string) => void;
+  setActiveCanvasViewport: (viewport: CanvasViewport) => void;
+  switchCanvas: (canvasId: string) => Promise<void>;
+  createCanvas: () => Promise<string>;
+  renameCanvas: (canvasId: string, name: string) => Promise<void>;
+  duplicateCanvas: (canvasId: string) => Promise<string>;
+  deleteCanvas: (canvasId: string) => Promise<void>;
   setSaveMessage: (message: string | null) => void;
   undo: () => void;
   redo: () => void;
@@ -4875,6 +4919,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectId: null,
       projectName: "Untitled",
       projectCreatedAt: null,
+      projectCanvases: [],
+      activeCanvasId: null,
+      activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
+      canvasSessions: {},
       currentProject: null,
       currentProjectThumbnailFileName: undefined,
       currentProjectPreviewUrls: [],
@@ -4904,6 +4952,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   projectId: null,
   projectName: "Untitled",
   projectCreatedAt: null,
+  projectCanvases: [],
+  activeCanvasId: null,
+  activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
+  canvasSessions: {},
   currentProject: null,
   currentProjectThumbnailFileName: undefined,
   currentProjectPreviewUrls: [],
@@ -6079,6 +6131,295 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
+  setActiveCanvasViewport: (viewport) => {
+    set({ activeCanvasViewport: viewport, dirty: true });
+  },
+
+  switchCanvas: async (canvasId) => {
+    const initialState = get();
+
+    if (canvasId === initialState.activeCanvasId) {
+      return;
+    }
+    if (!initialState.currentProject || !initialState.activeUserId) {
+      throw new Error("当前没有可切换的项目");
+    }
+    if (!initialState.projectCanvases.some((canvas) => canvas.id === canvasId)) {
+      throw new Error("画布不存在");
+    }
+
+    if (initialState.dirty) {
+      await initialState.saveProject();
+    }
+
+    const scope = captureCanvasUserScope(get, set);
+    const state = get();
+    const previousCanvasId = state.activeCanvasId;
+    const previousSession = previousCanvasId ? {
+      nodes: state.nodes,
+      edges: state.edges,
+      groups: state.groups,
+      viewport: state.activeCanvasViewport,
+      undoStack: state.undoStack,
+      redoStack: state.redoStack,
+      dirty: false,
+      lastSavedSignature: state.lastSavedSignature,
+    } satisfies CanvasRuntimeSession : null;
+
+    scope.set({ loading: true, error: null });
+
+    try {
+      const snapshot = await scope.wait(
+        loadProjectSnapshotFromDisk(state.currentProject!, scope.userId, canvasId),
+      );
+      const hydrated = await scope.wait(
+        hydrateProjectSnapshotPreviewUrls(state.currentProject!, snapshot, scope.userId),
+        (result) => revokeObjectUrls(result.previewUrls),
+      );
+      const loadedNodes = normalizeLoadedCanvasNodes(hydrated.snapshot.nodes);
+      const cachedTarget = state.canvasSessions[canvasId];
+
+      revokeObjectUrls(state.currentProjectPreviewUrls);
+      scope.set({
+        projectCanvases: hydrated.snapshot.canvases ?? state.projectCanvases,
+        activeCanvasId: canvasId,
+        activeCanvasViewport: hydrated.snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
+        canvasSessions: previousCanvasId && previousSession
+          ? { ...state.canvasSessions, [previousCanvasId]: previousSession }
+          : state.canvasSessions,
+        currentProjectPreviewUrls: hydrated.previewUrls,
+        nodes: loadedNodes,
+        edges: hydrated.snapshot.edges,
+        groups: hydrated.snapshot.groups ?? [],
+        loading: false,
+        error: null,
+        dirty: false,
+        lastSavedAt: hydrated.snapshot.updatedAt,
+        lastSavedSignature: getPersistentProjectSnapshotSignature({
+          ...hydrated.snapshot,
+          nodes: loadedNodes,
+        }),
+        undoStack: cachedTarget?.undoStack ?? [],
+        redoStack: cachedTarget?.redoStack ?? [],
+      });
+    } catch (error) {
+      if (isStaleCanvasUserScopeError(error)) {
+        throw error;
+      }
+      const message = toErrorMessage(error);
+      scope.set({ loading: false, error: message });
+      throw error;
+    }
+  },
+
+  createCanvas: async () => {
+    const initialState = get();
+
+    if (!initialState.currentProject || !initialState.activeUserId) {
+      throw new Error("当前没有打开的项目");
+    }
+    if (initialState.dirty) {
+      await initialState.saveProject();
+    }
+
+    const scope = captureCanvasUserScope(get, set);
+    const state = get();
+    const timestamp = nowIso();
+    const canvasId = crypto.randomUUID();
+    const canvasName = getNextCanvasName(state.projectCanvases.map((canvas) => canvas.name));
+    const metadata: ProjectCanvasMetadata = {
+      id: canvasId,
+      name: canvasName,
+      fileName: `${canvasId}.json`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const snapshot: ProjectSnapshot = {
+      version: 2,
+      id: state.projectId!,
+      name: state.projectName,
+      canvases: [...state.projectCanvases, metadata],
+      activeCanvasId: canvasId,
+      nodes: [],
+      edges: [],
+      groups: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      materialFolders: state.materialFolders,
+      materials: state.materials,
+      thumbnailFileName: state.currentProjectThumbnailFileName,
+      createdAt: state.projectCreatedAt ?? timestamp,
+      updatedAt: timestamp,
+    };
+    const saved = await scope.wait(saveProjectSnapshot(
+      state.currentProject!,
+      snapshot,
+      scope.userId,
+    ));
+
+    revokeObjectUrls(state.currentProjectPreviewUrls);
+    scope.set({
+      currentProject: saved.project,
+      currentProjectPreviewUrls: [],
+      projectCanvases: saved.snapshot.canvases ?? snapshot.canvases ?? [],
+      activeCanvasId: canvasId,
+      activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [],
+      edges: [],
+      groups: [],
+      undoStack: [],
+      redoStack: [],
+      dirty: false,
+      error: null,
+      lastSavedAt: saved.snapshot.updatedAt,
+      lastSavedSignature: getPersistentProjectSnapshotSignature(saved.snapshot),
+    });
+
+    return canvasId;
+  },
+
+  renameCanvas: async (canvasId, name) => {
+    const nextName = name.trim();
+    const state = get();
+
+    if (!nextName) {
+      throw new Error("画布名称不能为空");
+    }
+    if (!state.projectCanvases.some((canvas) => canvas.id === canvasId)) {
+      throw new Error("画布不存在");
+    }
+
+    const previousCanvases = state.projectCanvases;
+    set({
+      projectCanvases: previousCanvases.map((canvas) => (
+        canvas.id === canvasId ? { ...canvas, name: nextName, updatedAt: nowIso() } : canvas
+      )),
+      dirty: true,
+    });
+
+    try {
+      await get().saveProject();
+    } catch (error) {
+      set({ projectCanvases: previousCanvases });
+      throw error;
+    }
+  },
+
+  duplicateCanvas: async (canvasId) => {
+    const initialState = get();
+
+    if (!initialState.currentProject || !initialState.activeUserId) {
+      throw new Error("当前没有打开的项目");
+    }
+    if (initialState.dirty) {
+      await initialState.saveProject();
+    }
+
+    const scope = captureCanvasUserScope(get, set);
+    const state = get();
+    const sourceMetadata = state.projectCanvases.find((canvas) => canvas.id === canvasId);
+
+    if (!sourceMetadata) {
+      throw new Error("画布不存在");
+    }
+
+    const sourceSnapshot = canvasId === state.activeCanvasId
+      ? createSnapshot(state)
+      : await scope.wait(loadProjectSnapshotFromDisk(state.currentProject!, scope.userId, canvasId));
+    const sourceDocument: CanvasDocument = {
+      version: 1,
+      id: canvasId,
+      name: sourceMetadata.name,
+      nodes: sourceSnapshot.nodes,
+      edges: sourceSnapshot.edges,
+      groups: sourceSnapshot.groups,
+      viewport: sourceSnapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
+      createdAt: sourceMetadata.createdAt,
+      updatedAt: sourceMetadata.updatedAt,
+    };
+    const timestamp = nowIso();
+    const nextCanvasId = crypto.randomUUID();
+    const nextName = getDuplicateCanvasName(
+      sourceMetadata.name,
+      state.projectCanvases.map((canvas) => canvas.name),
+    );
+    const duplicate = duplicateCanvasDocument(sourceDocument, {
+      id: nextCanvasId,
+      name: nextName,
+      now: timestamp,
+    });
+    const metadata: ProjectCanvasMetadata = {
+      id: duplicate.id,
+      name: duplicate.name,
+      fileName: `${duplicate.id}.json`,
+      createdAt: duplicate.createdAt,
+      updatedAt: duplicate.updatedAt,
+    };
+    const snapshot: ProjectSnapshot = {
+      version: 2,
+      id: state.projectId!,
+      name: state.projectName,
+      canvases: [...state.projectCanvases, metadata],
+      activeCanvasId: duplicate.id,
+      nodes: duplicate.nodes,
+      edges: duplicate.edges,
+      groups: duplicate.groups,
+      viewport: duplicate.viewport,
+      materialFolders: state.materialFolders,
+      materials: state.materials,
+      thumbnailFileName: state.currentProjectThumbnailFileName,
+      createdAt: state.projectCreatedAt ?? timestamp,
+      updatedAt: timestamp,
+    };
+    const saved = await scope.wait(saveProjectSnapshot(state.currentProject!, snapshot, scope.userId));
+    const loadedDuplicateNodes = normalizeLoadedCanvasNodes(duplicate.nodes);
+    const duplicatePreviewUrls = collectPreviewUrlsFromNodes(loadedDuplicateNodes);
+
+    revokeObjectUrls(state.currentProjectPreviewUrls);
+    scope.set({
+      currentProject: saved.project,
+      currentProjectPreviewUrls: duplicatePreviewUrls,
+      projectCanvases: saved.snapshot.canvases ?? snapshot.canvases ?? [],
+      activeCanvasId: duplicate.id,
+      activeCanvasViewport: duplicate.viewport,
+      nodes: loadedDuplicateNodes,
+      edges: duplicate.edges,
+      groups: duplicate.groups ?? [],
+      undoStack: [],
+      redoStack: [],
+      dirty: false,
+      error: null,
+      lastSavedAt: saved.snapshot.updatedAt,
+      lastSavedSignature: getPersistentProjectSnapshotSignature(saved.snapshot),
+    });
+
+    return duplicate.id;
+  },
+
+  deleteCanvas: async (canvasId) => {
+    const state = get();
+
+    if (!state.projectCanvases.some((canvas) => canvas.id === canvasId)) {
+      throw new Error("画布不存在");
+    }
+    if (state.projectCanvases.length <= 1) {
+      throw new Error("最后一个画布不能删除");
+    }
+
+    if (state.activeCanvasId === canvasId) {
+      const target = state.projectCanvases.find((canvas) => canvas.id !== canvasId)!;
+      await state.switchCanvas(target.id);
+    }
+
+    set((current) => ({
+      projectCanvases: current.projectCanvases.filter((canvas) => canvas.id !== canvasId),
+      canvasSessions: Object.fromEntries(
+        Object.entries(current.canvasSessions).filter(([id]) => id !== canvasId),
+      ),
+      dirty: true,
+    }));
+    await get().saveProject();
+  },
+
   setSaveMessage: (message) => {
     set({ saveMessage: message });
 
@@ -6153,6 +6494,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectId: snapshot.id,
       projectName: snapshot.name,
       projectCreatedAt: snapshot.createdAt,
+      projectCanvases: snapshot.canvases ?? [],
+      activeCanvasId: snapshot.activeCanvasId ?? snapshot.canvases?.[0]?.id ?? null,
+      activeCanvasViewport: snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
       lastSavedAt: snapshot.updatedAt,
       lastSavedSignature: getPersistentProjectSnapshotSignature(snapshot),
       dirty: false,
@@ -10167,6 +10511,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectId: null,
       projectName: nextName,
       projectCreatedAt: null,
+      projectCanvases: [],
+      activeCanvasId: null,
+      activeCanvasViewport: { x: 0, y: 0, zoom: 1 },
+      canvasSessions: {},
       currentProject: null,
       currentProjectThumbnailFileName: undefined,
       currentProjectPreviewUrls: [],
@@ -10220,6 +10568,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         projectId: savedSnapshot.id,
         projectName: savedSnapshot.name,
         projectCreatedAt: savedSnapshot.createdAt,
+        projectCanvases: savedSnapshot.canvases ?? state.projectCanvases,
+        activeCanvasId: savedSnapshot.activeCanvasId ?? state.activeCanvasId,
+        activeCanvasViewport: savedSnapshot.viewport ?? state.activeCanvasViewport,
         currentProject: updatedProject,
         currentProjectThumbnailFileName: savedSnapshot.thumbnailFileName,
         currentProjectPreviewUrls: state.currentProjectPreviewUrls,
@@ -10264,6 +10615,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         projectId: hydrated.snapshot.id,
         projectName: hydrated.snapshot.name,
         projectCreatedAt: hydrated.snapshot.createdAt,
+        projectCanvases: hydrated.snapshot.canvases ?? [],
+        activeCanvasId: hydrated.snapshot.activeCanvasId ?? hydrated.snapshot.canvases?.[0]?.id ?? null,
+        activeCanvasViewport: hydrated.snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
+        canvasSessions: {},
         currentProject: project,
         currentProjectThumbnailFileName: hydrated.snapshot.thumbnailFileName,
         currentProjectPreviewUrls: hydrated.previewUrls,
@@ -10402,6 +10757,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectId: snapshot.id,
       projectName: snapshot.name,
       projectCreatedAt: snapshot.createdAt,
+      projectCanvases: snapshot.canvases ?? [],
+      activeCanvasId: snapshot.activeCanvasId ?? snapshot.canvases?.[0]?.id ?? null,
+      activeCanvasViewport: snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
+      canvasSessions: {},
       currentProject: project,
       currentProjectThumbnailFileName: snapshot.thumbnailFileName,
       currentProjectPreviewUrls: nextPreviewUrls,
@@ -10429,6 +10788,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       projectId: snapshot.id,
       projectName: snapshot.name,
       projectCreatedAt: snapshot.createdAt,
+      projectCanvases: snapshot.canvases ?? [],
+      activeCanvasId: snapshot.activeCanvasId ?? snapshot.canvases?.[0]?.id ?? null,
+      activeCanvasViewport: snapshot.viewport ?? { x: 0, y: 0, zoom: 1 },
       currentProject: project,
       currentProjectThumbnailFileName: snapshot.thumbnailFileName,
       loading: false,
