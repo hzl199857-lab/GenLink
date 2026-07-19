@@ -616,6 +616,44 @@ export type PendingMaterialSource = Omit<
   defaultName: string;
 };
 
+export interface CanvasViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface ProjectCanvasMetadata {
+  id: string;
+  name: string;
+  fileName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CanvasDocument {
+  version: 1;
+  id: string;
+  name: string;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  groups?: NodeGroup[];
+  viewport: CanvasViewport;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectManifest {
+  version: 2;
+  id: string;
+  name: string;
+  canvases: ProjectCanvasMetadata[];
+  materialFolders?: MaterialLibraryFolder[];
+  materials?: MaterialLibraryItem[];
+  thumbnailFileName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectSnapshot {
   id: string;
   name: string;
