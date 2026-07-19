@@ -76,3 +76,14 @@ test("shows the banner only for node targets and returns without exiting", () =>
     /<QuickReferenceSelectionBanner[\s\S]*?onReturnToNode=\{handleReturnToQuickReferenceTarget\}[\s\S]*?onExit=\{stopQuickReferenceConnect\}/,
   );
 });
+
+test("does not show the legacy project message for node selection mode", () => {
+  const startQuickReferenceConnect = infiniteCanvasSource.match(
+    /const startQuickReferenceConnect = useCallback\([\s\S]*?\n  \}, \[[^\]]*\]\);/,
+  )?.[0] ?? "";
+
+  assert.match(
+    startQuickReferenceConnect,
+    /if \(mode\.targetKind === 'agent'\) \{\s*showProjectMessage\(/,
+  );
+});

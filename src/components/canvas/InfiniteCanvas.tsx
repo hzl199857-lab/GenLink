@@ -11110,7 +11110,10 @@ function InnerCanvas({
     setImageInfoPopover(null);
     setImageLightbox(null);
     clearEdgeSelection();
-    showProjectMessage('请选择一个图片节点进行连接');
+
+    if (mode.targetKind === 'agent') {
+      showProjectMessage('请选择一个图片节点进行连接');
+    }
   }, [clearConnectionMenu, clearEdgeSelection, showProjectMessage]);
 
   const stopQuickReferenceConnect = useCallback(() => {
