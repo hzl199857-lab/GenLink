@@ -215,6 +215,7 @@ import {
 import { MaterialLibraryPanel } from './MaterialLibraryPanel';
 import { PromptLibraryDialog } from './PromptLibraryDialog';
 import { PromptLibraryEntryButton } from './PromptLibraryEntryButton';
+import { QuickReferenceSelectionBanner } from './QuickReferenceSelectionBanner';
 import {
   HomeAccountMenu,
   type HomeAccountMenuProps,
@@ -11784,6 +11785,16 @@ function InnerCanvas({
     clearEdgeSelection();
   }, [clearEdgeSelection]);
 
+  const handleReturnToQuickReferenceTarget = useCallback(() => {
+    if (!quickReferenceConnect || quickReferenceConnect.targetKind !== 'node') {
+      return;
+    }
+
+    const targetNodeId = quickReferenceConnect.targetNodeId;
+    selectSingleNode(targetNodeId);
+    focusSingleNodeViewport(targetNodeId);
+  }, [focusSingleNodeViewport, quickReferenceConnect, selectSingleNode]);
+
   const addPromptLibraryEntryToCanvas = useCallback((entry: PromptLibraryEntry) => {
     const viewport = getViewport();
     const nodeId = `prompt-library-${entry.kind}-${crypto.randomUUID()}`;
@@ -15552,6 +15563,12 @@ function InnerCanvas({
         <div className="fixed bottom-8 left-1/2 z-[95] -translate-x-1/2 rounded-[12px] border border-white/12 bg-[#1d1f23] px-4 py-2 text-[13px] text-white shadow-[0_18px_36px_rgba(0,0,0,0.4)]">
           {saveMessage}
         </div>
+      ) : null}
+      {quickReferenceConnect?.targetKind === 'node' ? (
+        <QuickReferenceSelectionBanner
+          onReturnToNode={handleReturnToQuickReferenceTarget}
+          onExit={stopQuickReferenceConnect}
+        />
       ) : null}
       <CanvasHeader
         projectName={projectName}
