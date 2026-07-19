@@ -20,7 +20,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
   (module as NodeModule & { _compile(source: string, filename: string): void })._compile(output.outputText, filename);
 };
 
-const { dbToSnapshot } = require("./project-mapper.ts") as typeof import("./project-mapper");
+const { dbToSnapshot, snapshotToDb } = require("./project-mapper.ts") as typeof import("./project-mapper");
 
 test("normalizes text node card dimensions from persisted data", () => {
   const snapshot = dbToSnapshot(
@@ -152,4 +152,69 @@ test("maps legacy uploaded_image db nodes into image nodes with hosted asset fie
       generatedAt: new Date(0).toISOString(),
     },
   });
+});
+
+test("maps nodes and edges through their owning canvas", () => {
+  const project = {
+    id: "project-1",
+    name: "Project",
+    createdAt: new Date("2026-07-19T08:00:00.000Z"),
+    updatedAt: new Date("2026-07-19T09:00:00.000Z"),
+  };
+  const canvas = {
+    id: "canvas-2",
+    projectId: project.id,
+    name: "画布 2",
+    position: 1,
+    viewport: JSON.stringify({ x: 12, y: 24, zoom: 0.8 }),
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  };
+  const snapshot = dbToSnapshot(
+    project,
+    [
+      {
+        id: "node-1",
+        projectId: project.id,
+        canvasId: "canvas-1",
+        type: "text",
+        positionX: 0,
+        positionY: 0,
+        data: JSON.stringify({ text: "other" }),
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+      },
+      {
+        id: "node-2",
+        projectId: project.id,
+        canvasId: canvas.id,
+        type: "text",
+        positionX: 10,
+        positionY: 20,
+        data: JSON.stringify({ text: "active" }),
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+      },
+    ],
+    [{
+      id: "edge-2",
+      projectId: project.id,
+      canvasId: canvas.id,
+      source: "node-2",
+      target: "node-2",
+      sourceHandle: null,
+      targetHandle: null,
+      createdAt: project.createdAt,
+    }],
+    canvas,
+  );
+
+  assert.equal(snapshot.activeCanvasId, canvas.id);
+  assert.deepEqual(snapshot.nodes.map((node) => node.id), ["node-2"]);
+  assert.deepEqual(snapshot.viewport, { x: 12, y: 24, zoom: 0.8 });
+
+  const persisted = snapshotToDb(snapshot);
+  assert.equal(persisted.canvas.id, canvas.id);
+  assert.equal(persisted.nodes[0]?.canvasId, canvas.id);
+  assert.equal(persisted.edges[0]?.canvasId, canvas.id);
 });

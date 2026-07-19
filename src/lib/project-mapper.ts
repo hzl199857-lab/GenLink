@@ -49,6 +49,7 @@ interface DbProjectRecord {
 interface DbCanvasNodeRecord {
   id: string;
   projectId: string;
+  canvasId?: string;
   type: string;
   positionX: number;
   positionY: number;
@@ -60,11 +61,22 @@ interface DbCanvasNodeRecord {
 interface DbCanvasEdgeRecord {
   id: string;
   projectId: string;
+  canvasId?: string;
   source: string;
   target: string;
   sourceHandle: string | null;
   targetHandle: string | null;
   createdAt: Date;
+}
+
+interface DbCanvasRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  position: number;
+  viewport: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 type StoryboardReferenceImageRecord = Record<string, unknown> & {
@@ -1210,18 +1222,51 @@ export function dbToSnapshot(
   project: DbProjectRecord,
   nodes: DbCanvasNodeRecord[],
   edges: DbCanvasEdgeRecord[],
+  canvas?: DbCanvasRecord,
 ): ProjectSnapshot {
-  const filteredNodes = nodes.filter((node) => node.type !== "prompt");
+  const filteredNodes = nodes.filter((node) => (
+    node.type !== "prompt" && (!canvas || node.canvasId === canvas.id)
+  ));
   const validNodeIds = new Set(filteredNodes.map((node) => node.id));
   const filteredEdges = edges.filter(
-    (edge) => validNodeIds.has(edge.source) && validNodeIds.has(edge.target),
+    (edge) => (
+      (!canvas || edge.canvasId === canvas.id) &&
+      validNodeIds.has(edge.source) &&
+      validNodeIds.has(edge.target)
+    ),
   );
+  let viewport = { x: 0, y: 0, zoom: 1 };
+
+  if (canvas) {
+    try {
+      const parsed = JSON.parse(canvas.viewport) as Partial<typeof viewport>;
+      if (
+        typeof parsed.x === "number" &&
+        typeof parsed.y === "number" &&
+        typeof parsed.zoom === "number"
+      ) {
+        viewport = { x: parsed.x, y: parsed.y, zoom: parsed.zoom };
+      }
+    } catch {
+      // Use the default viewport for malformed legacy values.
+    }
+  }
 
   return {
+    version: canvas ? 2 : undefined,
     id: project.id,
     name: project.name,
+    canvases: canvas ? [{
+      id: canvas.id,
+      name: canvas.name,
+      fileName: `${canvas.id}.json`,
+      createdAt: canvas.createdAt.toISOString(),
+      updatedAt: canvas.updatedAt.toISOString(),
+    }] : undefined,
+    activeCanvasId: canvas?.id,
     nodes: filteredNodes.map(nodeFromDbRecord),
     edges: filteredEdges.map(edgeFromDbRecord),
+    viewport: canvas ? viewport : undefined,
     materials: undefined,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
@@ -1233,9 +1278,17 @@ export function snapshotToDb(snapshot: ProjectSnapshot): {
     id: string;
     name: string;
   };
+  canvas: {
+    id: string;
+    projectId: string;
+    name: string;
+    position: number;
+    viewport: string;
+  };
   nodes: Array<{
     id: string;
     projectId: string;
+    canvasId: string;
     type: NodeType;
     positionX: number;
     positionY: number;
@@ -1244,20 +1297,36 @@ export function snapshotToDb(snapshot: ProjectSnapshot): {
   edges: Array<{
     id: string;
     projectId: string;
+    canvasId: string;
     source: string;
     target: string;
     sourceHandle: string | null;
     targetHandle: string | null;
   }>;
 } {
+  const activeCanvas = snapshot.canvases?.find((canvas) => canvas.id === snapshot.activeCanvasId)
+    ?? snapshot.canvases?.[0]
+    ?? {
+      id: snapshot.activeCanvasId ?? `canvas-${snapshot.id}`,
+      name: "画布 1",
+    };
+
   return {
     project: {
       id: snapshot.id,
       name: snapshot.name,
     },
+    canvas: {
+      id: activeCanvas.id,
+      projectId: snapshot.id,
+      name: activeCanvas.name,
+      position: Math.max(0, snapshot.canvases?.findIndex((canvas) => canvas.id === activeCanvas.id) ?? 0),
+      viewport: JSON.stringify(snapshot.viewport ?? { x: 0, y: 0, zoom: 1 }),
+    },
     nodes: snapshot.nodes.map((node) => ({
       id: node.id,
       projectId: snapshot.id,
+      canvasId: activeCanvas.id,
       type: node.type,
       positionX: node.position.x,
       positionY: node.position.y,
@@ -1266,6 +1335,7 @@ export function snapshotToDb(snapshot: ProjectSnapshot): {
     edges: snapshot.edges.map((edge) => ({
       id: edge.id,
       projectId: snapshot.id,
+      canvasId: activeCanvas.id,
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.sourceHandle ?? null,
