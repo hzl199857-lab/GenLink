@@ -179,6 +179,10 @@ test("InfiniteCanvas shows the shared loader while creating a named canvas", () 
   assert.match(source, /aria-busy=\{canvasCreateLoading\}/);
   assert.match(source, /role="status"/);
   assert.match(source, /aria-live="polite"/);
+  assert.match(source, /if \(!canvasCreateLoading\)[\s\S]*return;/);
+  assert.match(source, /const blockCanvasCreateKeydown = \(event: KeyboardEvent\) => \{[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopImmediatePropagation\(\)/);
+  assert.match(source, /window\.addEventListener\('keydown', blockCanvasCreateKeydown, true\)/);
+  assert.match(source, /window\.removeEventListener\('keydown', blockCanvasCreateKeydown, true\)/);
 });
 
 test("InfiniteCanvas serializes every canvas header action behind local busy state", () => {

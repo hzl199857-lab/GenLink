@@ -10455,6 +10455,19 @@ function InnerCanvas({
   });
   const edgeStyle = useStoredCanvasEdgeStyle(userId);
   const canvasHeaderBusy = loading || canvasHeaderPending;
+  useEffect(() => {
+    if (!canvasCreateLoading) {
+      return;
+    }
+
+    const blockCanvasCreateKeydown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+
+    window.addEventListener('keydown', blockCanvasCreateKeydown, true);
+    return () => window.removeEventListener('keydown', blockCanvasCreateKeydown, true);
+  }, [canvasCreateLoading]);
   const blockCanvasEditing = useCallback(() => {
     setPendingDeleteCanvas(null);
     setDeleteProjectDialogOpen(false);
