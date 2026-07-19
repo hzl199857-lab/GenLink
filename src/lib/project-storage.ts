@@ -3,19 +3,27 @@
 import type {
   AudioGenerationNodeData,
   AudioNodeData,
+  CanvasDocument,
   CanvasNode,
   ImageGenerationNodeData,
   MaterialLibraryCategory,
   MaterialLibraryFolder,
   MaterialLibraryItem,
+  ProjectManifest,
   ProjectOutputHistoryItem,
   ProjectSnapshot,
   VideoNodeData,
   VideoGenerationNodeData,
   VideoUpscaleNodeData,
 } from "@/types/canvas";
-import { buildProjectSnapshot } from "@/lib/project-snapshot";
+import {
+  buildCanvasDocumentFromSnapshot,
+  buildProjectManifestFromSnapshot,
+  buildProjectSnapshot,
+  mergeProjectManifestAndCanvas,
+} from "@/lib/project-snapshot";
 import { getMaterialKind } from "@/lib/material-library";
+import { migrateLegacyProjectSnapshot } from "@/lib/canvas/multi-canvas";
 
 const PROJECT_DB_NAME = "genlink-project-library";
 export const PROJECT_DB_VERSION = 2;
@@ -23,6 +31,7 @@ const PROJECT_STORE_NAME = "projects";
 const PROJECT_OWNER_INDEX_NAME = "ownerUserId";
 export const PROJECT_OWNERSHIP_ERROR = "该项目属于其他用户，无法覆盖";
 const PROJECT_FILE_NAME = "project.json";
+const CANVAS_DIRECTORY_NAME = "canvases";
 const OUTPUT_DIRECTORY_NAME = "output";
 const OUTPUT_HISTORY_FILE_NAME = "history.json";
 const THUMBNAIL_IMAGE_EXTENSION_PATTERN = /\.(png|jpe?g|webp|gif|bmp|svg|avif)$/i;
@@ -194,6 +203,10 @@ export function sanitizeFileStem(value?: string): string {
     .replace(/\s+/g, "-")
     .replace(/^-+|-+$/g, "")
     .toLowerCase() || "output";
+}
+
+export function getCanvasDocumentFileName(canvasId: string): string {
+  return `${sanitizeFileStem(canvasId)}.json`;
 }
 
 export function inferExtension(format?: string, mimeType?: string): string {
@@ -776,6 +789,24 @@ async function writeTextFile(
   await writable.close();
 }
 
+async function writeJsonFileVerified(
+  directoryHandle: FileSystemDirectoryHandle,
+  fileName: string,
+  value: unknown,
+): Promise<void> {
+  const content = JSON.stringify(value, null, 2);
+  const temporaryFileName = `${fileName}.tmp`;
+
+  await writeTextFile(directoryHandle, temporaryFileName, content);
+
+  try {
+    JSON.parse(await readTextFile(directoryHandle, temporaryFileName));
+    await writeTextFile(directoryHandle, fileName, content);
+  } finally {
+    await directoryHandle.removeEntry(temporaryFileName).catch(() => {});
+  }
+}
+
 async function writeBlobFile(
   directoryHandle: FileSystemDirectoryHandle,
   fileName: string,
@@ -921,37 +952,124 @@ async function createProjectDirectorySkeleton(
   snapshot: ProjectSnapshot,
 ): Promise<void> {
   await projectHandle.getDirectoryHandle(OUTPUT_DIRECTORY_NAME, { create: true });
-  await writeTextFile(projectHandle, PROJECT_FILE_NAME, JSON.stringify(snapshot, null, 2));
+  const canvasDirectory = await projectHandle.getDirectoryHandle(CANVAS_DIRECTORY_NAME, { create: true });
+  const manifest = buildProjectManifestFromSnapshot(snapshot);
+  const canvas = buildCanvasDocumentFromSnapshot(snapshot);
+
+  await writeJsonFileVerified(canvasDirectory, getCanvasDocumentFileName(canvas.id), canvas);
+  await writeJsonFileVerified(projectHandle, PROJECT_FILE_NAME, manifest);
 }
 
 async function readProjectSnapshotInternal(
   projectHandle: FileSystemDirectoryHandle,
+  preferredCanvasId?: string,
 ): Promise<ProjectSnapshot> {
   const text = await readTextFile(projectHandle, PROJECT_FILE_NAME);
-  const parsed = JSON.parse(text) as ProjectSnapshot;
+  const parsed = JSON.parse(text) as ProjectSnapshot | ProjectManifest;
+
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "version" in parsed &&
+    parsed.version === 2 &&
+    "canvases" in parsed &&
+    Array.isArray(parsed.canvases)
+  ) {
+    const parsedManifest = parsed as ProjectManifest;
+    const materialFolders = normalizeMaterialLibraryFolders(parsed.materialFolders);
+    const manifest: ProjectManifest = {
+      version: 2,
+      id: parsedManifest.id,
+      name: parsedManifest.name,
+      canvases: parsedManifest.canvases.filter((canvas) => (
+        Boolean(canvas) &&
+        typeof canvas.id === "string" &&
+        typeof canvas.name === "string" &&
+        typeof canvas.fileName === "string"
+      )),
+      materialFolders,
+      materials: normalizeMaterialLibraryItems(parsedManifest.materials, materialFolders ?? []),
+      thumbnailFileName:
+        typeof parsedManifest.thumbnailFileName === "string" && parsedManifest.thumbnailFileName.trim()
+          ? parsedManifest.thumbnailFileName
+          : undefined,
+      createdAt: parsedManifest.createdAt,
+      updatedAt: parsedManifest.updatedAt,
+    };
+    const activeCanvas = manifest.canvases.find((canvas) => canvas.id === preferredCanvasId)
+      ?? manifest.canvases[0];
+
+    if (!activeCanvas) {
+      throw new Error("项目中没有可用画布");
+    }
+
+    const canvasDirectory = await projectHandle.getDirectoryHandle(CANVAS_DIRECTORY_NAME);
+    const canvasText = await readTextFile(canvasDirectory, activeCanvas.fileName);
+    const canvas = JSON.parse(canvasText) as CanvasDocument;
+
+    if (
+      !canvas ||
+      canvas.version !== 1 ||
+      canvas.id !== activeCanvas.id ||
+      !Array.isArray(canvas.nodes) ||
+      !Array.isArray(canvas.edges) ||
+      !canvas.viewport ||
+      typeof canvas.viewport.x !== "number" ||
+      typeof canvas.viewport.y !== "number" ||
+      typeof canvas.viewport.zoom !== "number"
+    ) {
+      throw new Error("画布文件损坏，无法读取");
+    }
+
+    return mergeProjectManifestAndCanvas(manifest, canvas);
+  }
 
   if (
     !parsed ||
     typeof parsed !== "object" ||
     typeof parsed.id !== "string" ||
     typeof parsed.name !== "string" ||
+    !("nodes" in parsed) ||
+    !("edges" in parsed) ||
     !Array.isArray(parsed.nodes) ||
     !Array.isArray(parsed.edges)
   ) {
     throw new Error("\u9879\u76ee\u6587\u4ef6\u635f\u574f\uff0c\u65e0\u6cd5\u8bfb\u53d6");
   }
 
-  const materialFolders = normalizeMaterialLibraryFolders(parsed.materialFolders);
+  const legacySnapshot = parsed as ProjectSnapshot;
+  const materialFolders = normalizeMaterialLibraryFolders(legacySnapshot.materialFolders);
 
   return {
-    ...parsed,
+    ...legacySnapshot,
     materialFolders,
-    materials: normalizeMaterialLibraryItems(parsed.materials, materialFolders ?? []),
+    materials: normalizeMaterialLibraryItems(legacySnapshot.materials, materialFolders ?? []),
     thumbnailFileName:
-      typeof parsed.thumbnailFileName === "string" && parsed.thumbnailFileName.trim()
-        ? parsed.thumbnailFileName
+      typeof legacySnapshot.thumbnailFileName === "string" && legacySnapshot.thumbnailFileName.trim()
+        ? legacySnapshot.thumbnailFileName
         : undefined,
   };
+}
+
+async function migrateLegacyProjectAtHandle(
+  projectHandle: FileSystemDirectoryHandle,
+  snapshot: ProjectSnapshot,
+): Promise<ProjectSnapshot> {
+  const migrated = migrateLegacyProjectSnapshot(snapshot, {
+    canvasId: crypto.randomUUID(),
+  });
+  const canvasDirectory = await projectHandle.getDirectoryHandle(CANVAS_DIRECTORY_NAME, {
+    create: true,
+  });
+
+  await writeJsonFileVerified(
+    canvasDirectory,
+    getCanvasDocumentFileName(migrated.canvas.id),
+    migrated.canvas,
+  );
+  await writeJsonFileVerified(projectHandle, PROJECT_FILE_NAME, migrated.manifest);
+
+  return mergeProjectManifestAndCanvas(migrated.manifest, migrated.canvas);
 }
 
 type ThumbnailFileCandidate = {
@@ -1099,19 +1217,32 @@ export function buildCreatedProjectSnapshot(params: {
 }): ProjectSnapshot {
   const timestamp = params.timestamp ?? new Date().toISOString();
   const source = params.sourceSnapshot;
+  const canvasId = crypto.randomUUID();
 
-  return buildProjectSnapshot({
-    id: params.id ?? crypto.randomUUID(),
-    name: params.projectName,
-    nodes: source?.nodes ?? [],
+  return {
+    ...buildProjectSnapshot({
+      id: params.id ?? crypto.randomUUID(),
+      name: params.projectName,
+      nodes: source?.nodes ?? [],
     edges: source?.edges ?? [],
     groups: source?.groups,
     materialFolders: source?.materialFolders,
     materials: source?.materials,
     thumbnailFileName: source?.thumbnailFileName,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  });
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+    version: 2,
+    activeCanvasId: canvasId,
+    canvases: [{
+      id: canvasId,
+      name: "画布 1",
+      fileName: getCanvasDocumentFileName(canvasId),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }],
+    viewport: source?.viewport ?? { x: 0, y: 0, zoom: 1 },
+  };
 }
 
 export async function createProjectAtParentDirectory(params: {
@@ -1263,10 +1394,18 @@ export async function importProjectsFromParentDirectory(
 export async function loadProjectSnapshot(
   project: ProjectHandleRecord,
   userId: string,
+  canvasId?: string,
 ): Promise<ProjectSnapshot> {
   await requireStoredProjectOwner(project, userId);
   await requestDirectoryPermission(project.projectHandle, false);
-  return readProjectSnapshotInternal(project.projectHandle);
+  const snapshot = await readProjectSnapshotInternal(project.projectHandle, canvasId);
+
+  if (snapshot.version === 2) {
+    return snapshot;
+  }
+
+  await requestDirectoryPermission(project.projectHandle);
+  return migrateLegacyProjectAtHandle(project.projectHandle, snapshot);
 }
 
 export async function saveProjectSnapshot(
@@ -1278,19 +1417,40 @@ export async function saveProjectSnapshot(
   await requestDirectoryPermission(project.projectHandle);
   const existingSnapshot = await readProjectSnapshotInternal(project.projectHandle).catch(() => null);
   const thumbnailFileName = snapshot.thumbnailFileName ?? existingSnapshot?.thumbnailFileName;
-
-  const nextSnapshot = buildProjectSnapshot({
+  const timestamp = new Date().toISOString();
+  const sourceSnapshot: ProjectSnapshot = {
     ...snapshot,
     name: project.name,
     thumbnailFileName,
-    updatedAt: new Date().toISOString(),
+    updatedAt: timestamp,
+  };
+  const canvas = buildCanvasDocumentFromSnapshot(sourceSnapshot);
+  const existingManifest = buildProjectManifestFromSnapshot(sourceSnapshot);
+  const canvasMetadata = {
+    id: canvas.id,
+    name: canvas.name,
+    fileName: getCanvasDocumentFileName(canvas.id),
+    createdAt: canvas.createdAt,
+    updatedAt: timestamp,
+  };
+  const manifest: ProjectManifest = {
+    ...existingManifest,
+    updatedAt: timestamp,
+    canvases: existingManifest.canvases.some((item) => item.id === canvas.id)
+      ? existingManifest.canvases.map((item) => item.id === canvas.id ? canvasMetadata : item)
+      : [...existingManifest.canvases, canvasMetadata],
+  };
+  const nextCanvas: CanvasDocument = {
+    ...canvas,
+    updatedAt: timestamp,
+  };
+  const canvasDirectory = await project.projectHandle.getDirectoryHandle(CANVAS_DIRECTORY_NAME, {
+    create: true,
   });
 
-  await writeTextFile(
-    project.projectHandle,
-    PROJECT_FILE_NAME,
-    JSON.stringify(nextSnapshot, null, 2),
-  );
+  await writeJsonFileVerified(canvasDirectory, canvasMetadata.fileName, nextCanvas);
+  await writeJsonFileVerified(project.projectHandle, PROJECT_FILE_NAME, manifest);
+  const nextSnapshot = mergeProjectManifestAndCanvas(manifest, nextCanvas);
 
   const nextRecord: PersistedProjectRecord = {
     ...project,
@@ -1369,19 +1529,17 @@ export async function renameProjectDirectory(
   try {
     await copyDirectoryRecursive(project.projectHandle, nextHandle);
 
-    const snapshot = await readProjectSnapshotInternal(nextHandle);
-    const renamedSnapshot = buildProjectSnapshot({
-      ...snapshot,
+    const loadedSnapshot = await readProjectSnapshotInternal(nextHandle);
+    const snapshot = loadedSnapshot.version === 2
+      ? loadedSnapshot
+      : await migrateLegacyProjectAtHandle(nextHandle, loadedSnapshot);
+    const renamedSnapshot: ProjectManifest = {
+      ...buildProjectManifestFromSnapshot(snapshot),
       name: sanitizedName,
-      createdAt: snapshot.createdAt,
       updatedAt: new Date().toISOString(),
-    });
+    };
 
-    await writeTextFile(
-      nextHandle,
-      PROJECT_FILE_NAME,
-      JSON.stringify(renamedSnapshot, null, 2),
-    );
+    await writeJsonFileVerified(nextHandle, PROJECT_FILE_NAME, renamedSnapshot);
 
     await project.parentHandle.removeEntry(project.directoryName, { recursive: true });
 
@@ -1422,21 +1580,20 @@ export async function duplicateProjectDirectory(
   try {
     await copyDirectoryRecursive(project.projectHandle, nextHandle);
 
-    const sourceSnapshot = await readProjectSnapshotInternal(nextHandle);
+    const loadedSourceSnapshot = await readProjectSnapshotInternal(nextHandle);
+    const sourceSnapshot = loadedSourceSnapshot.version === 2
+      ? loadedSourceSnapshot
+      : await migrateLegacyProjectAtHandle(nextHandle, loadedSourceSnapshot);
     const timestamp = new Date().toISOString();
-    const copiedSnapshot = buildProjectSnapshot({
-      ...sourceSnapshot,
+    const copiedSnapshot: ProjectManifest = {
+      ...buildProjectManifestFromSnapshot(sourceSnapshot),
       id: crypto.randomUUID(),
       name: nextName,
       createdAt: timestamp,
       updatedAt: timestamp,
-    });
+    };
 
-    await writeTextFile(
-      nextHandle,
-      PROJECT_FILE_NAME,
-      JSON.stringify(copiedSnapshot, null, 2),
-    );
+    await writeJsonFileVerified(nextHandle, PROJECT_FILE_NAME, copiedSnapshot);
 
     const nextRecord: PersistedProjectRecord = {
       id: copiedSnapshot.id,

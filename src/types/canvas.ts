@@ -655,11 +655,15 @@ export interface ProjectManifest {
 }
 
 export interface ProjectSnapshot {
+  version?: 2;
   id: string;
   name: string;
+  canvases?: ProjectCanvasMetadata[];
+  activeCanvasId?: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   groups?: NodeGroup[];
+  viewport?: CanvasViewport;
   materialFolders?: MaterialLibraryFolder[];
   materials?: MaterialLibraryItem[];
   thumbnailFileName?: string;
