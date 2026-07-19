@@ -48,6 +48,9 @@ test("the active canvas check swaps with a fixed-width action button", () => {
   assert.match(source, /aria-checked=\{current\}/);
   assert.match(source, /group-hover\/canvas-row:hidden/);
   assert.match(source, /group-hover\/canvas-row:opacity-100/);
+  assert.match(source, /focus-visible:opacity-100/);
+  assert.match(source, /\[&:has\(button:focus-visible\)>svg\]:hidden/);
+  assert.doesNotMatch(source, /group-focus-within\/canvas-row/);
   assert.match(source, /relative ml-2 h-7 w-7 shrink-0/);
 });
 

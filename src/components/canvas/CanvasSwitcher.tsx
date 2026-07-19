@@ -383,8 +383,8 @@ export function CanvasSwitcher({
                       <span className="min-w-0 flex-1 truncate">{canvas.name}</span>
                     )}
                     {!renaming ? (
-                      <span className="relative ml-2 h-7 w-7 shrink-0">
-                        <Check size={15} className={`absolute inset-0 m-auto text-white/80 ${current ? 'group-hover/canvas-row:hidden group-focus-within/canvas-row:hidden' : 'hidden'}`} />
+                      <span className="relative ml-2 h-7 w-7 shrink-0 [&:has(button:focus-visible)>svg]:hidden">
+                        <Check size={15} className={`absolute inset-0 m-auto text-white/80 ${current ? 'group-hover/canvas-row:hidden' : 'hidden'}`} />
                         <button
                           ref={(element) => {
                             if (element) {
@@ -396,7 +396,7 @@ export function CanvasSwitcher({
                           type="button"
                           aria-label={`${canvas.name} 操作`}
                           disabled={busy || writeBlocked}
-                          className={`absolute inset-0 flex h-7 w-7 items-center justify-center rounded-[6px] text-white/62 transition hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:text-white/22 disabled:hover:bg-transparent ${current ? 'opacity-0 group-hover/canvas-row:opacity-100 group-focus-within/canvas-row:opacity-100' : ''}`}
+                          className={`absolute inset-0 flex h-7 w-7 items-center justify-center rounded-[6px] text-white/62 transition hover:bg-white/[0.1] hover:text-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:text-white/22 disabled:hover:bg-transparent ${current ? 'opacity-0 group-hover/canvas-row:opacity-100' : ''}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             setActionCanvasId((value) => value === canvas.id ? null : canvas.id);
