@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Ellipsis, ExternalLink, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
 import { getNextCanvasName } from '@/lib/canvas/multi-canvas';
 import type { ProjectCanvasMetadata } from '@/types/canvas';
@@ -13,7 +13,7 @@ type CanvasSwitcherProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelectCanvas?: (canvasId: string) => void | Promise<void>;
-  onCreateCanvas?: (name: string) => void | Promise<void>;
+  onCreateCanvas?: (name: string) => boolean | Promise<boolean>;
   onRenameCanvas?: (canvasId: string, name: string) => void | Promise<void>;
   onDuplicateCanvas?: (canvasId: string) => void | Promise<void>;
   onDeleteCanvas?: (canvasId: string) => void | Promise<void>;
@@ -40,6 +40,7 @@ export function CanvasSwitcher({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const createInputRef = useRef<HTMLInputElement | null>(null);
   const createSubmittingRef = useRef(false);
+  const createCancelledRef = useRef(false);
   const canvasItemRefs = useRef(new Map<string, HTMLDivElement>());
   const actionTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const actionMenuRefs = useRef(new Map<string, HTMLDivElement>());
@@ -109,36 +110,49 @@ export function CanvasSwitcher({
       void onRenameCanvas?.(canvasId, nextName);
     }
   };
-  const resetCreateDraft = () => {
-    createSubmittingRef.current = false;
+  const clearCreateDraft = () => {
     setCreatingCanvas(false);
     setCreateDefaultName('');
     setCreateDraft('');
   };
   const cancelCreate = () => {
-    resetCreateDraft();
+    createCancelledRef.current = true;
+    createSubmittingRef.current = false;
+    clearCreateDraft();
   };
-  const commitCreate = () => {
-    if (!creatingCanvas || createSubmittingRef.current) {
+  const commitCreate = useCallback(async () => {
+    if (!creatingCanvas || createSubmittingRef.current || createCancelledRef.current) {
       return;
     }
 
     createSubmittingRef.current = true;
     const name = createDraft.trim() || createDefaultName;
-    setCreatingCanvas(false);
-    setActionCanvasId(null);
-    setRenamingCanvasId(null);
-    onOpenChange(false);
-    void Promise.resolve()
-      .then(() => onCreateCanvas?.(name))
-      .finally(() => {
-        createSubmittingRef.current = false;
+    try {
+      const created = await onCreateCanvas?.(name);
+      if (created) {
+        setCreatingCanvas(false);
         setCreateDefaultName('');
         setCreateDraft('');
+        setActionCanvasId(null);
+        setRenamingCanvasId(null);
+        onOpenChange(false);
+        return;
+      }
+
+      setCreatingCanvas(true);
+      onOpenChange(true);
+      window.requestAnimationFrame(() => {
+        createInputRef.current?.focus();
+        createInputRef.current?.select();
       });
-  };
+    } finally {
+      createSubmittingRef.current = false;
+    }
+  }, [createDefaultName, createDraft, creatingCanvas, onCreateCanvas, onOpenChange]);
   const startCreate = () => {
     const defaultName = getNextCanvasName(canvases.map((canvas) => canvas.name));
+    createCancelledRef.current = false;
+    createSubmittingRef.current = false;
     setActionCanvasId(null);
     setRenamingCanvasId(null);
     setCreateDefaultName(defaultName);
@@ -146,11 +160,20 @@ export function CanvasSwitcher({
     setCreatingCanvas(true);
   };
   const changeOpen = (nextOpen: boolean) => {
+    if (!nextOpen && creatingCanvas) {
+      void commitCreate();
+      return;
+    }
+
     setActionCanvasId(null);
     setRenamingCanvasId(null);
-    resetCreateDraft();
     onOpenChange(nextOpen);
   };
+  useEffect(() => {
+    if (!open && creatingCanvas && !createSubmittingRef.current) {
+      void commitCreate();
+    }
+  }, [commitCreate, creatingCanvas, open]);
   const closeCanvasMenuAndRestoreFocus = () => {
     changeOpen(false);
     window.requestAnimationFrame(() => triggerRef.current?.focus());
@@ -306,7 +329,7 @@ export function CanvasSwitcher({
                   value={createDraft}
                   aria-label="新画布名称"
                   onChange={(event) => setCreateDraft(event.target.value)}
-                  onBlur={commitCreate}
+                  onBlur={() => void commitCreate()}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();

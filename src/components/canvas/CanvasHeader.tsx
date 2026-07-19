@@ -22,7 +22,7 @@ export interface CanvasHeaderProps {
   onCreateProject?: () => void;
   onDeleteProject?: () => void;
   onSelectCanvas?: (canvasId: string) => void | Promise<void>;
-  onCreateCanvas?: (name: string) => void | Promise<void>;
+  onCreateCanvas?: (name: string) => boolean | Promise<boolean>;
   onRenameCanvas?: (canvasId: string, name: string) => void | Promise<void>;
   onDuplicateCanvas?: (canvasId: string) => void | Promise<void>;
   onDeleteCanvas?: (canvasId: string) => void | Promise<void>;

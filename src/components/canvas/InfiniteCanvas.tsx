@@ -15711,17 +15711,19 @@ function InnerCanvas({
   const runCanvasHeaderAction = useCallback(async (
     action: () => Promise<unknown>,
     fallbackMessage: string,
-  ) => {
+  ): Promise<boolean> => {
     if (canvasHeaderActionPendingRef.current) {
-      return;
+      return false;
     }
 
     canvasHeaderActionPendingRef.current = true;
     setCanvasHeaderPending(true);
     try {
       await action();
+      return true;
     } catch (error) {
       showProjectMessage(error instanceof Error ? error.message : fallbackMessage);
+      return false;
     } finally {
       canvasHeaderActionPendingRef.current = false;
       setCanvasHeaderPending(false);
@@ -15739,14 +15741,14 @@ function InnerCanvas({
     await runCanvasHeaderAction(action, fallbackMessage);
   }, [ensureCanvasWriteAvailable, runCanvasHeaderAction]);
 
-  const handleCreateCanvas = useCallback(async (name: string) => {
+  const handleCreateCanvas = useCallback(async (name: string): Promise<boolean> => {
     if (!ensureCanvasWriteAvailable()) {
-      return;
+      return false;
     }
 
     setCanvasCreateLoading(true);
     try {
-      await runCanvasHeaderAction(
+      return await runCanvasHeaderAction(
         () => createCanvas(name),
         '新建画布失败',
       );
@@ -15856,6 +15858,11 @@ function InnerCanvas({
 
   return (
     <>
+      <div
+        className="contents"
+        inert={canvasCreateLoading ? true : undefined}
+        aria-busy={canvasCreateLoading}
+      >
       {saveMessage ? (
         <div className="fixed bottom-8 left-1/2 z-[95] -translate-x-1/2 rounded-[16px] border border-white/10 bg-[#242527]/95 px-4 py-2 text-[13px] text-white shadow-[0_18px_42px_rgba(0,0,0,0.45)] backdrop-blur-xl">
           {saveMessage}
@@ -15881,10 +15888,12 @@ function InnerCanvas({
         onAllProjects={onBackToLibrary}
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
-        onSelectCanvas={(canvasId) => runCanvasHeaderAction(
-          () => switchCanvas(canvasId),
-          '切换画布失败',
-        )}
+        onSelectCanvas={async (canvasId) => {
+          await runCanvasHeaderAction(
+            () => switchCanvas(canvasId),
+            '切换画布失败',
+          );
+        }}
         onCreateCanvas={handleCreateCanvas}
         onRenameCanvas={(canvasId, name) => runCanvasHeaderWriteAction(
           () => renameCanvas(canvasId, name),
@@ -15900,12 +15909,6 @@ function InnerCanvas({
           '打开画布失败',
         )}
       />
-      {canvasCreateLoading ? (
-        <div className="fixed inset-0 z-[180] flex flex-col items-center justify-center bg-[#08090b] text-white">
-          <UniqueLoading variant="squares" size="lg" />
-          <div className="mt-6 text-[12px] font-medium text-white/58">正在创建画布</div>
-        </div>
-      ) : null}
       {canvasWriteBlocked ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#090a0c]/72 backdrop-blur-[2px]">
           <div className="rounded-[16px] border border-white/10 bg-[#242527] px-6 py-5 text-center text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
@@ -16329,6 +16332,17 @@ function InnerCanvas({
         onConfirm={() => void handleConfirmDeleteCanvas()}
         onClose={handleCloseDeleteCanvasDialog}
       />
+      </div>
+      {canvasCreateLoading ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-0 z-[180] flex flex-col items-center justify-center bg-[#08090b] text-white"
+        >
+          <UniqueLoading variant="squares" size="lg" />
+          <div className="mt-6 text-[12px] font-medium text-white/58">正在创建画布</div>
+        </div>
+      ) : null}
     </>
   );
 }

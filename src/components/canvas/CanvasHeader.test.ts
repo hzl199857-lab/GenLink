@@ -36,10 +36,23 @@ test("new canvas creation is drafted before the callback runs", () => {
   assert.match(source, /const \[createDefaultName, setCreateDefaultName\] = useState\(''\)/);
   assert.match(source, /const \[createDraft, setCreateDraft\] = useState\(''\)/);
   assert.match(source, /onCreateCanvas\?: \(name: string\)/);
-  assert.match(source, /onBlur=\{commitCreate\}/);
+  assert.match(source, /onBlur=\{\(\) => void commitCreate\(\)\}/);
   assert.match(source, /event\.key === 'Escape'[\s\S]*cancelCreate\(\)/);
   assert.match(source, /createDraft\.trim\(\) \|\| createDefaultName/);
   assert.match(source, /aria-label="新画布名称"/);
+});
+
+test("failed canvas creation keeps the draft available for retry", () => {
+  const switcherSource = readSource("CanvasSwitcher.tsx");
+  const canvasSource = readSource("InfiniteCanvas.tsx");
+
+  assert.match(switcherSource, /onCreateCanvas\?: \(name: string\) => boolean \| Promise<boolean>/);
+  assert.match(switcherSource, /const created = await onCreateCanvas\?\.\(name\)/);
+  assert.match(switcherSource, /if \(created\)[\s\S]*setCreatingCanvas\(false\)[\s\S]*onOpenChange\(false\)/);
+  assert.match(switcherSource, /onOpenChange\(true\)[\s\S]*createInputRef\.current\?\.focus\(\)/);
+  assert.match(switcherSource, /if \(!open && creatingCanvas && !createSubmittingRef\.current\)[\s\S]*commitCreate\(\)/);
+  assert.match(canvasSource, /const runCanvasHeaderAction = useCallback[\s\S]*return true;[\s\S]*return false;/);
+  assert.match(canvasSource, /const handleCreateCanvas = useCallback\(async \(name: string\): Promise<boolean>/);
 });
 
 test("the active canvas check swaps with a fixed-width action button", () => {
@@ -54,13 +67,13 @@ test("the active canvas check swaps with a fixed-width action button", () => {
   assert.match(source, /relative ml-2 h-7 w-7 shrink-0/);
 });
 
-test("canvas switcher resets private menu state when its controlled menu closes", () => {
+test("canvas switcher routes controlled closing through pending draft creation", () => {
   const source = readSource("CanvasSwitcher.tsx");
   const changeOpen = source.match(/const changeOpen = \(nextOpen: boolean\) => \{[\s\S]*?\n  \};/)?.[0];
 
   assert.ok(changeOpen);
+  assert.match(changeOpen, /if \(!nextOpen && creatingCanvas\)[\s\S]*commitCreate\(\)/);
   assert.match(changeOpen, /setActionCanvasId\(null\)[\s\S]*setRenamingCanvasId\(null\)[\s\S]*onOpenChange\(nextOpen\)/);
-  assert.doesNotMatch(changeOpen, /if \(!nextOpen\)/);
 });
 
 test("canvas item actions support keyboard navigation and focus restoration", () => {
@@ -162,6 +175,10 @@ test("InfiniteCanvas shows the shared loader while creating a named canvas", () 
   assert.match(source, /setCanvasCreateLoading\(true\)[\s\S]*finally[\s\S]*setCanvasCreateLoading\(false\)/);
   assert.match(source, /<UniqueLoading variant="squares" size="lg" \/>/);
   assert.match(source, /正在创建画布/);
+  assert.match(source, /inert=\{canvasCreateLoading \? true : undefined\}/);
+  assert.match(source, /aria-busy=\{canvasCreateLoading\}/);
+  assert.match(source, /role="status"/);
+  assert.match(source, /aria-live="polite"/);
 });
 
 test("InfiniteCanvas serializes every canvas header action behind local busy state", () => {
@@ -185,7 +202,7 @@ test("InfiniteCanvas rejects blocked writes at runtime without blocking navigati
   assert.match(source, /const ensureCanvasWriteAvailable = useCallback/);
   assert.ok((source.match(/ensureCanvasWriteAvailable\(\)/g)?.length ?? 0) >= 7);
   assert.match(source, /const runCanvasHeaderWriteAction = useCallback/);
-  assert.match(source, /onSelectCanvas=\{\(canvasId\) => runCanvasHeaderAction\(/);
+  assert.match(source, /onSelectCanvas=\{async \(canvasId\) => \{[\s\S]*await runCanvasHeaderAction\(/);
   assert.match(source, /onCreateCanvas=\{handleCreateCanvas\}/);
   assert.match(source, /const handleCreateCanvas = useCallback[\s\S]*if \(!ensureCanvasWriteAvailable\(\)\)/);
   assert.match(source, /open=\{pendingDeleteCanvas !== null && !canvasWriteBlocked\}/);
