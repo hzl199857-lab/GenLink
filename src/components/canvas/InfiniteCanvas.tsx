@@ -10114,6 +10114,7 @@ type CanvasAgentDockProps = {
   userId: string;
   projectId?: string;
   projectName: string;
+  canvasId: string;
   nodeCount: number;
   edgeCount: number;
   groupCount: number;
@@ -10155,6 +10156,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
   userId,
   projectId,
   projectName,
+  canvasId,
   nodeCount,
   edgeCount,
   groupCount,
@@ -10226,6 +10228,7 @@ const CanvasAgentDock = memo(function CanvasAgentDock({
         open={effectiveOpen}
         projectId={projectId}
         projectName={projectName}
+        canvasId={canvasId}
         nodeCount={nodeCount}
         edgeCount={edgeCount}
         groupCount={groupCount}
@@ -10260,6 +10263,7 @@ function InnerCanvas({
   const storeNodes = useCanvasStore((s) => s.nodes);
   const storeEdges = useCanvasStore((s) => s.edges);
   const projectName = useCanvasStore((s) => s.projectName);
+  const activeCanvasId = useCanvasStore((s) => s.activeCanvasId);
   const currentProject = useCanvasStore((s) => s.currentProject);
   const loading = useCanvasStore((s) => s.loading);
   const dirty = useCanvasStore((s) => s.dirty);
@@ -15812,6 +15816,7 @@ function InnerCanvas({
         userId={userId}
         projectId={currentProject?.id}
         projectName={projectName}
+        canvasId={activeCanvasId ?? 'default'}
         nodeCount={storeNodes.length}
         edgeCount={storeEdges.length}
         groupCount={storeGroups.length}

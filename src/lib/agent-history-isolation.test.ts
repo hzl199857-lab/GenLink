@@ -71,6 +71,29 @@ test("isolates agent threads and drafts by authenticated user", () => {
   assert.equal(history.loadAgentDraft("user-b", "project-1", "Project"), "");
 });
 
+test("isolates agent threads and drafts by canvas", () => {
+  installStorage();
+
+  history.saveAgentThread({
+    userId: "user-a",
+    projectId: "project-1",
+    projectName: "Project",
+    canvasId: "canvas-a",
+    messages: [{ id: "m-a", role: "user", type: "text", content: "A", createdAt: new Date().toISOString() }],
+  });
+  history.saveAgentDraft("user-a", "project-1", "Project", "draft-a", "canvas-a");
+  history.saveAgentDraft("user-a", "project-1", "Project", "draft-b", "canvas-b");
+
+  assert.equal(history.listAgentThreads("user-a", "project-1", "Project", "canvas-a").length, 1);
+  assert.equal(history.listAgentThreads("user-a", "project-1", "Project", "canvas-b").length, 0);
+  assert.equal(history.loadAgentDraft("user-a", "project-1", "Project", "canvas-a"), "draft-a");
+  assert.equal(history.loadAgentDraft("user-a", "project-1", "Project", "canvas-b"), "draft-b");
+
+  history.deleteAgentThreadsForCanvas("user-a", "project-1", "Project", "canvas-a");
+  assert.equal(history.listAgentThreads("user-a", "project-1", "Project", "canvas-a").length, 0);
+  assert.equal(history.loadAgentDraft("user-a", "project-1", "Project", "canvas-a"), "");
+});
+
 test("allows only one user to claim legacy agent history", () => {
   const storage = installStorage();
   storage.setItem("genlink.canvasAgentThreads.v1", JSON.stringify({
@@ -119,4 +142,6 @@ test("CanvasAgentPanel saves drafts only after the active scope hydrates", () =>
 
   assert.match(sourceText, /hydratedDraftScopeRef/);
   assert.match(sourceText, /canSaveAgentDraftForScope\([\s\S]*?saveAgentDraft/);
+  assert.match(sourceText, /createAgentDraftScopeKey\(userId, projectId, projectName, canvasId\)/);
+  assert.doesNotMatch(sourceText, /canvasId:\s*['"]default['"]/);
 });

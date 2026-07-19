@@ -339,6 +339,7 @@ type CanvasAgentPanelProps = {
   open: boolean;
   projectId?: string;
   projectName: string;
+  canvasId: string;
   nodeCount: number;
   edgeCount: number;
   groupCount: number;
@@ -1273,6 +1274,7 @@ async function requestOpenClawPlanfEcomConfirm(
   provider: AgentProvider,
   model: string,
   projectId?: string,
+  canvasId = 'default',
 ): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>> {
   const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/confirm', {
@@ -1284,7 +1286,7 @@ async function requestOpenClawPlanfEcomConfirm(
       session,
       values: getPlanfSessionValues(session),
       projectId: projectId || 'local-dev-project',
-      canvasId: 'default',
+      canvasId,
       provider: textRunConfig.provider,
       model,
       apiKey: textRunConfig.apiKey,
@@ -1318,6 +1320,7 @@ async function requestOpenClawPlanfEcomCreateWorkflow(
   provider: AgentProvider,
   model: string,
   projectId?: string,
+  canvasId = 'default',
   anchor?: PlanfEcomAnchor,
 ): Promise<AgentRunPanelResult> {
   const textRunConfig = resolveAgentTextRunConfig(provider);
@@ -1341,7 +1344,7 @@ async function requestOpenClawPlanfEcomCreateWorkflow(
       )),
       anchor,
       projectId: projectId || 'local-dev-project',
-      canvasId: 'default',
+      canvasId,
       provider: textRunConfig.provider,
       model,
       apiKey: textRunConfig.apiKey,
@@ -1365,6 +1368,7 @@ async function requestOpenClawPlanfEcomFanoutWorkflow(
   provider: AgentProvider,
   model: string,
   projectId?: string,
+  canvasId = 'default',
 ): Promise<AgentRunPanelResult> {
   const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/create-workflow', {
@@ -1379,7 +1383,7 @@ async function requestOpenClawPlanfEcomFanoutWorkflow(
       references: [],
       anchor,
       projectId: projectId || 'local-dev-project',
-      canvasId: 'default',
+      canvasId,
       provider: textRunConfig.provider,
       model,
       apiKey: textRunConfig.apiKey,
@@ -1406,6 +1410,7 @@ async function requestOpenClawPlanfEcomReplan(
   provider: AgentProvider,
   model: string,
   projectId?: string,
+  canvasId = 'default',
 ): Promise<Extract<AgentPanelMessage, { type: 'planf_ecom_plan' }>> {
   const textRunConfig = resolveAgentTextRunConfig(provider);
   const response = await fetch('/api/openclaw/planf/ecom/confirm', {
@@ -1420,7 +1425,7 @@ async function requestOpenClawPlanfEcomReplan(
         styleLayer: `${adjustment.optionLabel}：${adjustment.instruction}`,
       },
       projectId: projectId || 'local-dev-project',
-      canvasId: 'default',
+      canvasId,
       provider: textRunConfig.provider,
       model,
       apiKey: textRunConfig.apiKey,
@@ -1572,6 +1577,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   open,
   projectId,
   projectName,
+  canvasId,
   nodeCount,
   edgeCount,
   groupCount,
@@ -1617,8 +1623,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const [attachments, setAttachments] = useState<AgentTaskAttachment[]>([]);
   const [draft, setDraft] = useState('');
   const draftScopeKey = useMemo(
-    () => createAgentDraftScopeKey(userId, projectId, projectName),
-    [projectId, projectName, userId],
+    () => createAgentDraftScopeKey(userId, projectId, projectName, canvasId),
+    [canvasId, projectId, projectName, userId],
   );
   const hydratedDraftScopeRef = useRef<string | null>(null);
   const [provider, setProvider] = useState<AgentProvider>('vibe');
@@ -1626,7 +1632,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   const [messages, setMessages] = useState<AgentPanelMessage[]>([]);
   const [busyMode, setBusyMode] = useState<AgentBusyMode | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyThreads, setHistoryThreads] = useState(() => listAgentThreads(userId, projectId, projectName));
+  const [historyThreads, setHistoryThreads] = useState(() => listAgentThreads(userId, projectId, projectName, canvasId));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [planfPresetOpen, setPlanfPresetOpen] = useState(false);
   const [selectedPlanfPresetId, setSelectedPlanfPresetId] = useState<PlanfEcomPresetId | null>(null);
@@ -1777,9 +1783,9 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
   }, [selectedPlanfPresetId]);
 
   const handleOpenHistory = useCallback(() => {
-    setHistoryThreads(listAgentThreads(userId, projectId, projectName));
+    setHistoryThreads(listAgentThreads(userId, projectId, projectName, canvasId));
     setHistoryOpen((current) => !current);
-  }, [projectId, projectName, userId]);
+  }, [canvasId, projectId, projectName, userId]);
 
   useEffect(() => {
     if (!historyOpen) {
@@ -1833,8 +1839,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     const scopeKey = draftScopeKey;
     const timer = window.setTimeout(() => {
       hydratedDraftScopeRef.current = scopeKey;
-      setDraft(loadAgentDraft(userId, projectId, projectName));
-      setHistoryThreads(listAgentThreads(userId, projectId, projectName));
+      setDraft(loadAgentDraft(userId, projectId, projectName, canvasId));
+      setHistoryThreads(listAgentThreads(userId, projectId, projectName, canvasId));
     }, 0);
 
     return () => {
@@ -1843,15 +1849,15 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         hydratedDraftScopeRef.current = null;
       }
     };
-  }, [draftScopeKey, projectId, projectName, userId]);
+  }, [canvasId, draftScopeKey, projectId, projectName, userId]);
 
   useEffect(() => {
     if (!canSaveAgentDraftForScope(hydratedDraftScopeRef.current, draftScopeKey)) {
       return;
     }
 
-    saveAgentDraft(userId, projectId, projectName, draft);
-  }, [draft, draftScopeKey, projectId, projectName, userId]);
+    saveAgentDraft(userId, projectId, projectName, draft, canvasId);
+  }, [canvasId, draft, draftScopeKey, projectId, projectName, userId]);
 
   useEffect(() => {
     if (messages.length === 0) {
@@ -1863,6 +1869,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       threadId,
       projectId,
       projectName,
+      canvasId,
       messages,
     });
 
@@ -1870,8 +1877,8 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       window.setTimeout(() => setThreadId(saved.id), 0);
     }
 
-    window.setTimeout(() => setHistoryThreads(listAgentThreads(userId, projectId, projectName)), 0);
-  }, [messages, projectId, projectName, threadId, userId]);
+    window.setTimeout(() => setHistoryThreads(listAgentThreads(userId, projectId, projectName, canvasId)), 0);
+  }, [canvasId, messages, projectId, projectName, threadId, userId]);
 
   useEffect(() => {
     if (!open) {
@@ -2281,6 +2288,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
               params.provider,
               params.model,
               projectId,
+              canvasId,
             );
 
             setMessages((current) => [
@@ -2447,6 +2455,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     nodeCount,
     nodes,
     onConfirmPlan,
+    canvasId,
     projectId,
     projectName,
   ]);
@@ -2740,7 +2749,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
         ? { ...message, status: 'submitted' as const }
         : message
     )));
-    void requestOpenClawPlanfEcomConfirm(sessionMessage.session, provider, model, projectId)
+    void requestOpenClawPlanfEcomConfirm(sessionMessage.session, provider, model, projectId, canvasId)
       .then((result) => {
         setMessages((current) => [
           ...current,
@@ -2764,7 +2773,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       .finally(() => {
         setBusyMode(null);
       });
-  }, [busy, messages, model, projectId, provider]);
+  }, [busy, canvasId, messages, model, projectId, provider]);
 
   const handleSelectEcomPlannerOption = useCallback((
     messageId: string,
@@ -3137,7 +3146,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
           }
         : message
     )));
-    void requestOpenClawPlanfEcomCreateWorkflow(planMessage, provider, model, projectId)
+    void requestOpenClawPlanfEcomCreateWorkflow(planMessage, provider, model, projectId, canvasId)
       .then((result) => {
         const planAspectRatio = getPlanfEcomPreferredAspectRatio({
           values: planMessage.values,
@@ -3241,7 +3250,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       .finally(() => {
         setBusyMode(null);
       });
-  }, [busy, messages, model, onConfirmPlan, projectId, provider, resolvedImagePreference]);
+  }, [busy, canvasId, messages, model, onConfirmPlan, projectId, provider, resolvedImagePreference]);
 
   const handleStartPlanfEcomPlanAdjustment = useCallback((
     messageId: string,
@@ -3311,6 +3320,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       provider,
       model,
       projectId,
+      canvasId,
     )
       .then((result) => {
         setMessages((current) => current.map((message) => (
@@ -3333,7 +3343,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       .finally(() => {
         setBusyMode(null);
       });
-  }, [busy, messages, model, projectId, provider]);
+  }, [busy, canvasId, messages, model, projectId, provider]);
 
   const handleSelectAttachmentForPlan = useCallback((messageId: string, attachmentId: string) => {
     if (busy) {
@@ -3463,7 +3473,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
     }
 
     setBusyMode('mcp');
-    void requestOpenClawPlanfEcomFanoutWorkflow(planfEcom, anchor, provider, model, projectId)
+    void requestOpenClawPlanfEcomFanoutWorkflow(planfEcom, anchor, provider, model, projectId, canvasId)
       .then((result) => {
         const planAspectRatio = getPlanfEcomPreferredAspectRatio({
           values: planfEcom.values,
@@ -3560,7 +3570,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
       .finally(() => {
         setBusyMode(null);
       });
-  }, [busy, messages, model, nodes, onConfirmPlan, projectId, provider, resolvedImagePreference]);
+  }, [busy, canvasId, messages, model, nodes, onConfirmPlan, projectId, provider, resolvedImagePreference]);
 
   const activeImageModels = IMAGE_MODEL_OPTIONS_BY_PROVIDER[resolvedImagePreference.provider];
   const showAgentSuggestions = messages.length === 0 && !busy;
@@ -3742,7 +3752,7 @@ export const CanvasAgentPanel = memo(function CanvasAgentPanel({
                     onClick={(event) => {
                       event.stopPropagation();
                       deleteAgentThread(userId, thread.id);
-                      setHistoryThreads(listAgentThreads(userId, projectId, projectName));
+                      setHistoryThreads(listAgentThreads(userId, projectId, projectName, canvasId));
 
                       if (thread.id === threadId) {
                         setMessages([]);

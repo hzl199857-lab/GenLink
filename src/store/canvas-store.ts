@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { migrateLegacyStorageValue, userStorageKey } from "@/lib/browser-user-storage";
 import { getBrowserImageDisplayUrl } from "@/lib/image-display-url";
+import { deleteAgentThreadsForCanvas } from "@/lib/agent-history";
 
 import {
   buildThreeViewPrompt,
@@ -6418,6 +6419,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       dirty: true,
     }));
     await get().saveProject();
+
+    const current = get();
+    if (current.activeUserId) {
+      deleteAgentThreadsForCanvas(
+        current.activeUserId,
+        current.projectId ?? undefined,
+        current.projectName,
+        canvasId,
+      );
+    }
   },
 
   setSaveMessage: (message) => {

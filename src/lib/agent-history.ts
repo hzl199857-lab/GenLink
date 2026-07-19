@@ -10,6 +10,7 @@ export type AgentThreadRecord = {
   id: string;
   projectId: string;
   projectName: string;
+  canvasId: string;
   title: string;
   messages: AgentPanelMessage[];
   createdAt: string;
@@ -57,7 +58,12 @@ function readStorage(userId: string): AgentThreadStorage {
         typeof thread.projectId === "string" &&
         typeof thread.title === "string" &&
         Array.isArray(thread.messages)
-      )),
+      )).map((thread) => ({
+        ...thread,
+        canvasId: typeof thread.canvasId === "string" && thread.canvasId.trim()
+          ? thread.canvasId
+          : "default",
+      })),
     };
   } catch {
     return { version: 1, threads: [] };
@@ -229,12 +235,25 @@ function getProjectId(projectId: string | undefined, projectName: string): strin
   return projectId?.trim() || `local:${projectName.trim() || "Untitled"}`;
 }
 
+function getCanvasId(canvasId?: string): string {
+  return canvasId?.trim() || "default";
+}
+
+function getDraftId(projectId: string, canvasId?: string): string {
+  return JSON.stringify([projectId, getCanvasId(canvasId)]);
+}
+
 export function createAgentDraftScopeKey(
   userId: string,
   projectId: string | undefined,
   projectName: string,
+  canvasId?: string,
 ): string {
-  return JSON.stringify([userId.trim(), getProjectId(projectId, projectName)]);
+  return JSON.stringify([
+    userId.trim(),
+    getProjectId(projectId, projectName),
+    getCanvasId(canvasId),
+  ]);
 }
 
 export function canSaveAgentDraftForScope(
@@ -248,12 +267,16 @@ export function listAgentThreads(
   userId: string,
   projectId: string | undefined,
   projectName: string,
+  canvasId?: string,
 ): AgentThreadRecord[] {
   const resolvedProjectId = getProjectId(projectId, projectName);
+  const resolvedCanvasId = getCanvasId(canvasId);
 
   return readStorage(userId)
     .threads
-    .filter((thread) => thread.projectId === resolvedProjectId)
+    .filter((thread) => (
+      thread.projectId === resolvedProjectId && thread.canvasId === resolvedCanvasId
+    ))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
@@ -270,10 +293,15 @@ export function loadAgentDraft(
   userId: string,
   projectId: string | undefined,
   projectName: string,
+  canvasId?: string,
 ): string {
   const resolvedProjectId = getProjectId(projectId, projectName);
+  const storage = readDraftStorage(userId);
+  const draftId = getDraftId(resolvedProjectId, canvasId);
 
-  return readDraftStorage(userId).drafts[resolvedProjectId] ?? "";
+  return storage.drafts[draftId]
+    ?? (getCanvasId(canvasId) === "default" ? storage.drafts[resolvedProjectId] : undefined)
+    ?? "";
 }
 
 export function saveAgentDraft(
@@ -281,15 +309,17 @@ export function saveAgentDraft(
   projectId: string | undefined,
   projectName: string,
   draft: string,
+  canvasId?: string,
 ): void {
   const storage = readDraftStorage(userId);
   const resolvedProjectId = getProjectId(projectId, projectName);
+  const draftId = getDraftId(resolvedProjectId, canvasId);
   const nextDrafts = { ...storage.drafts };
 
   if (draft.trim()) {
-    nextDrafts[resolvedProjectId] = draft;
+    nextDrafts[draftId] = draft;
   } else {
-    delete nextDrafts[resolvedProjectId];
+    delete nextDrafts[draftId];
   }
 
   writeDraftStorage(userId, { version: 1, drafts: nextDrafts });
@@ -300,11 +330,13 @@ export function saveAgentThread(params: {
   threadId?: string;
   projectId?: string;
   projectName: string;
+  canvasId?: string;
   messages: AgentPanelMessage[];
 }): AgentThreadRecord {
   const storage = readStorage(params.userId);
   const now = new Date().toISOString();
   const resolvedProjectId = getProjectId(params.projectId, params.projectName);
+  const resolvedCanvasId = getCanvasId(params.canvasId);
   const existing = params.threadId
     ? storage.threads.find((thread) => thread.id === params.threadId)
     : undefined;
@@ -312,6 +344,7 @@ export function saveAgentThread(params: {
     id: existing?.id ?? `agent-thread-${crypto.randomUUID()}`,
     projectId: resolvedProjectId,
     projectName: params.projectName,
+    canvasId: resolvedCanvasId,
     title: createThreadTitle(params.messages),
     messages: compactMessages(params.messages),
     createdAt: existing?.createdAt ?? now,
@@ -321,10 +354,14 @@ export function saveAgentThread(params: {
     thread,
     ...storage.threads.filter((candidate) => candidate.id !== thread.id),
   ];
-  const projectThreads = nextThreads.filter((candidate) => candidate.projectId === resolvedProjectId);
+  const projectThreads = nextThreads.filter((candidate) => (
+    candidate.projectId === resolvedProjectId && candidate.canvasId === resolvedCanvasId
+  ));
   const keptProjectThreadIds = new Set(projectThreads.slice(0, MAX_PROJECT_THREADS).map((candidate) => candidate.id));
   const prunedThreads = nextThreads.filter((candidate) => (
-    candidate.projectId !== resolvedProjectId || keptProjectThreadIds.has(candidate.id)
+    candidate.projectId !== resolvedProjectId ||
+    candidate.canvasId !== resolvedCanvasId ||
+    keptProjectThreadIds.has(candidate.id)
   ));
 
   let projectThreadLimit = MAX_PROJECT_THREADS;
@@ -338,9 +375,34 @@ export function saveAgentThread(params: {
     );
 
     nextPrunedThreads = nextThreads.filter((candidate) => (
-      candidate.projectId !== resolvedProjectId || nextKeptProjectThreadIds.has(candidate.id)
+      candidate.projectId !== resolvedProjectId ||
+      candidate.canvasId !== resolvedCanvasId ||
+      nextKeptProjectThreadIds.has(candidate.id)
     ));
   }
 
   return thread;
+}
+
+export function deleteAgentThreadsForCanvas(
+  userId: string,
+  projectId: string | undefined,
+  projectName: string,
+  canvasId: string,
+): void {
+  const resolvedProjectId = getProjectId(projectId, projectName);
+  const resolvedCanvasId = getCanvasId(canvasId);
+  const storage = readStorage(userId);
+  const draftStorage = readDraftStorage(userId);
+  const draftId = getDraftId(resolvedProjectId, resolvedCanvasId);
+  const nextDrafts = { ...draftStorage.drafts };
+
+  delete nextDrafts[draftId];
+  writeStorage(userId, {
+    version: 1,
+    threads: storage.threads.filter((thread) => (
+      thread.projectId !== resolvedProjectId || thread.canvasId !== resolvedCanvasId
+    )),
+  });
+  writeDraftStorage(userId, { version: 1, drafts: nextDrafts });
 }
