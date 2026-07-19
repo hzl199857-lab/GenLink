@@ -6,7 +6,7 @@ export function QuickReferenceSelectionBanner({
   onReturnToNode,
   onExit,
 }: {
-  onReturnToNode: () => void;
+  onReturnToNode?: () => void;
   onExit: () => void;
 }) {
   return (
@@ -22,13 +22,15 @@ export function QuickReferenceSelectionBanner({
         <span className="whitespace-nowrap px-1 text-[14px] font-semibold">
           从画布选择参考
         </span>
-        <button
-          type="button"
-          className="h-9 rounded-[9px] bg-white/[0.09] px-4 text-[13px] font-semibold text-white/86 transition-colors hover:bg-white/[0.14] hover:text-white"
-          onClick={onReturnToNode}
-        >
-          返回节点
-        </button>
+        {onReturnToNode ? (
+          <button
+            type="button"
+            className="h-9 rounded-[9px] bg-white/[0.09] px-4 text-[13px] font-semibold text-white/86 transition-colors hover:bg-white/[0.14] hover:text-white"
+            onClick={onReturnToNode}
+          >
+            返回节点
+          </button>
+        ) : null}
         <button
           type="button"
           className="h-9 rounded-[9px] bg-white px-4 text-[13px] font-semibold text-[#202124] transition-colors hover:bg-white/90"

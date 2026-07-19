@@ -62,10 +62,24 @@ test("wires the banner buttons to return and exit callbacks", () => {
   assert.match(source, /onClick=\{onExit\}/);
 });
 
-test("shows the banner only for node targets and returns without exiting", () => {
+test("omits the return control when no node callback is provided", () => {
+  assert.ok(bannerModule, "expected QuickReferenceSelectionBanner to exist");
+
+  const html = renderToStaticMarkup(
+    React.createElement(bannerModule.QuickReferenceSelectionBanner, {
+      onExit: () => {},
+    }),
+  );
+
+  assert.match(html, /从画布选择参考/u);
+  assert.match(html, /退出/u);
+  assert.doesNotMatch(html, /返回节点/u);
+});
+
+test("shows the banner for node and agent modes while only nodes can return", () => {
   assert.match(
     infiniteCanvasSource,
-    /quickReferenceConnect\?\.targetKind === 'node'[\s\S]*?<QuickReferenceSelectionBanner/,
+    /\{quickReferenceConnect \? \([\s\S]*?<QuickReferenceSelectionBanner/,
   );
   assert.match(
     infiniteCanvasSource,
@@ -73,19 +87,16 @@ test("shows the banner only for node targets and returns without exiting", () =>
   );
   assert.match(
     infiniteCanvasSource,
-    /<QuickReferenceSelectionBanner[\s\S]*?onReturnToNode=\{handleReturnToQuickReferenceTarget\}[\s\S]*?onExit=\{stopQuickReferenceConnect\}/,
+    /<QuickReferenceSelectionBanner[\s\S]*?onReturnToNode=\{quickReferenceConnect\.targetKind === 'node'[\s\S]*?\? handleReturnToQuickReferenceTarget[\s\S]*?: undefined[\s\S]*?\}[\s\S]*?onExit=\{stopQuickReferenceConnect\}/,
   );
 });
 
-test("does not show the legacy project message for node selection mode", () => {
+test("does not show the legacy project message for quick reference modes", () => {
   const startQuickReferenceConnect = infiniteCanvasSource.match(
     /const startQuickReferenceConnect = useCallback\([\s\S]*?\n  \}, \[[^\]]*\]\);/,
   )?.[0] ?? "";
 
-  assert.match(
-    startQuickReferenceConnect,
-    /if \(mode\.targetKind === 'agent'\) \{\s*showProjectMessage\(/,
-  );
+  assert.doesNotMatch(startQuickReferenceConnect, /showProjectMessage\(/);
 });
 
 test("uses the quick reference surface style for bottom project messages", () => {

@@ -272,3 +272,7 @@ git show --stat --oneline HEAD
 ```
 
 Expected: clean worktree and a commit containing exactly the banner component, its test, `InfiniteCanvas` wiring and this plan.
+
+## Follow-up: Agent panel quick reference mode
+
+The Agent panel uses the same `quickReferenceConnect` state and the same bottom banner. `onReturnToNode` is optional: node targets receive the existing return handler, while Agent targets omit it and therefore render only “退出”. The legacy Agent-only `showProjectMessage` call is removed so the persistent banner is the sole selection-state prompt.

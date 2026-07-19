@@ -11110,11 +11110,7 @@ function InnerCanvas({
     setImageInfoPopover(null);
     setImageLightbox(null);
     clearEdgeSelection();
-
-    if (mode.targetKind === 'agent') {
-      showProjectMessage('请选择一个图片节点进行连接');
-    }
-  }, [clearConnectionMenu, clearEdgeSelection, showProjectMessage]);
+  }, [clearConnectionMenu, clearEdgeSelection]);
 
   const stopQuickReferenceConnect = useCallback(() => {
     setQuickReferenceConnect(null);
@@ -15567,9 +15563,12 @@ function InnerCanvas({
           {saveMessage}
         </div>
       ) : null}
-      {quickReferenceConnect?.targetKind === 'node' ? (
+      {quickReferenceConnect ? (
         <QuickReferenceSelectionBanner
-          onReturnToNode={handleReturnToQuickReferenceTarget}
+          onReturnToNode={quickReferenceConnect.targetKind === 'node'
+            ? handleReturnToQuickReferenceTarget
+            : undefined
+          }
           onExit={stopQuickReferenceConnect}
         />
       ) : null}
