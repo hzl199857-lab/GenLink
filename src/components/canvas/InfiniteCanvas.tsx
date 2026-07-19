@@ -111,6 +111,11 @@ import {
   calculateNodeLayout,
   type CanvasLayoutMode,
 } from '@/lib/canvas/selection-layout';
+import {
+  acquireCanvasEditLock,
+  buildCanvasDeepLink,
+  type CanvasEditLockResult,
+} from '@/lib/canvas/canvas-edit-lock';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
 import type {
   CanvasEdge,
@@ -10265,6 +10270,8 @@ function InnerCanvas({
   const projectName = useCanvasStore((s) => s.projectName);
   const activeCanvasId = useCanvasStore((s) => s.activeCanvasId);
   const currentProject = useCanvasStore((s) => s.currentProject);
+  const canvasEditLockRef = useRef<Extract<CanvasEditLockResult, { acquired: true }> | null>(null);
+  const [canvasEditBlocked, setCanvasEditBlocked] = useState(false);
   const loading = useCanvasStore((s) => s.loading);
   const dirty = useCanvasStore((s) => s.dirty);
   const saveMessage = useCanvasStore((s) => s.saveMessage);
@@ -10414,6 +10421,40 @@ function InnerCanvas({
   const activeSelectedEdgeId = selectedEdgeId && storeEdges.some((edge) => edge.id === selectedEdgeId)
     ? selectedEdgeId
     : null;
+
+  useEffect(() => {
+    canvasEditLockRef.current?.release();
+    canvasEditLockRef.current = null;
+
+    if (!currentProject?.id || !activeCanvasId) {
+      setCanvasEditBlocked(false);
+      return;
+    }
+
+    let cancelled = false;
+    void acquireCanvasEditLock(currentProject.id, activeCanvasId).then((result) => {
+      if (cancelled) {
+        if (result.acquired) {
+          result.release();
+        }
+        return;
+      }
+
+      if (!result.acquired) {
+        setCanvasEditBlocked(true);
+        return;
+      }
+
+      canvasEditLockRef.current = result;
+      setCanvasEditBlocked(false);
+    });
+
+    return () => {
+      cancelled = true;
+      canvasEditLockRef.current?.release();
+      canvasEditLockRef.current = null;
+    };
+  }, [activeCanvasId, currentProject?.id]);
 
   useEffect(() => {
     return () => {
@@ -15584,6 +15625,21 @@ function InnerCanvas({
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
       />
+      {canvasEditBlocked ? (
+        <div className="fixed inset-0 z-[45] flex items-center justify-center bg-[#090a0c]/72 backdrop-blur-[2px]">
+          <div className="rounded-[16px] border border-white/10 bg-[#242527] px-6 py-5 text-center text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+            <div className="text-[15px] font-semibold">该画布已在其他窗口打开</div>
+            <div className="mt-1 text-[12px] text-white/48">你可以切换到其他画布，或在原窗口关闭后重试。</div>
+            <button
+              type="button"
+              className="mt-4 rounded-[9px] bg-white/10 px-3 py-2 text-[12px] font-medium transition hover:bg-white/16"
+              onClick={() => window.location.reload()}
+            >
+              重新获取编辑权
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div
         data-canvas-menu-ignore="true"
         className="fixed top-5 z-50 flex items-center gap-2"

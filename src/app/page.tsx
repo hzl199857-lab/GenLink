@@ -77,6 +77,7 @@ function HomePageContent() {
   const userId = session.data?.user.id ?? null;
   const listProjects = useCanvasStore((state) => state.listProjects);
   const loadProject = useCanvasStore((state) => state.loadProject);
+  const switchCanvas = useCanvasStore((state) => state.switchCanvas);
   const attachProject = useCanvasStore((state) => state.attachProject);
   const [readyUserId, setReadyUserId] = useState<string | null>(null);
   const [initialRefreshRestore, setInitialRefreshRestore] =
@@ -94,6 +95,10 @@ function HomePageContent() {
     useState<UpdateRefreshRestoreState | null>(
       null,
     );
+  const [pendingCanvasDeepLink, setPendingCanvasDeepLink] = useState<{
+    projectId: string;
+    canvasId: string;
+  } | null>(null);
   const [heroPrompt, setHeroPrompt] = useState('');
   const [heroProvider, setHeroProvider] = useState<AgentProvider>('vibe');
   const [heroModel, setHeroModel] = useState<AgentModelId>(AGENT_MODEL_OPTIONS[0].id);
@@ -470,8 +475,33 @@ function HomePageContent() {
   useEffect(() => {
     if (session.isPending || readyUserId !== userId || handledAppEntryRef.current) return;
 
+    const appParam = searchParams.get('app');
+    const deepLinkProjectId = searchParams.get('projectId')?.trim();
+    const deepLinkCanvasId = searchParams.get('canvasId')?.trim();
+
+    if (
+      appParam === 'canvas' &&
+      session.data?.user &&
+      deepLinkProjectId &&
+      deepLinkCanvasId
+    ) {
+      handledAppEntryRef.current = true;
+      setPendingCanvasDeepLink({
+        projectId: deepLinkProjectId,
+        canvasId: deepLinkCanvasId,
+      });
+
+      const timer = window.setTimeout(() => {
+        showEntryLoader('canvas');
+        showAppMode('library');
+        router.replace('/');
+      }, 0);
+
+      return () => window.clearTimeout(timer);
+    }
+
     const decision = getHomeEntryDecision({
-      appParam: searchParams.get('app'),
+      appParam,
       isAuthenticated: Boolean(session.data?.user),
     });
 
@@ -507,6 +537,16 @@ function HomePageContent() {
   ]);
 
   const showCanvasAfterProjectOpen = () => {
+    if (pendingCanvasDeepLink) {
+      const target = pendingCanvasDeepLink;
+      setPendingCanvasDeepLink(null);
+      showEntryLoader('canvas');
+      void switchCanvas(target.canvasId)
+        .catch(() => {})
+        .finally(() => showAppMode('canvas'));
+      return;
+    }
+
     if (refreshRestoreLoading) {
       showAppMode('canvas');
       return;
@@ -691,9 +731,10 @@ function HomePageContent() {
               onOpenProject={showCanvasAfterProjectOpen}
               onBackToHero={backToHero}
               restoreProjectId={
+                pendingCanvasDeepLink?.projectId ?? (
                 pendingRefreshRestore?.mode === 'canvas'
                   ? pendingRefreshRestore.projectId
-                  : undefined
+                  : undefined)
               }
               onRestoreProjectOpened={() => {
                 setPendingRefreshRestore(null);
