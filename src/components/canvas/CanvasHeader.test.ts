@@ -150,6 +150,17 @@ test("InfiniteCanvas wires all canvas lifecycle actions into the header", () => 
   }
 });
 
+test("InfiniteCanvas shows the shared loader while creating a named canvas", () => {
+  const source = readSource("InfiniteCanvas.tsx");
+
+  assert.match(source, /const \[canvasCreateLoading, setCanvasCreateLoading\] = useState\(false\)/);
+  assert.match(source, /onCreateCanvas=\{handleCreateCanvas\}/);
+  assert.match(source, /createCanvas\(name\)/);
+  assert.match(source, /setCanvasCreateLoading\(true\)[\s\S]*finally[\s\S]*setCanvasCreateLoading\(false\)/);
+  assert.match(source, /<UniqueLoading variant="squares" size="lg" \/>/);
+  assert.match(source, /正在创建画布/);
+});
+
 test("InfiniteCanvas serializes every canvas header action behind local busy state", () => {
   const source = readSource("InfiniteCanvas.tsx");
 
@@ -160,7 +171,8 @@ test("InfiniteCanvas serializes every canvas header action behind local busy sta
   assert.match(source, /if \(canvasHeaderActionPendingRef\.current\)/);
   assert.match(source, /busy=\{canvasHeaderBusy\}/);
   assert.ok((source.match(/runCanvasHeaderAction\(/g)?.length ?? 0) >= 3);
-  assert.ok((source.match(/runCanvasHeaderWriteAction\(/g)?.length ?? 0) >= 4);
+  assert.ok((source.match(/runCanvasHeaderWriteAction\(/g)?.length ?? 0) >= 3);
+  assert.match(source, /const handleCreateCanvas = useCallback[\s\S]*runCanvasHeaderAction\(/);
 });
 
 test("InfiniteCanvas rejects blocked writes at runtime without blocking navigation", () => {
@@ -171,7 +183,8 @@ test("InfiniteCanvas rejects blocked writes at runtime without blocking navigati
   assert.ok((source.match(/ensureCanvasWriteAvailable\(\)/g)?.length ?? 0) >= 7);
   assert.match(source, /const runCanvasHeaderWriteAction = useCallback/);
   assert.match(source, /onSelectCanvas=\{\(canvasId\) => runCanvasHeaderAction\(/);
-  assert.match(source, /onCreateCanvas=\{\(\) => runCanvasHeaderWriteAction\(/);
+  assert.match(source, /onCreateCanvas=\{handleCreateCanvas\}/);
+  assert.match(source, /const handleCreateCanvas = useCallback[\s\S]*if \(!ensureCanvasWriteAvailable\(\)\)/);
   assert.match(source, /open=\{pendingDeleteCanvas !== null && !canvasWriteBlocked\}/);
   assert.match(
     source,

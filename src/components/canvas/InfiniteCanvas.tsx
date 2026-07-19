@@ -10442,6 +10442,7 @@ function InnerCanvas({
   const [deleteProjectDialogOpen, setDeleteProjectDialogOpen] = useState(false);
   const canvasHeaderActionPendingRef = useRef(false);
   const [canvasHeaderPending, setCanvasHeaderPending] = useState(false);
+  const [canvasCreateLoading, setCanvasCreateLoading] = useState(false);
   const [pendingDeleteCanvas, setPendingDeleteCanvas] = useState<{ id: string; name: string } | null>(null);
   const [openDirectorNodeId, setOpenDirectorNodeId] = useState<string | null>(null);
   const [gridSnapEnabled, setGridSnapEnabled] = useState(false);
@@ -15738,6 +15739,22 @@ function InnerCanvas({
     await runCanvasHeaderAction(action, fallbackMessage);
   }, [ensureCanvasWriteAvailable, runCanvasHeaderAction]);
 
+  const handleCreateCanvas = useCallback(async (name: string) => {
+    if (!ensureCanvasWriteAvailable()) {
+      return;
+    }
+
+    setCanvasCreateLoading(true);
+    try {
+      await runCanvasHeaderAction(
+        () => createCanvas(name),
+        '新建画布失败',
+      );
+    } finally {
+      setCanvasCreateLoading(false);
+    }
+  }, [createCanvas, ensureCanvasWriteAvailable, runCanvasHeaderAction]);
+
   const handleRequestDeleteCanvas = useCallback((canvasId: string) => {
     if (!ensureCanvasWriteAvailable()) {
       return;
@@ -15868,10 +15885,7 @@ function InnerCanvas({
           () => switchCanvas(canvasId),
           '切换画布失败',
         )}
-        onCreateCanvas={() => runCanvasHeaderWriteAction(
-          () => createCanvas(),
-          '新建画布失败',
-        )}
+        onCreateCanvas={handleCreateCanvas}
         onRenameCanvas={(canvasId, name) => runCanvasHeaderWriteAction(
           () => renameCanvas(canvasId, name),
           '重命名画布失败',
@@ -15886,6 +15900,12 @@ function InnerCanvas({
           '打开画布失败',
         )}
       />
+      {canvasCreateLoading ? (
+        <div className="fixed inset-0 z-[180] flex flex-col items-center justify-center bg-[#08090b] text-white">
+          <UniqueLoading variant="squares" size="lg" />
+          <div className="mt-6 text-[12px] font-medium text-white/58">正在创建画布</div>
+        </div>
+      ) : null}
       {canvasWriteBlocked ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#090a0c]/72 backdrop-blur-[2px]">
           <div className="rounded-[16px] border border-white/10 bg-[#242527] px-6 py-5 text-center text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
