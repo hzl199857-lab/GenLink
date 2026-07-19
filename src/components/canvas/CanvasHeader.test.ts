@@ -183,6 +183,9 @@ test("InfiniteCanvas shows the shared loader while creating a named canvas", () 
   assert.match(source, /const blockCanvasCreateKeydown = \(event: KeyboardEvent\) => \{[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopImmediatePropagation\(\)/);
   assert.match(source, /window\.addEventListener\('keydown', blockCanvasCreateKeydown, true\)/);
   assert.match(source, /window\.removeEventListener\('keydown', blockCanvasCreateKeydown, true\)/);
+  assert.match(source, /let canvasCreateKeyboardBlocked = false/);
+  assert.match(source, /const handleKeyDown = \(event: KeyboardEvent\) => \{[\s\S]*?if \(canvasCreateKeyboardBlocked\)[\s\S]*?return;/);
+  assert.match(source, /const handleCreateCanvas = useCallback[\s\S]*canvasCreateKeyboardBlocked = true;[\s\S]*finally[\s\S]*canvasCreateKeyboardBlocked = false;/);
 });
 
 test("InfiniteCanvas serializes every canvas header action behind local busy state", () => {

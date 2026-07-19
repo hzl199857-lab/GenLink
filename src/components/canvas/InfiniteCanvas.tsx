@@ -280,6 +280,7 @@ let notifyMaterialLibraryRequest:
   | null = null;
 const MATERIAL_LIBRARY_REQUEST_EVENT = 'genlink:material-library-request';
 const INITIAL_AGENT_API_KEY_NOTICE = '请先填写 Agent 使用的 API Key，保存后将自动继续当前任务。';
+let canvasCreateKeyboardBlocked = false;
 let notifyImageGenerationNodeSelect:
   | ((nodeId: string) => void)
   | null = null;
@@ -4159,6 +4160,10 @@ const VideoNodeAdapter = memo(function VideoNodeAdapter({ id, data, selected, xP
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (canvasCreateKeyboardBlocked) {
+        return;
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault();
         setClipOpen(false);
@@ -15759,6 +15764,7 @@ function InnerCanvas({
       return false;
     }
 
+    canvasCreateKeyboardBlocked = true;
     setCanvasCreateLoading(true);
     try {
       return await runCanvasHeaderAction(
@@ -15766,6 +15772,7 @@ function InnerCanvas({
         '新建画布失败',
       );
     } finally {
+      canvasCreateKeyboardBlocked = false;
       setCanvasCreateLoading(false);
     }
   }, [createCanvas, ensureCanvasWriteAvailable, runCanvasHeaderAction]);
