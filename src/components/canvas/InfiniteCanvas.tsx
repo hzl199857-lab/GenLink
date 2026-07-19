@@ -3520,6 +3520,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const imageData = data as ImageNodeData;
+  const isUploading = imageData.status === 'generating';
   const hasImage = Boolean(imageData.imageUrl?.trim() || imageData.hostedImageUrl?.trim());
   const cameraAngle = imageData.cameraAngle ?? THREE_VIEW_DEFAULT_ANGLE;
   const threeViewOpen = threeViewControllerNodeId === id;
@@ -3636,7 +3637,7 @@ const ImageNodeAdapter = memo(function ImageNodeAdapter({ id, data, selected }: 
     <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
       <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
         <ImageGenerationNodeToolbar
-          visible={isActive}
+          visible={isActive && !isUploading}
           top={-IMAGE_NODE_TOOLBAR_LIFT}
           hasGeneratedImage={hasImage}
           panActive={threeViewOpen}
@@ -3702,6 +3703,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
   const renderData = data as CanvasNodeRenderData;
   const isActive = !!selected && !!renderData.canvasNodeActive;
   const uploadedData = data as UploadedImageNodeData;
+  const isUploading = 'status' in uploadedData && uploadedData.status === 'generating';
   const hasImage = Boolean(uploadedData.imageUrl?.trim());
   const [cameraAngle, setCameraAngle] = useState<ThreeViewControllerValue>(THREE_VIEW_DEFAULT_ANGLE);
   const threeViewOpen = threeViewControllerNodeId === id;
@@ -3745,7 +3747,7 @@ const UploadedImageNodeAdapter = memo(function UploadedImageNodeAdapter({ id, da
     <div className="relative group node-connectable-root" style={{ width: `${cardDimensions.width}px`, paddingTop: '74px' }}>
       <div className="relative" style={{ width: `${cardDimensions.width}px` }}>
         <ImageGenerationNodeToolbar
-          visible={isActive}
+          visible={isActive && !isUploading}
           top={-IMAGE_NODE_TOOLBAR_LIFT}
           hasGeneratedImage={hasImage}
           panActive={threeViewOpen}

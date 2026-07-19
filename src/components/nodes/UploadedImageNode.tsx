@@ -3,7 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import NextImage from 'next/image';
 import { Position } from 'reactflow';
-import { Image as ImageIcon, Upload } from 'lucide-react';
+import { Image as ImageIcon, LoaderCircle, Upload } from 'lucide-react';
 import type { ImageNodeData, UploadedImageNodeData } from '../../types/canvas';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 import { CardSideHandle } from './CardSideHandle';
@@ -93,7 +93,6 @@ export function UploadedImageNode({
       : 'right-3 top-3 rounded-[10px] px-3 py-2 text-[14px]';
   const replaceButtonGapClassName = useTightReplaceButton ? 'gap-1' : useCompactReplaceButton ? 'gap-1.5' : 'gap-2';
   const replaceIconSize = useTightReplaceButton ? 13 : useCompactReplaceButton ? 15 : 16;
-  const canReplace = Boolean(onReplace);
   const displayTitle = getNodeDisplayTitle(data);
   const displayAlt = displayTitle || ('prompt' in data ? data.prompt : undefined) || 'Image';
   const isGenerating = 'status' in data && data.status === 'generating';
@@ -104,6 +103,10 @@ export function UploadedImageNode({
   const errorMessage = 'errorMessage' in data && typeof data.errorMessage === 'string'
     ? data.errorMessage
     : undefined;
+  const uploadMessage = !statusMessage || statusMessage === 'Uploading...'
+    ? '上传中...'
+    : statusMessage;
+  const canReplace = Boolean(onReplace) && !isGenerating;
   const displayImageUrl = 'previewUrl' in data && data.previewUrl
     ? data.previewUrl
     : data.imageUrl;
@@ -173,14 +176,27 @@ export function UploadedImageNode({
         )}
 
         {isGenerating ? (
-          <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-black/70 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
-            {statusMessage || 'Uploading...'}
+          <div
+            role="status"
+            aria-live="polite"
+            data-upload-state="uploading"
+            className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 text-white backdrop-blur-[2px] transition-opacity duration-200"
+          >
+            <LoaderCircle
+              aria-hidden="true"
+              className="animate-spin"
+              size={22}
+              strokeWidth={2.2}
+            />
+            <span className="text-[14px] font-semibold tracking-wide">
+              {uploadMessage}
+            </span>
           </div>
         ) : null}
 
         {isError ? (
           <div className="absolute inset-x-3 bottom-3 z-10 rounded-[8px] bg-red-600/85 px-2.5 py-1.5 text-center text-[12px] font-semibold text-white shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
-            {errorMessage || 'Upload failed'}
+            {errorMessage || '上传失败'}
           </div>
         ) : null}
 
