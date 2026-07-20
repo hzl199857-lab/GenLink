@@ -39,6 +39,24 @@ class MemoryStorage implements Storage {
   setItem(key: string, value: string) { this.values.set(key, String(value)); }
 }
 
+class QuotaStorage extends MemoryStorage {
+  private readonly failures = new Map<string, number>();
+
+  failNextWrite(key: string) {
+    this.failures.set(key, (this.failures.get(key) ?? 0) + 1);
+  }
+
+  override setItem(key: string, value: string) {
+    const remaining = this.failures.get(key) ?? 0;
+    if (remaining > 0) {
+      this.failures.set(key, remaining - 1);
+      throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+    }
+
+    super.setItem(key, value);
+  }
+}
+
 const history = require("./agent-history.ts") as typeof import("./agent-history");
 const originalWindow = globalThis.window;
 
@@ -46,7 +64,9 @@ afterEach(() => {
   Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
 });
 
-function installStorage(storage = new MemoryStorage()) {
+function installStorage(): MemoryStorage;
+function installStorage<T extends MemoryStorage>(storage: T): T;
+function installStorage(storage: MemoryStorage = new MemoryStorage()) {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: { localStorage: storage },
@@ -111,6 +131,43 @@ test("allows only one user to claim legacy agent history", () => {
 
   assert.equal(history.listAgentThreads("user-a", "project-1", "Project").length, 1);
   assert.equal(history.listAgentThreads("user-b", "project-1", "Project").length, 0);
+});
+
+test("keeps legacy agent history readable when scoped migration exceeds storage quota", () => {
+  const storage = installStorage(new QuotaStorage());
+  storage.setItem("genlink.canvasAgentThreads.v1", JSON.stringify({
+    version: 1,
+    threads: [{
+      id: "legacy-thread",
+      projectId: "project-1",
+      projectName: "Project",
+      title: "Legacy",
+      messages: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }],
+  }));
+  storage.failNextWrite(
+    "genlink.user.user-a.genlink.canvasAgentThreads.v1",
+  );
+
+  assert.doesNotThrow(() => {
+    assert.equal(
+      history.listAgentThreads("user-a", "project-1", "Project").length,
+      1,
+    );
+  });
+});
+
+test("does not throw when an agent draft cannot be persisted because storage is full", () => {
+  const storage = installStorage(new QuotaStorage());
+  storage.failNextWrite(
+    "genlink.user.user-a.genlink.canvasAgentDrafts.v1",
+  );
+
+  assert.doesNotThrow(() => {
+    history.saveAgentDraft("user-a", "project-1", "Project", "draft-a");
+  });
 });
 
 test("does not save an empty or previous-user draft before the current scope hydrates", () => {

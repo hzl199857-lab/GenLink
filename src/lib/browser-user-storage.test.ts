@@ -139,24 +139,21 @@ test("claims legacy storage even when there is no legacy value to migrate", () =
   assert.equal(storage.getItem(userStorageKey("user-b", "canvas.provider")), null);
 });
 
-test("does not claim legacy storage when writing the scoped value fails", () => {
+test("moves legacy storage when copying the scoped value exceeds quota", () => {
   const storage = new FailingStorage();
   const scopedKey = userStorageKey("user-a", "canvas.provider");
   const claimKey = "genlink.legacy-claimed.v1.canvas.provider";
   storage.setItem("canvas.provider", "legacy-provider");
   storage.failNextWrite(scopedKey);
 
-  assert.throws(
-    () => migrateLegacyStorageValue("user-a", "canvas.provider", storage),
-    (error) => error instanceof DOMException && error.name === "QuotaExceededError",
+  assert.equal(
+    migrateLegacyStorageValue("user-a", "canvas.provider", storage),
+    "legacy-provider",
   );
-  assert.equal(storage.getItem(scopedKey), null);
-  assert.equal(storage.getItem(claimKey), null);
-  assert.equal(storage.getItem("canvas.provider"), "legacy-provider");
-
-  assert.equal(migrateLegacyStorageValue("user-a", "canvas.provider", storage), "legacy-provider");
   assert.equal(storage.getItem(scopedKey), "legacy-provider");
   assert.equal(storage.getItem(claimKey), "user-a");
+  assert.equal(storage.getItem("canvas.provider"), null);
+  assert.equal(migrateLegacyStorageValue("user-b", "canvas.provider", storage), null);
 });
 
 test("rolls back a newly scoped value when committing the claim marker fails", () => {

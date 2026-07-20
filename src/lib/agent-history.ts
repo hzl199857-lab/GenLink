@@ -31,13 +31,37 @@ function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+function isStorageQuotaError(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "name" in error &&
+    (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED"),
+  );
+}
+
+function readAgentStorageValue(userId: string, storageKey: string): string | null {
+  const storage = window.localStorage;
+
+  try {
+    migrateLegacyStorageValue(userId, storageKey, storage);
+    return storage.getItem(userStorageKey(userId, storageKey));
+  } catch (error) {
+    if (!isStorageQuotaError(error)) {
+      return null;
+    }
+
+    return storage.getItem(userStorageKey(userId, storageKey))
+      ?? storage.getItem(storageKey);
+  }
+}
+
 function readStorage(userId: string): AgentThreadStorage {
   if (!canUseStorage()) {
     return { version: 1, threads: [] };
   }
 
-  migrateLegacyStorageValue(userId, AGENT_HISTORY_STORAGE_KEY, window.localStorage);
-  const raw = window.localStorage.getItem(userStorageKey(userId, AGENT_HISTORY_STORAGE_KEY));
+  const raw = readAgentStorageValue(userId, AGENT_HISTORY_STORAGE_KEY);
 
   if (!raw) {
     return { version: 1, threads: [] };
@@ -83,10 +107,7 @@ function writeStorage(userId: string, storage: AgentThreadStorage): boolean {
     );
     return true;
   } catch (error) {
-    if (
-      error instanceof DOMException &&
-      (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
-    ) {
+    if (isStorageQuotaError(error)) {
       return false;
     }
 
@@ -99,8 +120,7 @@ function readDraftStorage(userId: string): AgentDraftStorage {
     return { version: 1, drafts: {} };
   }
 
-  migrateLegacyStorageValue(userId, AGENT_DRAFT_STORAGE_KEY, window.localStorage);
-  const raw = window.localStorage.getItem(userStorageKey(userId, AGENT_DRAFT_STORAGE_KEY));
+  const raw = readAgentStorageValue(userId, AGENT_DRAFT_STORAGE_KEY);
 
   if (!raw) {
     return { version: 1, drafts: {} };
@@ -131,11 +151,17 @@ function writeDraftStorage(userId: string, storage: AgentDraftStorage): void {
     return;
   }
 
-  migrateLegacyStorageValue(userId, AGENT_DRAFT_STORAGE_KEY, window.localStorage);
-  window.localStorage.setItem(
-    userStorageKey(userId, AGENT_DRAFT_STORAGE_KEY),
-    JSON.stringify(storage),
-  );
+  try {
+    migrateLegacyStorageValue(userId, AGENT_DRAFT_STORAGE_KEY, window.localStorage);
+    window.localStorage.setItem(
+      userStorageKey(userId, AGENT_DRAFT_STORAGE_KEY),
+      JSON.stringify(storage),
+    );
+  } catch (error) {
+    if (!isStorageQuotaError(error)) {
+      throw error;
+    }
+  }
 }
 
 function createThreadTitle(messages: AgentPanelMessage[]): string {
