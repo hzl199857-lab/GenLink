@@ -6,6 +6,7 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { AuthConsent } from "@/components/auth/AuthConsent";
+import { readAuthApiResponse } from "@/lib/auth-api-response";
 import { authClient } from "@/lib/auth-client";
 import {
   getRegisterAccountErrorMessage,
@@ -105,11 +106,7 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      const result = (await response.json()) as {
-        ok?: boolean;
-        error?: string;
-        devCode?: string;
-      };
+      const result = await readAuthApiResponse(response);
 
       if (!response.ok || !result.ok) {
         setError(getRegisterFlowErrorMessage(result.error));
@@ -121,6 +118,8 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
       }
 
       setStep("code");
+    } catch {
+      setError(getRegisterFlowErrorMessage());
     } finally {
       setSendingCode(false);
     }
@@ -146,10 +145,7 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code: codeValue }),
       });
-      const verifyResult = (await verifyResponse.json()) as {
-        ok?: boolean;
-        error?: string;
-      };
+      const verifyResult = await readAuthApiResponse(verifyResponse);
 
       if (!verifyResponse.ok || !verifyResult.ok) {
         setError(getRegisterFlowErrorMessage(verifyResult.error));
@@ -178,6 +174,8 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
       }
 
       setStep("success");
+    } catch {
+      setError(getRegisterFlowErrorMessage());
     } finally {
       setSubmitting(false);
     }

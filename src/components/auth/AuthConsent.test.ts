@@ -55,6 +55,12 @@ test("login and registration require explicit legal consent", () => {
   assert.match(registerSource, /<AuthConsent/);
 });
 
+test("registration handles failed API responses without parsing them blindly", () => {
+  assert.match(registerSource, /readAuthApiResponse/);
+  assert.doesNotMatch(registerSource, /response\.json\(\)/);
+  assert.doesNotMatch(registerSource, /verifyResponse\.json\(\)/);
+});
+
 test("legal documents cover service, safety, and privacy obligations", () => {
   assert.match(legalDocumentSource, /GenLink 服务条款/);
   assert.match(legalDocumentSource, /GenLink 社区准则/);
