@@ -165,7 +165,7 @@ function AddNodeMenuItem({
 export function AddNodeMenu({ x, y, onSelect, onMouseEnter, onMouseLeave }: AddNodeMenuProps) {
   return (
     <div
-      className="fixed z-[65] w-[196px] rounded-[12px] border border-white/10 bg-[#191A1C]/95 p-2 shadow-[0_18px_42px_rgba(0,0,0,0.48)] backdrop-blur-xl"
+      className="fixed z-[75] w-[196px] rounded-[12px] border border-white/10 bg-[#191A1C]/95 p-2 shadow-[0_18px_42px_rgba(0,0,0,0.48)] backdrop-blur-xl"
       style={{ left: x, top: y }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}

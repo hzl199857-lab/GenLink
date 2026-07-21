@@ -130,6 +130,12 @@ test("starting a project name edit closes any open header menu", () => {
   assert.match(headerSource, /onEditStart=\{\(\) => setOpenMenu\(null\)\}/);
 });
 
+test("open canvas header menus render above neighboring tool panels", () => {
+  const source = readSource("CanvasHeader.tsx");
+
+  assert.match(source, /openMenu \? 'z-\[75\]' : 'z-\[70\]'/);
+});
+
 test("write blocking preserves canvas navigation while disabling write actions", () => {
   const switcherSource = readSource("CanvasSwitcher.tsx");
   const headerSource = readSource("CanvasHeader.tsx");
@@ -252,7 +258,8 @@ test("checking and blocked locks guard every save entry and cover non-header con
   assert.ok(autoSaveEffect);
   assert.match(autoSaveEffect, /ensureCanvasWriteAvailable\(\)/);
   assert.match(source, /fixed inset-0 z-\[60\]/);
-  assert.match(headerSource, /fixed left-4 top-4 z-\[70\]/);
+  assert.match(headerSource, /fixed left-4 top-4/);
+  assert.match(headerSource, /openMenu \? 'z-\[75\]' : 'z-\[70\]'/);
   assert.match(source, /<CanvasToolbar[\s\S]*onSaveProject=\{\(\) => void handleSaveProject\(\)\}/);
 });
 

@@ -88,3 +88,15 @@ test("uses expandable hover and keyboard focus animation classes", () => {
   assert.match(html, /group-hover:opacity-100/);
   assert.match(html, /group-focus-visible:opacity-100/);
 });
+
+test("renders above the canvas header without covering full-screen edit overlays", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AddNodeMenu, {
+      x: 24,
+      y: 36,
+    }),
+  );
+
+  assert.match(html, /z-\[75\]/);
+  assert.doesNotMatch(html, /z-\[65\]/);
+});
