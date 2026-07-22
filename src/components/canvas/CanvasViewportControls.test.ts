@@ -36,15 +36,33 @@ test("pane selection ignores click jitter below the drag threshold", () => {
   assert.match(selectionEnd, /clearEdgeSelection\(\);/);
 });
 
-test("node multi-selection uses Shift in ReactFlow and does not toggle selection twice", () => {
+test("node multi-selection uses Shift and commits the exact selection synchronously", () => {
   assert.match(source, /multiSelectionKeyCode="Shift"/);
 
   const nodeClick = source.match(
     /const handleNodeClick = useCallback\([\s\S]*?(?=\n  const handleNodeContextMenu)/,
   )?.[0] ?? "";
 
-  assert.match(nodeClick, /if \(event\.shiftKey\) \{[\s\S]*?return;/);
-  assert.doesNotMatch(nodeClick, /setSelectedNodeIds\(\(current\) => \{/);
+  assert.match(nodeClick, /if \(event\.shiftKey\) \{[\s\S]*?const nextSelection = new Set\(selectedNodeIdsRef\.current\);/);
+  assert.match(nodeClick, /selectedNodeIdsRef\.current = nextSelection;/);
+  assert.match(nodeClick, /setSelectedNodeIds\(nextSelection\);/);
+});
+
+test("multi-node selection frame stays visible for nodes inside an existing group", () => {
+  const multiNodeSelectionOverlay = source.match(
+    /function MultiNodeSelectionOverlay[\s\S]*?\n}\n\nconst CanvasMiniMap/,
+  )?.[0] ?? "";
+
+  assert.doesNotMatch(multiNodeSelectionOverlay, /findContainingGroupForNodeSelection/);
+  assert.match(multiNodeSelectionOverlay, /if \(!visible \|\| !bounds \|\| selectedNodes\.length <= 1\)/);
+});
+
+test("a node selection resolves to a group only when every group node is selected", () => {
+  const containingGroup = source.match(
+    /function findContainingGroupForNodeSelection[\s\S]*?\n}\n\nfunction findGroupAtCanvasPoint/,
+  )?.[0] ?? "";
+
+  assert.match(containingGroup, /if \(groupNodeIds\.size !== selectedNodeIds\.size\)/);
 });
 
 test("canvas viewport controls expose a grid snap toggle", () => {

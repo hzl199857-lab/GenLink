@@ -5223,6 +5223,11 @@ function findContainingGroupForNodeSelection(
   for (let index = groups.length - 1; index >= 0; index -= 1) {
     const group = groups[index];
     const groupNodeIds = new Set(group.nodeIds);
+
+    if (groupNodeIds.size !== selectedNodeIds.size) {
+      continue;
+    }
+
     let containsSelection = true;
 
     for (const nodeId of selectedNodeIds) {
@@ -6251,7 +6256,6 @@ type MultiNodeSelectionOverlayProps = {
   nodes: CanvasNode[];
   flowNodes: ReactFlowNode[];
   selectedNodeIds: Set<string>;
-  groups: NodeGroup[];
   visible: boolean;
   onLayout: (nodeIds: string[], mode: CanvasLayoutMode) => void;
   onAddToConversation: (nodeIds: string[]) => void;
@@ -7235,7 +7239,6 @@ function MultiNodeSelectionOverlay({
   nodes,
   flowNodes,
   selectedNodeIds,
-  groups,
   visible,
   onLayout,
   onAddToConversation,
@@ -7276,13 +7279,8 @@ function MultiNodeSelectionOverlay({
     () => selectedNodes.map((node) => node.id).sort().join('|'),
     [selectedNodes],
   );
-  const selectedGroup = useMemo(
-    () => findContainingGroupForNodeSelection(groups, selectedNodeIds),
-    [groups, selectedNodeIds],
-  );
-
   useEffect(() => {
-    if (selectedNodes.length <= 1 || selectedGroup) {
+    if (selectedNodes.length <= 1) {
       return;
     }
 
@@ -7340,9 +7338,9 @@ function MultiNodeSelectionOverlay({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', scheduleUpdate);
     };
-  }, [selectedGroup, selectedNodeIdsKey, selectedNodes, viewport.x, viewport.y, viewport.zoom]);
+  }, [selectedNodeIdsKey, selectedNodes, viewport.x, viewport.y, viewport.zoom]);
 
-  if (!visible || !bounds || selectedNodes.length <= 1 || selectedGroup) {
+  if (!visible || !bounds || selectedNodes.length <= 1) {
     return null;
   }
 
@@ -11918,9 +11916,11 @@ function InnerCanvas({
 
   const selectSingleNode = useCallback((nodeId: string) => {
     clearCanvasNodeUi();
-    setSelectedNodeIds((current) =>
-      current.size === 1 && current.has(nodeId) ? current : new Set([nodeId]),
-    );
+    const nextSelection = new Set([nodeId]);
+    selectedNodeIdsRef.current = nextSelection;
+    setSelectedNodeIds((current) => (
+      current.size === 1 && current.has(nodeId) ? current : nextSelection
+    ));
     setActiveNodeId(nodeId);
     setSelectedGroupId(null);
     clearEdgeSelection();
@@ -12336,7 +12336,20 @@ function InnerCanvas({
     setSelectedGroupId(null);
 
     if (event.shiftKey) {
-      // ReactFlow handles Shift multi-selection through multiSelectionKeyCode.
+      clearCanvasNodeUi();
+      const nextSelection = new Set(selectedNodeIdsRef.current);
+
+      if (nextSelection.has(node.id)) {
+        nextSelection.delete(node.id);
+      } else {
+        nextSelection.add(node.id);
+      }
+
+      selectedNodeIdsRef.current = nextSelection;
+      setSelectedNodeIds(nextSelection);
+      setActiveNodeId(
+        nextSelection.size === 1 ? Array.from(nextSelection)[0] ?? null : null,
+      );
       return;
     }
 
@@ -16063,7 +16076,6 @@ function InnerCanvas({
           nodes={storeNodes}
           flowNodes={rfNodes}
           selectedNodeIds={selectedNodeIds}
-          groups={storeGroups}
           visible={!selectedGroupId && !groupDragActive && !selectionInProgress && !paneSelectionDragging}
           onLayout={handleLayoutSelectedNodes}
           onAddToConversation={handleAddSelectedNodesToConversation}
