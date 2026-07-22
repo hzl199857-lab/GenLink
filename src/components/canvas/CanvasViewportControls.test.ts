@@ -20,6 +20,33 @@ test("canvas zoom slider blocks pane and group drag mouse handling", () => {
   assert.match(sliderMarkup, /onMouseDown=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
+test("pane selection ignores click jitter below the drag threshold", () => {
+  assert.match(source, /const PANE_SELECTION_DRAG_THRESHOLD = 6;/);
+  assert.match(
+    source,
+    /Math\.hypot\(dx, dy\) >= PANE_SELECTION_DRAG_THRESHOLD[\s\S]*?paneSelectionMovedRef\.current = true;/,
+  );
+
+  const selectionEnd = source.match(
+    /const handleSelectionEnd = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[clearEdgeSelection, selectGroup\]\);/,
+  )?.[0] ?? "";
+
+  assert.match(selectionEnd, /if \(!selectionMoved\)/);
+  assert.match(selectionEnd, /selectedNodeIdsRef\.current = emptySelection;/);
+  assert.match(selectionEnd, /clearEdgeSelection\(\);/);
+});
+
+test("node multi-selection uses Shift in ReactFlow and does not toggle selection twice", () => {
+  assert.match(source, /multiSelectionKeyCode="Shift"/);
+
+  const nodeClick = source.match(
+    /const handleNodeClick = useCallback\([\s\S]*?(?=\n  const handleNodeContextMenu)/,
+  )?.[0] ?? "";
+
+  assert.match(nodeClick, /if \(event\.shiftKey\) \{[\s\S]*?return;/);
+  assert.doesNotMatch(nodeClick, /setSelectedNodeIds\(\(current\) => \{/);
+});
+
 test("canvas viewport controls expose a grid snap toggle", () => {
   assert.match(source, /aria-label=\{gridSnapLabel\}/);
   assert.match(source, /aria-pressed=\{gridSnapEnabled\}/);

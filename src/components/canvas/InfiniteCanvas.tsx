@@ -4796,6 +4796,7 @@ const IMAGE_IMPORT_SPACING_Y = 48;
 const CANVAS_MIN_ZOOM = 0.2;
 const CANVAS_MAX_ZOOM = 2;
 const CANVAS_SNAP_GRID_SIZE = 24;
+const PANE_SELECTION_DRAG_THRESHOLD = 6;
 const CANVAS_EDGE_STYLE_STORAGE_KEY = 'genlink.canvasEdgeStyle';
 const CANVAS_EDGE_STYLE_CHANGE_EVENT = 'genlink:canvas-edge-style-change';
 const TEXT_NODE_CARD_WIDTH = 511;
@@ -10871,6 +10872,7 @@ function InnerCanvas({
   const skipNextPaneClickClearRef = useRef(false);
   const cropPrevViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
   const selectionDragActiveRef = useRef(false);
+  const paneSelectionMovedRef = useRef(false);
   const panePointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const paneGroupDragRef = useRef<{ groupId: string; lastX: number; lastY: number; moved: boolean } | null>(null);
   const activeGroupDragIdRef = useRef<string | null>(null);
@@ -12334,17 +12336,7 @@ function InnerCanvas({
     setSelectedGroupId(null);
 
     if (event.shiftKey) {
-      setSelectedNodeIds((current) => {
-        const next = new Set(current);
-
-        if (next.has(node.id)) {
-          next.delete(node.id);
-        } else {
-          next.add(node.id);
-        }
-
-        return next;
-      });
+      // ReactFlow handles Shift multi-selection through multiSelectionKeyCode.
       return;
     }
 
@@ -12419,6 +12411,8 @@ function InnerCanvas({
   }, [clearEdgeSelection]);
 
   const handleSelectionStart = useCallback(() => {
+    paneSelectionMovedRef.current = false;
+
     if (paneGroupDragRef.current || suppressSelectionWhileGroupDraggingRef.current) {
       selectionDragActiveRef.current = false;
       setSelectionInProgress(false);
@@ -12433,12 +12427,24 @@ function InnerCanvas({
   }, []);
 
   const handleSelectionEnd = useCallback(() => {
+    const selectionMoved = paneSelectionMovedRef.current;
     selectionDragActiveRef.current = false;
+    paneSelectionMovedRef.current = false;
     panePointerStartRef.current = null;
     setPaneSelectionDragging(false);
     setSelectionInProgress(false);
 
     if (paneGroupDragRef.current || suppressSelectionWhileGroupDraggingRef.current) {
+      return;
+    }
+
+    if (!selectionMoved) {
+      const emptySelection = new Set<string>();
+      selectedNodeIdsRef.current = emptySelection;
+      setSelectedNodeIds((current) => (current.size === 0 ? current : emptySelection));
+      setActiveNodeId(null);
+      clearCanvasNodeUi();
+      clearEdgeSelection();
       return;
     }
 
@@ -12452,7 +12458,7 @@ function InnerCanvas({
         selectGroup(group.id);
       }
     });
-  }, [selectGroup]);
+  }, [clearEdgeSelection, selectGroup]);
 
   const moveSelectedFlowNodes = useCallback((dx: number, dy: number, dragging: boolean) => {
     const selectedIds = selectedNodeIdsRef.current;
@@ -12721,6 +12727,8 @@ function InnerCanvas({
   }, []);
 
   const handlePaneMouseDown = useCallback((event: React.MouseEvent) => {
+    paneSelectionMovedRef.current = false;
+
     if (event.button === 0) {
       setContextMenu(null);
       setNodeContextMenu(null);
@@ -12822,10 +12830,11 @@ function InnerCanvas({
       return;
     }
 
-    const dx = Math.abs(event.clientX - start.x);
-    const dy = Math.abs(event.clientY - start.y);
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
 
-    if (dx > 3 || dy > 3) {
+    if (Math.hypot(dx, dy) >= PANE_SELECTION_DRAG_THRESHOLD) {
+      paneSelectionMovedRef.current = true;
       setPaneSelectionDragging(true);
     }
   }, [getViewport, handleGroupDrag, updateHoveredGroupFromPointer]);
@@ -16012,6 +16021,7 @@ function InnerCanvas({
         zoomOnScroll={false}
         zoomActivationKeyCode="Control"
         selectionOnDrag
+        multiSelectionKeyCode="Shift"
         selectionMode={SelectionMode.Partial}
         defaultEdgeOptions={{
           animated: false,
