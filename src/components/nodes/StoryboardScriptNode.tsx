@@ -44,7 +44,7 @@ import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
 
 const HEADER_HEIGHT = 48;
 const ROW_MIN_HEIGHT = 74;
-const REFERENCE_PATTERN = /@(鍥剧墖|瑙嗛)(\d+)/g;
+const REFERENCE_PATTERN = /@(图片|视频)(\d+)/g;
 
 const STORYBOARD_CTRL_WHEEL_ZOOM_STEP = 0.0015;
 const STORYBOARD_CANVAS_MIN_ZOOM = 0.2;
@@ -129,7 +129,7 @@ function getReferenceImageMap(
   const resolvedReferences = referenceImages?.length
     ? referenceImages
     : connectedImages.map((image, index) => ({
-        label: `@鍥剧墖${index + 1}`,
+        label: `@图片${index + 1}`,
         url: image.imageUrl,
         previewUrl: image.previewUrl,
         sourceNodeId: image.id,
@@ -158,7 +158,7 @@ function getReferenceMediaMap(
   const resolvedVideos = referenceVideos?.length
     ? referenceVideos
     : connectedVideos.map((video, index) => ({
-        label: `@瑙嗛${index + 1}`,
+        label: `@视频${index + 1}`,
         url: video.videoUrl,
         previewUrl: video.previewUrl,
         sourceNodeId: video.id,
@@ -384,9 +384,10 @@ function EmptyState() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 px-10 text-center">
       <Clapperboard size={42} className="text-gl-text-muted" />
-      <div className="text-[15px] font-medium text-gl-text-secondary">杩樻病鏈夊垎闀滆〃</div>
+      <div className="text-[15px] font-medium text-gl-text-secondary">还没有分镜表</div>
       <div className="w-full max-w-[520px] text-[12px] leading-5 text-gl-text-muted">
-        鍦ㄤ笅鏂硅緭鍏ュ墽鏈€侀暅澶存暟閲忋€侀鏍兼垨鏃堕暱锛屼篃鍙互杩炴帴鍙傝€冨浘鍚庣敓鎴愮粨鏋勫寲鍒嗛暅銆?      </div>
+        在下方输入剧本、镜头数量、风格或时长，也可以连接参考图后生成结构化分镜。
+      </div>
     </div>
   );
 }
@@ -725,7 +726,7 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
         <Clapperboard size={24} />
         <EditableNodeTitle
           value={data.title}
-          fallbackValue="鍒嗛暅鑴氭湰"
+          fallbackValue="分镜脚本"
           editRequestId={titleEditRequestId}
           className="text-[22px] font-medium leading-none"
           inputClassName="nodrag nopan rounded bg-white/8 px-1 text-[22px] font-medium leading-none text-gl-text-primary outline-none ring-1 ring-white/18"
@@ -760,9 +761,9 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
         >
           <div className="flex items-center gap-2">
             <Clapperboard size={15} className="text-gl-text-tertiary" />
-            <span className="text-[13px] font-semibold text-gl-text-secondary">鍒嗛暅鑴氭湰</span>
+            <span className="text-[13px] font-semibold text-gl-text-secondary">分镜脚本</span>
             {isGenerating ? (
-              <span className="ml-2 text-[11px] text-gl-text-muted">鐢熸垚涓?..</span>
+              <span className="ml-2 text-[11px] text-gl-text-muted">生成中...</span>
             ) : null}
           </div>
 
@@ -778,7 +779,8 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
               onClick={() => patchData({ focusMode: 'imagePrompt' })}
             >
               <Images size={12} />
-              鍥剧墖鎻愮ず璇?            </button>
+              图片提示词
+            </button>
             <button
               type="button"
               className={[
@@ -790,7 +792,8 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
               onClick={() => patchData({ focusMode: 'videoPrompt' })}
             >
               <Video size={12} />
-              瑙嗛鎻愮ず璇?            </button>
+              视频提示词
+            </button>
             <button
               type="button"
               className={[
@@ -802,7 +805,7 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
               onClick={() => patchData({ viewMode: 'list' })}
             >
               <List size={12} />
-              鍒楄〃瑙嗗浘
+              列表视图
             </button>
             <button
               type="button"
@@ -815,13 +818,13 @@ export const StoryboardScriptNode = memo(function StoryboardScriptNode({
               onClick={() => patchData({ viewMode: 'card' })}
             >
               <Rows3 size={12} />
-              鍗＄墖瑙嗗浘
+              卡片视图
             </button>
             <button
               type="button"
               disabled
               className="inline-flex h-7 items-center gap-1 rounded-[8px] px-2 text-[11px] font-medium text-gl-text-muted opacity-60"
-              title="瀵煎嚭灏嗗湪鍚庣画鐗堟湰鎻愪緵"
+              title="导出将在后续版本提供"
             >
               <FileDown size={12} />
             </button>
