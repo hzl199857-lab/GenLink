@@ -58,6 +58,7 @@ import ReactFlow, {
   PanOnScrollMode,
   SelectionMode,
   type OnConnectStartParams,
+  useKeyPress,
   useStore,
   getViewportForBounds,
   applyNodeChanges,
@@ -254,6 +255,12 @@ import {
 } from '@/lib/material-library';
 import { hasAgentApiCredential } from '@/lib/agent-api-key';
 import { writeClipboardContent } from '@/lib/clipboard-content';
+import {
+  CANVAS_NODE_CLIPBOARD_TEXT_MARKER,
+  getClipboardImageFiles,
+  isCanvasNodeClipboard,
+  markCanvasNodeClipboard,
+} from '@/lib/canvas/clipboard-paste';
 import { areCanvasNodesSynced } from '@/lib/project-open-transition';
 import {
   CreateProjectDialog,
@@ -5668,19 +5675,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
-function hasEditableTextSelection(target: EventTarget | null): boolean {
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-    return target.selectionStart !== target.selectionEnd;
-  }
-
-  if (target instanceof HTMLElement && target.isContentEditable) {
-    const selection = window.getSelection();
-    return Boolean(selection && !selection.isCollapsed && target.contains(selection.anchorNode));
-  }
-
-  return false;
-}
-
 function isNodeCardFocusTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
@@ -5695,23 +5689,6 @@ function isNodeCardFocusTarget(target: EventTarget | null): boolean {
   }
 
   return Boolean(target.closest('.node-connectable-card'));
-}
-
-function getClipboardImageFiles(data: DataTransfer | null): File[] {
-  if (!data) {
-    return [];
-  }
-
-  const filesFromItems = Array.from(data.items)
-    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => file instanceof File);
-
-  if (filesFromItems.length > 0) {
-    return filesFromItems;
-  }
-
-  return Array.from(data.files).filter((file) => file.type.startsWith('image/'));
 }
 
 function clearCanvasNodeUi() {
@@ -6256,6 +6233,7 @@ type MultiNodeSelectionOverlayProps = {
   nodes: CanvasNode[];
   flowNodes: ReactFlowNode[];
   selectedNodeIds: Set<string>;
+  selectionModifierActive: boolean;
   visible: boolean;
   onLayout: (nodeIds: string[], mode: CanvasLayoutMode) => void;
   onAddToConversation: (nodeIds: string[]) => void;
@@ -7239,6 +7217,7 @@ function MultiNodeSelectionOverlay({
   nodes,
   flowNodes,
   selectedNodeIds,
+  selectionModifierActive,
   visible,
   onLayout,
   onAddToConversation,
@@ -7403,7 +7382,10 @@ function MultiNodeSelectionOverlay({
       </GroupLayoutMenuContext.Provider>
       <div
         data-canvas-menu-ignore="true"
-        className="pointer-events-auto absolute inset-0 z-10 cursor-move"
+        className={[
+          selectionModifierActive ? 'pointer-events-none' : 'pointer-events-auto',
+          'absolute inset-0 z-10 cursor-move',
+        ].join(' ')}
         onPointerDown={onSelectionFramePointerDown}
         onPointerMove={onSelectionFramePointerMove}
         onPointerUp={onSelectionFramePointerUp}
@@ -10377,6 +10359,12 @@ function InnerCanvas({
   const canvasReadyNotifiedRef = useRef(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
   const selectedNodeIdsRef = useRef<Set<string>>(selectedNodeIds);
+  const pendingShiftNodeSelectionRef = useRef<{
+    nodeId: string;
+    nextSelection: Set<string>;
+  } | null>(null);
+  const preserveShiftNodeSelectionForClickRef = useRef<string | null>(null);
+  const shiftMultiSelectionActive = useKeyPress('Shift');
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [nodeFocusRequest, setNodeFocusRequest] = useState<{
     nodeId: string;
@@ -11914,17 +11902,42 @@ function InnerCanvas({
     clearEdgeSelection();
   }, [clearEdgeSelection]);
 
-  const selectSingleNode = useCallback((nodeId: string) => {
+  const commitNodeSelection = useCallback((nextSelection: Set<string>) => {
     clearCanvasNodeUi();
-    const nextSelection = new Set([nodeId]);
     selectedNodeIdsRef.current = nextSelection;
-    setSelectedNodeIds((current) => (
-      current.size === 1 && current.has(nodeId) ? current : nextSelection
-    ));
-    setActiveNodeId(nodeId);
+    setSelectedNodeIds(nextSelection);
+    setActiveNodeId(
+      nextSelection.size === 1 ? Array.from(nextSelection)[0] ?? null : null,
+    );
     setSelectedGroupId(null);
     clearEdgeSelection();
   }, [clearEdgeSelection]);
+
+  const selectSingleNode = useCallback((nodeId: string) => {
+    commitNodeSelection(new Set([nodeId]));
+  }, [commitNodeSelection]);
+
+  const selectNodeFromCard = useCallback((nodeId: string) => {
+    if (preserveShiftNodeSelectionForClickRef.current === nodeId) {
+      return;
+    }
+
+    const pendingShiftSelection = pendingShiftNodeSelectionRef.current;
+    pendingShiftNodeSelectionRef.current = null;
+
+    if (pendingShiftSelection?.nodeId === nodeId) {
+      commitNodeSelection(pendingShiftSelection.nextSelection);
+      preserveShiftNodeSelectionForClickRef.current = nodeId;
+      window.setTimeout(() => {
+        if (preserveShiftNodeSelectionForClickRef.current === nodeId) {
+          preserveShiftNodeSelectionForClickRef.current = null;
+        }
+      }, 0);
+      return;
+    }
+
+    selectSingleNode(nodeId);
+  }, [commitNodeSelection, selectSingleNode]);
 
   const handleReturnToQuickReferenceTarget = useCallback(() => {
     if (!quickReferenceConnect || quickReferenceConnect.targetKind !== 'node') {
@@ -12006,7 +12019,7 @@ function InnerCanvas({
 
   useEffect(() => {
     notifyImageGenerationNodeSelect = (nodeId) => {
-      selectSingleNode(nodeId);
+      selectNodeFromCard(nodeId);
     };
 
     return () => {
@@ -12014,11 +12027,11 @@ function InnerCanvas({
         notifyImageGenerationNodeSelect = null;
       }
     };
-  }, [selectSingleNode]);
+  }, [selectNodeFromCard]);
 
   useEffect(() => {
     notifyCanvasNodeSelect = (nodeId) => {
-      selectSingleNode(nodeId);
+      selectNodeFromCard(nodeId);
     };
 
     return () => {
@@ -12026,7 +12039,7 @@ function InnerCanvas({
         notifyCanvasNodeSelect = null;
       }
     };
-  }, [selectSingleNode]);
+  }, [selectNodeFromCard]);
 
   useEffect(() => {
     notifyDirectorDeskOpen = (nodeId) => {
@@ -12053,7 +12066,7 @@ function InnerCanvas({
         suppressNextPaneClearRef.current = false;
       }, 0);
 
-      selectSingleNode(nodeId);
+      selectNodeFromCard(nodeId);
       const requestId = imageInfoRequestIdRef.current + 1;
       imageInfoRequestIdRef.current = requestId;
       setImageInfoPopover(toCanvasNodeInfoPopoverData(node));
@@ -12070,7 +12083,7 @@ function InnerCanvas({
         notifyCanvasImageInfoRequest = null;
       }
     };
-  }, [selectSingleNode, storeNodes]);
+  }, [selectNodeFromCard, storeNodes]);
 
   useEffect(() => {
     notifyCanvasImageLightboxRequest = (nodeId) => {
@@ -12094,7 +12107,7 @@ function InnerCanvas({
         suppressNextPaneClearRef.current = false;
       }, 0);
 
-      selectSingleNode(nodeId);
+      selectNodeFromCard(nodeId);
       setImageInfoPopover(null);
       setImageLightbox(lightboxData);
     };
@@ -12102,7 +12115,7 @@ function InnerCanvas({
     return () => {
       notifyCanvasImageLightboxRequest = null;
     };
-  }, [selectSingleNode, storeNodes]);
+  }, [selectNodeFromCard, storeNodes]);
 
   useEffect(() => {
     notifyStoryboardGridCellPreview = (lightboxData) => {
@@ -12232,7 +12245,30 @@ function InnerCanvas({
     storeNodes,
   ]);
 
-  const handleQuickReferenceMouseDownCapture = useCallback((event: React.MouseEvent) => {
+  const handleCanvasMouseDownCapture = useCallback((event: React.MouseEvent) => {
+    pendingShiftNodeSelectionRef.current = null;
+    preserveShiftNodeSelectionForClickRef.current = null;
+
+    if (!quickReferenceConnect && event.button === 0 && event.shiftKey) {
+      const target = event.target instanceof Element ? event.target : null;
+      const nodeElement = target?.closest('.react-flow__node');
+      const nodeId = nodeElement?.getAttribute('data-id');
+
+      if (nodeId) {
+        const nextSelection = new Set(selectedNodeIdsRef.current);
+
+        if (nextSelection.has(nodeId)) {
+          nextSelection.delete(nodeId);
+        } else {
+          nextSelection.add(nodeId);
+        }
+
+        pendingShiftNodeSelectionRef.current = { nodeId, nextSelection };
+      }
+
+      return;
+    }
+
     if (!quickReferenceConnect || event.button !== 0) {
       return;
     }
@@ -12335,26 +12371,33 @@ function InnerCanvas({
     clearEdgeSelection();
     setSelectedGroupId(null);
 
-    if (event.shiftKey) {
-      clearCanvasNodeUi();
-      const nextSelection = new Set(selectedNodeIdsRef.current);
+    const pendingShiftSelection = pendingShiftNodeSelectionRef.current;
+    pendingShiftNodeSelectionRef.current = null;
 
-      if (nextSelection.has(node.id)) {
-        nextSelection.delete(node.id);
-      } else {
-        nextSelection.add(node.id);
+    if (preserveShiftNodeSelectionForClickRef.current === node.id) {
+      return;
+    }
+
+    if (event.shiftKey || pendingShiftSelection?.nodeId === node.id) {
+      clearCanvasNodeUi();
+      const nextSelection = pendingShiftSelection?.nodeId === node.id
+        ? pendingShiftSelection.nextSelection
+        : new Set(selectedNodeIdsRef.current);
+
+      if (!pendingShiftSelection || pendingShiftSelection.nodeId !== node.id) {
+        if (nextSelection.has(node.id)) {
+          nextSelection.delete(node.id);
+        } else {
+          nextSelection.add(node.id);
+        }
       }
 
-      selectedNodeIdsRef.current = nextSelection;
-      setSelectedNodeIds(nextSelection);
-      setActiveNodeId(
-        nextSelection.size === 1 ? Array.from(nextSelection)[0] ?? null : null,
-      );
+      commitNodeSelection(nextSelection);
       return;
     }
 
     selectSingleNode(node.id);
-    }, [addEdgeStore, applyQuickReferenceSelection, clearEdgeSelection, quickReferenceConnect, selectSingleNode, showProjectMessage, storeEdges, storeNodes]);
+    }, [addEdgeStore, applyQuickReferenceSelection, clearEdgeSelection, commitNodeSelection, quickReferenceConnect, selectSingleNode, showProjectMessage, storeEdges, storeNodes]);
 
   const handleNodeContextMenu = useCallback((
     event: React.MouseEvent,
@@ -12973,6 +13016,7 @@ function InnerCanvas({
       : new Set([nodeContextTarget.id]);
 
     if (copyNodeIdsToInternalClipboard(ids)) {
+      void navigator.clipboard?.writeText(CANVAS_NODE_CLIPBOARD_TEXT_MARKER).catch(() => undefined);
       showProjectMessage('已复制节点');
     }
 
@@ -13441,6 +13485,7 @@ function InnerCanvas({
     stopQuickReferenceConnect,
     undo,
   });
+  const pendingPasteWithUpstreamRef = useRef(false);
 
   useEffect(() => {
     clipboardShortcutRef.current = {
@@ -13504,9 +13549,6 @@ function InnerCanvas({
 
       const key = event.key.toLowerCase();
       const isModifierPressed = event.ctrlKey || event.metaKey;
-      const canvasHasSelection =
-        shortcuts.selectedNodeIds.size > 0 || shortcuts.selectedEdgeId !== null;
-      const editableTextSelected = hasEditableTextSelection(event.target);
 
       if (isModifierPressed && !event.altKey && key === 'z') {
         event.preventDefault();
@@ -13521,23 +13563,17 @@ function InnerCanvas({
       }
 
       if (isModifierPressed && !event.altKey && !event.shiftKey && key === 'c') {
-        if (canvasHasSelection && !editableTextSelected && shortcuts.handleCopySelectedNodes()) {
-          event.preventDefault();
-          return;
-        }
+        return;
       }
 
       if (isModifierPressed && !event.altKey && key === 'v') {
-        if (!editableTextSelected) {
-          const pasted = event.shiftKey
-            ? shortcuts.handlePasteNodesWithUpstream()
-            : shortcuts.handlePasteNodes();
+        pendingPasteWithUpstreamRef.current = false;
 
-          if (pasted) {
-            event.preventDefault();
-            return;
-          }
+        if (!isTypingTarget(event.target)) {
+          pendingPasteWithUpstreamRef.current = event.shiftKey;
         }
+
+        return;
       }
 
       if (isTypingTarget(event.target)) {
@@ -13573,29 +13609,32 @@ function InnerCanvas({
   }, []);
 
   useEffect(() => {
+    const handleCopy = (event: ClipboardEvent) => {
+      const shortcuts = clipboardShortcutRef.current;
+
+      if (
+        shortcuts.openDirectorNodeId ||
+        isTypingTarget(event.target) ||
+        shortcuts.selectedNodeIds.size === 0
+      ) {
+        return;
+      }
+
+      if (shortcuts.handleCopySelectedNodes() && markCanvasNodeClipboard(event.clipboardData)) {
+        event.preventDefault();
+      }
+    };
+
     const handlePaste = (event: ClipboardEvent) => {
       const shortcuts = clipboardShortcutRef.current;
+      const pasteWithUpstream = pendingPasteWithUpstreamRef.current;
+      pendingPasteWithUpstreamRef.current = false;
 
       if (shortcuts.openDirectorNodeId) {
         return;
       }
 
-      const editableTextSelected = hasEditableTextSelection(event.target);
-      const canvasHasSelection =
-        shortcuts.selectedNodeIds.size > 0 || shortcuts.selectedEdgeId !== null;
-      const shouldPrioritizeCanvasPaste = canvasHasSelection && !editableTextSelected;
-
-      if (shouldPrioritizeCanvasPaste && shortcuts.handlePasteNodesWithUpstream()) {
-        event.preventDefault();
-        return;
-      }
-
-      if (isTypingTarget(event.target) && !shouldPrioritizeCanvasPaste) {
-        return;
-      }
-
-      if (shortcuts.handlePasteNodes()) {
-        event.preventDefault();
+      if (isTypingTarget(event.target)) {
         return;
       }
 
@@ -13614,17 +13653,37 @@ function InnerCanvas({
         void shortcuts.addUploadedImages(imageFiles, center);
         return;
       }
+
+      if (!isCanvasNodeClipboard(event.clipboardData)) {
+        return;
+      }
+
+      if (pasteWithUpstream && shortcuts.handlePasteNodesWithUpstream()) {
+        event.preventDefault();
+        return;
+      }
+
+      if (shortcuts.handlePasteNodes()) {
+        event.preventDefault();
+      }
     };
 
+    window.addEventListener('copy', handleCopy);
     window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('copy', handleCopy);
+      window.removeEventListener('paste', handlePaste);
+    };
   }, []);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const snappedChanges = applyGridSnapToNodeChanges(changes);
-    setRfNodes((currentNodes) => applyNodeChanges(snappedChanges, currentNodes));
+    const effectiveChanges = pendingShiftNodeSelectionRef.current
+      ? snappedChanges.filter((change) => change.type !== 'select')
+      : snappedChanges;
+    setRfNodes((currentNodes) => applyNodeChanges(effectiveChanges, currentNodes));
 
-    snappedChanges.forEach((change) => {
+    effectiveChanges.forEach((change) => {
       if (change.type === 'position') {
         if (activeGroupDragIdRef.current) {
           return;
@@ -16012,7 +16071,7 @@ function InnerCanvas({
         onPaneMouseMove={handlePaneMouseMove}
         onPaneMouseLeave={handlePaneMouseLeave}
         onMouseDown={handlePaneMouseDown}
-        onMouseDownCapture={handleQuickReferenceMouseDownCapture}
+        onMouseDownCapture={handleCanvasMouseDownCapture}
         onMouseMove={handlePaneMouseMove}
         onMouseUp={handlePaneMouseUp}
         onDoubleClick={handlePaneDoubleClick}
@@ -16076,6 +16135,7 @@ function InnerCanvas({
           nodes={storeNodes}
           flowNodes={rfNodes}
           selectedNodeIds={selectedNodeIds}
+          selectionModifierActive={shiftMultiSelectionActive}
           visible={!selectedGroupId && !groupDragActive && !selectionInProgress && !paneSelectionDragging}
           onLayout={handleLayoutSelectedNodes}
           onAddToConversation={handleAddSelectedNodesToConversation}

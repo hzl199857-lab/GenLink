@@ -43,9 +43,51 @@ test("node multi-selection uses Shift and commits the exact selection synchronou
     /const handleNodeClick = useCallback\([\s\S]*?(?=\n  const handleNodeContextMenu)/,
   )?.[0] ?? "";
 
-  assert.match(nodeClick, /if \(event\.shiftKey\) \{[\s\S]*?const nextSelection = new Set\(selectedNodeIdsRef\.current\);/);
-  assert.match(nodeClick, /selectedNodeIdsRef\.current = nextSelection;/);
-  assert.match(nodeClick, /setSelectedNodeIds\(nextSelection\);/);
+  assert.match(nodeClick, /const pendingShiftSelection = pendingShiftNodeSelectionRef\.current;/);
+  assert.match(nodeClick, /if \(event\.shiftKey \|\| pendingShiftSelection\?\.nodeId === node\.id\)/);
+  assert.match(nodeClick, /commitNodeSelection\(nextSelection\);/);
+});
+
+test("Shift selection snapshots the target before ReactFlow selection changes run", () => {
+  assert.match(source, /const handleCanvasMouseDownCapture = useCallback/);
+  assert.match(
+    source,
+    /if \(!quickReferenceConnect && event\.button === 0 && event\.shiftKey\)[\s\S]*?pendingShiftNodeSelectionRef\.current = \{ nodeId, nextSelection \};/,
+  );
+  assert.match(
+    source,
+    /const effectiveChanges = pendingShiftNodeSelectionRef\.current[\s\S]*?snappedChanges\.filter\(\(change\) => change\.type !== 'select'\)/,
+  );
+});
+
+test("the multi-selection drag surface lets Shift clicks reach nodes inside the frame", () => {
+  assert.match(source, /const shiftMultiSelectionActive = useKeyPress\('Shift'\);/);
+  assert.match(
+    source,
+    /selectionModifierActive \? 'pointer-events-none' : 'pointer-events-auto'/,
+  );
+  assert.match(source, /selectionModifierActive=\{shiftMultiSelectionActive\}/);
+});
+
+test("node card callbacks consume the same Shift selection transaction", () => {
+  const cardSelection = source.match(
+    /const selectNodeFromCard = useCallback[\s\S]*?\n  \}, \[commitNodeSelection, selectSingleNode\]\);/,
+  )?.[0] ?? "";
+
+  assert.match(cardSelection, /pendingShiftNodeSelectionRef\.current/);
+  assert.match(cardSelection, /commitNodeSelection\(pendingShiftSelection\.nextSelection\);/);
+  assert.match(cardSelection, /preserveShiftNodeSelectionForClickRef\.current = nodeId;/);
+  assert.match(source, /notifyCanvasNodeSelect = \(nodeId\) => \{\s*selectNodeFromCard\(nodeId\);/);
+  assert.match(source, /notifyImageGenerationNodeSelect = \(nodeId\) => \{\s*selectNodeFromCard\(nodeId\);/);
+});
+
+test("media info UI does not downgrade a card Shift selection to one node", () => {
+  const mediaInfoEffects = source.match(
+    /notifyCanvasImageInfoRequest = \(nodeId\) => \{[\s\S]*?notifyCanvasImageLightboxRequest = \(nodeId\) => \{[\s\S]*?\n  \}, \[selectNodeFromCard, storeNodes\]\);/,
+  )?.[0] ?? "";
+
+  assert.match(mediaInfoEffects, /selectNodeFromCard\(nodeId\);/);
+  assert.doesNotMatch(mediaInfoEffects, /selectSingleNode\(nodeId\);/);
 });
 
 test("multi-node selection frame stays visible for nodes inside an existing group", () => {
