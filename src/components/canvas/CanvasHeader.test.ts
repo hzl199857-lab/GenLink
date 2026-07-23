@@ -352,9 +352,31 @@ test("opening the active canvas in a new window requires an acquired edit lock",
 
 test("the all-projects header action enters the library through its app route", () => {
   const source = readProjectSource("src/app/page.tsx");
-  const callback = source.match(/const openProjectLibraryFromCanvas = \(\) => \{[\s\S]*?\n  \};/)?.[0];
+  const callback = source.match(/const openProjectLibraryFromCanvas = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0];
 
   assert.ok(callback);
+  assert.match(callback, /showAppMode\('library'\)/);
   assert.match(callback, /router\.push\('\/\?app=library'\)/);
-  assert.doesNotMatch(callback, /showAppMode\('library'\)/);
+});
+
+test("the project library URL remains canonical until a canvas opens", () => {
+  const source = readProjectSource("src/app/page.tsx");
+  const openCanvasCallback = source.match(/const showCanvasAfterProjectOpen = \(\) => \{[\s\S]*?\n  \};/)?.[0];
+  const libraryEntryBranch = source.match(/handledAppEntryRef\.current = true;\s+const timer = window\.setTimeout\(\(\) => \{\s+if \(mode !== 'library'\)[\s\S]*?\n    \}, 0\);/)?.[0];
+
+  assert.ok(openCanvasCallback);
+  assert.match(openCanvasCallback, /router\.replace\('\/'\)/);
+  assert.ok(libraryEntryBranch);
+  assert.doesNotMatch(libraryEntryBranch, /router\.replace\('\/'\)/);
+});
+
+test("project library loading settles the entry overlay on success or failure", () => {
+  const pageSource = readProjectSource("src/app/page.tsx");
+  const librarySource = readProjectSource("src/components/project/ProjectLibrary.tsx");
+
+  assert.match(pageSource, /const handleProjectLibraryProjectsReady = useCallback/);
+  assert.match(pageSource, /const handleProjectLibraryLoadSettled = useCallback/);
+  assert.match(pageSource, /onProjectsReady=\{handleProjectLibraryProjectsReady\}/);
+  assert.match(pageSource, /onProjectsLoadSettled=\{handleProjectLibraryLoadSettled\}/);
+  assert.match(librarySource, /finally \{[\s\S]*setLoading\(false\);[\s\S]*onProjectsLoadSettled\?\.\(\);/);
 });

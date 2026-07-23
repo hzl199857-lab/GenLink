@@ -520,7 +520,6 @@ function HomePageContent() {
         showEntryLoader('library');
         showAppMode('library');
       }
-      router.replace('/');
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -537,6 +536,8 @@ function HomePageContent() {
   ]);
 
   const showCanvasAfterProjectOpen = () => {
+    router.replace('/');
+
     if (pendingCanvasDeepLink) {
       const target = pendingCanvasDeepLink;
       setPendingCanvasDeepLink(null);
@@ -648,13 +649,22 @@ function HomePageContent() {
     router.replace('/');
   };
 
-  const openProjectLibraryFromCanvas = () => {
+  const handleProjectLibraryProjectsReady = useCallback((projectCount: number) => {
+    setKnownProjectCount(projectCount);
+  }, []);
+
+  const handleProjectLibraryLoadSettled = useCallback(() => {
+    hideEntryLoader('library');
+  }, [hideEntryLoader]);
+
+  const openProjectLibraryFromCanvas = useCallback(() => {
     if (shouldShowProjectLibraryEntryLoader(knownProjectCount)) {
       showEntryLoader('library');
     }
 
+    showAppMode('library');
     router.push('/?app=library');
-  };
+  }, [knownProjectCount, router, showAppMode, showEntryLoader]);
 
   const handleSignOut = async () => {
     await authClient.signOut();
@@ -747,15 +757,8 @@ function HomePageContent() {
                 setPendingRefreshRestore(null);
                 clearUpdateRefreshRestoreState(userId!);
               }}
-              onProjectsReady={(projectCount) => {
-                setKnownProjectCount(projectCount);
-                if (!shouldShowProjectLibraryEntryLoader(projectCount)) {
-                  hideEntryLoader('library');
-                  return;
-                }
-
-                hideEntryLoader('library');
-              }}
+              onProjectsReady={handleProjectLibraryProjectsReady}
+              onProjectsLoadSettled={handleProjectLibraryLoadSettled}
             />
           ) : (
             <InfiniteCanvas

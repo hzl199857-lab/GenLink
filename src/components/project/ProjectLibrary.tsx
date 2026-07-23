@@ -38,6 +38,7 @@ interface ProjectLibraryProps {
   onOpenProject: () => void;
   onBackToHero?: () => void;
   onProjectsReady?: (projectCount: number) => void;
+  onProjectsLoadSettled?: () => void;
   restoreProjectId?: string;
   onRestoreProjectOpened?: () => void;
   onRestoreProjectMissing?: () => void;
@@ -278,6 +279,7 @@ export function ProjectLibrary({
   onOpenProject,
   onBackToHero,
   onProjectsReady,
+  onProjectsLoadSettled,
   restoreProjectId,
   onRestoreProjectOpened,
   onRestoreProjectMissing,
@@ -348,8 +350,9 @@ export function ProjectLibrary({
       setError(nextError instanceof Error ? nextError.message : '项目列表加载失败');
     } finally {
       setLoading(false);
+      onProjectsLoadSettled?.();
     }
-  }, [listProjects, onProjectsReady]);
+  }, [listProjects, onProjectsLoadSettled, onProjectsReady]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
