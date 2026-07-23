@@ -85,7 +85,7 @@ test("canvas item actions support keyboard navigation and focus restoration", ()
   assert.match(source, /querySelectorAll<HTMLButtonElement>\('button:not\(:disabled\)'\)/);
   assert.match(source, /actionTriggerRefs\.current\.get\(canvasId\)\?\.focus\(\)/);
   assert.match(source, /querySelector<HTMLButtonElement>\('button:not\(:disabled\)'\)[\s\S]*?\?\.focus\(\)/);
-  assert.match(source, /title=\{activeCanvas\?\.name\}/);
+  assert.match(source, /title=\{busy \? '正在处理，请稍候' : activeCanvas\?\.name\}/);
   assert.match(readSource("EditableProjectName.tsx"), /title=\{displayValue\}/);
 });
 
@@ -133,7 +133,16 @@ test("starting a project name edit closes any open header menu", () => {
 test("open canvas header menus render above neighboring tool panels", () => {
   const source = readSource("CanvasHeader.tsx");
 
-  assert.match(source, /openMenu \? 'z-\[75\]' : 'z-\[70\]'/);
+  assert.match(source, /openMenu \? 'z-\[85\]' : 'z-\[70\]'/);
+});
+
+test("canvas switcher explains why it cannot open during a busy action", () => {
+  const source = readSource("CanvasSwitcher.tsx");
+
+  assert.match(source, /disabled=\{busy \|\| !activeCanvas\}/);
+  assert.match(source, /aria-busy=\{busy\}/);
+  assert.match(source, /title=\{busy \? '正在处理，请稍候' : activeCanvas\?\.name\}/);
+  assert.match(source, /<LoaderCircle[\s\S]*animate-spin/);
 });
 
 test("write blocking preserves canvas navigation while disabling write actions", () => {
@@ -259,7 +268,7 @@ test("checking and blocked locks guard every save entry and cover non-header con
   assert.match(autoSaveEffect, /ensureCanvasWriteAvailable\(\)/);
   assert.match(source, /fixed inset-0 z-\[60\]/);
   assert.match(headerSource, /fixed left-4 top-4/);
-  assert.match(headerSource, /openMenu \? 'z-\[75\]' : 'z-\[70\]'/);
+  assert.match(headerSource, /openMenu \? 'z-\[85\]' : 'z-\[70\]'/);
   assert.match(source, /<CanvasToolbar[\s\S]*onSaveProject=\{\(\) => void handleSaveProject\(\)\}/);
 });
 

@@ -74,7 +74,7 @@ export function CanvasHeader({
     <div
       ref={rootRef}
       data-canvas-menu-ignore="true"
-      className={`fixed left-4 top-4 flex h-10 max-w-[calc(100vw-32px)] items-center rounded-[10px] border border-white/[0.07] bg-[#242526]/96 p-1 text-white shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur-xl ${openMenu ? 'z-[75]' : 'z-[70]'}`}
+      className={`fixed left-4 top-4 flex h-10 max-w-[calc(100vw-32px)] items-center rounded-[10px] border border-white/[0.07] bg-[#242526]/96 p-1 text-white shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur-xl ${openMenu ? 'z-[85]' : 'z-[70]'}`}
     >
       <div className="relative shrink-0">
         <button

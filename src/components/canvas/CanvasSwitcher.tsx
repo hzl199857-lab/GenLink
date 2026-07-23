@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Ellipsis, ExternalLink, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Ellipsis, ExternalLink, LoaderCircle, Plus, Copy, Pencil, Trash2 } from 'lucide-react';
 import { getNextCanvasName } from '@/lib/canvas/multi-canvas';
 import type { ProjectCanvasMetadata } from '@/types/canvas';
 
@@ -277,12 +277,17 @@ export function CanvasSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={busy || !activeCanvas}
-        title={activeCanvas?.name}
+        aria-busy={busy}
+        title={busy ? '正在处理，请稍候' : activeCanvas?.name}
         className="flex h-8 max-w-[150px] items-center gap-1.5 rounded-[8px] px-2.5 text-[13px] font-medium text-white/90 transition hover:bg-white/[0.09] focus-visible:bg-white/[0.09] focus-visible:outline-none"
         onClick={() => changeOpen(!open)}
       >
         <span className="truncate">{activeCanvas?.name ?? '画布 1'}</span>
-        <ChevronDown size={13} className={`shrink-0 text-white/45 transition-transform ${open ? 'rotate-180' : ''}`} />
+        {busy ? (
+          <LoaderCircle size={13} className="shrink-0 animate-spin text-white/55" aria-hidden="true" />
+        ) : (
+          <ChevronDown size={13} className={`shrink-0 text-white/45 transition-transform ${open ? 'rotate-180' : ''}`} />
+        )}
       </button>
 
       {open ? (
