@@ -52,8 +52,12 @@ jobs:
           LEGACY_APP="/www/GenLink_app"
           RELEASES="/www/GenLink_releases"
           SHARED="/www/GenLink_shared"
+          BACKUPS="$SHARED/backups"
           CURRENT="/www/GenLink_current"
-          KEEP_RELEASES=3
+          KEEP_RELEASES=2
+          KEEP_BACKUPS=1
+          MIN_FREE_DISK_KB=$((8 * 1024 * 1024))
+          MAX_DISK_USED_PERCENT=80
           WORKER_NAME="genlink-media-worker"
           WORKER_PORT="8080"
           WORKER_VENV="/www/GenLink_worker_venv"
@@ -199,6 +203,36 @@ jobs:
                 done
           }
 
+          prune_old_backups() {
+            local count
+            count=0
+
+            [ -d "$BACKUPS" ] || return 0
+
+            find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+              | sort -rn \
+              | cut -d' ' -f2- \
+              | while IFS= read -r backup_path; do
+                  count=$((count + 1))
+                  if [ "$count" -gt "$KEEP_BACKUPS" ]; then
+                    rm -rf "$backup_path"
+                  fi
+                done
+          }
+
+          require_deploy_capacity() {
+            local available_kb used_percent
+            available_kb="$(df -Pk "$RELEASES" | awk 'NR == 2 { print $4 }')"
+            used_percent="$(df -Pk "$RELEASES" | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }')"
+
+            if [ "$available_kb" -lt "$MIN_FREE_DISK_KB" ] \
+              || [ "$used_percent" -ge "$MAX_DISK_USED_PERCENT" ]; then
+              df -h "$RELEASES"
+              echo "Deployment stopped: production disk needs at least 8 GiB free and must stay below 80% usage."
+              exit 1
+            fi
+          }
+
           mkdir -p "$RELEASES" "$SHARED/prisma"
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -263,6 +297,10 @@ jobs:
 
           git fetch origin master
 
+          prune_old_releases
+          prune_old_backups
+          require_deploy_capacity
+
           RELEASE_NAME="$(date +%Y%m%d%H%M%S)-${RELEASE_SHA:0:7}"
           RELEASE_DIR="$RELEASES/$RELEASE_NAME"
 
@@ -324,6 +362,9 @@ jobs:
           restart_worker
           restart_app
           prune_old_releases
+          prune_old_backups
+          $DEPLOY_NPM --cache "$NPM_CACHE" cache clean --force || true
+          npm cache clean --force || true
 
           echo "Deployed $RELEASE_NAME."
           REMOTE
