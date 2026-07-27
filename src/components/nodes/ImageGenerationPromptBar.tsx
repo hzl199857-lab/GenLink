@@ -262,7 +262,6 @@ export interface ImageGenerationPromptBarProps {
   onRemoveReference?: (referenceImageId: string) => void;
   onPointerDownWithin?: () => void;
   onFocusWithinChange?: (focused: boolean) => void;
-  focusRequestId?: number;
 }
 
 function ToolSquareButton({
@@ -529,7 +528,6 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
   onRemoveReference,
   onPointerDownWithin,
   onFocusWithinChange,
-  focusRequestId,
 }: ImageGenerationPromptBarProps) {
   const [draftPrompt, setDraftPrompt] = useState(prompt);
   const [isPromptFocused, setIsPromptFocused] = useState(false);
@@ -876,7 +874,6 @@ export const ImageGenerationPromptBar = memo(function ImageGenerationPromptBar({
             <PromptMentionInput
               value={resolvedValue}
               connectedImages={connectedImages}
-              focusRequestId={focusRequestId}
               onChange={(next) => {
                 setDraftPrompt(next);
 

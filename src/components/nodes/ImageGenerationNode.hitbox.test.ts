@@ -61,8 +61,21 @@ test("magnetic side plus uses canvas zoom only in canvas coordinate overlays", (
 
 test("closes image generation prompt bar menus when the selected node changes", () => {
   assert.match(promptBarSource, /closePromptBarMenus = useCallback/);
-  assert.match(canvasSource, /const selectSingleNode = useCallback\(\(nodeId: string\) => \{\s*clearCanvasNodeUi\(\);/);
+  assert.match(canvasSource, /const commitNodeSelection = useCallback\(\(nextSelection: Set<string>\) => \{\s*clearCanvasNodeUi\(\);/);
   assert.match(source, /key=\{`prompt-bar-\$\{id\}-\$\{promptBarVisible \? 'visible' : 'hidden'\}`\}/);
+});
+
+test("consumes prompt focus requests and releases input focus when selecting the image card", () => {
+  assert.match(
+    canvasSource,
+    /const selectNodeFromCard = useCallback\(\(nodeId: string\) => \{\s*setNodeFocusRequest\(null\);/,
+  );
+  assert.match(
+    source,
+    /onClick=\{\(event\) => \{\s*if \(document\.activeElement instanceof HTMLElement\) \{\s*document\.activeElement\.blur\(\);\s*\}\s*event\.stopPropagation\(\);\s*onSelectNode\?\.\(\);/,
+  );
+  assert.doesNotMatch(source, /promptFocusRequestId/);
+  assert.doesNotMatch(promptBarSource, /focusRequestId/);
 });
 
 test("image generation organize action opens the material save dialog directly", () => {

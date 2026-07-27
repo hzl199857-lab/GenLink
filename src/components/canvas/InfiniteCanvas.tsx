@@ -3157,7 +3157,6 @@ const ImageGenerationNodeAdapter = memo(function ImageGenerationNodeAdapter({ id
         }}
         hidePromptBar={threeViewOpen}
         panActive={threeViewOpen}
-        promptFocusRequestId={renderData.canvasFocusRequestId}
       />
       {threeViewOpen ? (
         <div
@@ -11918,6 +11917,8 @@ function InnerCanvas({
   }, [commitNodeSelection]);
 
   const selectNodeFromCard = useCallback((nodeId: string) => {
+    setNodeFocusRequest(null);
+
     if (preserveShiftNodeSelectionForClickRef.current === nodeId) {
       return;
     }

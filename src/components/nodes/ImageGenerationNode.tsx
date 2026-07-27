@@ -74,7 +74,6 @@ export interface ImageGenerationNodeProps {
   onPromptFocusWithinChange?: (focused: boolean) => void;
   hidePromptBar?: boolean;
   panActive?: boolean;
-  promptFocusRequestId?: number;
   titleEditRequestId?: number;
 }
 
@@ -292,7 +291,6 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
   onPromptFocusWithinChange,
   hidePromptBar,
   panActive,
-  promptFocusRequestId,
   titleEditRequestId,
 }: ImageGenerationNodeProps) {
   const updateNodeInternals = useUpdateNodeInternals();
@@ -570,6 +568,10 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
                     : 'border-gl-stroke-subtle',
             ].join(' ')}
             onClick={(event) => {
+              if (document.activeElement instanceof HTMLElement) {
+                document.activeElement.blur();
+              }
+
               event.stopPropagation();
               onSelectNode?.();
               if (hasGeneratedImage) {
@@ -767,7 +769,6 @@ export const ImageGenerationNode = memo(function ImageGenerationNode({
         generating={isGenerating}
         canUsePromptPresets={canUsePromptPresets}
         connectedImages={connectedImages}
-        focusRequestId={promptFocusRequestId}
         onPromptChange={handlePromptChange}
         onProviderModelChange={handleProviderModelChange}
         onModelChange={handleModelChange}
