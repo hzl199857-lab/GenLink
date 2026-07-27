@@ -26,18 +26,21 @@ const PROVIDERS: Array<{
   key: ApiProvider;
   label: string;
   url: string;
+  keyUrl?: string;
   apiKeyLabel: string;
 }> = [
   {
     key: 'comfly',
     label: 'Comfly',
     url: 'https://ai.comfly.org',
+    keyUrl: 'https://ai.comfly.org/register?aff=DH1D87025',
     apiKeyLabel: 'Comfly API Key',
   },
   {
     key: 'vibe',
     label: 'VibeAPI',
     url: 'https://www.vibeapi.cn',
+    keyUrl: 'https://www.vibeapi.cn/register?aff=gaYl',
     apiKeyLabel: 'VibeAPI Key',
   },
   {
@@ -50,6 +53,7 @@ const PROVIDERS: Array<{
     key: 'runninghub',
     label: 'RunningHub',
     url: 'https://www.runninghub.cn',
+    keyUrl: 'https://www.runninghub.cn?inviteCode=262e1ef1',
     apiKeyLabel: 'RunningHub API Key',
   },
   {
@@ -234,7 +238,7 @@ export function ApiSettingsPanel({
                       </div>
 
                       <a
-                        href={provider.url}
+                        href={provider.keyUrl ?? provider.url}
                         target="_blank"
                         rel="noreferrer"
                         className="rounded-sm border border-[#333333] px-3 py-1.5 text-[12px] text-[#888888] transition-colors hover:border-[#555555] hover:text-white"
