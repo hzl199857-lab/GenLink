@@ -5,6 +5,11 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-guard";
 
 import { saveImageDataUrl, saveRemoteImageUrl } from "@/lib/image-host";
+import {
+  assertPersistableImageReferences,
+  isTransientImageUrl,
+  withStableHostedImage,
+} from "@/lib/image-persistence";
 import { getImageHistoryDisplayPrompt } from "@/lib/image-prompt";
 import { prisma } from "@/lib/prisma";
 import {
@@ -105,6 +110,11 @@ type ImageJobResult = {
 };
 
 type GenerateImageOutput = Awaited<ReturnType<typeof generateImage>>;
+
+function serializeImageJobResult(result: ImageJobResult): string {
+  assertPersistableImageReferences(result.images);
+  return JSON.stringify(result);
+}
 
 function logImageTiming(
   jobId: string,
@@ -518,7 +528,6 @@ async function runImageJob(
   options: {
     cacheRemoteBeforeComplete?: boolean;
     deferHistoryPersistence?: boolean;
-    finalizeDataUrlImages?: boolean;
   } = {},
 ) {
   try {
@@ -567,7 +576,7 @@ async function persistCompletedImageJob(
     where: { id: jobId },
     data: {
       status: "completed",
-      result: JSON.stringify(result),
+      result: serializeImageJobResult(result),
       error: null,
     },
   });
@@ -581,6 +590,7 @@ async function persistImageHistoryItems(
   result: ImageJobResult,
 ) {
   const startedAt = Date.now();
+  assertPersistableImageReferences(result.images);
   const [job, existingCount] = await Promise.all([
     prisma.imageJob.findUnique({
       where: { id: jobId },
@@ -740,12 +750,10 @@ async function cacheRemoteImages(
           remoteUrl,
           `generated-image-${jobId}-${index + 1}.png`,
           "generated",
+          { forceOss: process.env.NODE_ENV === "production" },
         );
 
-        return {
-          ...image,
-          hostedImageUrl,
-        };
+        return withStableHostedImage(image, hostedImageUrl);
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
           console.warn(
@@ -942,23 +950,29 @@ async function attachHostedImageUrlsToJob(
 ): Promise<ImageJobResult> {
   const images = await Promise.all(
     result.images.map(async (image, index) => {
+      if (
+        image.hostedImageUrl &&
+        !isTransientImageUrl(image.hostedImageUrl)
+      ) {
+        return withStableHostedImage(image, image.hostedImageUrl);
+      }
+
       const imageDataUrl = image.hostedImageUrl?.startsWith("data:")
         ? image.hostedImageUrl
         : image.imageUrl;
 
-      if (!imageDataUrl.startsWith("data:") || image.hostedImageUrl?.startsWith("/api/")) {
+      if (!imageDataUrl.startsWith("data:")) {
         return image;
       }
 
       const hostedImageUrl = await saveImageDataUrl(
         imageDataUrl,
         `generated-image-${jobId}-${index + 1}.png`,
+        "generated",
+        { forceOss: process.env.NODE_ENV === "production" },
       );
 
-      return {
-        ...image,
-        hostedImageUrl,
-      };
+      return withStableHostedImage(image, hostedImageUrl);
     }),
   );
 
@@ -971,8 +985,8 @@ async function attachHostedImageUrlsToJob(
 function hasUnhostedDataUrlImages(result: ImageJobResult): boolean {
   return result.images.some(
     (image) =>
-      (image.imageUrl.startsWith("data:") || image.hostedImageUrl?.startsWith("data:")) &&
-      !image.hostedImageUrl?.startsWith("/api/"),
+      isTransientImageUrl(image.imageUrl) ||
+      Boolean(image.hostedImageUrl && isTransientImageUrl(image.hostedImageUrl)),
   );
 }
 
@@ -1025,7 +1039,6 @@ async function completeImageJob(
   options: {
     cacheRemoteBeforeComplete?: boolean;
     deferHistoryPersistence?: boolean;
-    finalizeDataUrlImages?: boolean;
   } = {},
 ): Promise<ImageJobResult> {
   const initialResult = buildImageJobResult(result);
@@ -1034,7 +1047,7 @@ async function completeImageJob(
     : initialResult;
   const needsHostedImageUrl = hasUnhostedDataUrlImages(baseResult);
 
-  if (needsHostedImageUrl && options.finalizeDataUrlImages !== false) {
+  if (needsHostedImageUrl) {
     const claimedJob = await prisma.imageJob.updateMany({
       where: {
         id: jobId,
@@ -1098,7 +1111,7 @@ async function completeImageJob(
     },
     data: {
       status: "completed",
-      result: JSON.stringify(baseResult),
+      result: serializeImageJobResult(baseResult),
       error: null,
     },
   });
@@ -1730,7 +1743,6 @@ export async function POST(request: Request) {
       await runImageJob(jobId, jobParams, {
         cacheRemoteBeforeComplete: provider === "fucheers",
         deferHistoryPersistence: provider === "fucheers",
-        finalizeDataUrlImages: provider !== "fucheers",
       });
       const completedJob = await prisma.imageJob.findUnique({
         where: { id: jobId },

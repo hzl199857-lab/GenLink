@@ -52,3 +52,43 @@ test("embeds the release version in the production browser build", () => {
   assert.ok(buildIndex > versionExportIndex, "version must be exported before build");
   assert.ok(buildIndex > versionAssignmentIndex, "version must be assigned before build");
 });
+
+test("keeps only the current and one rollback release", () => {
+  assert.match(source, /KEEP_RELEASES=2/);
+});
+
+test("keeps only the newest local production backup", () => {
+  assert.match(source, /BACKUPS="\$SHARED\/backups"/);
+  assert.match(source, /KEEP_BACKUPS=1/);
+  assert.match(source, /function prune_old_backups|prune_old_backups\(\)/);
+
+  const deploymentSteps = source.slice(source.indexOf('git fetch origin master'));
+  assert.ok(
+    deploymentSteps.indexOf("prune_old_backups") <
+      deploymentSteps.indexOf("require_deploy_capacity"),
+    "old backups must be pruned before the disk capacity check",
+  );
+});
+
+test("prunes releases and checks disk capacity before creating a release", () => {
+  const deploymentSteps = source.slice(source.indexOf('git fetch origin master'));
+  const pruneIndex = deploymentSteps.indexOf("prune_old_releases");
+  const capacityIndex = deploymentSteps.indexOf("require_deploy_capacity");
+  const releaseIndex = deploymentSteps.indexOf('RELEASE_NAME="$(date');
+
+  assert.ok(pruneIndex >= 0, "old releases must be pruned before deployment");
+  assert.ok(capacityIndex > pruneIndex, "disk capacity must be checked after pruning");
+  assert.ok(releaseIndex > capacityIndex, "release creation must happen after the disk check");
+  assert.match(source, /MIN_FREE_DISK_KB=\$\(\(8 \* 1024 \* 1024\)\)/);
+  assert.match(source, /MAX_DISK_USED_PERCENT=80/);
+});
+
+test("cleans shared and default npm caches after a successful deployment", () => {
+  const deploymentSteps = source.slice(source.lastIndexOf("restart_app"));
+
+  assert.match(
+    deploymentSteps,
+    /\$DEPLOY_NPM --cache "\$NPM_CACHE" cache clean --force \|\| true/,
+  );
+  assert.match(deploymentSteps, /npm cache clean --force \|\| true/);
+});
