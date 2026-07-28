@@ -103,6 +103,7 @@ import {
 import {
   createHostedCanvasImageData,
   createPendingCanvasImageData,
+  hasTransientCanvasImageMedia,
   type CanvasImageAssetUploadKind,
   type CanvasImageDerivativeOptions,
 } from '@/lib/canvas-image-assets';
@@ -15807,6 +15808,27 @@ function InnerCanvas({
 
     return () => window.clearInterval(timer);
   }, [currentProject, dirty, ensureCanvasWriteAvailable]);
+
+  useEffect(() => {
+    const hasPendingImageUpload = storeNodes.some(
+      (node) =>
+        node.type === 'image' &&
+        node.data.status === 'generating' &&
+        hasTransientCanvasImageMedia(node.data),
+    );
+
+    if (!hasPendingImageUpload) {
+      return;
+    }
+
+    const warnAboutPendingUpload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', warnAboutPendingUpload);
+    return () => window.removeEventListener('beforeunload', warnAboutPendingUpload);
+  }, [storeNodes]);
 
   const runCanvasHeaderAction = useCallback(async (
     action: () => Promise<unknown>,

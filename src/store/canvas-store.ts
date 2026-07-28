@@ -3,6 +3,10 @@
 import { create } from "zustand";
 import { migrateLegacyStorageValue, userStorageKey } from "@/lib/browser-user-storage";
 import { getBrowserImageDisplayUrl } from "@/lib/image-display-url";
+import {
+  hasTransientCanvasImageMedia,
+  sanitizeCanvasImageMediaForPersistence,
+} from "@/lib/canvas-image-assets";
 import { deleteAgentThreadsForCanvas } from "@/lib/agent-history";
 
 import {
@@ -2923,6 +2927,18 @@ function sanitizeImageGenerationNodeDataForPersistence(
 
 function normalizeLoadedCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
   return nodes.map((node) => {
+    if (
+      node.type === "image" &&
+      node.data.status === "generating" &&
+      !node.data.generatedOutputFileName?.trim() &&
+      hasTransientCanvasImageMedia(node.data)
+    ) {
+      return {
+        ...node,
+        data: sanitizeCanvasImageMediaForPersistence(node.data),
+      };
+    }
+
     if (node.type === "storyboard_script") {
       return {
         ...node,
@@ -2981,6 +2997,13 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
     }
 
     if (node.type !== "image_generation") {
+      if (node.type === "image" || node.type === "uploaded_image") {
+        return {
+          ...node,
+          data: sanitizeCanvasImageMediaForPersistence(node.data),
+        } as CanvasNode;
+      }
+
       if (node.type === "storyboard_grid") {
         return {
           ...node,
@@ -3034,17 +3057,6 @@ function sanitizeNodesForPersistence(nodes: CanvasNode[]): CanvasNode[] {
             ...node.data,
             audioUrl: `output:${node.data.generatedOutputFileName}`,
             hostedAudioUrl: undefined,
-          },
-        };
-      }
-
-      if (node.type === "uploaded_image" && node.data.outputFileName?.trim()) {
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            imageUrl: `output:${node.data.outputFileName}`,
-            hostedImageUrl: undefined,
           },
         };
       }
@@ -10696,6 +10708,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
       if (!state.activeUserId) {
         throw new Error("请先登录");
+      }
+      const hasPendingImageUpload = state.nodes.some(
+        (node) =>
+          node.type === "image" &&
+          node.data.status === "generating" &&
+          hasTransientCanvasImageMedia(node.data),
+      );
+
+      if (hasPendingImageUpload) {
+        throw new Error("图片仍在上传，请等待上传完成后再保存或切换画布");
       }
 
       const snapshot = createSnapshot(state);

@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import NextImage from 'next/image';
 import { Position } from 'reactflow';
 import { Image as ImageIcon, LoaderCircle, Upload } from 'lucide-react';
 import type { ImageNodeData, UploadedImageNodeData } from '../../types/canvas';
 import { getBrowserImageDisplayUrl } from '@/lib/image-display-url';
+import { getCanvasImageDisplayUrls } from '@/lib/canvas-image-assets';
 import { CardSideHandle } from './CardSideHandle';
 import { EditableNodeTitle } from './EditableNodeTitle';
 
@@ -107,11 +108,41 @@ export function UploadedImageNode({
     ? '上传中...'
     : statusMessage;
   const canReplace = Boolean(onReplace) && !isGenerating;
-  const displayImageUrl = 'previewUrl' in data && data.previewUrl
-    ? data.previewUrl
-    : data.imageUrl;
+  const displayImageUrls = getCanvasImageDisplayUrls(data);
+  const displayImageUrlsKey = displayImageUrls.join('\u0000');
+  const [imageFailureState, setImageFailureState] = useState<{
+    key: string;
+    urls: string[];
+  }>({ key: '', urls: [] });
+  const failedImageUrls = imageFailureState.key === displayImageUrlsKey
+    ? imageFailureState.urls
+    : [];
+  const displayImageUrl = displayImageUrls.find((url) => !failedImageUrls.includes(url)) || '';
+  const hasConfiguredImageUrl = Boolean(
+    data.imageUrl.trim() ||
+    ('hostedImageUrl' in data && data.hostedImageUrl?.trim()) ||
+    ('previewUrl' in data && data.previewUrl?.trim()),
+  );
   const browserImageUrl = getBrowserImageDisplayUrl(displayImageUrl);
   const isLocalPreviewUrl = displayImageUrl.startsWith('blob:') || displayImageUrl.startsWith('data:');
+  const imageLoadFailed = hasConfiguredImageUrl && !displayImageUrl;
+
+  const handleImageLoadError = () => {
+    if (!displayImageUrl) {
+      return;
+    }
+
+    setImageFailureState((current) => {
+      const failedUrls = current.key === displayImageUrlsKey ? current.urls : [];
+
+      return failedUrls.includes(displayImageUrl)
+        ? current
+        : {
+            key: displayImageUrlsKey,
+            urls: [...failedUrls, displayImageUrl],
+          };
+    });
+  };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -156,19 +187,31 @@ export function UploadedImageNode({
         {displayImageUrl && isLocalPreviewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- blob/data previews cannot be optimized by next/image.
           <img
+            key={browserImageUrl}
             src={browserImageUrl}
             alt={displayAlt}
             className="absolute inset-0 h-full w-full object-cover scale-[1.01]"
+            onError={handleImageLoadError}
           />
         ) : displayImageUrl ? (
           <NextImage
+            key={browserImageUrl}
             src={browserImageUrl}
             alt={displayAlt}
             fill
             unoptimized
             sizes={`${cardWidth}px`}
             className="object-cover scale-[1.01]"
+            onError={handleImageLoadError}
           />
+        ) : imageLoadFailed ? (
+          <div
+            role="status"
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/35 px-4 text-center text-gl-text-secondary"
+          >
+            <ImageIcon size={28} />
+            <span className="text-[13px] font-medium">图片加载失败</span>
+          </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-gl-text-muted">
             <ImageIcon size={28} />

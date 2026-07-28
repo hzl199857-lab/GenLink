@@ -806,8 +806,6 @@ body {
 }
 
 .agent-mention-menu {
-  bottom: calc(100% + 10px);
-  left: -92px;
   top: auto;
   width: min(408px, calc(100vw - 32px));
   max-height: 248px;

@@ -2222,7 +2222,7 @@ function resolveAudioOutputFileName(
   return fileName;
 }
 
-function withResolvedUploadedImagePreviewUrl(
+export function withResolvedUploadedImagePreviewUrl(
   previewUrl: string,
   fileName: string,
   node: Extract<CanvasNode, { type: "uploaded_image" }>,
@@ -2232,14 +2232,17 @@ function withResolvedUploadedImagePreviewUrl(
     data: {
       ...node.data,
       imageUrl: previewUrl,
-      hostedImageUrl: previewUrl,
+      hostedImageUrl: isObjectUrl(node.data.hostedImageUrl)
+        ? undefined
+        : node.data.hostedImageUrl,
+      previewUrl,
       fileName: node.data.fileName ?? fileName,
       outputFileName: fileName,
     },
   };
 }
 
-function withResolvedImagePreviewUrl(
+export function withResolvedImagePreviewUrl(
   previewUrl: string,
   fileName: string,
   node: Extract<CanvasNode, { type: "image" }>,
@@ -2249,7 +2252,10 @@ function withResolvedImagePreviewUrl(
     data: {
       ...node.data,
       imageUrl: previewUrl,
-      hostedImageUrl: previewUrl,
+      hostedImageUrl: isObjectUrl(node.data.hostedImageUrl)
+        ? undefined
+        : node.data.hostedImageUrl,
+      previewUrl,
       generatedOutputFileName: fileName,
     },
   };

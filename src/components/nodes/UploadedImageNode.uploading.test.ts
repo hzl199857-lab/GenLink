@@ -42,3 +42,14 @@ test("hides image toolbars while their local previews are still uploading", () =
   assert.equal(uploadingGuards?.length, 2);
   assert.equal(guardedToolbars?.length, 2);
 });
+
+test("falls back across image URLs and shows a visible terminal error", () => {
+  assert.match(uploadedImageNodeSource, /getCanvasImageDisplayUrls\(data\)/);
+  assert.equal(uploadedImageNodeSource.match(/onError=\{handleImageLoadError\}/g)?.length, 2);
+  assert.match(uploadedImageNodeSource, /图片加载失败/u);
+});
+
+test("guards project saves and page exits while a local image upload is pending", () => {
+  assert.match(infiniteCanvasSource, /hasTransientCanvasImageMedia\(node\.data\)/);
+  assert.match(infiniteCanvasSource, /beforeunload/);
+});

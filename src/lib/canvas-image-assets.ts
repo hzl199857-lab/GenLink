@@ -39,6 +39,18 @@ export type PendingCanvasImageData = {
   errorMessage?: undefined;
 };
 
+export type CanvasImageMediaData = {
+  imageUrl: string;
+  hostedImageUrl?: string;
+  previewUrl?: string;
+  semanticImageUrl?: string;
+  outputFileName?: string;
+  generatedOutputFileName?: string;
+  status?: "idle" | "generating" | "error";
+  statusMessage?: string;
+  errorMessage?: string;
+};
+
 export type CreatePendingCanvasImageDataOptions = {
   previewUrl: string;
   dimensions: ImageDimensions;
@@ -75,6 +87,60 @@ const SEMANTIC_DERIVATIVE_OPTIONS: CanvasImageDerivativeOptions = {
   mimeType: "image/jpeg",
   quality: 0.9,
 };
+
+function cleanUrl(value?: string): string {
+  return value?.trim() ?? "";
+}
+
+export function isBrowserObjectUrl(value?: string): boolean {
+  return cleanUrl(value).startsWith("blob:");
+}
+
+export function getCanvasImageDisplayUrls(data: CanvasImageMediaData): string[] {
+  return [...new Set([
+    cleanUrl(data.previewUrl),
+    cleanUrl(data.hostedImageUrl),
+    cleanUrl(data.imageUrl),
+  ].filter((url) => url && !url.startsWith("output:")))];
+}
+
+export function hasTransientCanvasImageMedia(data: CanvasImageMediaData): boolean {
+  return [data.imageUrl, data.hostedImageUrl, data.previewUrl, data.semanticImageUrl]
+    .some(isBrowserObjectUrl);
+}
+
+export function sanitizeCanvasImageMediaForPersistence<T extends CanvasImageMediaData>(
+  data: T,
+): T {
+  const outputFileName = cleanUrl(data.generatedOutputFileName) || cleanUrl(data.outputFileName);
+  const stableImageUrl = isBrowserObjectUrl(data.imageUrl) ? "" : cleanUrl(data.imageUrl);
+  const stableHostedImageUrl = isBrowserObjectUrl(data.hostedImageUrl)
+    ? ""
+    : cleanUrl(data.hostedImageUrl);
+  const stablePreviewUrl = isBrowserObjectUrl(data.previewUrl) ? "" : cleanUrl(data.previewUrl);
+  const stableSemanticImageUrl = isBrowserObjectUrl(data.semanticImageUrl)
+    ? ""
+    : cleanUrl(data.semanticImageUrl);
+  const persistentImageUrl = outputFileName
+    ? `output:${outputFileName}`
+    : stableHostedImageUrl || stableImageUrl || stablePreviewUrl;
+  const uploadWasInterrupted = data.status === "generating" && !persistentImageUrl;
+
+  return {
+    ...data,
+    imageUrl: persistentImageUrl,
+    hostedImageUrl: stableHostedImageUrl || undefined,
+    previewUrl: stablePreviewUrl || undefined,
+    semanticImageUrl: stableSemanticImageUrl || undefined,
+    ...(uploadWasInterrupted
+      ? {
+          status: "error",
+          statusMessage: undefined,
+          errorMessage: "图片上传未完成，请重新上传",
+        }
+      : {}),
+  };
+}
 
 export function createPendingCanvasImageData(
   file: File,

@@ -23,7 +23,74 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 const {
   createHostedCanvasImageData,
   createPendingCanvasImageData,
+  getCanvasImageDisplayUrls,
+  hasTransientCanvasImageMedia,
+  sanitizeCanvasImageMediaForPersistence,
 } = require("./canvas-image-assets.ts") as typeof import("./canvas-image-assets");
+
+test("orders image display URLs from preview to hosted source with duplicates removed", () => {
+  assert.deepEqual(
+    getCanvasImageDisplayUrls({
+      imageUrl: "https://oss.example.com/original.png",
+      hostedImageUrl: "https://oss.example.com/original.png",
+      previewUrl: "blob:fresh-preview",
+    }),
+    ["blob:fresh-preview", "https://oss.example.com/original.png"],
+  );
+
+  assert.deepEqual(
+    getCanvasImageDisplayUrls({ imageUrl: "output:missing.png" }),
+    [],
+  );
+});
+
+test("removes browser object URLs from persisted image data", () => {
+  const data = sanitizeCanvasImageMediaForPersistence({
+    imageUrl: "blob:original",
+    hostedImageUrl: "https://oss.example.com/original.png",
+    previewUrl: "blob:preview",
+    semanticImageUrl: "blob:semantic",
+    status: "idle" as const,
+  });
+
+  assert.deepEqual(data, {
+    imageUrl: "https://oss.example.com/original.png",
+    hostedImageUrl: "https://oss.example.com/original.png",
+    previewUrl: undefined,
+    semanticImageUrl: undefined,
+    status: "idle",
+  });
+  assert.equal(hasTransientCanvasImageMedia(data), false);
+});
+
+test("persists project-backed images by output file and marks interrupted uploads", () => {
+  assert.equal(
+    sanitizeCanvasImageMediaForPersistence({
+      imageUrl: "blob:project-preview",
+      previewUrl: "blob:project-preview",
+      generatedOutputFileName: "reference.png",
+    }).imageUrl,
+    "output:reference.png",
+  );
+
+  assert.deepEqual(
+    sanitizeCanvasImageMediaForPersistence({
+      imageUrl: "blob:pending",
+      previewUrl: "blob:pending",
+      status: "generating" as const,
+      statusMessage: "Uploading...",
+    }),
+    {
+      imageUrl: "",
+      hostedImageUrl: undefined,
+      previewUrl: undefined,
+      semanticImageUrl: undefined,
+      status: "error",
+      statusMessage: undefined,
+      errorMessage: "图片上传未完成，请重新上传",
+    },
+  );
+});
 
 test("creates pending canvas image data from a local preview URL", () => {
   const file = new File(["image-bytes"], "paste.png", { type: "image/png" });

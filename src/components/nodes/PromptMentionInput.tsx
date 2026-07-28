@@ -50,15 +50,19 @@ type MentionTrigger = {
   startOffset: number;
   endOffset: number;
   query: string;
-  left: number;
-  top: number;
   viewportLeft: number;
   viewportTop: number;
+  agentViewportLeft: number;
+  agentViewportBottom: number;
 };
 
 const DEFAULT_MENTION_MENU_WIDTH = 260;
 const DEFAULT_MENTION_MENU_MAX_HEIGHT = 260;
 const DEFAULT_MENTION_MENU_MARGIN = 8;
+const AGENT_MENTION_MENU_WIDTH = 408;
+const AGENT_MENTION_MENU_SIDE_MARGIN = 16;
+const AGENT_MENTION_MENU_LEFT_OFFSET = 92;
+const AGENT_MENTION_MENU_GAP = 10;
 
 export interface PromptMentionInputProps {
   value: string;
@@ -208,8 +212,6 @@ function getCurrentTrigger(editor: HTMLDivElement): MentionTrigger | null {
   const caretLeft = rect.left || editorRect.left;
   const caretTop = rect.top || editorRect.top;
   const caretBottom = rect.bottom || editorRect.top + 28;
-  const left = caretLeft - editorRect.left;
-  const top = caretBottom - editorRect.top + 6;
   const maxViewportLeft = Math.max(
     DEFAULT_MENTION_MENU_MARGIN,
     window.innerWidth - DEFAULT_MENTION_MENU_WIDTH - DEFAULT_MENTION_MENU_MARGIN,
@@ -224,19 +226,39 @@ function getCurrentTrigger(editor: HTMLDivElement): MentionTrigger | null {
   const viewportTop = shouldFlipAbove
     ? caretTop - DEFAULT_MENTION_MENU_MAX_HEIGHT - 6
     : belowTop;
+  const agentMenuWidth = Math.min(
+    AGENT_MENTION_MENU_WIDTH,
+    window.innerWidth - AGENT_MENTION_MENU_SIDE_MARGIN * 2,
+  );
+  const maxAgentViewportLeft = Math.max(
+    AGENT_MENTION_MENU_SIDE_MARGIN,
+    window.innerWidth - agentMenuWidth - AGENT_MENTION_MENU_SIDE_MARGIN,
+  );
 
   return {
     textNode,
     startOffset,
     endOffset: range.startOffset,
     query,
-    left: Math.max(0, left),
-    top: Math.max(28, top),
     viewportLeft: Math.min(
       maxViewportLeft,
       Math.max(DEFAULT_MENTION_MENU_MARGIN, caretLeft),
     ),
     viewportTop: Math.max(DEFAULT_MENTION_MENU_MARGIN, viewportTop),
+    agentViewportLeft: Math.min(
+      maxAgentViewportLeft,
+      Math.max(
+        AGENT_MENTION_MENU_SIDE_MARGIN,
+        editorRect.left - AGENT_MENTION_MENU_LEFT_OFFSET,
+      ),
+    ),
+    agentViewportBottom: Math.min(
+      window.innerHeight - DEFAULT_MENTION_MENU_MARGIN,
+      Math.max(
+        DEFAULT_MENTION_MENU_MARGIN,
+        window.innerHeight - editorRect.top + AGENT_MENTION_MENU_GAP,
+      ),
+    ),
   };
 }
 
@@ -502,7 +524,12 @@ export const PromptMentionInput = memo(function PromptMentionInput({
         'v2-mention-menu nodrag nopan',
         agentMenu ? 'agent-mention-menu' : '',
       ].join(' ')}
-      style={agentMenu ? undefined : {
+      style={agentMenu ? {
+        left: trigger.agentViewportLeft,
+        bottom: trigger.agentViewportBottom,
+        position: 'fixed',
+        zIndex: 1000,
+      } : {
         left: trigger.viewportLeft,
         top: trigger.viewportTop,
         position: 'fixed',
@@ -649,95 +676,7 @@ export const PromptMentionInput = memo(function PromptMentionInput({
         onWheelCapture={(event) => event.stopPropagation()}
       />
 
-      {agentMenu && trigger ? (
-        <div
-          data-ref-mention-menu="true"
-          className={[
-            'v2-mention-menu nodrag nopan',
-            agentMenu ? 'agent-mention-menu' : '',
-          ].join(' ')}
-          style={agentMenu ? undefined : {
-            left: trigger.left,
-            top: trigger.top,
-          }}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-          }}
-        >
-          {agentMenu ? (
-            <div className="agent-mention-menu-title">可能@的内容</div>
-          ) : null}
-          {filteredOptions.length > 0 ? (
-            filteredOptions.map((option, index) => {
-              const active = index === activeIndex;
-
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={[
-                    'at-mention-item',
-                    active ? 'at-mention-item-active' : '',
-                  ].join(' ')}
-                  onPointerEnter={() => setActiveIndex(index)}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    insertMention(option);
-                  }}
-                >
-                  <span className="ref-thumb-wrap">
-                    {option.type === 'video' ? (
-                      <>
-                        {option.previewUrl ? (
-                          <NextImage
-                            src={getBrowserImageDisplayUrl(option.previewUrl)}
-                            alt={option.alt || option.label}
-                            fill
-                            unoptimized
-                            sizes="34px"
-                            className="object-cover"
-                          />
-                        ) : (
-                          <span className="flex h-full w-full items-center justify-center bg-black/40 text-white/80">
-                            <Play size={14} fill="currentColor" strokeWidth={0} />
-                          </span>
-                        )}
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/18 text-white">
-                          <Play size={12} fill="currentColor" strokeWidth={0} />
-                        </span>
-                      </>
-                    ) : (
-                      <NextImage
-                        src={getBrowserImageDisplayUrl(option.previewUrl || option.imageUrl || '')}
-                        alt={option.alt || option.label}
-                        fill
-                        unoptimized
-                        sizes="34px"
-                        className="object-cover"
-                      />
-                    )}
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col text-left">
-                    <span className="truncate">{option.label}</span>
-                    {option.detail ? (
-                      <span className="truncate text-[11px] leading-4 text-gl-text-muted">
-                        {option.detail}
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-              );
-            })
-          ) : (
-            <div className="px-3 py-2 text-[12px] text-gl-text-muted">
-              No references
-            </div>
-          )}
-        </div>
-      ) : null}
-      {!agentMenu && mentionMenu && typeof document !== 'undefined'
+      {mentionMenu && typeof document !== 'undefined'
         ? createPortal(mentionMenu, document.body)
         : null}
     </div>
