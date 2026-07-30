@@ -61,6 +61,13 @@ test("registration handles failed API responses without parsing them blindly", (
   assert.doesNotMatch(registerSource, /verifyResponse\.json\(\)/);
 });
 
+test("registration surfaces validation, request progress, and API failures", () => {
+  assert.match(registerSource, /setError\([\s\S]*?\\u8bf7\\u8f93\\u5165/);
+  assert.match(registerSource, /aria-busy=\{sendingCode\}/);
+  assert.match(registerSource, /LoaderCircle className="h-4 w-4 animate-spin"/);
+  assert.match(registerSource, /role="alert" aria-live="polite"/);
+});
+
 test("legal documents cover service, safety, and privacy obligations", () => {
   assert.match(legalDocumentSource, /GenLink 服务条款/);
   assert.match(legalDocumentSource, /GenLink 社区准则/);

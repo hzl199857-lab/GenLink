@@ -1,6 +1,20 @@
 const CANVAS_NODE_CLIPBOARD_MIME = 'application/x-genlink-canvas-nodes';
 export const CANVAS_NODE_CLIPBOARD_TEXT_MARKER = '{"type":"genlink-canvas-nodes","version":1}';
 
+type ClipboardEdge = {
+  source: string;
+  target: string;
+};
+
+export function getInternalClipboardEdges<T extends ClipboardEdge>(
+  edges: T[],
+  selectedNodeIds: Set<string>,
+): T[] {
+  return edges.filter(
+    (edge) => selectedNodeIds.has(edge.source) && selectedNodeIds.has(edge.target),
+  );
+}
+
 export function markCanvasNodeClipboard(data: DataTransfer | null): boolean {
   if (!data) {
     return false;

@@ -33,7 +33,7 @@ const SIDE_PLUS_POINTER_BLOCKER_SELECTOR = [
 ].join(',');
 
 const HANDLE_HITBOX_BASE =
-  '!z-30 !pointer-events-auto !w-[10px] !-translate-y-1/2 !rounded-full !border-0 !bg-transparent transition-[top,left] duration-300 ease-out cursor-crosshair nodrag nopan';
+  '!z-30 !pointer-events-auto !w-[10px] !-translate-y-1/2 !rounded-full !border-0 !bg-transparent cursor-crosshair nodrag nopan';
 
 const HANDLE_BADGE_BASE =
   'card-side-plus-btn pointer-events-auto absolute z-40 flex h-8 w-8 items-center justify-center rounded-full border text-gl-text-tertiary nodrag nopan';
@@ -75,6 +75,7 @@ export interface CardSideHandleProps {
   cardTopOffset?: number;
   cardLeftOffset?: number;
   cardWidth?: number;
+  cardHeight?: number;
 }
 
 export interface MagneticSidePlusProps {
@@ -295,6 +296,7 @@ export function CardSideHandle({
   cardTopOffset = 0,
   cardLeftOffset = 0,
   cardWidth = 0,
+  cardHeight = 0,
 }: CardSideHandleProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const handleDomId = useId();
@@ -306,15 +308,21 @@ export function CardSideHandle({
   const [isConnectingFromPlus, setIsConnectingFromPlus] = useState(false);
   const shouldMeasureCardBounds = cardWidth <= 0;
   const [measuredCardBounds, setMeasuredCardBounds] = useState({
+    top: cardTopOffset,
     left: cardLeftOffset,
     width: cardWidth,
+    height: cardHeight,
   });
-  const handleTop = useMemo(
-    () => `calc(50% + ${cardTopOffset / 2}px)`,
-    [cardTopOffset],
-  );
+  const resolvedCardTop = cardHeight > 0 ? cardTopOffset : measuredCardBounds.top;
   const resolvedCardLeft = shouldMeasureCardBounds ? measuredCardBounds.left : cardLeftOffset;
   const resolvedCardWidth = shouldMeasureCardBounds ? measuredCardBounds.width : cardWidth;
+  const resolvedCardHeight = cardHeight > 0 ? cardHeight : measuredCardBounds.height;
+  const handleTop = useMemo(
+    () => resolvedCardHeight > 0
+      ? resolvedCardTop + resolvedCardHeight / 2
+      : `calc(50% + ${cardTopOffset / 2}px)`,
+    [cardTopOffset, resolvedCardHeight, resolvedCardTop],
+  );
   const cardRightEdge = resolvedCardLeft + resolvedCardWidth;
   const handleLeft = position === Position.Left
     ? resolvedCardLeft - HANDLE_SIZE / 2
@@ -361,8 +369,10 @@ export function CardSideHandle({
 
     const updateMeasuredCardBounds = () => {
       setMeasuredCardBounds({
+        top: cardElement.offsetTop,
         left: cardElement.offsetLeft,
         width: cardElement.offsetWidth,
+        height: cardElement.offsetHeight,
       });
     };
 
@@ -756,9 +766,9 @@ export function CardSideHandle({
         className="pointer-events-none absolute"
         style={{
           left: `${resolvedCardLeft}px`,
-          top: 0,
+          top: resolvedCardHeight > 0 ? `${resolvedCardTop}px` : 0,
           width: `${resolvedCardWidth}px`,
-          height: '100%',
+          height: resolvedCardHeight > 0 ? `${resolvedCardHeight}px` : '100%',
         }}
       />
       <Handle

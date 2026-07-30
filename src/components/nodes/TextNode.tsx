@@ -91,8 +91,10 @@ export const TextNode = memo(function TextNode({
   const [isComposing, setIsComposing] = useState(false);
   const [draftText, setDraftText] = useState(data.text || '');
   const [cardMetrics, setCardMetrics] = useState({
+    top: 0,
     left: 0,
     width: 0,
+    height: 0,
   });
   const dataRef = useRef(data);
   const resizeFrameRef = useRef<number | null>(null);
@@ -296,11 +298,18 @@ export const TextNode = memo(function TextNode({
     const updateCardMetrics = () => {
       setCardMetrics((current) => {
         const next = {
+          top: cardElement.offsetTop,
           left: cardElement.offsetLeft,
           width: cardElement.offsetWidth,
+          height: cardElement.offsetHeight,
         };
 
-        if (current.left === next.left && current.width === next.width) {
+        if (
+          current.top === next.top &&
+          current.left === next.left &&
+          current.width === next.width &&
+          current.height === next.height
+        ) {
           return current;
         }
 
@@ -334,7 +343,16 @@ export const TextNode = memo(function TextNode({
     });
 
     return () => window.cancelAnimationFrame(frameId);
-  }, [cardMetrics.left, cardMetrics.width, cardSize.height, cardSize.width, id, updateNodeInternals]);
+  }, [
+    cardMetrics.height,
+    cardMetrics.left,
+    cardMetrics.top,
+    cardMetrics.width,
+    cardSize.height,
+    cardSize.width,
+    id,
+    updateNodeInternals,
+  ]);
 
   const patchData = useCallback((partial: Partial<TextNodeData>) => {
     const currentData = dataRef.current;
@@ -546,7 +564,7 @@ export const TextNode = memo(function TextNode({
           className={NODE_RESIZE_HANDLE_ABSOLUTE_BUTTON_CLASS}
           style={{
             left: `${cardMetrics.left + cardSize.width - 4}px`,
-            top: `${18 + cardSize.height - 4}px`,
+            top: `${cardMetrics.top + cardSize.height - 4}px`,
             transform: `scale(${resizeHandleScale})`,
             transformOrigin: 'top left',
           }}
@@ -570,17 +588,19 @@ export const TextNode = memo(function TextNode({
           type="target"
           position={Position.Left}
           visible={showAccessories}
-          cardTopOffset={18}
+          cardTopOffset={cardMetrics.top}
           cardLeftOffset={cardMetrics.left}
           cardWidth={cardMetrics.width}
+          cardHeight={cardMetrics.height}
         />
         <CardSideHandle
           type="source"
           position={Position.Right}
           visible={showAccessories}
-          cardTopOffset={18}
+          cardTopOffset={cardMetrics.top}
           cardLeftOffset={cardMetrics.left}
           cardWidth={cardMetrics.width}
+          cardHeight={cardMetrics.height}
         />
       </div>
 

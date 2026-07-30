@@ -24,6 +24,7 @@ require.extensions[".ts"] = (module: NodeModule, filename: string) => {
 const {
   CANVAS_NODE_CLIPBOARD_TEXT_MARKER,
   getClipboardImageFiles,
+  getInternalClipboardEdges,
   isCanvasNodeClipboard,
   markCanvasNodeClipboard,
 } = require("./clipboard-paste.ts") as typeof import("./clipboard-paste");
@@ -56,6 +57,19 @@ test("marks and recognizes the system clipboard as GenLink node content", () => 
 test("does not treat unrelated external clipboard content as GenLink nodes", () => {
   assert.equal(isCanvasNodeClipboard(createClipboardData({ "text/plain": "external text" })), false);
   assert.equal(isCanvasNodeClipboard(null), false);
+});
+
+test("copies only edges whose endpoints are both selected", () => {
+  const edges = [
+    { id: "internal", source: "node-a", target: "node-b" },
+    { id: "incoming", source: "node-c", target: "node-a" },
+    { id: "outgoing", source: "node-b", target: "node-d" },
+  ];
+
+  assert.deepEqual(
+    getInternalClipboardEdges(edges, new Set(["node-a", "node-b"])),
+    [edges[0]],
+  );
 });
 
 test("reads copied webpage images from clipboard items", () => {

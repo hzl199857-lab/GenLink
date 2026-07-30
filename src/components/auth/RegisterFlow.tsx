@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { FormEvent, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -87,8 +87,12 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
     event.preventDefault();
     setEmailTouched(true);
     setPasswordTouched(true);
+    setError(null);
 
     if (!isValidEmail(email) || !password.trim()) {
+      setError(
+        "\u8bf7\u8f93\u5165\u6709\u6548\u7684\u90ae\u7bb1\u5730\u5740\u548c\u5bc6\u7801",
+      );
       return;
     }
 
@@ -98,7 +102,6 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
     }
 
     setSendingCode(true);
-    setError(null);
 
     try {
       const response = await fetch("/api/auth/send-register-code", {
@@ -275,19 +278,30 @@ export function RegisterFlow({ onSuccess }: RegisterFlowProps) {
                     type="submit"
                     className="group absolute right-1.5 top-1.5 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
                     disabled={sendingCode}
+                    aria-busy={sendingCode}
                     aria-label={"\u7ee7\u7eed"}
                   >
-                    <span className="relative block h-full w-full overflow-hidden">
-                      <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">
-                        <ArrowRight className="h-4 w-4" />
+                    {sendingCode ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <span className="relative block h-full w-full overflow-hidden">
+                        <span className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:translate-x-full">
+                          <ArrowRight className="h-4 w-4" />
+                        </span>
+                        <span className="absolute inset-0 flex -translate-x-full items-center justify-center transition-transform duration-300 group-hover:translate-x-0">
+                          <ArrowRight className="h-4 w-4" />
+                        </span>
                       </span>
-                      <span className="absolute inset-0 flex -translate-x-full items-center justify-center transition-transform duration-300 group-hover:translate-x-0">
-                        <ArrowRight className="h-4 w-4" />
-                      </span>
-                    </span>
+                    )}
                   </button>
                 </div>
               </form>
+
+              {error ? (
+                <p role="alert" aria-live="polite" className="text-sm text-red-300/90">
+                  {error}
+                </p>
+              ) : null}
             </div>
 
             <AuthConsent

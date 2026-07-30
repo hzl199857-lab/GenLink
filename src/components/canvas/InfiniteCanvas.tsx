@@ -259,6 +259,7 @@ import { writeClipboardContent } from '@/lib/clipboard-content';
 import {
   CANVAS_NODE_CLIPBOARD_TEXT_MARKER,
   getClipboardImageFiles,
+  getInternalClipboardEdges,
   isCanvasNodeClipboard,
   markCanvasNodeClipboard,
 } from '@/lib/canvas/clipboard-paste';
@@ -4909,7 +4910,7 @@ type QuickReferenceConnectMode = {
   onSelect: (attachment: AgentTaskAttachment) => 'added' | 'duplicate';
 };
 
-type ConnectedCopyBuffer = {
+type CanvasCopyBuffer = {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
 };
@@ -5178,27 +5179,41 @@ function getIncomingAndInternalEdgesForCopy(
   return edges.filter((edge) => selectedNodeIds.has(edge.target));
 }
 
-function createConnectedCopyBuffer(
+function createCanvasCopyBuffer(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
-  selectedNodeIds: Set<string>,
-): ConnectedCopyBuffer {
+): CanvasCopyBuffer {
   const copiedNodes = nodes.map((node) => cloneCanvasNode(node, 0));
   const copiedNodeIdsByOriginalId = new Map<string, string>(
     nodes.map((node, index) => [node.id, copiedNodes[index].id]),
   );
-  const copiedEdges = getIncomingAndInternalEdgesForCopy(edges, selectedNodeIds)
-    .map((edge) => ({
-      ...edge,
-      id: crypto.randomUUID(),
-      source: copiedNodeIdsByOriginalId.get(edge.source) ?? edge.source,
-      target: copiedNodeIdsByOriginalId.get(edge.target) ?? edge.target,
-    }));
+  const copiedEdges = edges.map((edge) => ({
+    ...edge,
+    id: crypto.randomUUID(),
+    source: copiedNodeIdsByOriginalId.get(edge.source) ?? edge.source,
+    target: copiedNodeIdsByOriginalId.get(edge.target) ?? edge.target,
+  }));
 
   return {
     nodes: copiedNodes,
     edges: copiedEdges,
   };
+}
+
+function createPastedCopyEdges(
+  copyBuffer: CanvasCopyBuffer,
+  pastedNodes: CanvasNode[],
+): CanvasEdge[] {
+  const pastedNodeIdsByCopiedId = new Map<string, string>(
+    copyBuffer.nodes.map((node, index) => [node.id, pastedNodes[index].id]),
+  );
+
+  return copyBuffer.edges.map((edge) => ({
+    ...edge,
+    id: crypto.randomUUID(),
+    source: pastedNodeIdsByCopiedId.get(edge.source) ?? edge.source,
+    target: pastedNodeIdsByCopiedId.get(edge.target) ?? edge.target,
+  }));
 }
 
 function areSetsEqual(a: Set<string>, b: Set<string>): boolean {
@@ -10848,8 +10863,8 @@ function InnerCanvas({
   const textReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const storyboardReferenceUploadNodeIdRef = React.useRef<string | null>(null);
   const videoReferenceUploadNodeIdRef = React.useRef<string | null>(null);
-  const copiedNodesRef = useRef<CanvasNode[]>([]);
-  const connectedCopyBufferRef = useRef<ConnectedCopyBuffer | null>(null);
+  const copiedBufferRef = useRef<CanvasCopyBuffer | null>(null);
+  const connectedCopyBufferRef = useRef<CanvasCopyBuffer | null>(null);
   const pasteCountRef = useRef(0);
   const [hasCopiedNodes, setHasCopiedNodes] = useState(false);
   const promptBarInteractionRef = useRef(false);
@@ -12930,11 +12945,15 @@ function InnerCanvas({
       return false;
     }
 
-    copiedNodesRef.current = selectedNodes.map((node) => cloneCanvasNode(node, 0));
-    connectedCopyBufferRef.current = createConnectedCopyBuffer(
+    const copiedNodeIds = new Set(selectedNodes.map((node) => node.id));
+
+    copiedBufferRef.current = createCanvasCopyBuffer(
       selectedNodes,
-      storeEdges,
-      nodeIds,
+      getInternalClipboardEdges(storeEdges, copiedNodeIds),
+    );
+    connectedCopyBufferRef.current = createCanvasCopyBuffer(
+      selectedNodes,
+      getIncomingAndInternalEdgesForCopy(storeEdges, copiedNodeIds),
     );
     pasteCountRef.current = 0;
     setHasCopiedNodes(true);
@@ -13045,39 +13064,45 @@ function InnerCanvas({
   }, [clearEdgeSelection, deleteNodes, nodeContextTarget, selectedNodeIds]);
 
   const handlePasteNodes = useCallback(() => {
-    if (copiedNodesRef.current.length === 0) {
+    const copyBuffer = copiedBufferRef.current;
+
+    if (!copyBuffer || copyBuffer.nodes.length === 0) {
       return false;
     }
 
     pasteCountRef.current += 1;
 
-    const pastedNodes = copiedNodesRef.current.map((node) =>
+    const pastedNodes = copyBuffer.nodes.map((node) =>
       cloneCanvasNode(node, pasteCountRef.current),
     );
+    const pastedEdges = createPastedCopyEdges(copyBuffer, pastedNodes);
 
     addNodes(pastedNodes);
+    pastedEdges.forEach(addEdgeStore);
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
     setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
-    setHasCopiedNodes(copiedNodesRef.current.length > 0);
+    setHasCopiedNodes(copyBuffer.nodes.length > 0);
     return true;
-  }, [addNodes, clearEdgeSelection]);
+  }, [addEdgeStore, addNodes, clearEdgeSelection]);
 
   const handlePasteNodesAtPosition = useCallback((targetPosition: { x: number; y: number }) => {
-    if (copiedNodesRef.current.length === 0) {
+    const copyBuffer = copiedBufferRef.current;
+
+    if (!copyBuffer || copyBuffer.nodes.length === 0) {
       setHasCopiedNodes(false);
       return false;
     }
 
     pasteCountRef.current += 1;
 
-    const minX = Math.min(...copiedNodesRef.current.map((node) => node.position.x));
-    const minY = Math.min(...copiedNodesRef.current.map((node) => node.position.y));
+    const minX = Math.min(...copyBuffer.nodes.map((node) => node.position.x));
+    const minY = Math.min(...copyBuffer.nodes.map((node) => node.position.y));
     const offset = {
       x: targetPosition.x - minX,
       y: targetPosition.y - minY,
     };
-    const pastedNodes = copiedNodesRef.current.map((node) => {
+    const pastedNodes = copyBuffer.nodes.map((node) => {
       const pastedNode = cloneCanvasNode(node, pasteCountRef.current);
 
       return {
@@ -13088,14 +13113,16 @@ function InnerCanvas({
         },
       };
     });
+    const pastedEdges = createPastedCopyEdges(copyBuffer, pastedNodes);
 
     addNodes(pastedNodes);
+    pastedEdges.forEach(addEdgeStore);
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
     setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
     setHasCopiedNodes(true);
     return true;
-  }, [addNodes, clearEdgeSelection]);
+  }, [addEdgeStore, addNodes, clearEdgeSelection]);
 
   const handlePasteNodesWithUpstream = useCallback(() => {
     const copyBuffer = connectedCopyBufferRef.current;
@@ -13109,26 +13136,19 @@ function InnerCanvas({
     const pastedNodes = copyBuffer.nodes.map((node) =>
       cloneCanvasNode(node, pasteCountRef.current),
     );
-    const pastedNodeIdsByCopiedId = new Map<string, string>(
-      copyBuffer.nodes.map((node, index) => [node.id, pastedNodes[index].id]),
-    );
     const validNodeIds = new Set([
       ...storeNodes.map((node) => node.id),
       ...pastedNodes.map((node) => node.id),
     ]);
-    const pastedEdges = copyBuffer.edges.map((edge) => ({
-      ...edge,
-      id: crypto.randomUUID(),
-      source: pastedNodeIdsByCopiedId.get(edge.source) ?? edge.source,
-      target: pastedNodeIdsByCopiedId.get(edge.target) ?? edge.target,
-    })).filter((edge) => validNodeIds.has(edge.source) && validNodeIds.has(edge.target));
+    const pastedEdges = createPastedCopyEdges(copyBuffer, pastedNodes)
+      .filter((edge) => validNodeIds.has(edge.source) && validNodeIds.has(edge.target));
 
     addNodes(pastedNodes);
     pastedEdges.forEach(addEdgeStore);
     setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
     setActiveNodeId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
     clearEdgeSelection();
-    setHasCopiedNodes(copiedNodesRef.current.length > 0);
+    setHasCopiedNodes(Boolean(copiedBufferRef.current?.nodes.length));
     return true;
   }, [addEdgeStore, addNodes, clearEdgeSelection, storeNodes]);
 

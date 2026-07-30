@@ -52,6 +52,7 @@ type MentionTrigger = {
   query: string;
   viewportLeft: number;
   viewportTop: number;
+  viewportBottom: number | null;
   agentViewportLeft: number;
   agentViewportBottom: number;
 };
@@ -223,9 +224,6 @@ function getCurrentTrigger(editor: HTMLDivElement): MentionTrigger | null {
   const shouldFlipAbove =
     belowTop > maxBelowTop &&
     caretTop > DEFAULT_MENTION_MENU_MAX_HEIGHT + DEFAULT_MENTION_MENU_MARGIN;
-  const viewportTop = shouldFlipAbove
-    ? caretTop - DEFAULT_MENTION_MENU_MAX_HEIGHT - 6
-    : belowTop;
   const agentMenuWidth = Math.min(
     AGENT_MENTION_MENU_WIDTH,
     window.innerWidth - AGENT_MENTION_MENU_SIDE_MARGIN * 2,
@@ -244,7 +242,13 @@ function getCurrentTrigger(editor: HTMLDivElement): MentionTrigger | null {
       maxViewportLeft,
       Math.max(DEFAULT_MENTION_MENU_MARGIN, caretLeft),
     ),
-    viewportTop: Math.max(DEFAULT_MENTION_MENU_MARGIN, viewportTop),
+    viewportTop: Math.max(DEFAULT_MENTION_MENU_MARGIN, belowTop),
+    viewportBottom: shouldFlipAbove
+      ? Math.max(
+        DEFAULT_MENTION_MENU_MARGIN,
+        window.innerHeight - caretTop + 6,
+      )
+      : null,
     agentViewportLeft: Math.min(
       maxAgentViewportLeft,
       Math.max(
@@ -531,7 +535,8 @@ export const PromptMentionInput = memo(function PromptMentionInput({
         zIndex: 1000,
       } : {
         left: trigger.viewportLeft,
-        top: trigger.viewportTop,
+        top: trigger.viewportBottom === null ? trigger.viewportTop : undefined,
+        bottom: trigger.viewportBottom ?? undefined,
         position: 'fixed',
         zIndex: 1000,
       }}
