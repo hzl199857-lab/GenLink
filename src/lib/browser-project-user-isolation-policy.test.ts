@@ -20,6 +20,11 @@ test('project records are indexed and filtered by authenticated owner', () => {
     listingImplementation,
     /store\.index\(PROJECT_OWNER_INDEX_NAME\)\.getAll\(userId\)/,
   );
+  assert.match(listingImplementation, /store\.getAll\(\)/);
+  assert.match(
+    listingImplementation,
+    /filter\(\(record\) => record\.ownerUserId === userId\)/,
+  );
 });
 
 test('account changes clear canvas memory and invalidate pending work', () => {

@@ -192,7 +192,10 @@ class MemoryDirectoryHandle {
   }
 }
 
-function installMemoryProjectDatabase(record: Record<string, unknown>): () => void {
+function installMemoryProjectDatabase(
+  record: Record<string, unknown>,
+  options?: { indexError?: Error },
+): () => void {
   const originalWindow = globalThis.window;
   const records = new Map([[String(record.id), record]]);
   const successRequest = <T>(result: T): IDBRequest<T> => {
@@ -202,11 +205,18 @@ function installMemoryProjectDatabase(record: Record<string, unknown>): () => vo
   };
   const store = {
     indexNames: { contains: () => true },
-    index: () => ({
-      getAll: (ownerUserId: string) => successRequest(
-        [...records.values()].filter((item) => item.ownerUserId === ownerUserId),
-      ),
-    }),
+    index: () => {
+      if (options?.indexError) {
+        throw options.indexError;
+      }
+
+      return {
+        getAll: (ownerUserId: string) => successRequest(
+          [...records.values()].filter((item) => item.ownerUserId === ownerUserId),
+        ),
+      };
+    },
+    getAll: () => successRequest([...records.values()]),
     get: (id: string) => successRequest(records.get(id)),
     put: (value: Record<string, unknown>) => {
       records.set(String(value.id), value);
@@ -910,6 +920,31 @@ test("project listing keeps records that need a user permission gesture", async 
     assert.equal(projects[0]?.thumbnailUrl, undefined);
     assert.equal(projectDirectory.getPermissionRequestCount(), 0);
     assert.equal(projectDirectory.getFileReadCount("project.json"), 0);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("project listing falls back when the owner index cannot be read", async () => {
+  const projectDirectory = new MemoryDirectoryHandle("project");
+  const parentDirectory = new MemoryDirectoryHandle("projects");
+  projectDirectory.setPermissionState("prompt");
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "project-1",
+    ownerUserId: "user-1",
+    name: "项目",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "project",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, {
+    indexError: new DOMException("Internal error.", "UnknownError"),
+  });
+
+  try {
+    const projects = await projectStorage.listProjectLibrary("user-1");
+    assert.deepEqual(projects.map((project) => project.id), ["project-1"]);
   } finally {
     restoreWindow();
   }

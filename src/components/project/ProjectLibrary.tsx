@@ -5,7 +5,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronLeft,
   Copy,
+  DatabaseBackup,
   Ellipsis,
+  FileJson2,
   FolderOpen,
   FolderPlus,
   Pencil,
@@ -15,10 +17,14 @@ import {
 import {
   createProjectAtParentDirectory,
   importProjectsFromParentDirectory,
+  isProjectLibraryIndexError,
+  pickLegacyProjectSnapshotFile,
   pickProjectParentDirectory,
+  rebuildProjectLibraryIndex,
   revokeObjectUrls,
   type ProjectHandleRecord,
 } from '@/lib/project-storage';
+import type { ProjectSnapshot } from '@/types/canvas';
 import { runCanvasUserScopedOperation, useCanvasStore } from '@/store/canvas-store';
 import {
   CreateProjectDialog,
@@ -283,6 +289,51 @@ function RenameProjectDialog({
   );
 }
 
+function RebuildProjectIndexDialog({
+  open,
+  loading,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  loading: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 px-4">
+      <div className="w-full max-w-[460px] rounded-[8px] border border-white/10 bg-[#141518] p-5 shadow-[0_24px_56px_rgba(0,0,0,0.46)]">
+        <div className="text-[15px] font-medium text-white/92">重建项目索引</div>
+        <p className="mt-3 text-[13px] leading-6 text-white/58">
+          这会清除当前浏览器中损坏的项目列表记录，但不会删除电脑里的项目文件夹或 project.json。重建后需要重新导入项目。
+        </p>
+        <div className="mt-5 flex justify-end gap-2.5">
+          <button
+            type="button"
+            disabled={loading}
+            className="h-9 rounded-[6px] px-3.5 text-[12px] text-white/56 transition hover:bg-white/7 hover:text-white/88 disabled:opacity-50"
+            onClick={onClose}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            className="h-9 rounded-[6px] bg-[#ccff00] px-3.5 text-[12px] font-medium text-[#101500] transition hover:bg-[#d8ff33] disabled:opacity-50"
+            onClick={onConfirm}
+          >
+            {loading ? '正在重建...' : '确认重建'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ProjectLibrary({
   userId,
   onOpenProject,
@@ -304,10 +355,15 @@ export function ProjectLibrary({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [repairAvailable, setRepairAvailable] = useState(false);
+  const [repairDialogOpen, setRepairDialogOpen] = useState(false);
   const [menuProjectId, setMenuProjectId] = useState<string | null>(null);
   const [renameProjectTarget, setRenameProjectTarget] = useState<ProjectHandleRecord | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectHandleRecord | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createDialogVariant, setCreateDialogVariant] = useState<'create' | 'restore'>('create');
+  const [legacyImportSnapshot, setLegacyImportSnapshot] = useState<ProjectSnapshot | null>(null);
   const [createDraft, setCreateDraft] = useState<CreateProjectDraft>({
     projectName: '',
     parentHandle: null,
@@ -346,6 +402,7 @@ export function ProjectLibrary({
   const refreshProjects = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setNotice(null);
 
     try {
       const nextProjects = await listProjects();
@@ -354,8 +411,10 @@ export function ProjectLibrary({
         project.thumbnailUrl ? [project.thumbnailUrl] : [],
       );
       setProjects(nextProjects);
+      setRepairAvailable(false);
       onProjectsReady?.(nextProjects.length);
     } catch (nextError) {
+      setRepairAvailable(isProjectLibraryIndexError(nextError));
       setError(getProjectLibraryErrorMessage(
         nextError,
         '项目列表加载失败，请刷新页面后重试。',
@@ -410,6 +469,9 @@ export function ProjectLibrary({
 
   const handleOpenCreateDialog = () => {
     setError(null);
+    setNotice(null);
+    setCreateDialogVariant('create');
+    setLegacyImportSnapshot(null);
     setCreateDraft({
       projectName: '',
       parentHandle: null,
@@ -421,6 +483,7 @@ export function ProjectLibrary({
   const handleImportProjects = async () => {
     setBusy(true);
     setError(null);
+    setNotice(null);
 
     try {
       const parentHandle = await pickProjectParentDirectory();
@@ -431,10 +494,57 @@ export function ProjectLibrary({
         setError('没有找到可导入的 GenLink 项目，请选择包含 project.json 的项目文件夹或其父目录。');
       }
     } catch (nextError) {
+      setRepairAvailable(isProjectLibraryIndexError(nextError));
       setError(getProjectLibraryErrorMessage(
         nextError,
         '无法读取所选目录，请确认目录仍存在且浏览器拥有访问权限，然后重试。',
       ));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleImportLegacyProjectFile = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const snapshot = await pickLegacyProjectSnapshotFile();
+      setLegacyImportSnapshot(snapshot);
+      setCreateDialogVariant('restore');
+      setCreateDraft({
+        projectName: snapshot.name,
+        parentHandle: null,
+        parentDirectoryLabel: '',
+      });
+      setCreateDialogOpen(true);
+    } catch (nextError) {
+      setError(getProjectLibraryErrorMessage(
+        nextError,
+        '读取 project.json 失败，请确认文件来自旧版 GenLink 项目。',
+      ));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRebuildProjectIndex = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      await rebuildProjectLibraryIndex();
+      revokeObjectUrls(thumbnailUrlsRef.current);
+      thumbnailUrlsRef.current = [];
+      setProjects([]);
+      setRepairAvailable(false);
+      setRepairDialogOpen(false);
+      setNotice('项目索引已重建。请使用“批量导入”选择完整项目文件夹，或导入旧版 project.json。');
+      onProjectsReady?.(0);
+    } catch (nextError) {
+      setError(getProjectLibraryErrorMessage(nextError, '项目索引重建失败，请稍后重试。'));
     } finally {
       setBusy(false);
     }
@@ -470,6 +580,7 @@ export function ProjectLibrary({
           parentHandle: createDraft.parentHandle!,
           projectName: createDraft.projectName.trim(),
           userId: activeUserId,
+          sourceSnapshot: legacyImportSnapshot ?? undefined,
         }),
         commit: (result) => attachProject(result.project, result.snapshot),
       });
@@ -479,6 +590,8 @@ export function ProjectLibrary({
       }
 
       setCreateDialogOpen(false);
+      setCreateDialogVariant('create');
+      setLegacyImportSnapshot(null);
       setCreateDraft({
         projectName: '',
         parentHandle: null,
@@ -487,6 +600,7 @@ export function ProjectLibrary({
       await refreshProjects();
       onOpenProject();
     } catch (nextError) {
+      setRepairAvailable(isProjectLibraryIndexError(nextError));
       setError(nextError instanceof Error ? nextError.message : '创建项目失败');
     } finally {
       setBusy(false);
@@ -647,11 +761,36 @@ export function ProjectLibrary({
             <FolderPlus size={14} />
             批量导入
           </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="inline-flex h-8 items-center gap-1.5 rounded-[9px] px-2.5 text-[12px] text-white/72 transition hover:bg-white/10 hover:text-white/92 focus-visible:bg-white/10 focus-visible:text-white/92 focus-visible:outline-none disabled:opacity-50"
+            onClick={() => void handleImportLegacyProjectFile()}
+          >
+            <FileJson2 size={14} />
+            导入旧版 project.json
+          </button>
         </div>
 
         {error ? (
-          <div className="mt-5 rounded-[12px] border border-[#553434] bg-[#2a1616] px-4 py-3 text-[12px] text-[#ffb4b4]">
-            {error}
+          <div className="mt-5 flex items-center justify-between gap-4 rounded-[8px] border border-[#553434] bg-[#2a1616] px-4 py-3 text-[12px] text-[#ffb4b4]">
+            <span>{error}</span>
+            {repairAvailable ? (
+              <button
+                type="button"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] border border-[#8a5555] px-3 text-[12px] text-[#ffd0d0] transition hover:bg-white/8"
+                onClick={() => setRepairDialogOpen(true)}
+              >
+                <DatabaseBackup size={14} />
+                重建项目索引
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {notice ? (
+          <div className="mt-5 rounded-[8px] border border-[#3d5534] bg-[#182a16] px-4 py-3 text-[12px] text-[#cfffbb]">
+            {notice}
           </div>
         ) : null}
 
@@ -680,7 +819,7 @@ export function ProjectLibrary({
 
       <CreateProjectDialog
         open={createDialogOpen}
-        variant="create"
+        variant={createDialogVariant}
         draft={createDraft}
         loading={busy}
         onChangeProjectName={(value) =>
@@ -697,6 +836,19 @@ export function ProjectLibrary({
           }
 
           setCreateDialogOpen(false);
+          setCreateDialogVariant('create');
+          setLegacyImportSnapshot(null);
+        }}
+      />
+
+      <RebuildProjectIndexDialog
+        open={repairDialogOpen}
+        loading={busy}
+        onConfirm={() => void handleRebuildProjectIndex()}
+        onClose={() => {
+          if (!busy) {
+            setRepairDialogOpen(false);
+          }
         }}
       />
 

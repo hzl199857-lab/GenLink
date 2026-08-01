@@ -57,6 +57,23 @@ test("the project library leaves sign-out in the home account menu", () => {
   assert.doesNotMatch(source, /authClient\.signOut|handleSignOut|LogOut/);
 });
 
+test("the project library exposes explicit recovery paths", () => {
+  const projectLibrarySource = readFileSync(
+    new URL("../project/ProjectLibrary.tsx", import.meta.url),
+    "utf8",
+  );
+  const createDialogSource = readFileSync(
+    new URL("../project/CreateProjectDialog.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(projectLibrarySource, /导入旧版 project\.json/);
+  assert.match(projectLibrarySource, /rebuildProjectLibraryIndex/);
+  assert.match(projectLibrarySource, /不会删除电脑里的项目文件夹或 project\.json/);
+  assert.match(createDialogSource, /variant === 'restore'/);
+  assert.match(createDialogSource, /导入并进入/);
+});
+
 test("the hero replaces the old start button with the composer", () => {
   const source = readHeroFile("GenLinkHero.tsx");
 

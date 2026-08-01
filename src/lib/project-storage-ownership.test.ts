@@ -53,6 +53,9 @@ const {
   PROJECT_OWNERSHIP_ERROR,
   assertProjectOwner,
   buildCreatedProjectSnapshot,
+  parseLegacyProjectSnapshotText,
+  pickLegacyProjectSnapshotFile,
+  rebuildProjectLibraryIndex,
 } = require("./project-storage.ts") as typeof import("./project-storage");
 
 test("upgrades project storage to the owner-aware schema", () => {
@@ -81,6 +84,90 @@ test("rejects blank active user IDs", () => {
     () => assertProjectOwner({ ownerUserId: "" }, "  "),
     new Error("该项目属于其他用户，无法覆盖"),
   );
+});
+
+test("reads legacy single-file project snapshots", () => {
+  const parsed = parseLegacyProjectSnapshotText(JSON.stringify({
+    id: "legacy-project",
+    name: "旧项目",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  }));
+
+  assert.equal(parsed.id, "legacy-project");
+  assert.equal(parsed.name, "旧项目");
+});
+
+test("directs current multi-canvas manifests to directory import", () => {
+  assert.throws(
+    () => parseLegacyProjectSnapshotText(JSON.stringify({
+      version: 2,
+      id: "current-project",
+      name: "新项目",
+      canvases: [],
+    })),
+    /选择包含 canvases 文件夹的完整项目目录/,
+  );
+});
+
+test("rebuilding the browser index does not touch project directories", async () => {
+  const originalWindow = globalThis.window;
+  let deletedDatabaseName = "";
+  const indexedDB = {
+    deleteDatabase: (name: string) => {
+      deletedDatabaseName = name;
+      const request = { error: null } as IDBOpenDBRequest;
+      queueMicrotask(() => request.onsuccess?.(new Event("success")));
+      return request;
+    },
+  } as unknown as IDBFactory;
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { indexedDB, showDirectoryPicker: () => Promise.reject(new Error("unused")) },
+  });
+
+  try {
+    await rebuildProjectLibraryIndex();
+    assert.equal(deletedDatabaseName, "genlink-project-library");
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow,
+    });
+  }
+});
+
+test("picks and reads a legacy project.json file", async () => {
+  const originalWindow = globalThis.window;
+  const file = new File([JSON.stringify({
+    id: "legacy-picked",
+    name: "选择的旧项目",
+    nodes: [],
+    edges: [],
+  })], "project.json", { type: "application/json" });
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      indexedDB: {},
+      showDirectoryPicker: () => Promise.reject(new Error("unused")),
+      showOpenFilePicker: async () => [{ getFile: async () => file }],
+    },
+  });
+
+  try {
+    const snapshot = await pickLegacyProjectSnapshotFile();
+    assert.equal(snapshot.id, "legacy-picked");
+    assert.equal(snapshot.name, "选择的旧项目");
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow,
+    });
+  }
 });
 
 test("creates a formal project snapshot without clearing the canvas draft", () => {

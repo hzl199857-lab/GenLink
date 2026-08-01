@@ -30,6 +30,9 @@ export const PROJECT_DB_VERSION = 2;
 const PROJECT_STORE_NAME = "projects";
 const PROJECT_OWNER_INDEX_NAME = "ownerUserId";
 export const PROJECT_OWNERSHIP_ERROR = "该项目属于其他用户，无法覆盖";
+export const PROJECT_LIBRARY_INDEX_ERROR_NAME = "ProjectLibraryIndexError";
+export const PROJECT_LIBRARY_INDEX_ERROR_MESSAGE =
+  "项目索引无法读取，请在项目库中重建索引后重新导入本地项目。";
 const PROJECT_FILE_NAME = "project.json";
 const CANVAS_DIRECTORY_NAME = "canvases";
 const OUTPUT_DIRECTORY_NAME = "output";
@@ -650,6 +653,28 @@ function ensureFileSystemAccessSupport(): void {
   }
 }
 
+function createProjectLibraryIndexError(): Error {
+  const error = new Error(PROJECT_LIBRARY_INDEX_ERROR_MESSAGE);
+  error.name = PROJECT_LIBRARY_INDEX_ERROR_NAME;
+  return error;
+}
+
+export function isProjectLibraryIndexError(error: unknown): boolean {
+  return error instanceof Error && error.name === PROJECT_LIBRARY_INDEX_ERROR_NAME;
+}
+
+function isInternalProjectLibraryError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    /^internal error\.?$/i.test(error.message.trim()) ||
+    error.name === "UnknownError" ||
+    error.name === "InvalidStateError"
+  );
+}
+
 function openProjectDb(): Promise<IDBDatabase> {
   ensureFileSystemAccessSupport();
 
@@ -710,15 +735,23 @@ async function persistProjectRecord(
   userId: string,
 ): Promise<void> {
   assertProjectOwner({ ownerUserId: userId }, userId);
-  await withProjectStore("readwrite", async (store) => {
-    const existing = await requestAsPromise(store.get(record.id)) as PersistedProjectRecord | undefined;
+  try {
+    await withProjectStore("readwrite", async (store) => {
+      const existing = await requestAsPromise(store.get(record.id)) as PersistedProjectRecord | undefined;
 
-    if (existing?.ownerUserId && existing.ownerUserId !== userId) {
-      throw new Error(PROJECT_OWNERSHIP_ERROR);
+      if (existing?.ownerUserId && existing.ownerUserId !== userId) {
+        throw new Error(PROJECT_OWNERSHIP_ERROR);
+      }
+
+      await requestAsPromise(store.put({ ...record, ownerUserId: userId }));
+    });
+  } catch (error) {
+    if (isInternalProjectLibraryError(error)) {
+      throw createProjectLibraryIndexError();
     }
 
-    await requestAsPromise(store.put({ ...record, ownerUserId: userId }));
-  });
+    throw error;
+  }
 }
 
 async function removeProjectRecord(projectId: string, userId: string): Promise<void> {
@@ -737,10 +770,37 @@ async function removeProjectRecord(projectId: string, userId: string): Promise<v
 
 async function readAllProjectRecords(userId: string): Promise<PersistedProjectRecord[]> {
   assertProjectOwner({ ownerUserId: userId }, userId);
-  return withProjectStore("readonly", async (store) => {
-    const request = store.index(PROJECT_OWNER_INDEX_NAME).getAll(userId);
-    const result = await requestAsPromise(request);
-    return (result as PersistedProjectRecord[]) ?? [];
+
+  try {
+    return await withProjectStore("readonly", async (store) => {
+      const request = store.index(PROJECT_OWNER_INDEX_NAME).getAll(userId);
+      const result = await requestAsPromise(request);
+      return (result as PersistedProjectRecord[]) ?? [];
+    });
+  } catch {
+    try {
+      return await withProjectStore("readonly", async (store) => {
+        const result = await requestAsPromise(store.getAll()) as PersistedProjectRecord[];
+        return (result ?? []).filter((record) => record.ownerUserId === userId);
+      });
+    } catch {
+      throw createProjectLibraryIndexError();
+    }
+  }
+}
+
+export async function rebuildProjectLibraryIndex(): Promise<void> {
+  ensureFileSystemAccessSupport();
+
+  await new Promise<void>((resolve, reject) => {
+    const request = window.indexedDB.deleteDatabase(PROJECT_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(
+      request.error ?? new Error("项目索引重建失败"),
+    );
+    request.onblocked = () => reject(
+      new Error("项目索引正在被其他 GenLink 页面使用，请关闭其他标签页后重试。"),
+    );
   });
 }
 
@@ -1403,6 +1463,67 @@ export async function pickProjectParentDirectory(): Promise<FileSystemDirectoryH
   const handle = await window.showDirectoryPicker({ mode: "readwrite" });
   await requestDirectoryPermission(handle);
   return handle;
+}
+
+export function parseLegacyProjectSnapshotText(text: string): ProjectSnapshot {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("project.json 不是有效的 JSON 文件");
+  }
+
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "version" in parsed &&
+    parsed.version === 2 &&
+    "canvases" in parsed &&
+    Array.isArray(parsed.canvases)
+  ) {
+    throw new Error("这是新版项目清单，请使用“批量导入”并选择包含 canvases 文件夹的完整项目目录。");
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !("id" in parsed) ||
+    typeof parsed.id !== "string" ||
+    !("name" in parsed) ||
+    typeof parsed.name !== "string" ||
+    !("nodes" in parsed) ||
+    !Array.isArray(parsed.nodes) ||
+    !("edges" in parsed) ||
+    !Array.isArray(parsed.edges)
+  ) {
+    throw new Error("该 project.json 不是可识别的旧版 GenLink 项目文件");
+  }
+
+  return parsed as ProjectSnapshot;
+}
+
+export async function pickLegacyProjectSnapshotFile(): Promise<ProjectSnapshot> {
+  ensureFileSystemAccessSupport();
+
+  if (typeof window.showOpenFilePicker !== "function") {
+    throw new Error("当前浏览器不支持直接导入 project.json");
+  }
+
+  const [fileHandle] = await window.showOpenFilePicker({
+    multiple: false,
+    types: [{
+      description: "GenLink project.json",
+      accept: { "application/json": [".json"] },
+    }],
+  });
+
+  if (!fileHandle) {
+    throw new Error("没有选择 project.json 文件");
+  }
+
+  const file = await fileHandle.getFile();
+  return parseLegacyProjectSnapshotText(await file.text());
 }
 
 export function buildCreatedProjectSnapshot(params: {
