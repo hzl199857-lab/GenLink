@@ -131,7 +131,7 @@ test("rebuilding the browser index does not touch project directories", async ()
 
   try {
     await rebuildProjectLibraryIndex();
-    assert.equal(deletedDatabaseName, "genlink-project-library");
+    assert.equal(deletedDatabaseName, "genlink-project-library-v2");
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,

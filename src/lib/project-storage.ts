@@ -25,7 +25,7 @@ import {
 import { getMaterialKind } from "@/lib/material-library";
 import { migrateLegacyProjectSnapshot } from "@/lib/canvas/multi-canvas";
 
-const PROJECT_DB_NAME = "genlink-project-library";
+const PROJECT_DB_NAME = "genlink-project-library-v2";
 export const PROJECT_DB_VERSION = 2;
 const PROJECT_STORE_NAME = "projects";
 const PROJECT_OWNER_INDEX_NAME = "ownerUserId";
