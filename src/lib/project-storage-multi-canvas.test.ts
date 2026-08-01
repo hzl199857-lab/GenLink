@@ -90,17 +90,20 @@ class MemoryDirectoryHandle {
   private readonly directories = new Map<string, MemoryDirectoryHandle>();
   private readonly readErrors = new Map<string, Error>();
   private readonly fileReadCounts = new Map<string, number>();
+  private permissionState: PermissionState = "granted";
+  private permissionRequestCount = 0;
 
   constructor(name: string) {
     this.name = name;
   }
 
   async queryPermission(): Promise<PermissionState> {
-    return "granted";
+    return this.permissionState;
   }
 
   async requestPermission(): Promise<PermissionState> {
-    return "granted";
+    this.permissionRequestCount += 1;
+    return this.permissionState;
   }
 
   async getFileHandle(name: string, options?: { create?: boolean }): Promise<MemoryFileHandle> {
@@ -179,6 +182,14 @@ class MemoryDirectoryHandle {
   getFileReadCount(name: string): number {
     return this.fileReadCounts.get(name) ?? 0;
   }
+
+  setPermissionState(state: PermissionState): void {
+    this.permissionState = state;
+  }
+
+  getPermissionRequestCount(): number {
+    return this.permissionRequestCount;
+  }
 }
 
 function installMemoryProjectDatabase(record: Record<string, unknown>): () => void {
@@ -191,6 +202,11 @@ function installMemoryProjectDatabase(record: Record<string, unknown>): () => vo
   };
   const store = {
     indexNames: { contains: () => true },
+    index: () => ({
+      getAll: (ownerUserId: string) => successRequest(
+        [...records.values()].filter((item) => item.ownerUserId === ownerUserId),
+      ),
+    }),
     get: (id: string) => successRequest(records.get(id)),
     put: (value: Record<string, unknown>) => {
       records.set(String(value.id), value);
@@ -868,6 +884,34 @@ test("manifest permission and parse failures propagate without writing", async (
       makeCanvas("canvas-a", "新内容"),
     ));
     assert.deepEqual(await canvasDirectory.readJson<CanvasDocument>("canvas-a.json"), originalCanvas);
+  }
+});
+
+test("project listing keeps records that need a user permission gesture", async () => {
+  const projectDirectory = new MemoryDirectoryHandle("project");
+  const parentDirectory = new MemoryDirectoryHandle("projects");
+  projectDirectory.setPermissionState("prompt");
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "project-1",
+    ownerUserId: "user-1",
+    name: "项目",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "project",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  });
+
+  try {
+    const projects = await projectStorage.listProjectLibrary("user-1");
+
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0]?.id, "project-1");
+    assert.equal(projects[0]?.thumbnailUrl, undefined);
+    assert.equal(projectDirectory.getPermissionRequestCount(), 0);
+    assert.equal(projectDirectory.getFileReadCount("project.json"), 0);
+  } finally {
+    restoreWindow();
   }
 });
 

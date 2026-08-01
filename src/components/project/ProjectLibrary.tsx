@@ -58,6 +58,15 @@ function formatDate(value: string): string {
   });
 }
 
+function getProjectLibraryErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) {
+    return fallback;
+  }
+
+  const message = error.message.trim();
+  return !message || /^internal error\.?$/i.test(message) ? fallback : message;
+}
+
 function ProjectMenu({
   open,
   onOpen,
@@ -347,7 +356,10 @@ export function ProjectLibrary({
       setProjects(nextProjects);
       onProjectsReady?.(nextProjects.length);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '项目列表加载失败');
+      setError(getProjectLibraryErrorMessage(
+        nextError,
+        '项目列表加载失败，请刷新页面后重试。',
+      ));
     } finally {
       setLoading(false);
       onProjectsLoadSettled?.();
@@ -416,10 +428,13 @@ export function ProjectLibrary({
       await refreshProjects();
 
       if (result.projects.length === 0) {
-        setError('没有在所选目录下找到可导入的项目，请选择包含项目文件夹的父目录。');
+        setError('没有找到可导入的 GenLink 项目，请选择包含 project.json 的项目文件夹或其父目录。');
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '导入项目失败');
+      setError(getProjectLibraryErrorMessage(
+        nextError,
+        '无法读取所选目录，请确认目录仍存在且浏览器拥有访问权限，然后重试。',
+      ));
     } finally {
       setBusy(false);
     }

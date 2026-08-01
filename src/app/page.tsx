@@ -15,7 +15,9 @@ import UniqueLoading from '@/components/ui/grid-loading';
 import { authClient } from '@/lib/auth-client';
 import {
   AUTH_DIALOG_QUERY_PARAM,
+  AUTH_RETURN_QUERY_PARAM,
   getAuthDialogMode,
+  getSafeAuthReturnPath,
   type AuthDialogMode,
 } from '@/lib/auth-dialog-return';
 import { getHomeEntryDecision } from '@/lib/auth-entry';
@@ -72,6 +74,11 @@ function HomePageContent() {
   const searchParams = useSearchParams();
   const returnedAuthMode = getAuthDialogMode(
     searchParams.get(AUTH_DIALOG_QUERY_PARAM),
+  );
+  const authReturnPathRef = useRef(
+    returnedAuthMode
+      ? getSafeAuthReturnPath(searchParams.get(AUTH_RETURN_QUERY_PARAM))
+      : '/',
   );
   const session = authClient.useSession();
   const userId = session.data?.user.id ?? null;
@@ -266,20 +273,6 @@ function HomePageContent() {
       handledAppEntryRef.current = false;
     }
   }, [searchParams]);
-
-  useEffect(() => {
-    if (!returnedAuthMode || session.isPending || readyUserId !== userId) {
-      return;
-    }
-
-    router.replace('/');
-  }, [
-    readyUserId,
-    returnedAuthMode,
-    router,
-    session.isPending,
-    userId,
-  ]);
 
   const showAppMode = useCallback((nextMode: Exclude<Mode, 'hero'>) => {
     setAppVisible(false);
@@ -802,10 +795,18 @@ function HomePageContent() {
         key={authDialogMode}
         initialMode={authDialogMode}
         open={authDialogOpen && !userId}
-        onClose={() => setAuthDialogOpen(false)}
+        onClose={() => {
+          setAuthDialogOpen(false);
+          if (returnedAuthMode) {
+            router.replace('/');
+          }
+        }}
         onAuthenticated={() => {
           setAuthDialogOpen(false);
-          void session.refetch();
+          void (async () => {
+            await session.refetch();
+            router.replace(authReturnPathRef.current);
+          })();
         }}
       />
 

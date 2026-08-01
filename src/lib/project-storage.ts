@@ -1688,25 +1688,34 @@ export async function saveProjectSnapshot(
 export async function listProjectLibrary(userId: string): Promise<ProjectHandleRecord[]> {
   const records = await readAllProjectRecords(userId);
   const validProjects: ProjectHandleRecord[] = [];
-  const invalidProjectIds: string[] = [];
 
   for (const record of sortProjects(records)) {
+    const fallbackProject: ProjectHandleRecord = {
+      ...toProjectLibraryItem(record),
+      projectHandle: record.projectHandle,
+      parentHandle: record.parentHandle,
+    };
+
     try {
-      await requestDirectoryPermission(record.projectHandle, false);
+      const permissionState = record.projectHandle.queryPermission
+        ? await record.projectHandle.queryPermission({ mode: "read" })
+        : "prompt";
+
+      if (permissionState !== "granted") {
+        validProjects.push(fallbackProject);
+        continue;
+      }
+
       const snapshot = await readProjectSnapshotInternal(record.projectHandle);
       const thumbnailUrl = await readProjectThumbnailUrl(record.projectHandle, snapshot);
       validProjects.push({
-        ...toProjectLibraryItem(record),
+        ...fallbackProject,
         thumbnailUrl,
-        projectHandle: record.projectHandle,
-        parentHandle: record.parentHandle,
       });
     } catch {
-      invalidProjectIds.push(record.id);
+      validProjects.push(fallbackProject);
     }
   }
-
-  await Promise.all(invalidProjectIds.map((projectId) => removeProjectRecord(projectId, userId)));
 
   return validProjects;
 }

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
-const PUBLIC_PAGE_PATHS = new Set(["/login", "/register"]);
 const PUBLIC_API_PREFIXES = [
   "/api/auth",
   "/api/app-version",
@@ -29,7 +28,8 @@ function hasSessionCookie(request: NextRequest): boolean {
 }
 
 function redirectToLogin(request: NextRequest): NextResponse {
-  const loginUrl = new URL("/login", request.url);
+  const loginUrl = new URL("/", request.url);
+  loginUrl.searchParams.set("auth", "login");
   loginUrl.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
   return NextResponse.redirect(loginUrl);
 }
@@ -54,10 +54,6 @@ export async function middleware(request: NextRequest) {
       { ok: false, error: "Authentication required" },
       { status: 401 },
     );
-  }
-
-  if (PUBLIC_PAGE_PATHS.has(pathname)) {
-    return NextResponse.next();
   }
 
   if (pathname === "/" && searchParams.get("app") !== "library") {
