@@ -772,6 +772,34 @@ function requestAsPromise<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
+function readIndexedProjectOwner(
+  store: IDBObjectStore,
+  projectId: string,
+): Promise<string | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = store.index(PROJECT_OWNER_INDEX_NAME).openKeyCursor();
+
+    request.onerror = () => reject(
+      request.error ?? new Error("项目归属信息读取失败"),
+    );
+    request.onsuccess = () => {
+      const cursor = request.result;
+
+      if (!cursor) {
+        resolve(undefined);
+        return;
+      }
+
+      if (String(cursor.primaryKey) === projectId) {
+        resolve(typeof cursor.key === "string" ? cursor.key : undefined);
+        return;
+      }
+
+      cursor.continue();
+    };
+  });
+}
+
 async function persistProjectRecord(
   record: PersistedProjectRecord,
   userId: string,
@@ -788,11 +816,34 @@ async function persistProjectRecord(
       await requestAsPromise(store.put({ ...record, ownerUserId: userId }));
     });
   } catch (error) {
-    if (isInternalProjectLibraryError(error)) {
-      throw createProjectLibraryIndexError();
+    if (!isInternalProjectLibraryError(error)) {
+      throw error;
     }
 
-    throw error;
+    try {
+      await withProjectStore("readwrite", async (store) => {
+        const existingKey = await requestAsPromise(store.getKey(record.id));
+        const indexedOwner = existingKey === undefined
+          ? undefined
+          : await readIndexedProjectOwner(store, record.id);
+
+        if (indexedOwner && indexedOwner !== userId) {
+          throw new Error(PROJECT_OWNERSHIP_ERROR);
+        }
+
+        await requestAsPromise(store.put({ ...record, ownerUserId: userId }));
+      });
+    } catch (recoveryError) {
+      if (recoveryError instanceof Error && recoveryError.message === PROJECT_OWNERSHIP_ERROR) {
+        throw recoveryError;
+      }
+
+      if (isProjectLibraryIndexError(recoveryError)) {
+        throw recoveryError;
+      }
+
+      throw createProjectLibraryIndexError();
+    }
   }
 }
 
@@ -814,11 +865,29 @@ async function readAllProjectRecords(userId: string): Promise<PersistedProjectRe
   assertProjectOwner({ ownerUserId: userId }, userId);
 
   try {
-    return await withProjectStore("readonly", async (store) => {
-      const request = store.index(PROJECT_OWNER_INDEX_NAME).getAll(userId);
-      const result = await requestAsPromise(request);
-      return (result as PersistedProjectRecord[]) ?? [];
+    const projectIds = await withProjectStore("readonly", (store) => {
+      const request = store.index(PROJECT_OWNER_INDEX_NAME).getAllKeys(userId);
+      return requestAsPromise(request);
     });
+    const records: PersistedProjectRecord[] = [];
+
+    for (const projectId of projectIds) {
+      try {
+        const record = await withProjectStore("readonly", (store) => (
+          requestAsPromise(store.get(projectId)) as Promise<PersistedProjectRecord | undefined>
+        ));
+
+        if (record?.ownerUserId === userId) {
+          records.push(record);
+        }
+      } catch (error) {
+        if (!isInternalProjectLibraryError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return records;
   } catch {
     try {
       return await withProjectStore("readonly", async (store) => {
@@ -1671,19 +1740,25 @@ export async function importProjectsFromParentDirectory(
 ): Promise<ImportProjectsResult> {
   await requestDirectoryPermission(parentHandle);
 
-  const importedProjects: ProjectHandleRecord[] = [];
+  const records: PersistedProjectRecord[] = [];
   let skippedCount = 0;
+  let selectedProjectSnapshot: ProjectSnapshot | null = null;
 
   try {
-    const snapshot = await readProjectSnapshotInternal(parentHandle);
+    selectedProjectSnapshot = await readProjectSnapshotInternal(parentHandle);
+  } catch {
+    // If the selected directory is not itself a project, scan its children.
+  }
+
+  if (selectedProjectSnapshot) {
     const timestamp = new Date().toISOString();
-    const projectName = sanitizeDirectoryName(snapshot.name || parentHandle.name);
+    const projectName = sanitizeDirectoryName(selectedProjectSnapshot.name || parentHandle.name);
     const record: PersistedProjectRecord = {
-      id: snapshot.id,
+      id: selectedProjectSnapshot.id,
       ownerUserId: userId,
       name: projectName || parentHandle.name,
-      createdAt: snapshot.createdAt || timestamp,
-      updatedAt: snapshot.updatedAt || timestamp,
+      createdAt: selectedProjectSnapshot.createdAt || timestamp,
+      updatedAt: selectedProjectSnapshot.updatedAt || timestamp,
       directoryName: parentHandle.name,
       projectHandle: parentHandle,
       parentHandle,
@@ -1699,12 +1774,6 @@ export async function importProjectsFromParentDirectory(
       }],
       skippedCount,
     };
-  } catch (error) {
-    if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
-      throw error;
-    }
-
-    // If the selected directory is not itself a project, scan its children.
   }
 
   const iterableParent = parentHandle as FileSystemDirectoryHandle & {
@@ -1719,11 +1788,10 @@ export async function importProjectsFromParentDirectory(
     const projectHandle = childHandle as FileSystemDirectoryHandle;
 
     try {
-      await requestDirectoryPermission(projectHandle, false);
       const snapshot = await readProjectSnapshotInternal(projectHandle);
       const timestamp = new Date().toISOString();
       const projectName = sanitizeDirectoryName(snapshot.name || projectHandle.name);
-      const record: PersistedProjectRecord = {
+      records.push({
         id: snapshot.id,
         ownerUserId: userId,
         name: projectName || projectHandle.name,
@@ -1732,25 +1800,22 @@ export async function importProjectsFromParentDirectory(
         directoryName: projectHandle.name,
         projectHandle,
         parentHandle,
-      };
-
-      await persistProjectRecord(record, userId);
-      importedProjects.push({
-        ...toProjectLibraryItem(record),
-        projectHandle,
-        parentHandle,
       });
-    } catch (error) {
-      if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
-        throw error;
-      }
-
+    } catch {
       skippedCount += 1;
     }
   }
 
+  for (const record of records) {
+    await persistProjectRecord(record, userId);
+  }
+
   return {
-    projects: sortProjects(importedProjects),
+    projects: sortProjects(records.map((record) => ({
+      ...toProjectLibraryItem(record),
+      projectHandle: record.projectHandle,
+      parentHandle: record.parentHandle,
+    }))),
     skippedCount,
   };
 }

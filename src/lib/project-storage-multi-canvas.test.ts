@@ -151,6 +151,12 @@ class MemoryDirectoryHandle {
     }
   }
 
+  async *values(): AsyncGenerator<MemoryFileHandle | MemoryDirectoryHandle> {
+    for await (const [, entry] of this.entries()) {
+      yield entry;
+    }
+  }
+
   async writeJson(name: string, value: unknown): Promise<void> {
     this.files.set(name, JSON.stringify(value, null, 2));
   }
@@ -194,13 +200,19 @@ class MemoryDirectoryHandle {
 
 function installMemoryProjectDatabase(
   record: Record<string, unknown>,
-  options?: { indexError?: Error },
+  options?: { getErrorCount?: number; indexError?: Error },
 ): () => void {
   const originalWindow = globalThis.window;
   const records = new Map([[String(record.id), record]]);
+  let remainingGetErrors = options?.getErrorCount ?? 0;
   const successRequest = <T>(result: T): IDBRequest<T> => {
     const request = { result, error: null } as IDBRequest<T>;
     queueMicrotask(() => request.onsuccess?.(new Event("success")));
+    return request;
+  };
+  const errorRequest = <T>(error: Error): IDBRequest<T> => {
+    const request = { result: undefined, error } as unknown as IDBRequest<T>;
+    queueMicrotask(() => request.onerror?.(new Event("error")));
     return request;
   };
   const store = {
@@ -214,12 +226,57 @@ function installMemoryProjectDatabase(
         getAll: (ownerUserId: string) => successRequest(
           [...records.values()].filter((item) => item.ownerUserId === ownerUserId),
         ),
+        getAllKeys: (ownerUserId: string) => successRequest(
+          [...records.entries()]
+            .filter(([, item]) => item.ownerUserId === ownerUserId)
+            .map(([id]) => id),
+        ),
+        openKeyCursor: () => {
+          const entries = [...records.entries()].filter(([, item]) => (
+            typeof item.ownerUserId === "string"
+          ));
+          const request = {
+            result: null as IDBCursor | null,
+            error: null,
+            onsuccess: null as ((event: Event) => unknown) | null,
+            onerror: null as ((event: Event) => unknown) | null,
+          };
+          let index = 0;
+          const advance = () => {
+            const entry = entries[index];
+            request.result = entry
+              ? {
+                  primaryKey: entry[0],
+                  key: entry[1].ownerUserId,
+                  continue: () => {
+                    index += 1;
+                    queueMicrotask(advance);
+                  },
+                } as unknown as IDBCursor
+              : null;
+            request.onsuccess?.(new Event("success"));
+          };
+          queueMicrotask(advance);
+          return request as unknown as IDBRequest<IDBCursor | null>;
+        },
       };
     },
     getAll: () => successRequest([...records.values()]),
-    get: (id: string) => successRequest(records.get(id)),
+    get: (id: string) => {
+      if (remainingGetErrors > 0) {
+        remainingGetErrors -= 1;
+        return errorRequest(new Error("Internal error."));
+      }
+
+      return successRequest(records.get(id));
+    },
+    getKey: (id: string) => successRequest(records.has(id) ? id : undefined),
     put: (value: Record<string, unknown>) => {
       records.set(String(value.id), value);
+      return successRequest(undefined);
+    },
+    clear: () => {
+      records.clear();
       return successRequest(undefined);
     },
   } as unknown as IDBObjectStore;
@@ -925,6 +982,29 @@ test("project listing keeps records that need a user permission gesture", async 
   }
 });
 
+test("project listing skips an unreadable stored handle without failing the library", async () => {
+  const projectDirectory = new MemoryDirectoryHandle("project");
+  const parentDirectory = new MemoryDirectoryHandle("projects");
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "project-1",
+    ownerUserId: "user-1",
+    name: "项目",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "project",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, { getErrorCount: 1 });
+
+  try {
+    const projects = await projectStorage.listProjectLibrary("user-1");
+
+    assert.deepEqual(projects, []);
+  } finally {
+    restoreWindow();
+  }
+});
+
 test("project listing falls back when the owner index cannot be read", async () => {
   const projectDirectory = new MemoryDirectoryHandle("project");
   const parentDirectory = new MemoryDirectoryHandle("projects");
@@ -945,6 +1025,77 @@ test("project listing falls back when the owner index cannot be read", async () 
   try {
     const projects = await projectStorage.listProjectLibrary("user-1");
     assert.deepEqual(projects.map((project) => project.id), ["project-1"]);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("bulk import repairs an unreadable legacy record after explicit directory selection", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("下载");
+  const projectDirectory = await parentDirectory.getDirectoryHandle("旧项目", { create: true });
+  await projectDirectory.writeJson("project.json", {
+    id: "legacy-project-1",
+    name: "旧项目",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-06-21T12:00:00.000Z",
+    updatedAt: "2026-06-21T12:00:00.000Z",
+  });
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "legacy-project-1",
+    name: "旧项目",
+    createdAt: "2026-06-21T12:00:00.000Z",
+    updatedAt: "2026-06-21T12:00:00.000Z",
+    directoryName: "旧项目",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, { getErrorCount: 1 });
+
+  try {
+    const result = await projectStorage.importProjectsFromParentDirectory(
+      parentDirectory as unknown as FileSystemDirectoryHandle,
+      "user-1",
+    );
+    const projects = await projectStorage.listProjectLibrary("user-1");
+
+    assert.equal(result.projects.length, 1);
+    assert.equal(result.projects[0]?.id, "legacy-project-1");
+    assert.equal(result.skippedCount, 0);
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0]?.ownerUserId, "user-1");
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("bulk import does not replace an unreadable project owned by another account", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("下载");
+  const projectDirectory = await parentDirectory.getDirectoryHandle("其他账号项目", { create: true });
+  await projectDirectory.writeJson("project.json", {
+    id: "owned-project-1",
+    name: "其他账号项目",
+    nodes: [],
+    edges: [],
+  });
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "owned-project-1",
+    ownerUserId: "user-2",
+    name: "其他账号项目",
+    createdAt: "2026-06-21T12:00:00.000Z",
+    updatedAt: "2026-06-21T12:00:00.000Z",
+    directoryName: "其他账号项目",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, { getErrorCount: 1 });
+
+  try {
+    await assert.rejects(
+      projectStorage.importProjectsFromParentDirectory(
+        parentDirectory as unknown as FileSystemDirectoryHandle,
+        "user-1",
+      ),
+      new RegExp(projectStorage.PROJECT_OWNERSHIP_ERROR),
+    );
   } finally {
     restoreWindow();
   }

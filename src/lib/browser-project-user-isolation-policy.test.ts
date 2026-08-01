@@ -18,8 +18,9 @@ test('project records are indexed and filtered by authenticated owner', () => {
   assert.match(projectStorage, /listProjectLibrary\(userId: string\)/);
   assert.match(
     listingImplementation,
-    /store\.index\(PROJECT_OWNER_INDEX_NAME\)\.getAll\(userId\)/,
+    /store\.index\(PROJECT_OWNER_INDEX_NAME\)\.getAllKeys\(userId\)/,
   );
+  assert.match(listingImplementation, /record\?\.ownerUserId === userId/);
   assert.match(listingImplementation, /store\.getAll\(\)/);
   assert.match(
     listingImplementation,
