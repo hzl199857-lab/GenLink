@@ -38,8 +38,6 @@ import {
 } from '@/lib/agent-image-preference';
 import {
   createProjectAtParentDirectory,
-  isProjectLibraryIndexError,
-  PROJECT_LIBRARY_INDEX_ERROR_MESSAGE,
   pickProjectParentDirectory,
   revokeObjectUrls,
   type ProjectHandleRecord,
@@ -406,11 +404,9 @@ function HomePageContent() {
         .catch((error) => {
           if (!cancelled) {
             setHeroProjectsError(
-              isProjectLibraryIndexError(error)
-                ? PROJECT_LIBRARY_INDEX_ERROR_MESSAGE
-                : error instanceof Error && !/^internal error\.?$/i.test(error.message.trim())
-                  ? error.message
-                  : '项目加载失败，请前往“所有项目”检查或重建项目索引。',
+              error instanceof Error && !/^internal error\.?$/i.test(error.message.trim())
+                ? error.message
+                : '项目加载失败，请刷新页面后重试。',
             );
           }
         })

@@ -32,7 +32,7 @@ const PROJECT_OWNER_INDEX_NAME = "ownerUserId";
 export const PROJECT_OWNERSHIP_ERROR = "该项目属于其他用户，无法覆盖";
 export const PROJECT_LIBRARY_INDEX_ERROR_NAME = "ProjectLibraryIndexError";
 export const PROJECT_LIBRARY_INDEX_ERROR_MESSAGE =
-  "项目索引无法读取，请在项目库中重建索引后重新导入本地项目。";
+  "项目列表暂时无法读取，请刷新页面后重试。";
 const PROJECT_FILE_NAME = "project.json";
 const CANVAS_DIRECTORY_NAME = "canvases";
 const OUTPUT_DIRECTORY_NAME = "output";
@@ -692,7 +692,11 @@ function openProjectDb(): Promise<IDBDatabase> {
         store.createIndex(PROJECT_OWNER_INDEX_NAME, "ownerUserId", { unique: false });
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onversionchange = () => database.close();
+      resolve(database);
+    };
   });
 }
 
@@ -703,23 +707,61 @@ async function withProjectStore<T>(
   const database = await openProjectDb();
 
   return new Promise<T>((resolve, reject) => {
-    const transaction = database.transaction(PROJECT_STORE_NAME, mode);
-    const store = transaction.objectStore(PROJECT_STORE_NAME);
+    let transaction: IDBTransaction;
 
-    Promise.resolve(run(store))
-      .then((value) => {
-        transaction.oncomplete = () => {
-          database.close();
-          resolve(value);
-        };
-        transaction.onerror = () => {
-          reject(transaction.error ?? new Error("\u9879\u76ee\u5e93\u64cd\u4f5c\u5931\u8d25"));
-        };
+    try {
+      transaction = database.transaction(PROJECT_STORE_NAME, mode);
+    } catch (error) {
+      database.close();
+      reject(error);
+      return;
+    }
+
+    const store = transaction.objectStore(PROJECT_STORE_NAME);
+    let completed = false;
+    let operationSettled = false;
+    let settled = false;
+    let value: T;
+
+    const closeAndReject = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      database.close();
+      reject(error instanceof Error ? error : new Error("项目库操作失败"));
+    };
+
+    const resolveWhenComplete = () => {
+      if (settled || !completed || !operationSettled) {
+        return;
+      }
+
+      settled = true;
+      database.close();
+      resolve(value);
+    };
+
+    transaction.oncomplete = () => {
+      completed = true;
+      resolveWhenComplete();
+    };
+    transaction.onerror = () => {
+      closeAndReject(transaction.error ?? new Error("\u9879\u76ee\u5e93\u64cd\u4f5c\u5931\u8d25"));
+    };
+    transaction.onabort = () => {
+      closeAndReject(transaction.error ?? new Error("\u9879\u76ee\u5e93\u64cd\u4f5c\u5df2\u4e2d\u6b62"));
+    };
+
+    Promise.resolve()
+      .then(() => run(store))
+      .then((nextValue) => {
+        value = nextValue;
+        operationSettled = true;
+        resolveWhenComplete();
       })
-      .catch((error) => {
-        database.close();
-        reject(error);
-      });
+      .catch(closeAndReject);
   });
 }
 
@@ -792,16 +834,21 @@ async function readAllProjectRecords(userId: string): Promise<PersistedProjectRe
 export async function rebuildProjectLibraryIndex(): Promise<void> {
   ensureFileSystemAccessSupport();
 
-  await new Promise<void>((resolve, reject) => {
-    const request = window.indexedDB.deleteDatabase(PROJECT_DB_NAME);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(
-      request.error ?? new Error("项目索引重建失败"),
-    );
-    request.onblocked = () => reject(
-      new Error("项目索引正在被其他 GenLink 页面使用，请关闭其他标签页后重试。"),
-    );
-  });
+  try {
+    await withProjectStore("readwrite", (store) => requestAsPromise(store.clear()));
+    return;
+  } catch {
+    await new Promise<void>((resolve, reject) => {
+      const request = window.indexedDB.deleteDatabase(PROJECT_DB_NAME);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(
+        request.error ?? new Error("项目索引重建失败"),
+      );
+      request.onblocked = () => reject(
+        new Error("项目索引正在被其他 GenLink 页面使用，请关闭其他标签页后重试。"),
+      );
+    });
+  }
 }
 
 async function requireStoredProjectOwner(

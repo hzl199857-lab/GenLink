@@ -25,7 +25,7 @@ export function CreateProjectDialog({
   onClose,
 }: {
   open: boolean;
-  variant?: 'create' | 'save' | 'restore';
+  variant?: 'create' | 'save';
   draft: CreateProjectDraft;
   loading: boolean;
   onChangeProjectName: (value: string) => void;
@@ -40,14 +40,10 @@ export function CreateProjectDialog({
   const canSubmit = Boolean(draft.projectName.trim() && draft.parentHandle);
   const title = variant === 'save'
     ? '保存项目'
-    : variant === 'restore'
-      ? '导入旧版项目'
-      : '新建项目';
+    : '新建项目';
   const confirmLabel = variant === 'save'
     ? '保存'
-    : variant === 'restore'
-      ? '导入并进入'
-      : '创建并进入';
+    : '创建并进入';
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/48 px-4">

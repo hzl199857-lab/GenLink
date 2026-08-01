@@ -57,7 +57,7 @@ test("the project library leaves sign-out in the home account menu", () => {
   assert.doesNotMatch(source, /authClient\.signOut|handleSignOut|LogOut/);
 });
 
-test("the project library exposes explicit recovery paths", () => {
+test("the project library keeps the normal project workflow", () => {
   const projectLibrarySource = readFileSync(
     new URL("../project/ProjectLibrary.tsx", import.meta.url),
     "utf8",
@@ -67,11 +67,12 @@ test("the project library exposes explicit recovery paths", () => {
     "utf8",
   );
 
-  assert.match(projectLibrarySource, /导入旧版 project\.json/);
-  assert.match(projectLibrarySource, /rebuildProjectLibraryIndex/);
-  assert.match(projectLibrarySource, /不会删除电脑里的项目文件夹或 project\.json/);
-  assert.match(createDialogSource, /variant === 'restore'/);
-  assert.match(createDialogSource, /导入并进入/);
+  assert.match(projectLibrarySource, /批量导入/);
+  assert.match(projectLibrarySource, /variant="create"/);
+  assert.doesNotMatch(projectLibrarySource, /导入旧版 project\.json/);
+  assert.doesNotMatch(projectLibrarySource, /rebuildProjectLibraryIndex/);
+  assert.doesNotMatch(createDialogSource, /variant === 'restore'/);
+  assert.doesNotMatch(createDialogSource, /导入并进入/);
 });
 
 test("the hero replaces the old start button with the composer", () => {
