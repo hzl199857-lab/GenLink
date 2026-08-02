@@ -117,6 +117,7 @@ import {
   acquireCanvasEditLock,
   buildCanvasDeepLink,
   clearCanvasEditOwnerForWindow,
+  requestCanvasEditLockTakeover,
   subscribeCanvasLockEvents,
   type CanvasEditLockResult,
 } from '@/lib/canvas/canvas-edit-lock';
@@ -10287,6 +10288,8 @@ function InnerCanvas({
   const currentProject = useCanvasStore((s) => s.currentProject);
   const canvasEditLockRef = useRef<Extract<CanvasEditLockResult, { acquired: true }> | null>(null);
   const canvasEditLockKeyRef = useRef<string | null>(null);
+  const pendingTakeoverInstanceIdRef = useRef<string | null>(null);
+  const canvasTakeoverRetryTimerRef = useRef<number | null>(null);
   const canvasEditLockKey = currentProject?.id && activeCanvasId
     ? `${currentProject.id}:${activeCanvasId}`
     : null;
@@ -10295,11 +10298,15 @@ function InnerCanvas({
     status: 'idle',
   });
   const [canvasEditLockAttempt, setCanvasEditLockAttempt] = useState(0);
+  const [canvasTakeoverRequestKey, setCanvasTakeoverRequestKey] = useState<string | null>(null);
   const canvasEditLockStatus: CanvasEditLockStatus = !canvasEditLockKey
     ? 'idle'
     : canvasEditLockState.key === canvasEditLockKey
       ? canvasEditLockState.status
       : 'checking';
+  const canvasTakeoverRequested = Boolean(
+    canvasEditLockKey && canvasTakeoverRequestKey === canvasEditLockKey,
+  );
   const canvasWriteBlocked = canvasEditLockStatus === 'checking' || canvasEditLockStatus === 'blocked';
   const loading = useCanvasStore((s) => s.loading);
   const dirty = useCanvasStore((s) => s.dirty);
@@ -10516,6 +10523,12 @@ function InnerCanvas({
 
         canvasEditLockRef.current = result;
         canvasEditLockKeyRef.current = canvasEditLockKey;
+        pendingTakeoverInstanceIdRef.current = null;
+        setCanvasTakeoverRequestKey(null);
+        if (canvasTakeoverRetryTimerRef.current !== null) {
+          window.clearTimeout(canvasTakeoverRetryTimerRef.current);
+          canvasTakeoverRetryTimerRef.current = null;
+        }
         setCanvasEditLockState({ key: canvasEditLockKey, status: 'acquired' });
       }).catch(() => {
         if (!cancelled) {
@@ -10533,21 +10546,25 @@ function InnerCanvas({
     };
   }, [activeCanvasId, blockCanvasEditing, canvasEditLockAttempt, canvasEditLockKey, currentProject?.id]);
 
-  useEffect(() => subscribeCanvasLockEvents((message) => {
-    if (
-      canvasEditLockStatus === 'blocked' &&
-      message.type === 'released' &&
-      message.projectId === currentProject?.id &&
-      message.canvasId === activeCanvasId
-    ) {
-      setCanvasEditLockAttempt((attempt) => attempt + 1);
-    }
-  }), [activeCanvasId, canvasEditLockStatus, currentProject?.id]);
-
   const retryCanvasEditLock = useCallback(() => {
+    if (!currentProject?.id || !activeCanvasId) {
+      return;
+    }
+
+    pendingTakeoverInstanceIdRef.current = requestCanvasEditLockTakeover(
+      currentProject.id,
+      activeCanvasId,
+    );
+    setCanvasTakeoverRequestKey(canvasEditLockKey);
     setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
-    setCanvasEditLockAttempt((attempt) => attempt + 1);
-  }, [canvasEditLockKey]);
+    if (canvasTakeoverRetryTimerRef.current !== null) {
+      window.clearTimeout(canvasTakeoverRetryTimerRef.current);
+    }
+    canvasTakeoverRetryTimerRef.current = window.setTimeout(() => {
+      canvasTakeoverRetryTimerRef.current = null;
+      setCanvasEditLockAttempt((attempt) => attempt + 1);
+    }, 300);
+  }, [activeCanvasId, canvasEditLockKey, currentProject]);
 
   const releaseCanvasEditLock = useCallback(() => {
     canvasEditLockRef.current?.release();
@@ -10567,6 +10584,9 @@ function InnerCanvas({
 
   useEffect(() => {
     return () => {
+      if (canvasTakeoverRetryTimerRef.current !== null) {
+        window.clearTimeout(canvasTakeoverRetryTimerRef.current);
+      }
       if (closeAddMenuTimeoutRef.current) {
         window.clearTimeout(closeAddMenuTimeoutRef.current);
       }
@@ -10966,6 +10986,70 @@ function InnerCanvas({
       setSaveMessage(null);
     }, 2200);
   }, [setSaveMessage]);
+
+  useEffect(() => subscribeCanvasLockEvents((message) => {
+    if (
+      message.projectId !== currentProject?.id ||
+      message.canvasId !== activeCanvasId
+    ) {
+      return;
+    }
+
+    if (message.type === 'takeover' && message.instanceId) {
+      const activeLock = canvasEditLockRef.current;
+      if (!activeLock || message.instanceId === activeLock.instanceId) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          if (useCanvasStore.getState().dirty) {
+            await saveProject();
+          }
+        } catch {
+          showProjectMessage('原窗口保存项目失败，暂未移交编辑权');
+          return;
+        }
+
+        if (canvasEditLockRef.current !== activeLock) {
+          return;
+        }
+
+        activeLock.handoff(message.instanceId);
+        canvasEditLockRef.current = null;
+        canvasEditLockKeyRef.current = null;
+        blockCanvasEditing();
+      })();
+      return;
+    }
+
+    if (
+      message.type === 'handoff' &&
+      message.targetInstanceId &&
+      message.targetInstanceId === pendingTakeoverInstanceIdRef.current
+    ) {
+      pendingTakeoverInstanceIdRef.current = null;
+      if (canvasTakeoverRetryTimerRef.current !== null) {
+        window.clearTimeout(canvasTakeoverRetryTimerRef.current);
+        canvasTakeoverRetryTimerRef.current = null;
+      }
+      setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
+      setCanvasEditLockAttempt((attempt) => attempt + 1);
+      return;
+    }
+
+    if (canvasEditLockStatus === 'blocked' && message.type === 'released') {
+      setCanvasEditLockAttempt((attempt) => attempt + 1);
+    }
+  }), [
+    activeCanvasId,
+    blockCanvasEditing,
+    canvasEditLockKey,
+    canvasEditLockStatus,
+    currentProject?.id,
+    saveProject,
+    showProjectMessage,
+  ]);
 
   const ensureCanvasWriteAvailable = useCallback(() => {
     if (!canvasWriteBlocked) {
@@ -16092,19 +16176,29 @@ function InnerCanvas({
           <div className="rounded-[16px] border border-white/10 bg-[#242527] px-6 py-5 text-center text-white shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
             {canvasEditLockStatus === 'checking' ? (
               <>
-                <div className="text-[15px] font-semibold">正在获取画布编辑权</div>
-                <div className="mt-1 text-[12px] text-white/48">请稍候，获取成功后即可继续编辑。</div>
+                <div className="text-[15px] font-semibold">
+                  {canvasTakeoverRequested ? '正在请求接管编辑权' : '正在获取画布编辑权'}
+                </div>
+                <div className="mt-1 text-[12px] text-white/48">
+                  {canvasTakeoverRequested ? '原窗口保存并释放后，当前窗口将自动恢复编辑。' : '请稍候，获取成功后即可继续编辑。'}
+                </div>
               </>
             ) : (
               <>
-                <div className="text-[15px] font-semibold">该画布已在其他窗口打开</div>
-                <div className="mt-1 text-[12px] text-white/48">你可以切换到其他画布，或在原窗口关闭后重试。</div>
+                <div className="text-[15px] font-semibold">
+                  {canvasTakeoverRequested ? '原窗口尚未释放编辑权' : '该画布已在其他窗口打开'}
+                </div>
+                <div className="mt-1 text-[12px] text-white/48">
+                  {canvasTakeoverRequested
+                    ? '接管请求已发送；若原窗口未响应，请关闭或刷新原窗口后再试。'
+                    : '接管后原窗口将转为只读，当前窗口可继续编辑。'}
+                </div>
                 <button
                   type="button"
                   className="mt-4 rounded-[9px] bg-white/10 px-3 py-2 text-[12px] font-medium transition hover:bg-white/16"
                   onClick={retryCanvasEditLock}
                 >
-                  重新获取编辑权
+                  {canvasTakeoverRequested ? '再次请求接管' : '接管编辑权'}
                 </button>
               </>
             )}

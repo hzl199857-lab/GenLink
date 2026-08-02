@@ -14,10 +14,12 @@ export type CanvasLockLease = {
 };
 
 export type CanvasLockMessage = {
-  type: 'acquired' | 'released' | 'handoff';
+  type: 'acquired' | 'released' | 'handoff' | 'takeover';
   projectId: string;
   canvasId: string;
   ownerId: string;
+  instanceId?: string;
+  targetInstanceId?: string;
 };
 
 export type CanvasEditLockResult =
@@ -25,14 +27,24 @@ export type CanvasEditLockResult =
   | {
       acquired: true;
       ownerId: string;
+      instanceId: string;
       release: () => void;
-      handoff: () => void;
+      handoff: (targetInstanceId?: string) => void;
     };
+
+let windowInstanceId: string | null = null;
 
 export function clearCanvasEditOwnerForWindow(
   target: Pick<Window, 'sessionStorage'>,
 ): void {
   target.sessionStorage.removeItem(OWNER_SESSION_KEY);
+}
+
+function getWindowInstanceId(): string {
+  if (!windowInstanceId) {
+    windowInstanceId = crypto.randomUUID();
+  }
+  return windowInstanceId;
 }
 
 export function buildCanvasEditLockKey(projectId: string, canvasId: string): string {
@@ -66,10 +78,17 @@ export function parseCanvasLockMessage(value: unknown): CanvasLockMessage | null
 
   const candidate = value as Partial<CanvasLockMessage>;
   if (
-    (candidate.type !== 'acquired' && candidate.type !== 'released' && candidate.type !== 'handoff') ||
+    (
+      candidate.type !== 'acquired' &&
+      candidate.type !== 'released' &&
+      candidate.type !== 'handoff' &&
+      candidate.type !== 'takeover'
+    ) ||
     typeof candidate.projectId !== 'string' ||
     typeof candidate.canvasId !== 'string' ||
-    typeof candidate.ownerId !== 'string'
+    typeof candidate.ownerId !== 'string' ||
+    (candidate.instanceId !== undefined && typeof candidate.instanceId !== 'string') ||
+    (candidate.targetInstanceId !== undefined && typeof candidate.targetInstanceId !== 'string')
   ) {
     return null;
   }
@@ -79,6 +98,8 @@ export function parseCanvasLockMessage(value: unknown): CanvasLockMessage | null
     projectId: candidate.projectId,
     canvasId: candidate.canvasId,
     ownerId: candidate.ownerId,
+    ...(candidate.instanceId ? { instanceId: candidate.instanceId } : {}),
+    ...(candidate.targetInstanceId ? { targetInstanceId: candidate.targetInstanceId } : {}),
   };
 }
 
@@ -125,6 +146,25 @@ function postMessage(message: CanvasLockMessage): void {
   channel.close();
 }
 
+export function requestCanvasEditLockTakeover(
+  projectId: string,
+  canvasId: string,
+): string {
+  if (typeof window === 'undefined') {
+    return 'server';
+  }
+
+  const instanceId = getWindowInstanceId();
+  postMessage({
+    type: 'takeover',
+    projectId,
+    canvasId,
+    ownerId: getWindowOwnerId(),
+    instanceId,
+  });
+  return instanceId;
+}
+
 type WebLockAttempt =
   | { supported: false }
   | { supported: true; release: null | (() => void) };
@@ -161,11 +201,18 @@ export async function acquireCanvasEditLock(
   options: { heartbeatMs?: number; leaseTimeoutMs?: number } = {},
 ): Promise<CanvasEditLockResult> {
   if (typeof window === 'undefined') {
-    return { acquired: true, ownerId: 'server', release: () => {}, handoff: () => {} };
+    return {
+      acquired: true,
+      ownerId: 'server',
+      instanceId: 'server',
+      release: () => {},
+      handoff: () => {},
+    };
   }
 
   const key = buildCanvasEditLockKey(projectId, canvasId);
   const ownerId = getWindowOwnerId();
+  const instanceId = getWindowInstanceId();
   const now = Date.now();
   const existing = readLease(key);
 
@@ -210,17 +257,24 @@ export async function acquireCanvasEditLock(
     }
     releaseWebLock();
     if (notify) {
-      postMessage({ type: 'released', projectId, canvasId, ownerId });
+      postMessage({ type: 'released', projectId, canvasId, ownerId, instanceId });
     }
   };
   const release = () => finishRelease(true);
-  const handoff = () => {
+  const handoff = (targetInstanceId?: string) => {
     finishRelease(false);
-    postMessage({ type: 'handoff', projectId, canvasId, ownerId });
+    postMessage({
+      type: 'handoff',
+      projectId,
+      canvasId,
+      ownerId,
+      instanceId,
+      targetInstanceId,
+    });
   };
 
-  postMessage({ type: 'acquired', projectId, canvasId, ownerId });
-  return { acquired: true, ownerId, release, handoff };
+  postMessage({ type: 'acquired', projectId, canvasId, ownerId, instanceId });
+  return { acquired: true, ownerId, instanceId, release, handoff };
 }
 
 export function subscribeCanvasLockEvents(

@@ -26,6 +26,7 @@ const {
   clearCanvasEditOwnerForWindow,
   isCanvasEditLeaseStale,
   parseCanvasLockMessage,
+  requestCanvasEditLockTakeover,
 } = require("./canvas-edit-lock.ts") as typeof import("./canvas-edit-lock");
 
 test("builds stable project and canvas lock keys", () => {
@@ -59,7 +60,27 @@ test("accepts only scoped canvas lock messages", () => {
     canvasId: "canvas-1",
     ownerId: "window-1",
   });
+  assert.deepEqual(parseCanvasLockMessage({
+    type: "takeover",
+    projectId: "project-1",
+    canvasId: "canvas-1",
+    ownerId: "window-2",
+    instanceId: "instance-2",
+  }), {
+    type: "takeover",
+    projectId: "project-1",
+    canvasId: "canvas-1",
+    ownerId: "window-2",
+    instanceId: "instance-2",
+  });
   assert.equal(parseCanvasLockMessage({ type: "released", projectId: "project-1" }), null);
+  assert.equal(parseCanvasLockMessage({
+    type: "handoff",
+    projectId: "project-1",
+    canvasId: "canvas-1",
+    ownerId: "window-1",
+    targetInstanceId: 42,
+  }), null);
 });
 
 test("clears only the cloned canvas owner before fallback lock acquisition", async () => {
@@ -223,17 +244,17 @@ test("keeps a fresh foreign lease as the fallback when Web Locks are unavailable
   }
 });
 
-test("handoff does not announce a normal release that could reacquire in the source window", async () => {
+test("takeover requests receive a targeted handoff without a normal release broadcast", async () => {
   const sessionValues = new Map<string, string>();
   const localValues = new Map<string, string>();
-  const messages: Array<{ type?: string }> = [];
+  const messages: Array<{ type?: string; targetInstanceId?: string }> = [];
   const previousWindow = globalThis.window;
   const previousNavigator = globalThis.navigator;
   const previousBroadcastChannel = globalThis.BroadcastChannel;
 
   class FakeBroadcastChannel {
     constructor() {}
-    postMessage(message: { type?: string }) {
+    postMessage(message: { type?: string; targetInstanceId?: string }) {
       messages.push(message);
     }
     close() {}
@@ -265,12 +286,14 @@ test("handoff does not announce a normal release that could reacquire in the sou
       value: FakeBroadcastChannel,
     });
 
+    const requesterInstanceId = requestCanvasEditLockTakeover("project-1", "canvas-1");
     const result = await acquireCanvasEditLock("project-1", "canvas-1");
     assert.equal(result.acquired, true);
     if (result.acquired) {
-      result.handoff();
+      result.handoff(requesterInstanceId);
     }
-    assert.deepEqual(messages.map((message) => message.type), ["acquired", "handoff"]);
+    assert.deepEqual(messages.map((message) => message.type), ["takeover", "acquired", "handoff"]);
+    assert.equal(messages[2]?.targetInstanceId, requesterInstanceId);
   } finally {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
