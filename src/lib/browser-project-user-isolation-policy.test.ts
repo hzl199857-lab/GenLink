@@ -23,6 +23,16 @@ test('project records are read individually and filtered by authenticated owner'
   assert.doesNotMatch(listingImplementation, /store\.getAll\(\)/);
 });
 
+test('opening the project library does not create an index over file-handle records', () => {
+  const projectStorage = source('src/lib/project-storage.ts');
+  const openStart = projectStorage.indexOf('function openProjectDb');
+  const openEnd = projectStorage.indexOf('async function withProjectStore', openStart);
+  const openImplementation = projectStorage.slice(openStart, openEnd);
+
+  assert.doesNotMatch(openImplementation, /createIndex\(/);
+  assert.match(openImplementation, /indexedDB\.open\(databaseName\)/);
+});
+
 test('account changes clear canvas memory and invalidate pending work', () => {
   const canvasStore = source('src/store/canvas-store.ts');
 

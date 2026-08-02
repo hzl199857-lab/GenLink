@@ -42,6 +42,8 @@ PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma npx prisma 
 - 除非功能明确要求自由变形，否则要保留原始媒体尺寸和比例。
 - 删除节点或素材时，先考虑该媒体是否仍被其他位置引用，再删除底层文件。
 - 项目快照生成应集中走 `buildProjectSnapshot`，项目持久化应集中走 `project-storage` 相关 helper。
+- 浏览器项目索引只能作为可重建缓存：索引打开或写入失败不得阻断项目创建、目录导入或当前会话使用，更不得因此删除项目目录或项目文件。
+- IndexedDB 读取与目录选择器能力必须分别检测；不要为包含 `FileSystemHandle` 的旧记录强制创建索引或执行非必要 schema 升级。
 
 ## Agent 与 MCP
 

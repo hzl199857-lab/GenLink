@@ -53,6 +53,76 @@ type PersistedProjectRecord = {
   parentHandle: FileSystemDirectoryHandle;
 };
 
+const sessionProjectRecords = new Map<
+  string,
+  Map<string, PersistedProjectRecord>
+>();
+const sessionProjectTombstones = new Map<string, Set<string>>();
+let projectDatabaseUnavailable = false;
+
+function rememberSessionProjectRecord(
+  record: PersistedProjectRecord,
+  userId: string,
+): void {
+  let records = sessionProjectRecords.get(userId);
+
+  if (!records) {
+    records = new Map();
+    sessionProjectRecords.set(userId, records);
+  }
+
+  records.set(record.id, { ...record, ownerUserId: userId });
+  const tombstones = sessionProjectTombstones.get(userId);
+  tombstones?.delete(record.id);
+
+  if (tombstones?.size === 0) {
+    sessionProjectTombstones.delete(userId);
+  }
+}
+
+function forgetSessionProjectRecord(projectId: string, userId: string): void {
+  const records = sessionProjectRecords.get(userId);
+  records?.delete(projectId);
+
+  if (records?.size === 0) {
+    sessionProjectRecords.delete(userId);
+  }
+}
+
+function readSessionProjectRecords(userId: string): PersistedProjectRecord[] {
+  return [...(sessionProjectRecords.get(userId)?.values() ?? [])];
+}
+
+function rememberSessionProjectTombstone(projectId: string, userId: string): void {
+  let tombstones = sessionProjectTombstones.get(userId);
+
+  if (!tombstones) {
+    tombstones = new Set();
+    sessionProjectTombstones.set(userId, tombstones);
+  }
+
+  tombstones.add(projectId);
+  forgetSessionProjectRecord(projectId, userId);
+}
+
+function forgetSessionProjectTombstone(projectId: string, userId: string): void {
+  const tombstones = sessionProjectTombstones.get(userId);
+  tombstones?.delete(projectId);
+
+  if (tombstones?.size === 0) {
+    sessionProjectTombstones.delete(userId);
+  }
+}
+
+function readSessionProjectTombstones(userId: string): string[] {
+  return [...(sessionProjectTombstones.get(userId) ?? [])];
+}
+
+function getProjectRecordTimestamp(record: Pick<PersistedProjectRecord, "updatedAt">): number {
+  const timestamp = new Date(record.updatedAt).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 type OutputHistoryManifestItem = {
   id: string;
   sourceKey?: string;
@@ -645,13 +715,29 @@ export async function readImageOutputBlob(
   }
 }
 
-function ensureFileSystemAccessSupport(): void {
+function ensureIndexedDbSupport(): void {
   if (
     typeof window === "undefined" ||
-    typeof window.indexedDB === "undefined" ||
+    typeof window.indexedDB === "undefined"
+  ) {
+    throw new Error("\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u9879\u76ee\u7d22\u5f15\u5b58\u50a8");
+  }
+}
+
+function ensureDirectoryPickerSupport(): void {
+  if (
+    typeof window === "undefined" ||
     typeof window.showDirectoryPicker !== "function"
   ) {
     throw new Error("\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u9879\u76ee\u6587\u4ef6\u7cfb\u7edf\u8bbf\u95ee");
+  }
+}
+
+async function requestPersistentBrowserStorage(): Promise<void> {
+  try {
+    await window.navigator.storage?.persist?.();
+  } catch {
+    // Persistence is a best-effort durability hint after an explicit directory pick.
   }
 }
 
@@ -677,25 +763,60 @@ function isInternalProjectLibraryError(error: unknown): boolean {
   );
 }
 
-function openProjectDb(databaseName = PROJECT_DB_NAME): Promise<IDBDatabase> {
-  ensureFileSystemAccessSupport();
+function openProjectDb(
+  databaseName = PROJECT_DB_NAME,
+  requestedVersion?: number,
+): Promise<IDBDatabase> {
+  ensureIndexedDbSupport();
 
   return new Promise((resolve, reject) => {
-    const request = window.indexedDB.open(databaseName, PROJECT_DB_VERSION);
+    let request: IDBOpenDBRequest;
 
-    request.onerror = () => reject(request.error ?? new Error("\u9879\u76ee\u5e93\u521d\u59cb\u5316\u5931\u8d25"));
+    try {
+      request = requestedVersion === undefined
+        ? window.indexedDB.open(databaseName)
+        : window.indexedDB.open(databaseName, requestedVersion);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    let settled = false;
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error instanceof Error ? error : new Error("\u9879\u76ee\u5e93\u521d\u59cb\u5316\u5931\u8d25"));
+    };
+
+    request.onerror = () => rejectOnce(
+      request.error ?? new Error("\u9879\u76ee\u5e93\u521d\u59cb\u5316\u5931\u8d25"),
+    );
+    request.onblocked = () => rejectOnce(
+      new DOMException("\u9879\u76ee\u5e93\u6b63\u5728\u88ab\u5176\u4ed6 GenLink \u9875\u9762\u4f7f\u7528", "InvalidStateError"),
+    );
     request.onupgradeneeded = () => {
       const database = request.result;
-      const store = database.objectStoreNames.contains(PROJECT_STORE_NAME)
-        ? request.transaction!.objectStore(PROJECT_STORE_NAME)
-        : database.createObjectStore(PROJECT_STORE_NAME, { keyPath: "id" });
 
-      if (!store.indexNames.contains(PROJECT_OWNER_INDEX_NAME)) {
-        store.createIndex(PROJECT_OWNER_INDEX_NAME, "ownerUserId", { unique: false });
+      if (!database.objectStoreNames.contains(PROJECT_STORE_NAME)) {
+        database.createObjectStore(PROJECT_STORE_NAME, { keyPath: "id" });
       }
     };
     request.onsuccess = () => {
       const database = request.result;
+
+      if (settled) {
+        database.close();
+        return;
+      }
+
+      if (!database.objectStoreNames.contains(PROJECT_STORE_NAME)) {
+        const repairVersion = Math.max(database.version + 1, PROJECT_DB_VERSION);
+        database.close();
+        void openProjectDb(databaseName, repairVersion).then(resolve, rejectOnce);
+        return;
+      }
+
+      settled = true;
       database.onversionchange = () => database.close();
       resolve(database);
     };
@@ -775,7 +896,7 @@ function requestAsPromise<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-function collectStoreKeys(store: IDBObjectStore): Promise<IDBValidKey[]> {
+function collectStoreKeysWithCursor(store: IDBObjectStore): Promise<IDBValidKey[]> {
   return new Promise((resolve, reject) => {
     const keys: IDBValidKey[] = [];
     const request = store.openKeyCursor();
@@ -800,7 +921,19 @@ function collectStoreKeys(store: IDBObjectStore): Promise<IDBValidKey[]> {
 async function readProjectRecordKeysFromDatabase(
   databaseName: string,
 ): Promise<IDBValidKey[]> {
-  return withProjectStore("readonly", collectStoreKeys, databaseName);
+  try {
+    return await withProjectStore(
+      "readonly",
+      (store) => requestAsPromise(store.getAllKeys()),
+      databaseName,
+    );
+  } catch {
+    return withProjectStore(
+      "readonly",
+      collectStoreKeysWithCursor,
+      databaseName,
+    );
+  }
 }
 
 async function readProjectRecordFromDatabase(
@@ -839,6 +972,10 @@ function readIndexedProjectOwner(
   store: IDBObjectStore,
   projectId: string,
 ): Promise<string | undefined> {
+  if (!store.indexNames.contains(PROJECT_OWNER_INDEX_NAME)) {
+    return Promise.resolve(undefined);
+  }
+
   return new Promise((resolve, reject) => {
     const request = store.index(PROJECT_OWNER_INDEX_NAME).openKeyCursor();
 
@@ -863,7 +1000,7 @@ function readIndexedProjectOwner(
   });
 }
 
-async function persistProjectRecord(
+async function persistProjectRecordDurably(
   record: PersistedProjectRecord,
   userId: string,
 ): Promise<void> {
@@ -886,6 +1023,12 @@ async function persistProjectRecord(
     try {
       await withProjectStore("readwrite", async (store) => {
         const existingKey = await requestAsPromise(store.getKey(record.id));
+        const ownerIndexExists = store.indexNames.contains(PROJECT_OWNER_INDEX_NAME);
+
+        if (existingKey !== undefined && !ownerIndexExists) {
+          throw createProjectLibraryIndexError();
+        }
+
         const indexedOwner = existingKey === undefined
           ? undefined
           : await readIndexedProjectOwner(store, record.id);
@@ -910,8 +1053,36 @@ async function persistProjectRecord(
   }
 }
 
-async function removeProjectRecord(projectId: string, userId: string): Promise<void> {
+async function persistProjectRecord(
+  record: PersistedProjectRecord,
+  userId: string,
+): Promise<void> {
+  if (projectDatabaseUnavailable) {
+    rememberSessionProjectRecord(record, userId);
+    return;
+  }
+
+  try {
+    await persistProjectRecordDurably(record, userId);
+    forgetSessionProjectRecord(record.id, userId);
+  } catch (error) {
+    if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
+      throw error;
+    }
+
+    if (isProjectLibraryIndexError(error) || isInternalProjectLibraryError(error)) {
+      projectDatabaseUnavailable = true;
+    }
+    rememberSessionProjectRecord(record, userId);
+  }
+}
+
+async function removeProjectRecordDurably(
+  projectId: string,
+  userId: string,
+): Promise<void> {
   assertProjectOwner({ ownerUserId: userId }, userId);
+  const errors: unknown[] = [];
 
   for (const databaseName of [PROJECT_DB_NAME, ...PROJECT_RECOVERY_DB_NAMES]) {
     try {
@@ -929,26 +1100,71 @@ async function removeProjectRecord(projectId: string, userId: string): Promise<v
       if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
         throw error;
       }
+
+      errors.push(error);
     }
   }
+
+  if (errors.length > 0) {
+    throw errors[0];
+  }
+}
+
+async function removeProjectRecord(projectId: string, userId: string): Promise<void> {
+  try {
+    await removeProjectRecordDurably(projectId, userId);
+    forgetSessionProjectTombstone(projectId, userId);
+  } catch (error) {
+    if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
+      throw error;
+    }
+
+    rememberSessionProjectTombstone(projectId, userId);
+  }
+
+  forgetSessionProjectRecord(projectId, userId);
 }
 
 async function readAllProjectRecords(userId: string): Promise<PersistedProjectRecord[]> {
   assertProjectOwner({ ownerUserId: userId }, userId);
-  const recordsById = new Map<string, PersistedProjectRecord>();
+  const tombstones = new Set(readSessionProjectTombstones(userId));
+  const sessionRecords = readSessionProjectRecords(userId).filter(
+    (record) => !tombstones.has(record.id),
+  );
+  const sessionRecordsToPersist = new Map(
+    sessionRecords.map((record) => [record.id, record]),
+  );
+  const recordsById = new Map(
+    sessionRecords.map((record) => [record.id, record]),
+  );
   const databaseNames = [PROJECT_DB_NAME, ...PROJECT_RECOVERY_DB_NAMES];
-  let successfulReadCount = 0;
+  let databaseReadSucceeded = false;
 
   for (const databaseName of databaseNames) {
     try {
       const records = await readAllProjectRecordsFromDatabase(databaseName, userId);
-      successfulReadCount += 1;
+      databaseReadSucceeded = true;
 
       for (const record of records) {
+        if (tombstones.has(record.id)) {
+          continue;
+        }
+
         const existing = recordsById.get(record.id);
+        const sessionRecord = sessionRecordsToPersist.get(record.id);
+        const recordTimestamp = getProjectRecordTimestamp(record);
+
+        if (
+          sessionRecord &&
+          recordTimestamp >= getProjectRecordTimestamp(sessionRecord)
+        ) {
+          sessionRecordsToPersist.delete(record.id);
+          forgetSessionProjectRecord(record.id, userId);
+        }
+
         const shouldReplace =
           !existing ||
-          new Date(record.updatedAt).getTime() > new Date(existing.updatedAt).getTime();
+          recordTimestamp >= getProjectRecordTimestamp(existing);
 
         if (shouldReplace) {
           recordsById.set(record.id, record);
@@ -966,18 +1182,39 @@ async function readAllProjectRecords(userId: string): Promise<PersistedProjectRe
     }
   }
 
-  if (successfulReadCount === 0) {
-    throw createProjectLibraryIndexError();
+  projectDatabaseUnavailable = !databaseReadSucceeded;
+
+  if (databaseReadSucceeded) {
+    for (const projectId of tombstones) {
+      try {
+        await removeProjectRecordDurably(projectId, userId);
+        forgetSessionProjectTombstone(projectId, userId);
+      } catch {
+        // Keep suppressing the deleted project until durable cleanup succeeds.
+      }
+    }
+
+    for (const record of sessionRecordsToPersist.values()) {
+      try {
+        await persistProjectRecordDurably(record, userId);
+        forgetSessionProjectRecord(record.id, userId);
+      } catch {
+        // Keep the session record and retry after a later successful database read.
+      }
+    }
   }
 
   return [...recordsById.values()];
 }
 
 export async function rebuildProjectLibraryIndex(): Promise<void> {
-  ensureFileSystemAccessSupport();
+  ensureIndexedDbSupport();
 
   try {
     await withProjectStore("readwrite", (store) => requestAsPromise(store.clear()));
+    sessionProjectRecords.clear();
+    sessionProjectTombstones.clear();
+    projectDatabaseUnavailable = false;
     return;
   } catch {
     await new Promise<void>((resolve, reject) => {
@@ -990,15 +1227,26 @@ export async function rebuildProjectLibraryIndex(): Promise<void> {
         new Error("项目索引正在被其他 GenLink 页面使用，请关闭其他标签页后重试。"),
       );
     });
+    sessionProjectRecords.clear();
+    sessionProjectTombstones.clear();
+    projectDatabaseUnavailable = false;
   }
 }
 
 async function requireStoredProjectOwner(
   project: ProjectHandleRecord,
   userId: string,
+  options?: { requireDurableVerification?: boolean },
 ): Promise<void> {
   assertProjectOwner(project, userId);
-  let found = false;
+  const sessionRecord = sessionProjectRecords.get(userId)?.get(project.id);
+  const tombstoned = sessionProjectTombstones.get(userId)?.has(project.id) ?? false;
+  let found = Boolean(sessionRecord) && !tombstoned;
+  let durableReadError: unknown;
+
+  if (sessionRecord) {
+    assertProjectOwner(sessionRecord, userId);
+  }
 
   for (const databaseName of [PROJECT_DB_NAME, ...PROJECT_RECOVERY_DB_NAMES]) {
     try {
@@ -1010,12 +1258,17 @@ async function requireStoredProjectOwner(
 
       assertProjectOwner(record, userId);
       found = true;
-      break;
     } catch (error) {
       if (error instanceof Error && error.message === PROJECT_OWNERSHIP_ERROR) {
         throw error;
       }
+
+      durableReadError ??= error;
     }
+  }
+
+  if (options?.requireDurableVerification && durableReadError) {
+    throw createProjectLibraryIndexError();
   }
 
   if (!found) {
@@ -1661,9 +1914,10 @@ function getUniqueCopyName(baseName: string, existingNames: Set<string>): string
 }
 
 export async function pickProjectParentDirectory(): Promise<FileSystemDirectoryHandle> {
-  ensureFileSystemAccessSupport();
+  ensureDirectoryPickerSupport();
   const handle = await window.showDirectoryPicker({ mode: "readwrite" });
   await requestDirectoryPermission(handle);
+  await requestPersistentBrowserStorage();
   return handle;
 }
 
@@ -1706,7 +1960,7 @@ export function parseLegacyProjectSnapshotText(text: string): ProjectSnapshot {
 }
 
 export async function pickLegacyProjectSnapshotFile(): Promise<ProjectSnapshot> {
-  ensureFileSystemAccessSupport();
+  ensureDirectoryPickerSupport();
 
   if (typeof window.showOpenFilePicker !== "function") {
     throw new Error("当前浏览器不支持直接导入 project.json");
@@ -2079,6 +2333,17 @@ export async function renameProjectDirectory(
   const nextHandle = await project.parentHandle.getDirectoryHandle(sanitizedName, {
     create: true,
   });
+  const previousRecord: PersistedProjectRecord = {
+    id: project.id,
+    ownerUserId: project.ownerUserId,
+    name: project.name,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    directoryName: project.directoryName,
+    projectHandle: project.projectHandle,
+    parentHandle: project.parentHandle,
+  };
+  let nextRecord: PersistedProjectRecord;
 
   try {
     await copyDirectoryRecursive(project.projectHandle, nextHandle);
@@ -2095,9 +2360,7 @@ export async function renameProjectDirectory(
 
     await writeJsonFileVerified(nextHandle, PROJECT_FILE_NAME, renamedSnapshot);
 
-    await project.parentHandle.removeEntry(project.directoryName, { recursive: true });
-
-    const nextRecord: PersistedProjectRecord = {
+    nextRecord = {
       ...project,
       name: sanitizedName,
       updatedAt: renamedSnapshot.updatedAt,
@@ -2106,16 +2369,24 @@ export async function renameProjectDirectory(
     };
 
     await persistProjectRecord(nextRecord, userId);
-
-    return {
-      ...toProjectLibraryItem(nextRecord),
-      projectHandle: nextHandle,
-      parentHandle: project.parentHandle,
-    };
   } catch (error) {
     await tryRemoveProjectDirectory(project.parentHandle, sanitizedName);
     throw error;
   }
+
+  try {
+    await project.parentHandle.removeEntry(project.directoryName, { recursive: true });
+  } catch (error) {
+    await persistProjectRecord(previousRecord, userId);
+    await tryRemoveProjectDirectory(project.parentHandle, sanitizedName);
+    throw error;
+  }
+
+  return {
+    ...toProjectLibraryItem(nextRecord),
+    projectHandle: nextHandle,
+    parentHandle: project.parentHandle,
+  };
 }
 
 export async function duplicateProjectDirectory(
@@ -2126,7 +2397,13 @@ export async function duplicateProjectDirectory(
   await requestDirectoryPermission(project.parentHandle);
   const allProjects = await readAllProjectRecords(userId);
   const existingNames = new Set(allProjects.map((item) => item.directoryName));
-  const nextName = getUniqueCopyName(project.name, existingNames);
+  let nextName = getUniqueCopyName(project.name, existingNames);
+
+  while (await directoryEntryExists(project.parentHandle, nextName)) {
+    existingNames.add(nextName);
+    nextName = getUniqueCopyName(project.name, existingNames);
+  }
+
   const nextHandle = await project.parentHandle.getDirectoryHandle(nextName, {
     create: true,
   });
@@ -2177,10 +2454,27 @@ export async function deleteProjectDirectory(
   project: ProjectHandleRecord,
   userId: string,
 ): Promise<void> {
-  await requireStoredProjectOwner(project, userId);
+  await requireStoredProjectOwner(project, userId, {
+    requireDurableVerification: true,
+  });
   await requestDirectoryPermission(project.parentHandle);
-  await project.parentHandle.removeEntry(project.directoryName, { recursive: true });
   await removeProjectRecord(project.id, userId);
+
+  try {
+    await project.parentHandle.removeEntry(project.directoryName, { recursive: true });
+  } catch (error) {
+    await persistProjectRecord({
+      id: project.id,
+      ownerUserId: project.ownerUserId,
+      name: project.name,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      directoryName: project.directoryName,
+      projectHandle: project.projectHandle,
+      parentHandle: project.parentHandle,
+    }, userId);
+    throw error;
+  }
 }
 
 export async function persistGeneratedOutput(

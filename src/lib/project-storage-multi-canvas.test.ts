@@ -202,8 +202,15 @@ function installMemoryProjectDatabase(
   record: Record<string, unknown> | Record<string, unknown>[],
   options?: {
     databaseName?: string;
+    deleteError?: Error;
     getErrorCount?: number;
     indexError?: Error;
+    keyReadError?: Error;
+    openError?: Error;
+    openBlocked?: boolean;
+    ownerIndexExists?: boolean;
+    showDirectoryPicker?: boolean;
+    onOpen?: (databaseName: string, version?: number) => void;
   },
 ): () => void {
   const originalWindow = globalThis.window;
@@ -256,7 +263,7 @@ function installMemoryProjectDatabase(
     records: Map<string, Record<string, unknown>>,
   ): IDBDatabase => {
     const store = {
-      indexNames: { contains: () => true },
+      indexNames: { contains: () => options?.ownerIndexExists !== false },
       index: () => {
         if (options?.indexError) {
           throw options.indexError;
@@ -281,6 +288,9 @@ function installMemoryProjectDatabase(
       openKeyCursor: () => createKeyCursorRequest(
         [...records.keys()].map((id) => [id, id]),
       ),
+      getAllKeys: () => options?.keyReadError
+        ? errorRequest<IDBValidKey[]>(options.keyReadError)
+        : successRequest([...records.keys()]),
       getAll: () => successRequest([...records.values()]),
       get: (id: string) => {
         if (remainingGetErrors > 0) {
@@ -293,6 +303,14 @@ function installMemoryProjectDatabase(
       getKey: (id: string) => successRequest(records.has(id) ? id : undefined),
       put: (value: Record<string, unknown>) => {
         records.set(String(value.id), value);
+        return successRequest(undefined);
+      },
+      delete: (id: string) => {
+        if (options?.deleteError) {
+          return errorRequest(options.deleteError);
+        }
+
+        records.delete(id);
         return successRequest(undefined);
       },
       clear: () => {
@@ -322,7 +340,29 @@ function installMemoryProjectDatabase(
     } as unknown as IDBDatabase;
   };
   const indexedDB = {
-    open: (databaseName: string) => {
+    open: (databaseName: string, version?: number) => {
+      options?.onOpen?.(databaseName, version);
+
+      if (options?.openError) {
+        const request = {
+          result: undefined,
+          error: options.openError,
+        } as unknown as IDBOpenDBRequest;
+        queueMicrotask(() => request.onerror?.(new Event("error")));
+        return request;
+      }
+
+      if (options?.openBlocked) {
+        const request = {
+          result: undefined,
+          error: null,
+        } as unknown as IDBOpenDBRequest;
+        queueMicrotask(() => request.onblocked?.(
+          new Event("blocked") as IDBVersionChangeEvent,
+        ));
+        return request;
+      }
+
       let records = recordsByDatabase.get(databaseName);
 
       if (!records) {
@@ -339,7 +379,12 @@ function installMemoryProjectDatabase(
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: { indexedDB, showDirectoryPicker: () => Promise.reject(new Error("unused")) },
+    value: {
+      indexedDB,
+      ...(options?.showDirectoryPicker === false
+        ? {}
+        : { showDirectoryPicker: () => Promise.reject(new Error("unused")) }),
+    },
   });
   return () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
@@ -1012,6 +1057,402 @@ test("project listing keeps records that need a user permission gesture", async 
   }
 });
 
+test("project listing does not require the directory picker API", async () => {
+  const projectDirectory = new MemoryDirectoryHandle("project-no-picker");
+  const parentDirectory = new MemoryDirectoryHandle("projects-no-picker");
+  projectDirectory.setPermissionState("prompt");
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "project-no-picker",
+    ownerUserId: "user-no-picker",
+    name: "Project without picker",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "project-no-picker",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, { showDirectoryPicker: false });
+
+  try {
+    const projects = await projectStorage.listProjectLibrary("user-no-picker");
+    assert.deepEqual(projects.map((project) => project.id), ["project-no-picker"]);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("project listing opens existing databases without forcing a schema upgrade", async () => {
+  const openedVersions: Array<number | undefined> = [];
+  const restoreWindow = installMemoryProjectDatabase([], {
+    onOpen: (_databaseName, version) => openedVersions.push(version),
+  });
+
+  try {
+    await projectStorage.listProjectLibrary("user-unversioned-open");
+    assert.ok(openedVersions.length >= 2);
+    assert.deepEqual(openedVersions, openedVersions.map(() => undefined));
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("project listing falls back to a key cursor when getAllKeys fails", async () => {
+  const projectDirectory = new MemoryDirectoryHandle("project-key-fallback");
+  const parentDirectory = new MemoryDirectoryHandle("projects-key-fallback");
+  projectDirectory.setPermissionState("prompt");
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "project-key-fallback",
+    ownerUserId: "user-key-fallback",
+    name: "Project key fallback",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "project-key-fallback",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, {
+    keyReadError: new DOMException("Internal error.", "UnknownError"),
+  });
+
+  try {
+    const projects = await projectStorage.listProjectLibrary("user-key-fallback");
+    assert.deepEqual(projects.map((project) => project.id), ["project-key-fallback"]);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("project listing stays usable when the origin IndexedDB backend cannot open", async () => {
+  const restoreWindow = installMemoryProjectDatabase([], {
+    openError: new DOMException("Internal error.", "UnknownError"),
+  });
+
+  try {
+    assert.deepEqual(
+      await projectStorage.listProjectLibrary("user-broken-indexeddb"),
+      [],
+    );
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("project listing settles when an IndexedDB open is blocked", async () => {
+  const restoreWindow = installMemoryProjectDatabase([], { openBlocked: true });
+
+  try {
+    assert.deepEqual(
+      await projectStorage.listProjectLibrary("user-blocked-indexeddb"),
+      [],
+    );
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("bulk import remains usable in-session when IndexedDB persistence fails", async () => {
+  const openedDatabases: string[] = [];
+  const parentDirectory = new MemoryDirectoryHandle("downloads-session-fallback");
+  const projectDirectory = await parentDirectory.getDirectoryHandle(
+    "session-project",
+    { create: true },
+  );
+  await projectDirectory.writeJson("project.json", {
+    id: "session-project",
+    name: "Session project",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+  });
+  const restoreWindow = installMemoryProjectDatabase([], {
+    openError: new DOMException("Internal error.", "UnknownError"),
+    onOpen: (databaseName) => openedDatabases.push(databaseName),
+  });
+
+  try {
+    await projectStorage.listProjectLibrary("user-session-fallback");
+    const openCountBeforeImport = openedDatabases.length;
+    const imported = await projectStorage.importProjectsFromParentDirectory(
+      parentDirectory as unknown as FileSystemDirectoryHandle,
+      "user-session-fallback",
+    );
+    const openCountAfterImport = openedDatabases.length;
+    const ownProjects = await projectStorage.listProjectLibrary("user-session-fallback");
+    const otherProjects = await projectStorage.listProjectLibrary("other-session-user");
+
+    assert.deepEqual(imported.projects.map((project) => project.id), ["session-project"]);
+    assert.equal(openCountAfterImport, openCountBeforeImport);
+    assert.deepEqual(ownProjects.map((project) => project.id), ["session-project"]);
+    assert.deepEqual(otherProjects, []);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("creating a project keeps its files when IndexedDB persistence fails", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("create-session-fallback");
+  const restoreWindow = installMemoryProjectDatabase([], {
+    openError: new DOMException("Internal error.", "UnknownError"),
+  });
+
+  try {
+    const created = await projectStorage.createProjectAtParentDirectory({
+      parentHandle: parentDirectory as unknown as FileSystemDirectoryHandle,
+      projectName: "Created project",
+      userId: "user-create-session-fallback",
+    });
+    const projectDirectory = await parentDirectory.getDirectoryHandle("Created project");
+    const projects = await projectStorage.listProjectLibrary(
+      "user-create-session-fallback",
+    );
+
+    assert.equal(projectDirectory.hasFile("project.json"), true);
+    assert.deepEqual(projects.map((project) => project.id), [created.project.id]);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("duplicating a project never overwrites an unindexed disk directory", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("duplicate-parent");
+  const sourceDirectory = await parentDirectory.getDirectoryHandle("Project", { create: true });
+  await sourceDirectory.writeJson("project.json", {
+    id: "duplicate-source",
+    name: "Project",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+  });
+  const existingCopyName = "Project - \u526f\u672c";
+  const existingCopy = await parentDirectory.getDirectoryHandle(existingCopyName, {
+    create: true,
+  });
+  await existingCopy.writeText("sentinel.txt", "keep");
+  const sourceRecord = {
+    id: "duplicate-source",
+    ownerUserId: "user-duplicate-disk-check",
+    name: "Project",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "Project",
+    projectHandle: sourceDirectory,
+    parentHandle: parentDirectory,
+  };
+  const restoreWindow = installMemoryProjectDatabase(sourceRecord);
+
+  try {
+    const duplicate = await projectStorage.duplicateProjectDirectory(
+      sourceRecord as unknown as import("./project-storage").ProjectHandleRecord,
+      "user-duplicate-disk-check",
+    );
+
+    assert.equal(existingCopy.readText("sentinel.txt"), "keep");
+    assert.equal(duplicate.directoryName, "Project - \u526f\u672c 2");
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("a newer durable record is never overwritten by an older session record", async () => {
+  const sessionParent = new MemoryDirectoryHandle("session-newer-parent");
+  const sessionProject = await sessionParent.getDirectoryHandle("shared-project", {
+    create: true,
+  });
+  await sessionProject.writeJson("project.json", {
+    id: "shared-newer-project",
+    name: "Older session project",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  });
+  const restoreBrokenWindow = installMemoryProjectDatabase([], {
+    openError: new DOMException("Internal error.", "UnknownError"),
+  });
+
+  await projectStorage.importProjectsFromParentDirectory(
+    sessionParent as unknown as FileSystemDirectoryHandle,
+    "user-newer-durable",
+  );
+  restoreBrokenWindow();
+
+  const durableProject = new MemoryDirectoryHandle("shared-project");
+  durableProject.setPermissionState("prompt");
+  const durableParent = new MemoryDirectoryHandle("durable-newer-parent");
+  const restoreHealthyWindow = installMemoryProjectDatabase({
+    id: "shared-newer-project",
+    ownerUserId: "user-newer-durable",
+    name: "Newer durable project",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    directoryName: "shared-project",
+    projectHandle: durableProject,
+    parentHandle: durableParent,
+  });
+
+  try {
+    const firstRead = await projectStorage.listProjectLibrary("user-newer-durable");
+    const secondRead = await projectStorage.listProjectLibrary("user-newer-durable");
+
+    assert.equal(firstRead[0]?.name, "Newer durable project");
+    assert.equal(secondRead[0]?.name, "Newer durable project");
+  } finally {
+    restoreHealthyWindow();
+  }
+});
+
+test("a recovered ownership conflict cannot remove either rename directory", async () => {
+  const sessionParent = new MemoryDirectoryHandle("rename-conflict-parent");
+  const sessionProject = await sessionParent.getDirectoryHandle("Original", { create: true });
+  await sessionProject.writeJson("project.json", {
+    id: "rename-conflict-project",
+    name: "Original",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  });
+  const restoreBrokenWindow = installMemoryProjectDatabase([], {
+    openError: new DOMException("Internal error.", "UnknownError"),
+  });
+  const imported = await projectStorage.importProjectsFromParentDirectory(
+    sessionParent as unknown as FileSystemDirectoryHandle,
+    "user-rename-conflict",
+  );
+  restoreBrokenWindow();
+
+  const otherProject = new MemoryDirectoryHandle("other-project");
+  const otherParent = new MemoryDirectoryHandle("other-parent");
+  const restoreHealthyWindow = installMemoryProjectDatabase({
+    id: "rename-conflict-project",
+    ownerUserId: "other-user",
+    name: "Other project",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    directoryName: "other-project",
+    projectHandle: otherProject,
+    parentHandle: otherParent,
+  });
+
+  try {
+    await assert.rejects(
+      projectStorage.renameProjectDirectory(
+        imported.projects[0]!,
+        "Renamed",
+        "user-rename-conflict",
+      ),
+      new Error(projectStorage.PROJECT_OWNERSHIP_ERROR),
+    );
+    assert.equal(
+      await sessionParent.getDirectoryHandle("Original"),
+      sessionProject,
+    );
+    await assert.rejects(sessionParent.getDirectoryHandle("Renamed"), /Missing directory/);
+  } finally {
+    restoreHealthyWindow();
+  }
+});
+
+test("a durable ownership read failure cannot delete a session project directory", async () => {
+  const sessionParent = new MemoryDirectoryHandle("delete-owner-check-parent");
+  const sessionProject = await sessionParent.getDirectoryHandle("Delete owner check", {
+    create: true,
+  });
+  await sessionProject.writeJson("project.json", {
+    id: "delete-owner-check-project",
+    name: "Delete owner check",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  });
+  const restoreBrokenWindow = installMemoryProjectDatabase([], {
+    openError: new DOMException("Internal error.", "UnknownError"),
+  });
+  const imported = await projectStorage.importProjectsFromParentDirectory(
+    sessionParent as unknown as FileSystemDirectoryHandle,
+    "user-delete-owner-check",
+  );
+  restoreBrokenWindow();
+
+  const otherProject = new MemoryDirectoryHandle("other-delete-owner-check");
+  const otherParent = new MemoryDirectoryHandle("other-delete-owner-check-parent");
+  const restoreHealthyWindow = installMemoryProjectDatabase({
+    id: "delete-owner-check-project",
+    ownerUserId: "other-user",
+    name: "Other owner project",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    directoryName: "other-delete-owner-check",
+    projectHandle: otherProject,
+    parentHandle: otherParent,
+  }, { getErrorCount: 1 });
+
+  try {
+    await assert.rejects(
+      projectStorage.deleteProjectDirectory(
+        imported.projects[0]!,
+        "user-delete-owner-check",
+      ),
+      (error: unknown) => (
+        error instanceof Error &&
+        error.name === projectStorage.PROJECT_LIBRARY_INDEX_ERROR_NAME
+      ),
+    );
+    assert.equal(
+      await sessionParent.getDirectoryHandle("Delete owner check"),
+      sessionProject,
+    );
+  } finally {
+    restoreHealthyWindow();
+  }
+});
+
+test("a failed durable delete stays hidden and retries after database recovery", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("delete-tombstone-parent");
+  const projectDirectory = await parentDirectory.getDirectoryHandle("Delete me", {
+    create: true,
+  });
+  const projectRecord = {
+    id: "delete-tombstone-project",
+    ownerUserId: "user-delete-tombstone",
+    name: "Delete me",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+    directoryName: "Delete me",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  };
+  const restoreFailingWindow = installMemoryProjectDatabase(projectRecord, {
+    deleteError: new DOMException("Internal error.", "UnknownError"),
+  });
+
+  await projectStorage.deleteProjectDirectory(
+    projectRecord as unknown as import("./project-storage").ProjectHandleRecord,
+    "user-delete-tombstone",
+  );
+  assert.deepEqual(
+    await projectStorage.listProjectLibrary("user-delete-tombstone"),
+    [],
+  );
+  restoreFailingWindow();
+
+  const restoreRecoveredWindow = installMemoryProjectDatabase(projectRecord);
+
+  try {
+    assert.deepEqual(
+      await projectStorage.listProjectLibrary("user-delete-tombstone"),
+      [],
+    );
+    assert.deepEqual(
+      await projectStorage.listProjectLibrary("user-delete-tombstone"),
+      [],
+    );
+  } finally {
+    restoreRecoveredWindow();
+  }
+});
+
 test("project listing skips an unreadable stored handle without failing the library", async () => {
   const projectDirectory = new MemoryDirectoryHandle("project");
   const secondProjectDirectory = new MemoryDirectoryHandle("project-2");
@@ -1144,6 +1585,92 @@ test("bulk import repairs an unreadable legacy record after explicit directory s
     assert.equal(result.skippedCount, 0);
     assert.equal(projects.length, 1);
     assert.equal(projects[0]?.ownerUserId, "user-1");
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("bulk import repairs an unreadable legacy record without an owner index", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("legacy-no-index-parent");
+  const projectDirectory = await parentDirectory.getDirectoryHandle(
+    "legacy-no-index",
+    { create: true },
+  );
+  await projectDirectory.writeJson("project.json", {
+    id: "legacy-no-index",
+    name: "Legacy no index",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-06-21T12:00:00.000Z",
+    updatedAt: "2026-06-21T12:00:00.000Z",
+  });
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "legacy-no-index",
+    name: "Legacy no index",
+    createdAt: "2026-06-21T12:00:00.000Z",
+    updatedAt: "2026-06-21T12:00:00.000Z",
+    directoryName: "legacy-no-index",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, {
+    getErrorCount: 1,
+    ownerIndexExists: false,
+  });
+
+  try {
+    await projectStorage.importProjectsFromParentDirectory(
+      parentDirectory as unknown as FileSystemDirectoryHandle,
+      "user-legacy-no-index",
+    );
+    const projects = await projectStorage.listProjectLibrary("user-legacy-no-index");
+
+    assert.deepEqual(projects.map((project) => project.id), ["legacy-no-index"]);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("bulk import never overwrites an unverifiable owner without an owner index", async () => {
+  const selectedParent = new MemoryDirectoryHandle("no-index-owner-parent");
+  const selectedProject = await selectedParent.getDirectoryHandle(
+    "no-index-owner-project",
+    { create: true },
+  );
+  await selectedProject.writeJson("project.json", {
+    id: "no-index-owner-project",
+    name: "Selected project",
+    nodes: [],
+    edges: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  });
+  const otherProject = new MemoryDirectoryHandle("other-no-index-project");
+  otherProject.setPermissionState("prompt");
+  const otherParent = new MemoryDirectoryHandle("other-no-index-parent");
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "no-index-owner-project",
+    ownerUserId: "other-user",
+    name: "Other owner project",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+    directoryName: "other-no-index-project",
+    projectHandle: otherProject,
+    parentHandle: otherParent,
+  }, {
+    getErrorCount: 1,
+    ownerIndexExists: false,
+  });
+
+  try {
+    await projectStorage.importProjectsFromParentDirectory(
+      selectedParent as unknown as FileSystemDirectoryHandle,
+      "current-user",
+    );
+    const currentProjects = await projectStorage.listProjectLibrary("current-user");
+    const otherProjects = await projectStorage.listProjectLibrary("other-user");
+
+    assert.deepEqual(currentProjects.map((project) => project.name), ["Selected project"]);
+    assert.deepEqual(otherProjects.map((project) => project.name), ["Other owner project"]);
   } finally {
     restoreWindow();
   }
