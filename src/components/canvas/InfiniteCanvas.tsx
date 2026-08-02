@@ -10123,6 +10123,8 @@ interface InnerCanvasProps {
 
 type CanvasEditLockStatus = 'idle' | 'checking' | 'acquired' | 'blocked';
 
+const CANVAS_EDIT_LOCK_AUTO_RETRY_MS = 1_500;
+
 type CanvasEditLockState = {
   key: string | null;
   status: CanvasEditLockStatus;
@@ -10290,7 +10292,6 @@ function InnerCanvas({
   const canvasEditLockKeyRef = useRef<string | null>(null);
   const canvasEditLockAcquisitionRef = useRef<Promise<void>>(Promise.resolve());
   const pendingTakeoverInstanceIdRef = useRef<string | null>(null);
-  const canvasTakeoverRetryTimerRef = useRef<number | null>(null);
   const canvasEditLockKey = currentProject?.id && activeCanvasId
     ? `${currentProject.id}:${activeCanvasId}`
     : null;
@@ -10514,7 +10515,11 @@ function InnerCanvas({
         return;
       }
 
-      setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
+      setCanvasEditLockState((current) => (
+        current.key === canvasEditLockKey && current.status === 'blocked'
+          ? current
+          : { key: canvasEditLockKey, status: 'checking' }
+      ));
       try {
         const result = await acquireCanvasEditLock(currentProject.id, activeCanvasId);
         if (cancelled) {
@@ -10533,10 +10538,6 @@ function InnerCanvas({
         canvasEditLockKeyRef.current = canvasEditLockKey;
         pendingTakeoverInstanceIdRef.current = null;
         setCanvasTakeoverRequestKey(null);
-        if (canvasTakeoverRetryTimerRef.current !== null) {
-          window.clearTimeout(canvasTakeoverRetryTimerRef.current);
-          canvasTakeoverRetryTimerRef.current = null;
-        }
         setCanvasEditLockState({ key: canvasEditLockKey, status: 'acquired' });
       } catch {
         if (!cancelled) {
@@ -10554,6 +10555,17 @@ function InnerCanvas({
     };
   }, [activeCanvasId, blockCanvasEditing, canvasEditLockAttempt, canvasEditLockKey, currentProject?.id]);
 
+  useEffect(() => {
+    if (canvasEditLockStatus !== 'blocked' || !canvasEditLockKey) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCanvasEditLockAttempt((attempt) => attempt + 1);
+    }, CANVAS_EDIT_LOCK_AUTO_RETRY_MS);
+    return () => window.clearTimeout(timer);
+  }, [canvasEditLockAttempt, canvasEditLockKey, canvasEditLockStatus]);
+
   const retryCanvasEditLock = useCallback(() => {
     if (!currentProject?.id || !activeCanvasId) {
       return;
@@ -10565,13 +10577,7 @@ function InnerCanvas({
     );
     setCanvasTakeoverRequestKey(canvasEditLockKey);
     setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
-    if (canvasTakeoverRetryTimerRef.current !== null) {
-      window.clearTimeout(canvasTakeoverRetryTimerRef.current);
-    }
-    canvasTakeoverRetryTimerRef.current = window.setTimeout(() => {
-      canvasTakeoverRetryTimerRef.current = null;
-      setCanvasEditLockAttempt((attempt) => attempt + 1);
-    }, 300);
+    setCanvasEditLockAttempt((attempt) => attempt + 1);
   }, [activeCanvasId, canvasEditLockKey, currentProject]);
 
   const releaseCanvasEditLock = useCallback(() => {
@@ -10592,9 +10598,6 @@ function InnerCanvas({
 
   useEffect(() => {
     return () => {
-      if (canvasTakeoverRetryTimerRef.current !== null) {
-        window.clearTimeout(canvasTakeoverRetryTimerRef.current);
-      }
       if (closeAddMenuTimeoutRef.current) {
         window.clearTimeout(closeAddMenuTimeoutRef.current);
       }
@@ -11037,10 +11040,6 @@ function InnerCanvas({
       message.targetInstanceId === pendingTakeoverInstanceIdRef.current
     ) {
       pendingTakeoverInstanceIdRef.current = null;
-      if (canvasTakeoverRetryTimerRef.current !== null) {
-        window.clearTimeout(canvasTakeoverRetryTimerRef.current);
-        canvasTakeoverRetryTimerRef.current = null;
-      }
       setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
       setCanvasEditLockAttempt((attempt) => attempt + 1);
       return;

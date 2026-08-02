@@ -258,6 +258,15 @@ test("canvas edit locks expose keyed idle checking acquired and blocked states",
   assert.match(source, /await previousAcquisition\.catch\(\(\) => \{\}\)[\s\S]*acquireCanvasEditLock\(currentProject\.id, activeCanvasId\)/);
   assert.match(source, /activeLock\.handoff\(message\.instanceId\)/);
   assert.match(source, /message\.targetInstanceId === pendingTakeoverInstanceIdRef\.current/);
+  assert.match(
+    source,
+    /canvasEditLockStatus !== 'blocked'[\s\S]*CANVAS_EDIT_LOCK_AUTO_RETRY_MS/,
+  );
+  assert.match(
+    source,
+    /const retryCanvasEditLock = useCallback[\s\S]*setCanvasEditLockAttempt\(\(attempt\) => attempt \+ 1\)/,
+  );
+  assert.doesNotMatch(source, /canvasTakeoverRetryTimerRef/);
   assert.match(source, /接管编辑权/);
   assert.match(source, /原窗口尚未释放编辑权/);
   assert.match(source, /若原窗口未响应，请关闭或刷新原窗口后再试/);
