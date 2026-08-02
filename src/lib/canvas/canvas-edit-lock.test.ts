@@ -108,3 +108,181 @@ test("clears only the cloned canvas owner before fallback lock acquisition", asy
     });
   }
 });
+
+test("uses an available Web Lock instead of blocking on a stale foreign lease", async () => {
+  const sessionValues = new Map<string, string>();
+  const localValues = new Map<string, string>([[
+    buildCanvasEditLockKey("project-1", "canvas-1"),
+    JSON.stringify({
+      projectId: "project-1",
+      canvasId: "canvas-1",
+      ownerId: "closed-window",
+      heartbeatAt: Date.now(),
+    }),
+  ]]);
+  const target = {
+    sessionStorage: {
+      getItem: (key: string) => sessionValues.get(key) ?? null,
+      setItem: (key: string, value: string) => sessionValues.set(key, value),
+      removeItem: (key: string) => sessionValues.delete(key),
+    },
+    localStorage: {
+      getItem: (key: string) => localValues.get(key) ?? null,
+      setItem: (key: string, value: string) => localValues.set(key, value),
+      removeItem: (key: string) => localValues.delete(key),
+    },
+    setInterval,
+    clearInterval,
+  };
+  const previousWindow = globalThis.window;
+  const previousNavigator = globalThis.navigator;
+
+  try {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: target,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        locks: {
+          request: async (
+            _key: string,
+            _options: LockOptions,
+            callback: (lock: Lock | null) => Promise<void>,
+          ) => callback({} as Lock),
+        },
+      },
+    });
+
+    const result = await acquireCanvasEditLock("project-1", "canvas-1");
+    assert.equal(result.acquired, true);
+    assert.notEqual(result.ownerId, "closed-window");
+    if (result.acquired) {
+      result.release();
+    }
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+  }
+});
+
+test("keeps a fresh foreign lease as the fallback when Web Locks are unavailable", async () => {
+  const sessionValues = new Map<string, string>();
+  const localValues = new Map<string, string>([[
+    buildCanvasEditLockKey("project-1", "canvas-1"),
+    JSON.stringify({
+      projectId: "project-1",
+      canvasId: "canvas-1",
+      ownerId: "active-window",
+      heartbeatAt: Date.now(),
+    }),
+  ]]);
+  const previousWindow = globalThis.window;
+  const previousNavigator = globalThis.navigator;
+
+  try {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        sessionStorage: {
+          getItem: (key: string) => sessionValues.get(key) ?? null,
+          setItem: (key: string, value: string) => sessionValues.set(key, value),
+        },
+        localStorage: {
+          getItem: (key: string) => localValues.get(key) ?? null,
+          setItem: (key: string, value: string) => localValues.set(key, value),
+          removeItem: (key: string) => localValues.delete(key),
+        },
+        setInterval,
+        clearInterval,
+      },
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+
+    const result = await acquireCanvasEditLock("project-1", "canvas-1");
+    assert.deepEqual(result, { acquired: false, ownerId: "active-window" });
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+  }
+});
+
+test("handoff does not announce a normal release that could reacquire in the source window", async () => {
+  const sessionValues = new Map<string, string>();
+  const localValues = new Map<string, string>();
+  const messages: Array<{ type?: string }> = [];
+  const previousWindow = globalThis.window;
+  const previousNavigator = globalThis.navigator;
+  const previousBroadcastChannel = globalThis.BroadcastChannel;
+
+  class FakeBroadcastChannel {
+    constructor() {}
+    postMessage(message: { type?: string }) {
+      messages.push(message);
+    }
+    close() {}
+  }
+
+  try {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        sessionStorage: {
+          getItem: (key: string) => sessionValues.get(key) ?? null,
+          setItem: (key: string, value: string) => sessionValues.set(key, value),
+        },
+        localStorage: {
+          getItem: (key: string) => localValues.get(key) ?? null,
+          setItem: (key: string, value: string) => localValues.set(key, value),
+          removeItem: (key: string) => localValues.delete(key),
+        },
+        setInterval,
+        clearInterval,
+      },
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+    });
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+      configurable: true,
+      value: FakeBroadcastChannel,
+    });
+
+    const result = await acquireCanvasEditLock("project-1", "canvas-1");
+    assert.equal(result.acquired, true);
+    if (result.acquired) {
+      result.handoff();
+    }
+    assert.deepEqual(messages.map((message) => message.type), ["acquired", "handoff"]);
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+      configurable: true,
+      value: previousBroadcastChannel,
+    });
+  }
+});

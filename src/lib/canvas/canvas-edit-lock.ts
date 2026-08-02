@@ -125,9 +125,13 @@ function postMessage(message: CanvasLockMessage): void {
   channel.close();
 }
 
-async function acquireWebLock(key: string): Promise<null | (() => void)> {
+type WebLockAttempt =
+  | { supported: false }
+  | { supported: true; release: null | (() => void) };
+
+async function acquireWebLock(key: string): Promise<WebLockAttempt> {
   if (typeof navigator === 'undefined' || !navigator.locks) {
-    return () => {};
+    return { supported: false };
   }
 
   let releaseLock: (() => void) | null = null;
@@ -145,7 +149,10 @@ async function acquireWebLock(key: string): Promise<null | (() => void)> {
     });
   });
 
-  return acquired ? () => releaseLock?.() : null;
+  return {
+    supported: true,
+    release: acquired ? () => releaseLock?.() : null,
+  };
 }
 
 export async function acquireCanvasEditLock(
@@ -162,7 +169,12 @@ export async function acquireCanvasEditLock(
   const now = Date.now();
   const existing = readLease(key);
 
-  if (existing && existing.ownerId !== ownerId && !isCanvasEditLeaseStale(
+  const webLockAttempt = await acquireWebLock(key);
+  if (webLockAttempt.supported && !webLockAttempt.release) {
+    return { acquired: false, ownerId: existing?.ownerId };
+  }
+
+  if (!webLockAttempt.supported && existing && existing.ownerId !== ownerId && !isCanvasEditLeaseStale(
     existing,
     now,
     options.leaseTimeoutMs ?? DEFAULT_LEASE_TIMEOUT_MS,
@@ -170,10 +182,9 @@ export async function acquireCanvasEditLock(
     return { acquired: false, ownerId: existing.ownerId };
   }
 
-  const releaseWebLock = await acquireWebLock(key);
-  if (!releaseWebLock) {
-    return { acquired: false, ownerId: existing?.ownerId };
-  }
+  const releaseWebLock = webLockAttempt.supported
+    ? webLockAttempt.release!
+    : () => {};
 
   const writeHeartbeat = () => {
     const lease: CanvasLockLease = { projectId, canvasId, ownerId, heartbeatAt: Date.now() };
@@ -188,7 +199,7 @@ export async function acquireCanvasEditLock(
 
   const timer = window.setInterval(writeHeartbeat, options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS);
   let released = false;
-  const release = () => {
+  const finishRelease = (notify: boolean) => {
     if (released) {
       return;
     }
@@ -198,10 +209,13 @@ export async function acquireCanvasEditLock(
       window.localStorage.removeItem(key);
     }
     releaseWebLock();
-    postMessage({ type: 'released', projectId, canvasId, ownerId });
+    if (notify) {
+      postMessage({ type: 'released', projectId, canvasId, ownerId });
+    }
   };
+  const release = () => finishRelease(true);
   const handoff = () => {
-    release();
+    finishRelease(false);
     postMessage({ type: 'handoff', projectId, canvasId, ownerId });
   };
 
