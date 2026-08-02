@@ -10288,6 +10288,7 @@ function InnerCanvas({
   const currentProject = useCanvasStore((s) => s.currentProject);
   const canvasEditLockRef = useRef<Extract<CanvasEditLockResult, { acquired: true }> | null>(null);
   const canvasEditLockKeyRef = useRef<string | null>(null);
+  const canvasEditLockAcquisitionRef = useRef<Promise<void>>(Promise.resolve());
   const pendingTakeoverInstanceIdRef = useRef<string | null>(null);
   const canvasTakeoverRetryTimerRef = useRef<number | null>(null);
   const canvasEditLockKey = currentProject?.id && activeCanvasId
@@ -10506,9 +10507,16 @@ function InnerCanvas({
     }
 
     let cancelled = false;
-    const timer = window.setTimeout(() => {
+    const previousAcquisition = canvasEditLockAcquisitionRef.current;
+    const acquisition = (async () => {
+      await previousAcquisition.catch(() => {});
+      if (cancelled) {
+        return;
+      }
+
       setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
-      void acquireCanvasEditLock(currentProject.id, activeCanvasId).then((result) => {
+      try {
+        const result = await acquireCanvasEditLock(currentProject.id, activeCanvasId);
         if (cancelled) {
           if (result.acquired) {
             result.release();
@@ -10530,16 +10538,16 @@ function InnerCanvas({
           canvasTakeoverRetryTimerRef.current = null;
         }
         setCanvasEditLockState({ key: canvasEditLockKey, status: 'acquired' });
-      }).catch(() => {
+      } catch {
         if (!cancelled) {
           blockCanvasEditing();
         }
-      });
-    }, 0);
+      }
+    })();
+    canvasEditLockAcquisitionRef.current = acquisition;
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
       canvasEditLockRef.current?.release();
       canvasEditLockRef.current = null;
       canvasEditLockKeyRef.current = null;

@@ -249,11 +249,13 @@ test("canvas edit locks expose keyed idle checking acquired and blocked states",
   assert.match(source, /该画布已在其他窗口打开/);
   assert.match(
     source,
-    /acquireCanvasEditLock\(currentProject\.id, activeCanvasId\)[\s\S]*\.catch\(\(\) => \{[\s\S]*if \(!cancelled\)[\s\S]*blockCanvasEditing\(\)/,
+    /try \{[\s\S]*await acquireCanvasEditLock\(currentProject\.id, activeCanvasId\)[\s\S]*\} catch \{[\s\S]*if \(!cancelled\)[\s\S]*blockCanvasEditing\(\)/,
   );
   assert.match(source, /subscribeCanvasLockEvents\([\s\S]*message\.type === 'released'/);
   assert.match(source, /onClick=\{retryCanvasEditLock\}/);
   assert.match(source, /requestCanvasEditLockTakeover\([\s\S]*message\.type === 'takeover'/);
+  assert.match(source, /const previousAcquisition = canvasEditLockAcquisitionRef\.current/);
+  assert.match(source, /await previousAcquisition\.catch\(\(\) => \{\}\)[\s\S]*acquireCanvasEditLock\(currentProject\.id, activeCanvasId\)/);
   assert.match(source, /activeLock\.handoff\(message\.instanceId\)/);
   assert.match(source, /message\.targetInstanceId === pendingTakeoverInstanceIdRef\.current/);
   assert.match(source, /接管编辑权/);
