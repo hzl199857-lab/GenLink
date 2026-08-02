@@ -117,6 +117,7 @@ import {
   acquireCanvasEditLock,
   buildCanvasDeepLink,
   clearCanvasEditOwnerForWindow,
+  subscribeCanvasLockEvents,
   type CanvasEditLockResult,
 } from '@/lib/canvas/canvas-edit-lock';
 import { THREE_VIEW_DEFAULT_ANGLE } from '@/lib/three-view-defaults';
@@ -10293,6 +10294,7 @@ function InnerCanvas({
     key: null,
     status: 'idle',
   });
+  const [canvasEditLockAttempt, setCanvasEditLockAttempt] = useState(0);
   const canvasEditLockStatus: CanvasEditLockStatus = !canvasEditLockKey
     ? 'idle'
     : canvasEditLockState.key === canvasEditLockKey
@@ -10529,7 +10531,39 @@ function InnerCanvas({
       canvasEditLockRef.current = null;
       canvasEditLockKeyRef.current = null;
     };
-  }, [activeCanvasId, blockCanvasEditing, canvasEditLockKey, currentProject?.id]);
+  }, [activeCanvasId, blockCanvasEditing, canvasEditLockAttempt, canvasEditLockKey, currentProject?.id]);
+
+  useEffect(() => subscribeCanvasLockEvents((message) => {
+    if (
+      canvasEditLockStatus === 'blocked' &&
+      message.type === 'released' &&
+      message.projectId === currentProject?.id &&
+      message.canvasId === activeCanvasId
+    ) {
+      setCanvasEditLockAttempt((attempt) => attempt + 1);
+    }
+  }), [activeCanvasId, canvasEditLockStatus, currentProject?.id]);
+
+  const retryCanvasEditLock = useCallback(() => {
+    setCanvasEditLockState({ key: canvasEditLockKey, status: 'checking' });
+    setCanvasEditLockAttempt((attempt) => attempt + 1);
+  }, [canvasEditLockKey]);
+
+  const releaseCanvasEditLock = useCallback(() => {
+    canvasEditLockRef.current?.release();
+    canvasEditLockRef.current = null;
+    canvasEditLockKeyRef.current = null;
+  }, []);
+
+  const handleBackHome = useCallback(() => {
+    releaseCanvasEditLock();
+    onBackHome?.();
+  }, [onBackHome, releaseCanvasEditLock]);
+
+  const handleBackToLibrary = useCallback(() => {
+    releaseCanvasEditLock();
+    onBackToLibrary?.();
+  }, [onBackToLibrary, releaseCanvasEditLock]);
 
   useEffect(() => {
     return () => {
@@ -16028,8 +16062,8 @@ function InnerCanvas({
         canvases={projectCanvases}
         activeCanvasId={activeCanvasId}
         onProjectNameCommit={handleRenameCurrentProject}
-        onBackHome={onBackHome}
-        onAllProjects={onBackToLibrary}
+        onBackHome={handleBackHome}
+        onAllProjects={handleBackToLibrary}
         onCreateProject={handleOpenCreateProjectDialog}
         onDeleteProject={currentProject ? handleRequestDeleteCurrentProject : undefined}
         onSelectCanvas={async (canvasId) => {
@@ -16068,7 +16102,7 @@ function InnerCanvas({
                 <button
                   type="button"
                   className="mt-4 rounded-[9px] bg-white/10 px-3 py-2 text-[12px] font-medium transition hover:bg-white/16"
-                  onClick={() => window.location.reload()}
+                  onClick={retryCanvasEditLock}
                 >
                   重新获取编辑权
                 </button>
@@ -16086,7 +16120,11 @@ function InnerCanvas({
           open={promptLibraryOpen}
           onClick={() => setPromptLibraryOpen((current) => !current)}
         />
-        <HomeAccountMenu {...account} placement="inline" />
+        <HomeAccountMenu
+          {...account}
+          onOpenProjects={handleBackToLibrary}
+          placement="inline"
+        />
       </div>
       <div ref={canvasReadyRootRef} className="h-full w-full">
       <ReactFlow

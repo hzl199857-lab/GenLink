@@ -251,6 +251,19 @@ test("canvas edit locks expose keyed idle checking acquired and blocked states",
     source,
     /acquireCanvasEditLock\(currentProject\.id, activeCanvasId\)[\s\S]*\.catch\(\(\) => \{[\s\S]*if \(!cancelled\)[\s\S]*blockCanvasEditing\(\)/,
   );
+  assert.match(source, /subscribeCanvasLockEvents\([\s\S]*message\.type === 'released'/);
+  assert.match(source, /onClick=\{retryCanvasEditLock\}/);
+  assert.doesNotMatch(source, /onClick=\{\(\) => window\.location\.reload\(\)\}/);
+});
+
+test("leaving the canvas releases its edit lock before navigation", () => {
+  const source = readSource("InfiniteCanvas.tsx");
+
+  assert.match(source, /const handleBackHome = useCallback\(\(\) => \{[\s\S]*releaseCanvasEditLock\(\);[\s\S]*onBackHome\?\.\(\)/);
+  assert.match(source, /const handleBackToLibrary = useCallback\(\(\) => \{[\s\S]*releaseCanvasEditLock\(\);[\s\S]*onBackToLibrary\?\.\(\)/);
+  assert.match(source, /onBackHome=\{handleBackHome\}/);
+  assert.match(source, /onAllProjects=\{handleBackToLibrary\}/);
+  assert.match(source, /<HomeAccountMenu[\s\S]*onOpenProjects=\{handleBackToLibrary\}/);
 });
 
 test("checking and blocked locks guard every save entry and cover non-header controls", () => {
