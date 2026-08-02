@@ -199,11 +199,21 @@ class MemoryDirectoryHandle {
 }
 
 function installMemoryProjectDatabase(
-  record: Record<string, unknown>,
-  options?: { getErrorCount?: number; indexError?: Error },
+  record: Record<string, unknown> | Record<string, unknown>[],
+  options?: {
+    databaseName?: string;
+    getErrorCount?: number;
+    indexError?: Error;
+  },
 ): () => void {
   const originalWindow = globalThis.window;
-  const records = new Map([[String(record.id), record]]);
+  const initialRecords = Array.isArray(record) ? record : [record];
+  const recordsByDatabase = new Map<string, Map<string, Record<string, unknown>>>([
+    [
+      options?.databaseName ?? "genlink-project-library",
+      new Map(initialRecords.map((item) => [String(item.id), item])),
+    ],
+  ]);
   let remainingGetErrors = options?.getErrorCount ?? 0;
   const successRequest = <T>(result: T): IDBRequest<T> => {
     const request = { result, error: null } as IDBRequest<T>;
@@ -215,92 +225,112 @@ function installMemoryProjectDatabase(
     queueMicrotask(() => request.onerror?.(new Event("error")));
     return request;
   };
-  const store = {
-    indexNames: { contains: () => true },
-    index: () => {
-      if (options?.indexError) {
-        throw options.indexError;
-      }
+  const createKeyCursorRequest = (
+    entries: Array<[IDBValidKey, IDBValidKey]>,
+  ): IDBRequest<IDBCursor | null> => {
+    const request = {
+      result: null as IDBCursor | null,
+      error: null,
+      onsuccess: null as ((event: Event) => unknown) | null,
+      onerror: null as ((event: Event) => unknown) | null,
+    };
+    let index = 0;
+    const advance = () => {
+      const entry = entries[index];
+      request.result = entry
+        ? {
+            primaryKey: entry[0],
+            key: entry[1],
+            continue: () => {
+              index += 1;
+              queueMicrotask(advance);
+            },
+          } as unknown as IDBCursor
+        : null;
+      request.onsuccess?.(new Event("success"));
+    };
+    queueMicrotask(advance);
+    return request as unknown as IDBRequest<IDBCursor | null>;
+  };
+  const createDatabase = (
+    records: Map<string, Record<string, unknown>>,
+  ): IDBDatabase => {
+    const store = {
+      indexNames: { contains: () => true },
+      index: () => {
+        if (options?.indexError) {
+          throw options.indexError;
+        }
 
-      return {
-        getAll: (ownerUserId: string) => successRequest(
-          [...records.values()].filter((item) => item.ownerUserId === ownerUserId),
-        ),
-        getAllKeys: (ownerUserId: string) => successRequest(
-          [...records.entries()]
-            .filter(([, item]) => item.ownerUserId === ownerUserId)
-            .map(([id]) => id),
-        ),
-        openKeyCursor: () => {
-          const entries = [...records.entries()].filter(([, item]) => (
-            typeof item.ownerUserId === "string"
-          ));
-          const request = {
-            result: null as IDBCursor | null,
-            error: null,
-            onsuccess: null as ((event: Event) => unknown) | null,
-            onerror: null as ((event: Event) => unknown) | null,
-          };
-          let index = 0;
-          const advance = () => {
-            const entry = entries[index];
-            request.result = entry
-              ? {
-                  primaryKey: entry[0],
-                  key: entry[1].ownerUserId,
-                  continue: () => {
-                    index += 1;
-                    queueMicrotask(advance);
-                  },
-                } as unknown as IDBCursor
-              : null;
-            request.onsuccess?.(new Event("success"));
-          };
-          queueMicrotask(advance);
-          return request as unknown as IDBRequest<IDBCursor | null>;
-        },
-      };
-    },
-    getAll: () => successRequest([...records.values()]),
-    get: (id: string) => {
-      if (remainingGetErrors > 0) {
-        remainingGetErrors -= 1;
-        return errorRequest(new Error("Internal error."));
-      }
+        return {
+          getAll: (ownerUserId: string) => successRequest(
+            [...records.values()].filter((item) => item.ownerUserId === ownerUserId),
+          ),
+          getAllKeys: (ownerUserId: string) => successRequest(
+            [...records.entries()]
+              .filter(([, item]) => item.ownerUserId === ownerUserId)
+              .map(([id]) => id),
+          ),
+          openKeyCursor: () => createKeyCursorRequest(
+            [...records.entries()]
+              .filter(([, item]) => typeof item.ownerUserId === "string")
+              .map(([id, item]) => [id, item.ownerUserId as string]),
+          ),
+        };
+      },
+      openKeyCursor: () => createKeyCursorRequest(
+        [...records.keys()].map((id) => [id, id]),
+      ),
+      getAll: () => successRequest([...records.values()]),
+      get: (id: string) => {
+        if (remainingGetErrors > 0) {
+          remainingGetErrors -= 1;
+          return errorRequest(new Error("Internal error."));
+        }
 
-      return successRequest(records.get(id));
-    },
-    getKey: (id: string) => successRequest(records.has(id) ? id : undefined),
-    put: (value: Record<string, unknown>) => {
-      records.set(String(value.id), value);
-      return successRequest(undefined);
-    },
-    clear: () => {
-      records.clear();
-      return successRequest(undefined);
-    },
-  } as unknown as IDBObjectStore;
-  const database = {
-    objectStoreNames: { contains: () => true },
-    transaction: () => {
-      const transaction = {
-        error: null,
-        objectStore: () => store,
-      } as unknown as IDBTransaction;
-      Object.defineProperty(transaction, "oncomplete", {
-        configurable: true,
-        set(handler: ((event: Event) => unknown) | null) {
-          if (handler) {
-            queueMicrotask(() => handler(new Event("complete")));
-          }
-        },
-      });
-      return transaction;
-    },
-    close: () => {},
-  } as unknown as IDBDatabase;
+        return successRequest(records.get(id));
+      },
+      getKey: (id: string) => successRequest(records.has(id) ? id : undefined),
+      put: (value: Record<string, unknown>) => {
+        records.set(String(value.id), value);
+        return successRequest(undefined);
+      },
+      clear: () => {
+        records.clear();
+        return successRequest(undefined);
+      },
+    } as unknown as IDBObjectStore;
+
+    return {
+      objectStoreNames: { contains: () => true },
+      transaction: () => {
+        const transaction = {
+          error: null,
+          objectStore: () => store,
+        } as unknown as IDBTransaction;
+        Object.defineProperty(transaction, "oncomplete", {
+          configurable: true,
+          set(handler: ((event: Event) => unknown) | null) {
+            if (handler) {
+              queueMicrotask(() => handler(new Event("complete")));
+            }
+          },
+        });
+        return transaction;
+      },
+      close: () => {},
+    } as unknown as IDBDatabase;
+  };
   const indexedDB = {
-    open: () => {
+    open: (databaseName: string) => {
+      let records = recordsByDatabase.get(databaseName);
+
+      if (!records) {
+        records = new Map();
+        recordsByDatabase.set(databaseName, records);
+      }
+
+      const database = createDatabase(records);
       const request = { result: database, error: null } as IDBOpenDBRequest;
       queueMicrotask(() => request.onsuccess?.(new Event("success")));
       return request;
@@ -984,22 +1014,35 @@ test("project listing keeps records that need a user permission gesture", async 
 
 test("project listing skips an unreadable stored handle without failing the library", async () => {
   const projectDirectory = new MemoryDirectoryHandle("project");
+  const secondProjectDirectory = new MemoryDirectoryHandle("project-2");
   const parentDirectory = new MemoryDirectoryHandle("projects");
-  const restoreWindow = installMemoryProjectDatabase({
-    id: "project-1",
-    ownerUserId: "user-1",
-    name: "项目",
-    createdAt: "2026-07-19T12:00:00.000Z",
-    updatedAt: "2026-07-19T12:00:00.000Z",
-    directoryName: "project",
-    projectHandle: projectDirectory,
-    parentHandle: parentDirectory,
-  }, { getErrorCount: 1 });
+  const restoreWindow = installMemoryProjectDatabase([
+    {
+      id: "project-1",
+      ownerUserId: "user-1",
+      name: "损坏项目",
+      createdAt: "2026-07-19T12:00:00.000Z",
+      updatedAt: "2026-07-19T12:00:00.000Z",
+      directoryName: "project",
+      projectHandle: projectDirectory,
+      parentHandle: parentDirectory,
+    },
+    {
+      id: "project-2",
+      ownerUserId: "user-1",
+      name: "正常项目",
+      createdAt: "2026-07-20T12:00:00.000Z",
+      updatedAt: "2026-07-20T12:00:00.000Z",
+      directoryName: "project-2",
+      projectHandle: secondProjectDirectory,
+      parentHandle: parentDirectory,
+    },
+  ], { getErrorCount: 1 });
 
   try {
     const projects = await projectStorage.listProjectLibrary("user-1");
 
-    assert.deepEqual(projects, []);
+    assert.deepEqual(projects.map((project) => project.id), ["project-2"]);
   } finally {
     restoreWindow();
   }
@@ -1025,6 +1068,44 @@ test("project listing falls back when the owner index cannot be read", async () 
   try {
     const projects = await projectStorage.listProjectLibrary("user-1");
     assert.deepEqual(projects.map((project) => project.id), ["project-1"]);
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("project listing reads records left in the temporary v2 database", async () => {
+  const projectDirectory = new MemoryDirectoryHandle("project");
+  const parentDirectory = new MemoryDirectoryHandle("projects");
+  await projectDirectory.writeJson("project.json", {
+    id: "project-v2",
+    name: "临时库项目",
+    nodes: [],
+    edges: [],
+    groups: [],
+    materialFolders: [],
+    materials: [],
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+  });
+  const restoreWindow = installMemoryProjectDatabase({
+    id: "project-v2",
+    ownerUserId: "user-1",
+    name: "临时库项目",
+    createdAt: "2026-07-19T12:00:00.000Z",
+    updatedAt: "2026-07-19T12:00:00.000Z",
+    directoryName: "project",
+    projectHandle: projectDirectory,
+    parentHandle: parentDirectory,
+  }, {
+    databaseName: "genlink-project-library-v2",
+  });
+
+  try {
+    const projects = await projectStorage.listProjectLibrary("user-1");
+    assert.deepEqual(projects.map((project) => project.id), ["project-v2"]);
+
+    const loaded = await projectStorage.loadProjectSnapshot(projects[0]!, "user-1");
+    assert.equal(loaded.id, "project-v2");
   } finally {
     restoreWindow();
   }
@@ -1063,6 +1144,37 @@ test("bulk import repairs an unreadable legacy record after explicit directory s
     assert.equal(result.skippedCount, 0);
     assert.equal(projects.length, 1);
     assert.equal(projects[0]?.ownerUserId, "user-1");
+  } finally {
+    restoreWindow();
+  }
+});
+
+test("bulk import discovers a project inside one nested wrapper directory", async () => {
+  const parentDirectory = new MemoryDirectoryHandle("下载");
+  const wrapperDirectory = await parentDirectory.getDirectoryHandle("插插乐", { create: true });
+  const projectDirectory = await wrapperDirectory.getDirectoryHandle("插插乐", { create: true });
+  await projectDirectory.writeJson("project.json", {
+    id: "nested-project-1",
+    name: "插插乐",
+    nodes: [],
+    edges: [],
+    groups: [],
+    createdAt: "2026-06-21T12:00:00.000Z",
+    updatedAt: "2026-06-21T12:00:00.000Z",
+  });
+  const restoreWindow = installMemoryProjectDatabase([]);
+
+  try {
+    const result = await projectStorage.importProjectsFromParentDirectory(
+      parentDirectory as unknown as FileSystemDirectoryHandle,
+      "user-1",
+    );
+
+    assert.deepEqual(result.projects.map((project) => project.id), ["nested-project-1"]);
+    assert.equal(
+      result.projects[0]?.parentHandle,
+      wrapperDirectory as unknown as FileSystemDirectoryHandle,
+    );
   } finally {
     restoreWindow();
   }

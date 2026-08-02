@@ -7,7 +7,7 @@ function source(path: string): string {
   return readFileSync(resolve(process.cwd(), path), 'utf8');
 }
 
-test('project records are indexed and filtered by authenticated owner', () => {
+test('project records are read individually and filtered by authenticated owner', () => {
   const projectStorage = source('src/lib/project-storage.ts');
   const listStart = projectStorage.indexOf('async function readAllProjectRecords');
   const listEnd = projectStorage.indexOf('async function requireStoredProjectOwner', listStart);
@@ -16,16 +16,11 @@ test('project records are indexed and filtered by authenticated owner', () => {
   assert.match(projectStorage, /ownerUserId/);
   assert.match(projectStorage, /PROJECT_OWNER_INDEX_NAME/);
   assert.match(projectStorage, /listProjectLibrary\(userId: string\)/);
-  assert.match(
-    listingImplementation,
-    /store\.index\(PROJECT_OWNER_INDEX_NAME\)\.getAllKeys\(userId\)/,
-  );
+  assert.match(listingImplementation, /readProjectRecordKeysFromDatabase\(databaseName\)/);
+  assert.match(projectStorage, /store\.openKeyCursor\(\)/);
+  assert.match(listingImplementation, /readProjectRecordFromDatabase\(databaseName, projectId\)/);
   assert.match(listingImplementation, /record\?\.ownerUserId === userId/);
-  assert.match(listingImplementation, /store\.getAll\(\)/);
-  assert.match(
-    listingImplementation,
-    /filter\(\(record\) => record\.ownerUserId === userId\)/,
-  );
+  assert.doesNotMatch(listingImplementation, /store\.getAll\(\)/);
 });
 
 test('account changes clear canvas memory and invalidate pending work', () => {
