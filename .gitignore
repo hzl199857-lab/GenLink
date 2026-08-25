@@ -59,6 +59,8 @@ CLAUDE.md
 
 # local caches
 .eslintcache
+__pycache__/
+*.py[cod]
 .graphify_*.json
 .graphify_uncached.txt
 graphify-out/
